@@ -11,7 +11,9 @@ page allocation inside INSERT loops differs across sqlite versions/ports. The
 regeneration test therefore asserts byte identity only on the recorded
 generating version; on any other runtime it asserts full logical identity of
 the table content plus the exact sealed truth JSON (which is pure text and
-byte-exact everywhere).
+byte-exact everywhere). Sample values themselves are platform-independent by
+construction: the generator uses only IEEE754-exact arithmetic (see
+generate._z_sample), no libm transcendentals.
 """
 import json
 import os
@@ -67,7 +69,9 @@ class GenerationIntegrity(unittest.TestCase):
                     return rows
                 self.assertEqual(dump(Path(tmp) / "data.db"),
                                  dump(FAMILY / "fixtures/b1v1/data.db"))
-                self.assertEqual(len(regenerated), len(committed))
+                # Page layout and file size are build-dependent (page
+                # allocation is not a sqlite guarantee); only the header
+                # magic is fixed across builds.
                 self.assertEqual(regenerated[:16], committed[:16])
             sealed = json.loads((FAMILY / "ground-truth/b1v1.json").read_text(encoding="utf-8"))
             self.assertEqual(truth, sealed)

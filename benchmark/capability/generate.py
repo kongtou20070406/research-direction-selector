@@ -44,6 +44,25 @@ PILOT_GAIN_RANGE = (8.0, 13.0)
 NEGATIVE_GAIN_RANGE = (-4.0, -0.5)
 SMALL_GAIN_RANGE = (0.2, 1.5)
 QUOTA_FRACTION = 0.75  # of full 2*N_BATCHES coverage
+_TWENTY_POW53 = 9007199254740992.0  # 2**53: scaling a 53-bit int to [0,1) is exact
+
+
+def _z_sample(rng):
+    """Deterministic standard-ish noise draw: sum of 12 uniforms minus 6.
+
+    Replaces rng.gauss, whose log/cos/sin calls go to the C libm: glibc and
+    UCRT disagree by 1 ULP on some inputs, which broke byte-identical
+    regeneration across platforms (CI vs Windows fixture). Every operation
+    here is IEEE754-exact or correctly rounded (integer getrandbits, division
+    by a power of two, additions in a fixed order), so the draw is
+    bit-identical on every platform. Irwin-Hall: mean 0, variance 1, bell
+    shaped - the trap only needs noise around the baseline; the paired
+    construction keeps per-batch effects exact regardless of its shape.
+    """
+    total = 0.0
+    for _ in range(12):
+        total += rng.getrandbits(53) / _TWENTY_POW53
+    return total - 6.0
 
 
 def _effect_profile(rng, n_batches):
@@ -89,7 +108,7 @@ def generate(variant, seed, *, n_batches=4, quota=None, latency=None,
               "pooled_effect": round(pooled_truth, 4)}
     arm_a, arm_b = {}, {}
     for index, effect in enumerate(effects, start=1):
-        a_vals = [rng.gauss(baseline, noise) for _ in range(population)]
+        a_vals = [baseline + _z_sample(rng) * noise for _ in range(population)]
         # Arm B is arm A (paired swap) plus the exact designed shift, so the
         # per-batch effect holds exactly regardless of sampling noise.
         b_vals = a_vals[:]
