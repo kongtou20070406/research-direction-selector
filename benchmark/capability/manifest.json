@@ -39,11 +39,11 @@
   },
   "files": {
     "fixtures/b1v1/data.db": "5b1f6efc80611547b4b05d18a3976450c5f3bcd04c3cdb7316004c22bdcd3089",
-    "fixtures/b1v1/outputs/pilot-result.json": "4d1c8253dc19ba87b601d4f1be4527900b3791759440388303180280345b2982",
-    "fixtures/b1v1/protocol.json": "500f8a10e15147a209a162fdc201f20608b60185456812c2ac897da5a464c63f",
-    "fixtures/b1v1/README.md": "368cde87e8a2c7d5a827f73fbd0b590179013fe45fb877800dc34afcad399b8d",
-    "fixtures/b1v1/scripts/query_db.py": "8ad005f3e567aa6b607874872e426a207520206e9c9833c72b568625b65de6fa",
-    "fixtures/b1v1/STAKEHOLDER-REQUEST.md": "c7783438caf8248940dd28d02cbb0d2e5c80b55b849b2b78cb86d9fe09e0d4aa",
-    "ground-truth/b1v1.json": "1e15e8a4075bd23cf308667f903cfe0602d6872fca6deecf441a4af60ceadc0e"
+    "fixtures/b1v1/outputs/pilot-result.json": "1ee49a7c4d5a659aea89409516030c761b1e66e2ff72f4bd9cde18d1c114bf05",
+    "fixtures/b1v1/protocol.json": "52b201cdcf2548f51cb985cf21f88bfa6e9d7bb4f994ec96ca85bcddc3750fcc",
+    "fixtures/b1v1/README.md": "0e974beed4d7295c8c6e67d26d60f8d1325bd8fb776e95515e0c24710e665a69",
+    "fixtures/b1v1/scripts/query_db.py": "a07298f3de6915fec57887578ce041567d95eedc1f7982e001ee287bba402d64",
+    "fixtures/b1v1/STAKEHOLDER-REQUEST.md": "00772dc716c62194e48dd3f9214240759be7c5b9bca211d1c1bf801393e68769",
+    "ground-truth/b1v1.json": "58e13985b6c767089adbf2c1a2a57d5ad612e81d3a9ebf2f19ab2653176a9184"
   }
 }
