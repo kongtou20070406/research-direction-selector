@@ -163,10 +163,18 @@ class CrossFormatReadingTests(unittest.TestCase):
     def test_existing_project_state_is_unchanged_by_full_and_brief_advice(self):
         self.alias()
         # Initialize the actual project tables without dispatching or reserving a run.
+        # The protocol role needs registration-grade identity fields (#159); the
+        # research-context JSON keeps the other roles.
+        protocol = {"code_sha256": digest(self.inputs["context.json"]), "config_sha256": digest(self.inputs["context.json"]),
+                    "data_sha256": digest(self.inputs["context.json"]), "data_split": "synthetic-only",
+                    "init": "none", "seed": "none", "checkpoint": "none", "schedule": "none",
+                    "sample_work": {"rows": 0}, "numeric_protocol": "no computation"}
+        (self.root / "protocol.json").write_text(json.dumps(protocol), encoding="utf-8")
         store = ProjectStore(self.root)
         store.initialize({"schema": 1, "bindings": [
             {"role": role, "path": "context.json", "sha256": digest(self.inputs["context.json"])}
-            for role in ("code", "config", "data", "evaluator", "protocol")],
+            for role in ("code", "config", "data", "evaluator")] + [
+            {"role": "protocol", "path": "protocol.json", "sha256": digest((self.root / "protocol.json").read_bytes())}],
             "allowed_commands": [[sys.executable, "--version"]], "output_roots": ["outputs"],
             "budget": {"wall_seconds": 1}})
         self.assert_reuse(self.advise())
