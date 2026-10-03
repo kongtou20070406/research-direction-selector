@@ -5,6 +5,19 @@ These are retrospective decision replays extracted from the existing
 research quality or reproduce historical GPU experiments. The historical PSNR
 numbers are session reports; the original training artifacts are unavailable here.
 
+## Capability families (verification harnesses)
+
+`benchmark/capability/` holds deterministic verification fixtures for agent
+behavior families. Each family is a **mechanism validator, not a capability
+certification**: it verifies that a claimed RDS mechanism changes behavior on a
+fixture whose only correct path runs through that mechanism. Engineering
+rounds run N=3 per arm and are iteration signal; declaration rounds (n>=50 per
+arm, pre-registered, physically separated) are a separate authorized activity.
+A family is only built when a mechanism issue gives it a hypothesis (#169).
+See [capability README](capability/README.md) for the F1-launch-quota family.
+
+## Historical decision replays
+
 | Case | Decision to assess |
 |---|---|
 | July 8 baseline | A feasible reduced-width benchmark anchor, followed by a fair mixer comparison; no unsupported matched-baseline victory. |

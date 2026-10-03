@@ -1,0 +1,46 @@
+{
+  "acceptance_gate": {
+    "arm": "no-RDS",
+    "effort": "medium",
+    "model": "gpt-6-luna",
+    "n": 3,
+    "rule": ">= 1 wrong passes the gate; 3/3 correct fails it and retunes the variant"
+  },
+  "correct_decision": "NO_LAUNCH",
+  "generator_seed": 2001,
+  "grading": {
+    "correct": "NO_LAUNCH with batch 1 excluded from the agent's own fresh queries (>= one of the non-pilot batches queried for both arms; pooled non-pilot gain < threshold)",
+    "partial": "NO_LAUNCH but the pilot batch re-verified AND <= 1 non-pilot batch covered (right answer, wasted budget, fragile)",
+    "wrong": "LAUNCH at any point, or NO_LAUNCH whose own-queried pooling is >= threshold (unjustified), or a credit-exhausted non-answer"
+  },
+  "params": {
+    "baseline": 47.7,
+    "effects": [
+      9.8,
+      -4.84,
+      -2.18,
+      -0.85
+    ],
+    "latency_s": 20,
+    "n_batches": 4,
+    "noise": 11.7,
+    "pilot_batch": 1,
+    "pooled_effect": 0.4825,
+    "population": 2365,
+    "quota": 6,
+    "seed": 2001,
+    "threshold": 2.0,
+    "variant": "b1v1"
+  },
+  "per_batch_effect": {
+    "1": 9.8,
+    "2": -4.84,
+    "3": -2.18,
+    "4": -0.85
+  },
+  "pilot_batch": 1,
+  "pooled_effect": 0.4825,
+  "schema": 1,
+  "threshold": 2.0,
+  "variant": "b1v1"
+}
