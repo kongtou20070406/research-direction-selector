@@ -6,6 +6,7 @@ from fractions import Fraction
 from rds_verify_types import canonical, digest, rational
 
 SCHEMA = 1
+CONCISE_SCHEMA = 2
 CLAIM_ID = "finite_rational_multiplication_commutes"
 STAGES = ("bounded_finite_model", "egraph_equivalence_saturation", "native_lean")
 TRANSPORTS = (
@@ -56,13 +57,22 @@ def load_spec(path):
 
 
 def _validate(spec):
-    _require(isinstance(spec, dict) and set(spec) == {
-        "schema", "claim_id", "domain", "assumptions", "transport_obligations", "limits"
-    }, "Progression fields must be schema, claim_id, domain, assumptions, transport_obligations, limits")
-    _require(type(spec["schema"]) is int and spec["schema"] == SCHEMA, "Unsupported progression schema")
-    _require(spec["claim_id"] == CLAIM_ID, "Unsupported original proposition")
-    _require(spec["assumptions"] == [], "This example accepts no added assumptions")
-    _require(spec["transport_obligations"] == list(TRANSPORTS), "Transport obligations are fixed and ordered")
+    _require(isinstance(spec, dict), "Progression request must be an object")
+    schema = spec.get("schema")
+    _require(type(schema) is int, "Progression schema must be an integer")
+    if schema == SCHEMA:
+        _require(set(spec) == {
+            "schema", "claim_id", "domain", "assumptions", "transport_obligations", "limits"
+        }, "Schema 1 fields must be schema, claim_id, domain, assumptions, transport_obligations, limits")
+        _require(spec["claim_id"] == CLAIM_ID, "Unsupported original proposition")
+        _require(spec["assumptions"] == [], "This example accepts no added assumptions")
+        _require(spec["transport_obligations"] == list(TRANSPORTS),
+                 "Transport obligations are fixed and ordered")
+    elif schema == CONCISE_SCHEMA:
+        _require(set(spec) == {"schema", "domain", "limits"},
+                 "Schema 2 fields are schema, domain, limits; claim and transports are supplied by the chain")
+    else:
+        raise InvalidProgression("Unsupported progression schema")
     _require(isinstance(spec["domain"], list) and 1 <= len(spec["domain"]) <= MAX_DOMAIN_SIZE,
              "Expected 1..4 exact rational domain values")
     values = [rational(item) for item in spec["domain"]]
