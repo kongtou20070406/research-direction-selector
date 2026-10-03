@@ -1531,16 +1531,32 @@ class ProtocolIdentityMessageTests(unittest.TestCase):
                       + " (the SHA256 of the one 'config' binding)", rejected.stdout + rejected.stderr)
         self.assertFalse((root / ".rds" / "project.sqlite3").exists())
 
-    def test_protocol_files_without_identity_hashes_still_initialize(self):
-        root = self.project("prose")
-        (root / "protocol.md").write_text("# Protocol\nPrimary metric: mse.\n", encoding="utf-8")
+    def test_protocol_files_that_cannot_register_are_rejected_before_the_contract_freezes(self):
+        """#159: a JSON protocol missing identity fields would freeze a contract that can never register a run."""
+        # Prose protocols stay initable: registration rejects them only when a run names one.
+        prose = self.project("prose")
+        (prose / "protocol.md").write_text("# Protocol\nPrimary metric: mse.\n", encoding="utf-8")
+        contract = json.loads((prose / "contract.json").read_text(encoding="utf-8"))
+        contract["bindings"].append({"role": "protocol", "path": "protocol.md", "sha256": file_sha(prose / "protocol.md")})
+        (prose / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+        self.assertEqual(self.init(prose).returncode, 0)
+        # A JSON protocol missing identity fields is rejected at init and fixable in the same root.
+        root = self.project("partial")
         (root / "partial.json").write_text(json.dumps({"seed": 3}), encoding="utf-8")
         contract = json.loads((root / "contract.json").read_text(encoding="utf-8"))
-        contract["bindings"] += [{"role": "protocol", "path": name, "sha256": file_sha(root / name)}
-                                 for name in ("protocol.md", "partial.json")]
+        contract["bindings"].append({"role": "protocol", "path": "partial.json", "sha256": file_sha(root / "partial.json")})
         (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
-        initialized = self.init(root)
-        self.assertEqual(initialized.returncode, 0, initialized.stdout + initialized.stderr)
+        rejected = self.init(root)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("Protocol identity fields required: code_sha256, config_sha256, data_sha256, data_split, init, "
+                      "checkpoint, schedule, sample_work, numeric_protocol; exec can complete operational identity "
+                      "fields in partial.json; the protocol is frozen with the contract", rejected.stdout + rejected.stderr)
+        self.assertFalse((root / ".rds" / "project.sqlite3").exists())
+        # Corrected in place: the unusable protocol binding is removed and the contract initializes.
+        (root / "partial.json").unlink()
+        contract["bindings"] = [b for b in contract["bindings"] if b["path"] != "partial.json"]
+        (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+        self.assertEqual(self.init(root).returncode, 0)
 
 if __name__ == "__main__":
     unittest.main()

@@ -562,8 +562,10 @@ class ProjectStore:
                 protocol = load_json(self._path(b["path"]))
             except (ValueError, UnicodeDecodeError):
                 continue  # Not a JSON identity file; registration rejects it if a run names it.
-            conflict = self._protocol_conflict(contract, protocol) if isinstance(protocol, dict) else None
-            require(not conflict, f"{conflict} in {b['path']}; the protocol is frozen with the contract, "
+            if not isinstance(protocol, dict):
+                continue  # JSON but not an identity object; registration rejects it if a run names it.
+            error = self._protocol_error(contract, protocol)
+            require(not error, f"{error} in {b['path']}; the protocol is frozen with the contract, "
                     "so correct it and its binding SHA256 before project init")
         if 'maintenance_allowance' in contract:
             self._maintenance_context(contract)
