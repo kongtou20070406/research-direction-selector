@@ -1111,7 +1111,7 @@ def cmd_project(args):
     from rds_project import ProjectStore
     store = ProjectStore(args.root)
     if args.action == "init":
-        return store.initialize(load_spec(args.contract))
+        return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
     if args.action == "create":
         return store.register(load_spec(args.manifest))
     if args.action == "execute":
@@ -1459,7 +1459,10 @@ def parser():
 
     project = commands.add_parser("project", help="Locked local project runner with receipts and resource accounting")
     pr_actions = project.add_subparsers(dest="action", required=True)
-    pr_actions.add_parser("init").add_argument("--contract", required=True)
+    pr_init = pr_actions.add_parser("init")
+    pr_init.add_argument("--contract", required=True)
+    pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
+                         help="Link this new root to a frozen project root by digest; the predecessor is never modified")
     pr_actions.add_parser("create").add_argument("--manifest", required=True)
     pr_exec = pr_actions.add_parser("execute")
     pr_exec.add_argument("--id", required=True)
