@@ -2,7 +2,28 @@
 
 [English](CONTRIBUTING.md) · **简体中文**
 
-RDS 的改动可能通过自己的测试，却仍让用户找不到宣传的 CLI 入口、把缺失测量当成事实，或在恢复时重复花算力。本指南从这些故障出发。贡献应让一个具体的研究决定或程序行为更容易使用和检查。
+感谢关注。RDS 是一个小项目，问题很明确：Agent 驱动的科研里，哪些部分可以交给便宜、可测试的程序，让昂贵又难以预测的 Agent 不必承担？不碰内核也能帮上忙。
+
+## 参与方式
+
+| 你有…… | 可以贡献 | 从这里开始 |
+| --- | --- | --- |
+| 10 分钟 | 修正任一 README 或指南中的错别字、失效链接或含糊表述 | 直接提 PR |
+| 自己的科研工作流 | 开一个 issue，说明你的 Agent 在哪里弄丢了运行记录、预算、目标或被否掉的想法，并附上你的设置 | [新建 issue](https://github.com/kongtou20070406/research-direction-selector/issues/new/choose) |
+| 一个下午 | 一个让不用 RDS 的 Agent 得出错误结论的基准任务，附评分器 | [贡献基准任务](#贡献基准任务) |
+| 一个 bug | 复现步骤；能修的话，附上聚焦的修复 | [先说明问题](#先说明问题) |
+| 一个功能想法 | 先开 issue，设计达成一致后再提 PR | [路线计划](docs/roadmap.md)、[5.9 规划](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
+
+准备检出只需要 Git 和 Python 3.11+：
+
+```powershell
+git clone https://github.com/kongtou20070406/research-direction-selector.git
+cd research-direction-selector
+python -B scripts/rds_cli.py --version
+python -B -m unittest discover -s tests -p "test_rds_quick*.py"
+```
+
+本指南其余部分说明怎样的改动容易审查和合入。RDS 的改动可能通过自己的测试，却仍让用户找不到宣传的 CLI 入口、把缺失测量当成事实，或在恢复时重复花算力。本指南从这些故障出发。贡献应让一个具体的研究决定或程序行为更容易使用和检查。
 
 版本编号与发布遵循[版本规范](docs/versioning.md)。五个组件固定为 **Skill、执行与验收内核、研究状态与记忆、Advisor、RSI**。M01–M06 是其中的工作项，提供有限格式证据导入、实验组合、成本与对照检查、项目执行、规则采用及接续恢复。详见[路线计划](docs/roadmap.md)与[命令和范围](docs/development-loop.md)。程序检查通过不等于具备端到端科研能力。
 
@@ -10,11 +31,11 @@ RDS 的改动可能通过自己的测试，却仍让用户找不到宣传的 CLI
 
 错误报告和聚焦的修复 PR 可以直接提交。说明触发输入、准确复现、预期行为与根因。较大的功能、新 schema 或科研行为的实质变化，先在 issue 中讨论设计；已经确定的决定应继续沿用，不需要让每个人重新申请。
 
-每个 PR 聚焦一个具体目的。说明研究者能因此解决什么问题，以及现有概念为何不足。新增字段、状态、文件类型或依赖前，先读[科研工作流](docs/research-workflow.zh-CN.md)、[术语](docs/terminology.zh-CN.md)与相邻实现。
+每个 PR 聚焦一个具体目的。说明研究者能因此解决什么问题，以及现有概念为何不足。优先选择把记账负担从 Agent 转移到程序的改动：程序的工作更便宜、行为确定、可以测试，而 Agent 的工作昂贵且难以优化。内核能完成的检查，不应依赖 Agent 记得去做。新增字段、状态、文件类型或依赖前，先读[科研工作流](docs/research-workflow.zh-CN.md)、[术语](docs/terminology.zh-CN.md)与相邻实现。
 
 Fork [仓库](https://github.com/kongtou20070406/research-direction-selector/fork)，从目标 base 建立分支，只提交自己的改动。PR 应说明最终的问题与行为、实际运行的检查和实质限制；区分 base 上已有行为、本 PR 引入的行为与开发候选。共享命令和证据边界须在各版 README 与中英贡献指南中一致；纯措辞修正可以只影响一种语言。
 
-后续 README 沿用既定框架：静态顶图、科研循环的两侧、五组件、Skill 与安装、内核、数学检查、Advisor、历史、测试、仓库结构与许可证。主 README 保持纯英文，翻译分别放入各自文件。详细实现和测试报告放在链接指南中，不继续扩展首页。
+后续 README 沿用既定框架：静态顶图与标语、为什么需要 RDS、已测到的结果、两分钟上手、科研循环的两侧、五组件、Skill 与安装、内核、数学检查、Advisor、历史、测试、仓库结构、参与进来、Star 趋势与许可证。主 README 保持纯英文，翻译分别放入各自文件。详细实现和测试报告放在链接指南中，不继续扩展首页。README 中的每个数字都要链接到公开的设计与数据报告；有新证据改变它时，所有语言版本同步更新或删除。
 
 ## 六项可供审查的检查
 
@@ -78,6 +99,19 @@ python -B -m unittest discover -s tests -p test_rds_artifacts.py -v
 开发时用过的案例属于回归证据。独立科研评估需要未使用案例、模型／skill 版本记录、决策时的信息边界、匹配的总预算和负结果，参见[评测协议](benchmark/README.md)。科研自主程度与 RSI 改善分别成立，详见[自主程度范围](docs/research-autonomy.md)与 [RSI 证据](references/rsi-evidence.md)。
 
 尊重当前研究者的目标、资源和实验偏好。[可选偏好示例](references/optional-preferences.md)不默认追加多 seed，只有已观测到且可能改变决定的不稳定性才考虑追加。它是项目可选偏好，不是所有研究者必须接受的科学要求；建议和偏好记录都不扩大资源授权。
+
+## 贡献基准任务
+
+RDS 目前的开放问题是客观的科研收益，而这个问题只能在不用 RDS 的 Agent 确实会失败的任务上回答。在复查成本很低的陷阱上，前沿 Agent 不需要帮助也能得出正确结论，见 [README 中的结果](README.zh-CN.md#已测到的而非承诺的)。能打破这一模式的任务，是你能做出的最有价值的贡献之一。可以在 [#169](https://github.com/kongtou20070406/research-direction-selector/issues/169) 或新 issue 中讨论。
+
+有用的任务具备：
+
+- **已知答案和评分器。** 评分器只读取 Agent 的最终产物（例如 `DECISION.json`、查询日志、回执），给出正确、部分正确或错误，并附理由。[PR #176](https://github.com/kongtou20070406/research-direction-selector/pull/176) 提出了 `benchmark/capability/` 下的格式。
+- **不用 RDS 的 Agent 确实会犯的错误。** 先在不用 RDS 的条件下试跑。如果 Agent 从不失败，这个任务就无法显示收益；这个结果也请报告。
+- **答错有真实代价：** 额度、慢速运行器、不可逆的决定或诱人的捷径，而不是谜题。
+- **最小的合成或公开数据。** 由带种子的脚本生成，不含私有数据集、会话或凭据。
+
+报告试验时，请写明模型与推理强度、宿主及其版本、RDS 提交、每组的准确提示词、每组试验次数、包括报错和负面结果在内的全部结果，以及每次失败背后的机制。各组除被测因素外保持一致。样本小没关系，说明即可。
 
 ## 性能与最终验收
 
