@@ -662,6 +662,94 @@ def cascade_refute(spec, contradicted_node_ids=(), contradicted_rule_ids=()):
                             refute_rules=contradicted_rule_ids)
 
 
+def _operator_verdict_target(spec, target_token):
+    """Resolve one ``node:<id>``/``rule:<id>`` token to the map's record and kind."""
+    _require(isinstance(target_token, str) and target_token.strip(),
+             "target token must be a nonempty string")
+    kind, separator, ident = target_token.strip().partition(":")
+    _require(separator and kind in ("node", "rule") and ident.strip(),
+             "target token must be 'node:<id>' or 'rule:<id>': use a token from ready_obligations")
+    ident = ident.strip()
+    key = "nodes" if kind == "node" else "hyperedges"
+    records = spec.get(key)
+    _require(isinstance(records, list), "dependency map lacks a " + key + " table")
+    for record in records:
+        if isinstance(record, dict) and record.get("id") == ident:
+            return kind, ident, record
+    _require(False, "unknown " + kind + " target: " + ident)
+
+
+def apply_operator_verdict(spec, target_token, operator_receipt, *, locator="operator-verdict"):
+    """Ingest one operator execution verdict into the dependency map (Issue #49).
+
+    A deterministic bridge between a runnable operator's structured result and
+    the declared TMS: PASS with a receipt-binding keeps the token's support
+    obligation open to the existing grounded-receipt audit (a self-declared
+    PASS is not support); CONTRADICTED with a witness refutes the target and
+    recomputes the closure and minimal missing-evidence sets through the
+    normal review; anything else leaves the map unchanged. The verdict and
+    witness are archived in the refuted record's source locator, so no second
+    ledger or manual JSON edit is needed. Declared impact never verifies
+    scientific truth: ASSURANCE is unchanged.
+    """
+    from rds_hypergraph_input import prepare_input
+    spec, input_review = prepare_input(spec, locator)
+    _require(not input_review["errors"],
+             "invalid dependency map: " + "; ".join(row["reason"] for row in input_review["errors"][:3]))
+    _require(isinstance(operator_receipt, dict), "operator receipt must be an object")
+    status = operator_receipt.get("status")
+    _require(status in ("PASS", "CONTRADICTED", "UNKNOWN", "ERROR"),
+             "operator verdict status must be PASS, CONTRADICTED, UNKNOWN or ERROR")
+    kind, ident, record = _operator_verdict_target(spec, target_token)
+    if status != "CONTRADICTED":
+        # PASS/UNKNOWN/ERROR: nothing is claimed beyond the existing map. A PASS
+        # without a grounded receipt stays a proof obligation, fail-closed.
+        result = review_hypergraph(spec, locator=locator)
+        result["operator_verdict"] = {
+            "target_token": kind + ":" + ident, "status": status,
+            "effect": "UNCHANGED",
+            "meaning": "Declared map unchanged; support still requires grounded receipt evidence" if status == "PASS"
+                       else "Unproven verdict retains the current status and obligations"}
+        return result
+    witness = operator_receipt.get("witness")
+    _require(isinstance(witness, (dict, list, str, int, float)) and witness is not None,
+             "a CONTRADICTED verdict requires a witness value")
+    operator_name = operator_receipt.get("operator")
+    _require(isinstance(operator_name, str) and operator_name.strip(),
+             "operator receipt must name the operator")
+    input_digest = operator_receipt.get("input_sha256")
+    if input_digest is not None:
+        _require(isinstance(input_digest, str) and len(input_digest) == 64
+                 and all(c in "0123456789abcdefABCDEF" for c in input_digest),
+                 "input_sha256 must have 64 hexadecimal characters")
+        input_digest = input_digest.lower()
+    archive = {"locator": (str(locator) + "#witness/" + kind + "/" + ident),
+               "operator": operator_name.strip(),
+               "verdict_status": "CONTRADICTED",
+               "input_sha256": input_digest,
+               "witness": witness}
+    if isinstance(record.get("source"), str):
+        archive["previous_locator"] = record["source"]
+    elif isinstance(record.get("source"), dict) and isinstance(record["source"].get("locator"), str):
+        archive["previous_locator"] = record["source"]["locator"]
+    refuted = deepcopy(spec)
+    for row in refuted["nodes" if kind == "node" else "hyperedges"]:
+        if row.get("id") == ident:
+            row["source"] = archive
+            break
+    result = review_hypergraph(refuted, locator=locator,
+                               **({"refute_nodes": [ident]} if kind == "node" else {"refute_rules": [ident]}))
+    result["operator_verdict"] = {
+        "target_token": kind + ":" + ident, "status": "CONTRADICTED", "effect": "REFUTED",
+        "operator": operator_name.strip(), "input_sha256": input_digest, "witness": witness,
+        "lost_support": result.get("revision", {}).get("lost_support", []),
+        "minimal_missing_evidence_sets": {goal: row["minimal_missing_evidence_sets"]
+                                          for goal, row in result["goals"].items()},
+        "meaning": "Witness refutes the declared record; remaining routes and the recalculated "
+                   "blocker sets above are declared impact, not scientific verification"}
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True)
