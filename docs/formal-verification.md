@@ -34,7 +34,20 @@ The implementation uses `scripts/rds_verify.py` and the `formal` CLI, with finit
 | `scale_equivariance` | `network.positive_homogeneity`: the supported Linear/ReLU model's declared positive-scale identity; distinct from scale invariance. |
 | `network_bounds` / `network_margin` | `network.interval_bounds` / `network.interval_margin`: declared bounds/margins over an input box; failure requires an actual checked counterexample. |
 | `tensor_identity` / `tensor_bounds` | `tensor.exact_identity` / `tensor.exact_bounds`: concrete finite tensor calculations, not arbitrary symbolic tensor identities. |
+| `finite_rational_multiplication_commutes` | `theory.finite_rational_multiplication_commutes`: exhaustive proof on a declared finite rational domain closed under multiplication, with a native Lean certificate for every ordered pair. |
 | `theorem_module` | Named finite statements composed using `logic.and_intro`; not a new Lean language. |
+
+The bounded multiplication rule can be named in a theorem module, referenced through
+`$ref`, reused by multiple conjunctions, and checked through the existing formal CLI
+and proof cache. See [the composed example](../examples/formal/bounded_progression_module.json).
+The rule recomputes the exact Cayley table and checks the ordered pair list and each
+closed-rational Lean certificate during replay. A cache hit skips proof generation,
+but still replays each Lean certificate. A report status or hash is not proof.
+The domain must be closed: for example, `["1", "2"]` is UNKNOWN and is never silently
+widened. The result concerns only the listed domain; it does not establish universal
+commutativity, scientific acceptance, or application behavior. Those assurance fields
+remain UNKNOWN. EGraph output remains available from the separate progression command
+as a bounded diagnostic and is not used as proof evidence.
 
 `verify(spec)` produces and independently checks evidence; `check_certificate(spec, certificate)` checks its validity, and `checked_result` reconstructs the conclusion. A valid **FAIL** certificate can also pass certificate validation: valid evidence is not necessarily a true proposition. Results include `status`, `assurance`, `backend`, `semantics`, `spec_sha256`, `verifier_sha256` and a certificate when decided. CLI `check` accepts a framework certificate or a complete framework result containing it; it reconstructs the verdict rather than trusting the result's reported status. CLI exit codes are 0/1/2 for PASS/FAIL/UNKNOWN. These commands need no initialized research contract.
 
@@ -43,7 +56,9 @@ Run these commands from a current `main` or v5.5.0-rc.2 checkout containing the 
 ```powershell
 python -B scripts/rds_cli.py --root . formal rules
 python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/affine_dynamics.json --output proof.json --no-cache
+python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/bounded_progression_module.json --output progression-proof.json
 python -B scripts/rds_cli.py --root . formal check --spec examples/formal/affine_dynamics.json --certificate proof.json
+python -B scripts/rds_cli.py --root . formal check --spec examples/formal/bounded_progression_module.json --certificate progression-proof.json
 ```
 
 For the reference runner, a declared mathematical side condition has this shape:

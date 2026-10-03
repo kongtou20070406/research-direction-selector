@@ -1,9 +1,10 @@
 """Bind the existing bounded model, EGraph and native Lean checks to one claim."""
 import hashlib
 import json
+from copy import deepcopy
 from fractions import Fraction
 
-from rds_verify_types import canonical, digest, rational
+from rds_verify_types import bounded, canonical, digest, rational
 
 SCHEMA = 1
 CONCISE_SCHEMA = 2
@@ -18,6 +19,10 @@ MAX_SPEC_BYTES = 16 * 1024
 MAX_DOMAIN_SIZE = 4
 MAX_NATIVE_PAIRS = 16
 MAX_EGRAPH_ITERATIONS = 16
+PROOF_KIND = "finite_rational_multiplication_commutes"
+PROOF_RULE = "theory.finite_rational_multiplication_commutes"
+PROOF_ASSURANCE = "FINITE_DOMAIN_EXHAUSTIVE_PLUS_LEAN_KERNEL_CHECKED"
+PROOF_SEMANTICS = "finite_exact_rational_multiplication"
 
 
 class InvalidProgression(ValueError):
@@ -327,3 +332,154 @@ def run_progression(spec, *, native_verify=None):
             "declared_limits": spec["limits"],
             "reason": "Finite-domain equality was exhaustively checked and every instantiated closed-rational leaf was checked by native Lean"
                       if overall == "PASS" else "One or more required stages or handoffs remain unresolved"}
+
+
+def _proof_statement(statement):
+    _require(isinstance(statement, dict) and set(statement) == {"schema", "kind", "domain"},
+             "Finite multiplication theorem fields must be schema, kind, domain")
+    _require(type(statement["schema"]) is int and statement["schema"] == 1,
+             "Expected finite multiplication theorem schema 1")
+    _require(statement["kind"] == PROOF_KIND, "Unsupported finite multiplication theorem")
+    _require(isinstance(statement["domain"], list) and 1 <= len(statement["domain"]) <= MAX_DOMAIN_SIZE,
+             "Expected 1..4 exact rational domain values")
+    values = [rational(item) for item in statement["domain"]]
+    _require(len(values) ** 2 <= MAX_NATIVE_PAIRS,
+             "Finite proof exceeds the 16 native pair obligation limit")
+    _require(len(set(values)) == len(values), "Domain values must be unique after rational normalization")
+    return values, [str(value) for value in values]
+
+
+def _proof_table(values, labels):
+    table = {}
+    for left_index, left in enumerate(labels):
+        for right_index, right in enumerate(labels):
+            table[left, right] = str(bounded(values[left_index] * values[right_index]))
+    encoded = {left + "|" + right: product for (left, right), product in table.items()}
+    return table, encoded
+
+
+def _proof_scope(labels):
+    return {"kind": "finite_domain", "domain": labels,
+            "operation": "exact rational multiplication",
+            "statement": ("For every ordered pair in the declared finite multiplication-closed rational domain, "
+                          "x * y = y * x."),
+            "limits": {"max_domain_size": MAX_DOMAIN_SIZE, "max_native_pairs": MAX_NATIVE_PAIRS},
+            "assumptions": [], "scientific_assurance": "UNKNOWN",
+            "application_status": "UNKNOWN"}
+
+
+def _pair_obligation(table, left, right):
+    return {"schema": 1, "kind": "lean_obligation", "relation": "eq",
+            "left": table[left, right], "right": table[right, left]}
+
+
+def verify(statement):
+    """Prove bounded multiplication commutativity with a replayable finite table and Lean leaves."""
+    try:
+        values, labels = _proof_statement(statement)
+        table, encoded_table = _proof_table(values, labels)
+        label_set = set(labels)
+        if any(product not in label_set for product in table.values()):
+            return {"status": "UNKNOWN", "assurance": "NONE",
+                    "reason": "Declared domain is not closed under exact rational multiplication; it was not widened"}
+
+        from rds_operators import BoundedFiniteModelOperator
+        finite = BoundedFiniteModelOperator.verify_cayley_property(labels, table, "commutative")
+        finite_summary = {"status": finite.get("status"), "assurance": finite.get("assurance"),
+                          "property": finite.get("property"), "domain_size": finite.get("domain_size"),
+                          "combinations_checked": finite.get("combinations_checked")}
+        expected_finite = {"status": "PASS", "assurance": "BOUNDED_FINITE_MODEL_VERIFIED",
+                           "property": "commutative", "domain_size": len(labels),
+                           "combinations_checked": len(labels) ** 2}
+        if finite_summary != expected_finite:
+            return {"status": "UNKNOWN", "assurance": "NONE",
+                    "reason": "Finite Cayley checker did not exhaustively verify the declared domain"}
+
+        from rds_verify import LeanFormalEngine
+        pairs = []
+        leaf_certificates = {}
+        for left in labels:
+            for right in labels:
+                obligation = _pair_obligation(table, left, right)
+                obligation_key = canonical(obligation)
+                leaf_certificate = leaf_certificates.get(obligation_key)
+                if leaf_certificate is None:
+                    try:
+                        answer = LeanFormalEngine().verify(obligation, ("lean4",))
+                    except (ValueError, TypeError, KeyError, OSError, RuntimeError) as exc:
+                        answer = {"status": "UNKNOWN", "assurance": "NONE", "reason": str(exc)}
+                    wrapped = answer.get("certificate") if isinstance(answer, dict) else None
+                    wrapped_proof = wrapped.get("proof") if isinstance(wrapped, dict) else None
+                    leaf_certificate = (wrapped_proof.get("certificate")
+                                        if isinstance(wrapped_proof, dict)
+                                        and wrapped_proof.get("rule") == "lean.rational_relation" else None)
+                    accepted = (isinstance(answer, dict) and answer.get("status") == "PASS"
+                                and answer.get("assurance") == "LEAN_KERNEL_CHECKED"
+                                and isinstance(wrapped, dict) and wrapped.get("spec_sha256") == digest(obligation)
+                                and wrapped.get("verdict") == "PASS"
+                                and isinstance(leaf_certificate, dict)
+                                and leaf_certificate.get("verdict") == "PASS"
+                                and leaf_certificate.get("spec_sha256") == digest(obligation))
+                    if not accepted:
+                        return {"status": "UNKNOWN", "assurance": "NONE",
+                                "reason": answer.get("reason", "Native Lean did not check every domain pair")
+                                if isinstance(answer, dict) else "Native Lean returned a malformed result"}
+                    leaf_certificates[obligation_key] = leaf_certificate
+                pairs.append({"pair": [left, right], "product": table[left, right],
+                              "obligation": obligation, "certificate": deepcopy(leaf_certificate)})
+
+        certificate = {"schema": 1, "kind": PROOF_KIND, "verdict": "PASS",
+                       "assurance": PROOF_ASSURANCE, "semantics": PROOF_SEMANTICS,
+                       "scope": _proof_scope(labels),
+                       "domain": labels, "table": encoded_table, "table_sha256": digest(encoded_table),
+                       "finite_model": expected_finite, "pairs": pairs}
+        return {"status": "PASS", "assurance": PROOF_ASSURANCE, "certificate": certificate}
+    except (InvalidProgression, ValueError, TypeError, KeyError, ZeroDivisionError,
+            OverflowError, UnicodeError, RecursionError, OSError) as exc:
+        return {"status": "UNKNOWN", "assurance": "NONE", "reason": str(exc)}
+
+
+def check_certificate(statement, certificate):
+    """Replay the exact finite Cayley table and each native Lean leaf; never trust a prior report."""
+    try:
+        values, labels = _proof_statement(statement)
+        table, encoded_table = _proof_table(values, labels)
+        if any(product not in set(labels) for product in table.values()):
+            return False
+        require_keys = {"schema", "kind", "verdict", "assurance", "semantics", "scope", "domain", "table",
+                        "table_sha256", "finite_model", "pairs"}
+        if not isinstance(certificate, dict) or set(certificate) != require_keys:
+            return False
+        expected_finite = {"status": "PASS", "assurance": "BOUNDED_FINITE_MODEL_VERIFIED",
+                           "property": "commutative", "domain_size": len(labels),
+                           "combinations_checked": len(labels) ** 2}
+        if (type(certificate["schema"]) is not int or certificate["schema"] != 1
+                or certificate["kind"] != PROOF_KIND or certificate["verdict"] != "PASS"
+                or certificate["assurance"] != PROOF_ASSURANCE
+                or certificate["semantics"] != PROOF_SEMANTICS
+                or certificate["scope"] != _proof_scope(labels)
+                or certificate["domain"] != labels or certificate["table"] != encoded_table
+                or certificate["table_sha256"] != digest(encoded_table)
+                or certificate["finite_model"] != expected_finite):
+            return False
+        pairs = certificate["pairs"]
+        if not isinstance(pairs, list) or len(pairs) != len(labels) ** 2:
+            return False
+        from rds_lean_verify import check_certificate as check_lean_certificate
+        expected_pairs = [(left, right) for left in labels for right in labels]
+        replayed = {}
+        for item, (left, right) in zip(pairs, expected_pairs):
+            if (not isinstance(item, dict) or set(item) != {"pair", "product", "obligation", "certificate"}
+                    or item["pair"] != [left, right] or item["product"] != table[left, right]
+                    or item["obligation"] != _pair_obligation(table, left, right)):
+                return False
+            obligation_key = canonical(item["obligation"])
+            certificate_key = canonical(item["certificate"])
+            if replayed.get(obligation_key) != certificate_key:
+                if not check_lean_certificate(item["obligation"], item["certificate"]):
+                    return False
+                replayed[obligation_key] = certificate_key
+        return True
+    except (InvalidProgression, ValueError, TypeError, KeyError, ZeroDivisionError,
+            OverflowError, UnicodeError, RecursionError, OSError):
+        return False
