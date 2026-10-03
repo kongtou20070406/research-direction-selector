@@ -464,7 +464,9 @@ class OwnedAdvisorCLITests(unittest.TestCase):
             with self.subTest(label=label):
                 result = self.initialize(mutate_protocol=change, ok=False)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("Frozen route 'baseline' cannot register with protocol.json (" + reason, result.stderr)
+                # The general binding loop rejects the protocol before the owned-route loop names the route.
+                self.assertIn(reason, result.stderr)
+                self.assertIn("in protocol.json; the protocol is frozen with the contract", result.stderr)
                 self.assertFalse((self.root / '.rds/project.sqlite3').exists())
                 self.assertEqual(self.starts(), [])
         # Corrected in the same root, the contract freezes and the first route registers and runs.
