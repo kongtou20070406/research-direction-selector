@@ -3,6 +3,15 @@
 Deterministic only: regeneration integrity, grading anchors replayed from the
 2026-10-03 pilot, quota semantics and fail-closed grading. No LLM, no network,
 no sleeps (latency is overridden to 0 in generated test fixtures).
+
+The committed fixture's .db bytes were produced by one specific sqlite build
+(recorded in manifest.json as families.F1-launch-quota.generator.sqlite_version).
+SQLite makes no cross-build byte-layout guarantee for the same logical content:
+page allocation inside INSERT loops differs across sqlite versions/ports. The
+regeneration test therefore asserts byte identity only on the recorded
+generating version; on any other runtime it asserts full logical identity of
+the table content plus the exact sealed truth JSON (which is pure text and
+byte-exact everywhere).
 """
 import json
 import os
@@ -27,17 +36,47 @@ PILOT_EFFECTS = {"1": 10.7, "2": -2.8, "3": -1.5, "4": 0.9}
 PILOT_TRUTH = {"per_batch_effect": PILOT_EFFECTS, "pooled_effect": 1.825,
                "pilot_batch": 1, "threshold": 2.0, "params": {"quota": 6}}
 
+MANIFEST = json.loads((FAMILY / "manifest.json").read_text(encoding="utf-8"))
+GENERATING_SQLITE = (MANIFEST["families"]["F1-launch-quota"]["generator"]
+                     .get("sqlite_version"))
+
 
 class GenerationIntegrity(unittest.TestCase):
-    def test_committed_variant_regenerates_byte_identical(self):
+    def test_committed_variant_regenerates_identically(self):
         params, arms, extras = generate("b1v1", 2001)
         with tempfile.TemporaryDirectory(prefix="f1-regen-") as tmp:
             truth = write_data_and_truth("b1v1", 2001, tmp, params, arms, extras)
             regenerated = (Path(tmp) / "data.db").read_bytes()
             committed = (FAMILY / "fixtures/b1v1/data.db").read_bytes()
-            self.assertEqual(regenerated, committed)
+            if GENERATING_SQLITE == sqlite3.sqlite_version:
+                # Same sqlite build: the write path is byte-for-byte
+                # reproducible, so byte identity is asserted.
+                self.assertEqual(regenerated, committed)
+            else:
+                # Different sqlite build: assert logical identity of every row
+                # in canonical order instead of a layout guarantee sqlite does
+                # not make across builds.
+                def dump(payload):
+                    con = sqlite3.connect(f"file:{payload}?mode=ro", uri=True)
+                    try:
+                        rows = con.execute(
+                            "SELECT sample_id, arm, batch, score FROM scores "
+                            "ORDER BY sample_id").fetchall()
+                    finally:
+                        con.close()
+                    return rows
+                self.assertEqual(dump(Path(tmp) / "data.db"),
+                                 dump(FAMILY / "fixtures/b1v1/data.db"))
+                self.assertEqual(len(regenerated), len(committed))
+                self.assertEqual(regenerated[:16], committed[:16])
             sealed = json.loads((FAMILY / "ground-truth/b1v1.json").read_text(encoding="utf-8"))
             self.assertEqual(truth, sealed)
+
+    def test_manifest_records_the_generating_sqlite_version(self):
+        self.assertIsInstance(GENERATING_SQLITE, str)
+        parts = GENERATING_SQLITE.split(".")
+        self.assertEqual(len(parts), 3, "Expected major.minor.patch")
+        self.assertTrue(all(part.isdigit() for part in parts))
 
     def test_manifest_binds_every_committed_file(self):
         manifest = json.loads((FAMILY / "manifest.json").read_text(encoding="utf-8"))

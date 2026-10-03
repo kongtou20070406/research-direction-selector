@@ -20,7 +20,8 @@
       "runner": "benchmark/capability/run.py",
       "generator": {
         "path": "benchmark/capability/generate.py",
-        "sealed_seed": 2001
+        "sealed_seed": 2001,
+        "sqlite_version": "3.50.2"
       }
     },
     "F2-posthoc-picking": {
