@@ -562,8 +562,10 @@ class ProjectStore:
                 protocol = load_json(self._path(b["path"]))
             except (ValueError, UnicodeDecodeError):
                 continue  # Not a JSON identity file; registration rejects it if a run names it.
-            conflict = self._protocol_conflict(contract, protocol) if isinstance(protocol, dict) else None
-            require(not conflict, f"{conflict} in {b['path']}; the protocol is frozen with the contract, "
+            if not isinstance(protocol, dict):
+                continue  # JSON but not an identity object; registration rejects it if a run names it.
+            error = self._protocol_error(contract, protocol)
+            require(not error, f"{error} in {b['path']}; the protocol is frozen with the contract, "
                     "so correct it and its binding SHA256 before project init")
         if 'maintenance_allowance' in contract:
             self._maintenance_context(contract)
@@ -591,7 +593,12 @@ class ProjectStore:
             # Owned routes register their frozen manifests, so each named protocol must pass registration now.
             for route in contract["advisor_policy"]["routes"]:
                 path = route["manifest"]["protocol"]["path"]
-                error = self._protocol_error(contract, load_json(self._path(path)))
+                try:
+                    protocol = load_json(self._path(path))
+                except (ValueError, UnicodeDecodeError):
+                    require(False, f"Frozen route '{route['manifest']['id']}' protocol {path} is not a JSON "
+                            "identity object; registration would reject every run naming it")
+                error = self._protocol_error(contract, protocol)
                 require(not error, f"Frozen route '{route['manifest']['id']}' cannot register with {path} ({error}). "
                         "The protocol is frozen with the contract, so correct it and its binding SHA256 before project init")
         canonical(contract)
