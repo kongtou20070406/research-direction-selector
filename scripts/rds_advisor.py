@@ -687,10 +687,15 @@ class RDSAdvisor:
                 row["root"] = root  # A record read from a predecessor root through its successor chain (#178).
             return row
 
-        def collect(db, records, contract_sha, root=None, pinned=None):
+        def collect(db, records, contract_sha, rows, skipped, root=None, pinned=None):
+            seen = set()
             for checkpoint_id, sha, raw in db.execute("SELECT id,sha,body FROM checkpoints ORDER BY rowid"):
-                if pinned is not None and checkpoint_id not in pinned:
-                    continue  # Records a predecessor gained after it was superseded are not part of the chain.
+                if pinned is not None:
+                    if checkpoint_id not in pinned:
+                        continue  # Records a predecessor gained after it was superseded are not part of the chain.
+                    # The successor's pin, not the row's own hash, decides which bytes the chain admits (#178).
+                    _require(sha == pinned[checkpoint_id], "Predecessor checkpoint differs from the pinned digest: " + checkpoint_id)
+                    seen.add(checkpoint_id)
                 _require(isinstance(raw, str) and len(raw.encode("utf-8")) <= checkpoint_cap
                          and hashlib.sha256(raw.encode("utf-8")).hexdigest() == sha, "Checkpoint integrity failure: " + checkpoint_id)
                 record = strict_json(raw)
@@ -711,12 +716,15 @@ class RDSAdvisor:
                 if not all(key in prior for key in CHECKPOINT_ROUTE_FIELDS):
                     continue  # Older opaque contexts never become route decisions.
                 if same_question:
-                    history.append(decision_row(prior, checkpoint_id, sha, True, same_goal, records, root))
+                    rows.append(decision_row(prior, checkpoint_id, sha, True, same_goal, records, root))
                     continue
                 try:  # Another question's record adds history; it was never part of this question's review.
-                    history.append(decision_row(prior, checkpoint_id, sha, False, True, records, root))
+                    rows.append(decision_row(prior, checkpoint_id, sha, False, True, records, root))
                 except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
-                    skipped_goal_records.append(checkpoint_id)
+                    skipped.append(checkpoint_id)
+            if pinned is not None:
+                _require(seen == set(pinned), "Pinned predecessor checkpoint is missing: "
+                         + ", ".join(sorted(set(pinned) - seen)[:3]))
 
         def connect(database):
             db = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=0.05)
@@ -744,32 +752,47 @@ class RDSAdvisor:
                     from rds_project import PREDECESSOR_DEPTH, ProjectStore
                     depth = context.get("predecessor_depth", PREDECESSOR_DEPTH)
                     chain = ProjectStore(self.root_dir).predecessor_chain(depth)
-                verified = [hop for hop in chain if hop["status"] == "VERIFIED"]
+                unverified = "Records at and beyond this root were not read; this root's own history is unaffected."
                 for hop in chain:
                     if hop["status"] == "MISMATCH":
                         review["flags"].append({"kind": "PREDECESSOR_CHAIN_UNVERIFIED", "root": hop["root"], "reason": hop["reason"],
-                            "effect": "Records at and beyond this root were not read; this root's own history is unaffected."})
+                                                "effect": unverified})
                     elif hop["status"] == "TRUNCATED":
                         review["limitations"].append(f"PREDECESSOR_CHAIN_TRUNCATED: roots from {hop['root']} back were not read "
                                                      f"({hop['reason']}).")
-                if verified:
-                    review["limitations"].append(
-                        f"History includes pinned records from {len(verified)} predecessor root(s); they are recorded input "
-                        "of earlier frozen contracts, not scientific verification.")
-                for hop in reversed(verified):  # Oldest root first, so a later decision still wins.
-                    root = Path(hop["root"])
-                    other = connect(root / ".rds" / "project.sqlite3")
+                inherited = []
+                for hop in (hop for hop in chain if hop["status"] == "VERIFIED"):  # Newest predecessor first.
+                    # Each hop is re-read in its own transaction and must still match the pins the chain check used;
+                    # a hop that fails here is dropped with every older root, as a MISMATCH in the chain would be.
+                    rows, skipped = [], []
                     try:
-                        row = other.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
-                        _require(row is not None and row[1] == hop["contract_sha256"]
-                                 and _sha(strict_json(row[0])) == row[1], "Predecessor contract integrity failure: " + hop["root"])
-                        if hop["checkpoint_ids"]:
-                            collect(other, root / ".rds", row[1], hop["root"], set(hop["checkpoint_ids"]))
-                    finally:
-                        other.close()
+                        root = Path(hop["root"])
+                        other = connect(root / ".rds" / "project.sqlite3")
+                        try:
+                            row = other.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
+                            _require(row is not None and row[1] == hop["contract_sha256"]
+                                     and _sha(strict_json(row[0])) == row[1], "Predecessor contract integrity failure: " + hop["root"])
+                            pinned = {item["id"]: item["sha256"] for item in hop["checkpoint_shas"]}
+                            if pinned:
+                                collect(other, root / ".rds", row[1], rows, skipped, hop["root"], pinned)
+                        finally:
+                            other.close()
+                    except (sqlite3.Error, OSError, ValueError, KeyError, TypeError, AttributeError, UnicodeError,
+                            RecursionError) as exc:
+                        review["flags"].append({"kind": "PREDECESSOR_CHAIN_UNVERIFIED", "root": hop["root"], "reason": str(exc),
+                                                "effect": unverified})
+                        break
+                    inherited.append((rows, skipped))
+                if inherited:
+                    review["limitations"].append(
+                        f"History includes pinned records from {len(inherited)} predecessor root(s); they are recorded input "
+                        "of earlier frozen contracts, not scientific verification.")
+                for rows, skipped in reversed(inherited):  # Oldest root first, so a later decision still wins.
+                    history.extend(rows)
+                    skipped_goal_records.extend(skipped)
                 if db is not None:
-                    collect(db, directory, contract_sha)
-                elif not verified and not review["flags"]:
+                    collect(db, directory, contract_sha, history, skipped_goal_records)
+                elif not inherited and not review["flags"]:
                     return None
             finally:
                 if db is not None:

@@ -501,7 +501,11 @@ class ProjectStore:
         return cls._protocol_conflict(contract, protocol)
 
     def _ledger_pins(self):
-        """This root's verified contract, receipt and checkpoint digests; any damaged record is rejected."""
+        """This root's verified contract, receipt, checkpoint and predecessor-link digests, plus its link record.
+
+        Any damaged record is rejected. The link digest is None for a root that supersedes nothing, so a link
+        added, removed or replaced later changes the pins as much as a changed receipt does.
+        """
         require(self.path.is_file(), f"No project ledger at {self.root}")
         with self._db(True) as db:
             db.execute("BEGIN")
@@ -513,65 +517,98 @@ class ProjectStore:
                     require(isinstance(body, str) and hashlib.sha256(body.encode("utf-8")).hexdigest() == sha,
                             f"Checkpoint integrity failure: {checkpoint_id}")
                     checkpoints.append({"id": checkpoint_id, "sha256": sha})
+            link, link_sha = self._link_record(db)
         return {"contract_sha256": digest(contract),
                 "receipt_digests": [{"run_id": r["run_id"], "sha256": r["sha256"]} for r in receipts],
-                "checkpoint_shas": checkpoints}
+                "checkpoint_shas": checkpoints, "predecessor_sha256": link_sha}, link
+
+    @staticmethod
+    def _link_record(db):
+        """The predecessor link stored in db and its digest, or (None, None); a malformed link is damage, not a link."""
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predecessor'").fetchone():
+            return None, None
+        row = db.execute("SELECT body,sha256 FROM predecessor WHERE id=1").fetchone()
+        require(row is not None and isinstance(row["body"], str), "Predecessor record is missing")
+        try:
+            record = json.loads(row["body"])
+        except (ValueError, RecursionError):
+            raise ValueError("Predecessor record is not valid JSON") from None
+        require(digest(record) == row["sha256"], "Predecessor record integrity failure")
+
+        def sha(value):
+            return isinstance(value, str) and len(value) == 64 and set(value) <= set("0123456789abcdef")
+
+        def pins(items, key):
+            return isinstance(items, list) and all(isinstance(item, dict) and set(item) == {key, "sha256"}
+                                                   and isinstance(item[key], str) and item[key] and sha(item["sha256"])
+                                                   for item in items)
+
+        require(isinstance(record, dict) and set(record) == {"schema", "root_path", "contract_sha256", "receipt_digests",
+                                                             "checkpoint_shas", "predecessor_sha256", "assurance"},
+                "Predecessor record is malformed: unexpected fields")
+        for field, valid in (("schema", type(record["schema"]) is int and record["schema"] == 1),
+                             ("root_path", isinstance(record["root_path"], str) and 0 < len(record["root_path"]) <= 4096),
+                             ("contract_sha256", sha(record["contract_sha256"])),
+                             ("receipt_digests", pins(record["receipt_digests"], "run_id")),
+                             ("checkpoint_shas", pins(record["checkpoint_shas"], "id")),
+                             ("predecessor_sha256", record["predecessor_sha256"] is None or sha(record["predecessor_sha256"])),
+                             ("assurance", record["assurance"] == "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION")):
+            require(valid, f"Predecessor record is malformed: {field}")
+        return record, row["sha256"]
 
     def _predecessor(self):
         """The predecessor this root recorded at init, or None for a root that supersedes nothing."""
         if not self.path.is_file():
             return None
         with self._db(True) as db:
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predecessor'").fetchone():
-                return None
-            row = db.execute("SELECT body,sha256 FROM predecessor WHERE id=1").fetchone()
-        require(row is not None, "Predecessor record is missing")
-        record = json.loads(row["body"])
-        require(digest(record) == row["sha256"], "Predecessor record integrity failure")
-        return record
+            return self._link_record(db)[0]
 
     def predecessor_chain(self, depth=PREDECESSOR_DEPTH):
         """Check each recorded predecessor against the pins its successor stored; stop at the first failure.
 
-        A hop is VERIFIED when its contract and every pinned receipt and checkpoint are present and unchanged.
+        A hop is VERIFIED when its contract, its own predecessor link and every pinned receipt and checkpoint are
+        present and unchanged. The next hop follows the link read in that same verified transaction.
         Records the predecessor gained after it was superseded are counted, never pinned.
         """
         require(type(depth) is int and 0 <= depth <= PREDECESSOR_DEPTH_CAP,
                 f"Predecessor depth must be an integer in 0..{PREDECESSOR_DEPTH_CAP}")
         chain, store, seen = [], self, {self.root}
-        while True:
+        # Damage of any shape at the traversal boundary is a MISMATCH; it never escapes into snapshot() or Advisor.
+        damaged = (ValueError, OSError, RuntimeError, sqlite3.Error, TypeError, KeyError, AttributeError)
+        try:
+            record = self._predecessor()
+        except damaged as exc:
+            return [{"root": str(self.root), "status": "MISMATCH", "reason": str(exc)}]
+        while record is not None:
+            hop = {"root": record["root_path"], "superseded_by": str(store.root), "contract_sha256": record["contract_sha256"]}
             try:
-                record = store._predecessor()
-            except (ValueError, OSError, sqlite3.Error) as exc:
-                chain.append({"root": str(store.root), "status": "MISMATCH", "reason": str(exc)})
-                break
-            if record is None:
-                break
-            target = (store.root / record["root_path"]).resolve()
-            hop = {"root": str(target), "superseded_by": str(store.root), "contract_sha256": record["contract_sha256"]}
-            if len(chain) >= depth:
-                chain.append({**hop, "status": "TRUNCATED", "reason": f"Predecessor chain is longer than {depth} roots"})
-                break
-            try:
+                target = (store.root / record["root_path"]).resolve()
+                hop["root"] = str(target)
+                if len(chain) >= depth:
+                    chain.append({**hop, "status": "TRUNCATED", "reason": f"Predecessor chain is longer than {depth} roots"})
+                    break
                 require(target not in seen, "Predecessor chain repeats a root")
                 seen.add(target)
                 require(target.is_dir() and (target / ".rds" / "project.sqlite3").is_file(), "Predecessor ledger is missing")
                 predecessor = ProjectStore(target)
-                current = predecessor._ledger_pins()
+                current, link = predecessor._ledger_pins()
                 require(current["contract_sha256"] == record["contract_sha256"], "Predecessor contract differs from the recorded digest")
+                require(current["predecessor_sha256"] == record["predecessor_sha256"],
+                        "Predecessor's own link differs from the recorded digest")
                 for key, label in (("receipt_digests", "receipt"), ("checkpoint_shas", "checkpoint")):
                     present = {json.dumps(item, sort_keys=True) for item in current[key]}
                     for item in record[key]:
                         require(json.dumps(item, sort_keys=True) in present,
                                 f"Predecessor {label} differs from the recorded digest: {item.get('run_id', item.get('id'))}")
                 hop.update(status="VERIFIED", checkpoint_ids=[item["id"] for item in record["checkpoint_shas"]],
+                           checkpoint_shas=record["checkpoint_shas"],
                            unpinned_receipts=len(current["receipt_digests"]) - len(record["receipt_digests"]),
                            unpinned_checkpoints=len(current["checkpoint_shas"]) - len(record["checkpoint_shas"]))
-            except (ValueError, OSError, sqlite3.Error) as exc:
+            except damaged as exc:
                 chain.append({**hop, "status": "MISMATCH", "reason": str(exc)})
                 break
             chain.append(hop)
-            store = predecessor
+            store, record = predecessor, link
         return chain
 
     def initialize(self, contract, supersedes=None):
@@ -687,7 +724,7 @@ class ProjectStore:
             require(source.is_dir() and (source / ".rds" / "project.sqlite3").is_file(),
                     f"Predecessor has no project ledger: {source}")
             try:
-                pins = ProjectStore(source)._ledger_pins()
+                pins, _ = ProjectStore(source)._ledger_pins()
             except (ValueError, sqlite3.Error) as exc:
                 raise ValueError(f"Predecessor ledger cannot be superseded: {exc}") from exc
             predecessor = {"schema": 1, "root_path": os.path.relpath(source, self.root), **pins,
@@ -713,9 +750,7 @@ class ProjectStore:
                 require(old["sha256"] == digest(contract), "Contract is frozen; use a new project root"
                         f" (project init --supersedes {_shell_argument(str(self.root))} links it to this root's ledger)")
                 if predecessor is not None:
-                    has_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predecessor'").fetchone()
-                    row = has_table and db.execute("SELECT body FROM predecessor WHERE id=1").fetchone()
-                    recorded = json.loads(row["body"]) if row else {}
+                    recorded = self._link_record(db)[0] or {}
                     require(recorded.get("root_path") == predecessor["root_path"]
                             and recorded.get("contract_sha256") == predecessor["contract_sha256"],
                             "Predecessor is frozen with the contract; use a new project root")
@@ -1359,7 +1394,8 @@ class ProjectStore:
             snapshot["binding_check"] = {"files": found, "errors": errors}
         chain = self.predecessor_chain()
         if chain:  # Only successor roots carry the field; every other snapshot is unchanged.
-            snapshot["predecessor_chain"] = chain
+            # Pinned checkpoint digests stay in the link record; the snapshot names the IDs only.
+            snapshot["predecessor_chain"] = [{k: v for k, v in hop.items() if k != "checkpoint_shas"} for hop in chain]
         return snapshot
 
     def _receipt_result(self, receipt):

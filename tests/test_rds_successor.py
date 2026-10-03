@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -9,13 +10,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 from rds_advisor import RDSAdvisor  # noqa: E402
 from rds_checkpoints import save_checkpoint  # noqa: E402
-from rds_project import ProjectStore  # noqa: E402
+from rds_project import ProjectStore, canonical, digest  # noqa: E402
 from test_rds_advisor_search import fact, node  # noqa: E402
 import test_rds_project  # noqa: E402  (module import keeps its TestCase out of this module's discovery)
 
@@ -48,6 +50,42 @@ def tamper(root, table, column, value):
         trigger = "checkpoint_no_update" if table == "checkpoints" else f"{table}_no_update"
         db.execute(f"DROP TRIGGER {trigger}")
         db.execute(f"UPDATE {table} SET {column}=?", (value,))
+        db.commit()
+    finally:
+        db.close()
+
+
+def relink(root, body, sha):
+    """Replace a root's predecessor link out of band, creating the table for a root that had none."""
+    db = sqlite3.connect(Path(root) / ".rds" / "project.sqlite3")
+    try:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='predecessor'").fetchone():
+            db.execute("DROP TRIGGER IF EXISTS predecessor_no_update")
+            db.execute("UPDATE predecessor SET body=?, sha256=?", (body, sha))
+        else:
+            db.execute("CREATE TABLE predecessor(id INTEGER PRIMARY KEY, sha256 TEXT NOT NULL, body TEXT NOT NULL)")
+            db.execute("INSERT INTO predecessor VALUES (1,?,?)", (sha, body))
+        db.commit()
+    finally:
+        db.close()
+
+
+def link_to(successor, predecessor):
+    """A hash-consistent link record pointing successor at predecessor, as project init would write it."""
+    pins, _ = ProjectStore(predecessor)._ledger_pins()
+    record = {"schema": 1, "root_path": os.path.relpath(Path(predecessor).resolve(), Path(successor).resolve()), **pins,
+              "assurance": "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION"}
+    return canonical(record), digest(record)
+
+
+def null_body(root, table, key):
+    """Rebuild a table without its NOT NULL guard and null one body, as only an outside writer could."""
+    db = sqlite3.connect(Path(root) / ".rds" / "project.sqlite3")
+    try:
+        db.execute(f"ALTER TABLE {table} RENAME TO damaged")
+        db.execute(f"CREATE TABLE {table}({key} PRIMARY KEY, sha256 TEXT, body TEXT)")
+        db.execute(f"INSERT INTO {table} SELECT {key}, sha256, NULL FROM damaged")
+        db.execute("DROP TABLE damaged")
         db.commit()
     finally:
         db.close()
@@ -206,6 +244,171 @@ class SuccessorTests(unittest.TestCase):
         self.assertTrue(any(text.startswith("PREDECESSOR_CHAIN_TRUNCATED") for text in output["loop_review"]["limitations"]))
         with self.assertRaisesRegex(ValueError, "Predecessor depth must be an integer in 0..32"):
             ProjectStore(third).predecessor_chain(33)
+
+    def test_a_changed_ancestor_link_is_a_mismatch_and_is_never_traversed(self):
+        candidate = self.candidate()
+        self.record(self.first, "phase1-rejected", candidate)
+        second, contract = self.phase("second")
+        ProjectStore(second).initialize(contract, supersedes=str(self.first))
+        third, contract = self.phase("third")
+        ProjectStore(third).initialize(contract, supersedes=str(second))
+        self.assertEqual(self.search(third)["search"]["candidates"], [])
+        alternate, contract = self.phase("alternate")
+        ProjectStore(alternate).initialize(contract)
+        # Second's link now names another root; the record is self-consistent, but third pinned the old one.
+        relink(second, *link_to(second, alternate))
+        chain = ProjectStore(third).snapshot()["predecessor_chain"]
+        self.assertEqual([hop["status"] for hop in chain], ["MISMATCH"])
+        self.assertEqual(Path(chain[0]["root"]), second.resolve())
+        self.assertIn("own link differs", chain[0]["reason"])
+        review = self.search(third)["search"]["loop_review"]
+        flag = next(f for f in review["flags"] if f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED")
+        self.assertEqual(Path(flag["root"]), second.resolve())
+        self.assertNotIn("LOOP_HISTORY_REVIEW_ERROR", [f["kind"] for f in review["flags"]])
+        self.assertFalse(any("predecessor root" in text for text in review["limitations"]))
+        # A link added to a root that superseded nothing is the same change: the absence was pinned too.
+        fourth, contract = self.phase("fourth")
+        ProjectStore(fourth).initialize(contract, supersedes=str(alternate))
+        relink(alternate, *link_to(alternate, self.first))
+        [hop] = ProjectStore(fourth).predecessor_chain()
+        self.assertEqual((hop["status"], Path(hop["root"])), ("MISMATCH", alternate.resolve()))
+        self.assertIn("own link differs", hop["reason"])
+
+    def test_advisor_uses_only_the_pinned_checkpoint_bytes(self):
+        candidate = self.candidate()
+        self.record(self.first, "phase1-rejected", candidate)
+        root, contract = self.phase("second")
+        ProjectStore(root).initialize(contract, supersedes=str(self.first))
+        self.record(root, "phase2-rejected", candidate)
+        state = ProjectStore(root).snapshot()
+        state["advisor_context"] = copy.deepcopy(CONTEXT)
+        chain_check, calls = ProjectStore.predecessor_chain, []
+
+        def replace_after_check(store, *args, **kwargs):
+            chain = chain_check(store, *args, **kwargs)
+            if not calls:  # One real row replacement right after the Advisor's own chain check.
+                calls.append(chain)
+                path = self.first / ".rds" / "project.sqlite3"
+                db = sqlite3.connect(path)
+                try:
+                    body = json.loads(db.execute("SELECT body FROM checkpoints WHERE id='phase1-rejected'").fetchone()[0])
+                    body["decision"]["outcome"] = "accepted"
+                    raw = json.dumps(body, sort_keys=True)
+                    db.execute("DROP TRIGGER checkpoint_no_update")
+                    db.execute("UPDATE checkpoints SET body=?, sha=? WHERE id='phase1-rejected'",
+                               (raw, hashlib.sha256(raw.encode("utf-8")).hexdigest()))
+                    db.commit()
+                finally:
+                    db.close()
+            return chain
+
+        with mock.patch.object(ProjectStore, "predecessor_chain", replace_after_check):
+            rows = RDSAdvisor(root).recommend_next_directions(state, graph())
+        self.assertEqual([hop["status"] for hop in calls[0]], ["VERIFIED"])
+        output = next(row for row in rows if row["type"] == "EXECUTABLE_DIRECTION_SEARCH")["search"]
+        review = output["loop_review"]
+        flag = next(f for f in review["flags"] if f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED")
+        self.assertEqual(Path(flag["root"]), self.first.resolve())
+        self.assertIn("differs from the pinned digest: phase1-rejected", flag["reason"])
+        self.assertNotIn("LOOP_HISTORY_REVIEW_ERROR", [f["kind"] for f in review["flags"]])
+        self.assertFalse(any("predecessor root" in text for text in review["limitations"]))
+        # The successor's own history still decides.
+        self.assertEqual(output["candidates"], [])
+        blocked = output["blocked_candidates"][-1]["loop_review"]
+        self.assertEqual((blocked["checkpoint_id"], blocked.get("root")), ("phase2-rejected", None))
+        # An ordinary chain check sees the same replacement.
+        [hop] = ProjectStore(root).predecessor_chain()
+        self.assertEqual(hop["status"], "MISMATCH")
+
+    def test_malformed_link_records_are_a_mismatch(self):
+        second, contract = self.phase("second")
+        ProjectStore(second).initialize(contract, supersedes=str(self.first))
+        third, contract = self.phase("third")
+        ProjectStore(third).initialize(contract, supersedes=str(second))
+        good = json.loads(link_to(second, self.first)[0])
+        cases = {"schema only": {"schema": 1}, "not an object": [], "empty root path": dict(good, root_path=""),
+                 "schema 2": dict(good, schema=2), "missing link digest": {k: v for k, v in good.items() if k != "predecessor_sha256"},
+                 "checkpoint pins": dict(good, checkpoint_shas=[{"id": "x"}]), "receipt pins": dict(good, receipt_digests={})}
+        for index, (name, record) in enumerate([*cases.items(), ("not JSON", None)]):
+            with self.subTest(name):
+                body, sha = ("{", "0" * 64) if record is None else (canonical(record), digest(record))
+                relink(second, body, sha)
+                [hop] = ProjectStore(second).snapshot()["predecessor_chain"]
+                self.assertEqual((hop["status"], Path(hop["root"])), ("MISMATCH", second.resolve()))
+                review = self.search(second)["search"]["loop_review"]
+                self.assertIn("PREDECESSOR_CHAIN_UNVERIFIED", [f["kind"] for f in review["flags"]])
+                self.assertNotIn("LOOP_HISTORY_REVIEW_ERROR", [f["kind"] for f in review["flags"]])
+                # A successor that pinned the old link reports the damaged predecessor and keeps working.
+                [hop] = ProjectStore(third).snapshot()["predecessor_chain"]
+                self.assertEqual((hop["status"], Path(hop["root"])), ("MISMATCH", second.resolve()))
+                fourth, contract = self.phase(f"fourth-{index}")
+                with self.assertRaisesRegex(ValueError, "Predecessor ledger cannot be superseded"):
+                    ProjectStore(fourth).initialize(contract, supersedes=str(second))
+                self.assertFalse((fourth / ".rds").exists())
+
+    def test_an_older_hop_failing_at_read_keeps_the_newer_history(self):
+        candidate = self.candidate()
+        self.record(self.first, "phase1-accepted", candidate, outcome="accepted")
+        second, contract = self.phase("second")
+        ProjectStore(second).initialize(contract, supersedes=str(self.first))
+        self.record(second, "phase2-rejected", candidate)
+        third, contract = self.phase("third")
+        ProjectStore(third).initialize(contract, supersedes=str(second))
+        state = ProjectStore(third).snapshot()
+        state["advisor_context"] = copy.deepcopy(CONTEXT)
+        chain_check = ProjectStore.predecessor_chain
+
+        def delete_after_check(store, *args, **kwargs):
+            chain = chain_check(store, *args, **kwargs)
+            db = sqlite3.connect(self.first / ".rds" / "project.sqlite3")
+            try:
+                db.execute("DROP TRIGGER checkpoint_no_delete")
+                db.execute("DELETE FROM checkpoints")
+                db.commit()
+            finally:
+                db.close()
+            return chain
+
+        with mock.patch.object(ProjectStore, "predecessor_chain", delete_after_check):
+            rows = RDSAdvisor(third).recommend_next_directions(state, graph())
+        output = next(row for row in rows if row["type"] == "EXECUTABLE_DIRECTION_SEARCH")["search"]
+        flag = next(f for f in output["loop_review"]["flags"] if f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED")
+        self.assertEqual(Path(flag["root"]), self.first.resolve())
+        self.assertIn("Pinned predecessor checkpoint is missing: phase1-accepted", flag["reason"])
+        self.assertTrue(any(text.startswith("History includes pinned records from 1 predecessor root(s)")
+                            for text in output["loop_review"]["limitations"]))
+        # The newer hop's rejection is still read; the dropped older acceptance never reaches the review.
+        self.assertEqual(output["candidates"], [])
+        blocked = output["blocked_candidates"][-1]["loop_review"]
+        self.assertEqual((blocked["checkpoint_id"], Path(blocked["root"])), ("phase2-rejected", second.resolve()))
+
+    def test_damage_of_any_shape_at_the_boundary_is_a_mismatch(self):
+        candidate = self.candidate()
+        self.store.register(self.spec())
+        self.store.execute("r1")
+        second, contract = self.phase("second")
+        ProjectStore(second).initialize(contract, supersedes=str(self.first))
+        self.record(second, "phase2-rejected", candidate)
+        third, contract = self.phase("third")
+        ProjectStore(third).initialize(contract, supersedes=str(second))
+        # A predecessor receipt with no body (TypeError inside the receipt reader).
+        null_body(self.first, "receipts", "run_id")
+        [hop] = ProjectStore(second).snapshot()["predecessor_chain"]
+        self.assertEqual((hop["status"], Path(hop["root"])), ("MISMATCH", self.first.resolve()))
+        # A middle root's link with no body.
+        null_body(second, "predecessor", "id")
+        [hop] = ProjectStore(third).snapshot()["predecessor_chain"]
+        self.assertEqual((hop["status"], Path(hop["root"])), ("MISMATCH", second.resolve()))
+        # The successor's own link nested past the JSON parser's recursion limit; its own history still decides.
+        relink(second, "[" * 200000, "0" * 64)
+        [hop] = ProjectStore(second).snapshot()["predecessor_chain"]
+        self.assertEqual((hop["status"], Path(hop["root"])), ("MISMATCH", second.resolve()))
+        output = self.search(second)["search"]
+        kinds = [f["kind"] for f in output["loop_review"]["flags"]]
+        self.assertIn("PREDECESSOR_CHAIN_UNVERIFIED", kinds)
+        self.assertNotIn("LOOP_HISTORY_REVIEW_ERROR", kinds)
+        self.assertEqual(output["candidates"], [])
+        self.assertEqual(output["blocked_candidates"][-1]["loop_review"]["checkpoint_id"], "phase2-rejected")
 
     def test_roots_without_a_predecessor_are_unchanged(self):
         snapshot = self.store.snapshot()
