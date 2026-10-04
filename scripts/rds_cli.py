@@ -1112,6 +1112,12 @@ def cmd_project(args):
     store = ProjectStore(args.root)
     if args.action == "init":
         return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
+    if args.action == "revise":
+        from rds_method_revision import apply
+        return apply(store, load_spec(args.proposal))
+    if args.action == "improve":
+        from rds_tool_workbench import prepare
+        return prepare(store, args.code_path, args.id)
     if args.action == "create":
         return store.register(load_spec(args.manifest))
     if args.action == "execute":
@@ -1472,6 +1478,10 @@ def parser():
     pr_init.add_argument("--contract", required=True)
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
                          help="Link this new root to a frozen project root by digest; the predecessor is never modified")
+    pr_actions.add_parser("revise", help="Adopt a bounded method revision in the same ledger without resetting budget or deadline").add_argument("--proposal", required=True)
+    pr_improve = pr_actions.add_parser("improve", help="Prepare receipt diagnostics, editable tool code and a same-ledger revision proposal")
+    pr_improve.add_argument("--code-path", required=True)
+    pr_improve.add_argument("--id", required=True)
     pr_actions.add_parser("create").add_argument("--manifest", required=True)
     pr_exec = pr_actions.add_parser("execute")
     pr_exec.add_argument("--id", required=True)

@@ -687,7 +687,7 @@ class RDSAdvisor:
                 row["root"] = root  # A record read from a predecessor root through its successor chain (#178).
             return row
 
-        def collect(db, records, contract_sha, rows, skipped, root=None, pinned=None):
+        def collect(db, records, contract_sha, rows, skipped, root=None, pinned=None, contracts=None):
             seen = set()
             for checkpoint_id, sha, raw in db.execute("SELECT id,sha,body FROM checkpoints ORDER BY rowid"):
                 if pinned is not None:
@@ -702,8 +702,12 @@ class RDSAdvisor:
                 _require(record.get("id") == checkpoint_id and record.get("schema") == SCHEMA
                          and record.get("kind") == kind and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", checkpoint_id),
                          "Checkpoint identity mismatch: " + checkpoint_id)
-                _require(record.get("contract_sha256") == contract_sha
-                         and _sha(record["snapshot"]["contract"]) == contract_sha,
+                recorded_contract_sha = record.get("contract_sha256")
+                allowed_contracts = contracts if contracts is not None else {contract_sha: None}
+                _require(recorded_contract_sha in allowed_contracts
+                         and _sha(record["snapshot"]["contract"]) == recorded_contract_sha
+                         and (allowed_contracts[recorded_contract_sha] is None
+                              or record["snapshot"]["contract"] == allowed_contracts[recorded_contract_sha]),
                          "Checkpoint contract mismatch: " + checkpoint_id)
                 prior = record.get("decision", {})
                 if not isinstance(prior, dict):
@@ -728,6 +732,7 @@ class RDSAdvisor:
 
         def connect(database):
             db = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=0.05)
+            db.row_factory = sqlite3.Row
             db.execute("PRAGMA query_only=ON")
             db.execute("BEGIN")
             return db
@@ -739,8 +744,10 @@ class RDSAdvisor:
                     db.close()
                     db = None
                 elif kind == "project":
-                    row = db.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
-                    contract, contract_sha = strict_json(row[0]), row[1]
+                    from rds_method_revision import contract_history
+                    lineage = contract_history(db)
+                    contract, contract_sha = lineage[-1]['contract'], lineage[-1]['sha256']
+                    checkpoint_contracts = {entry['sha256']: entry['contract'] for entry in lineage}
                 else:
                     live = strict_json(db.execute("SELECT body FROM state WHERE id=1").fetchone()[0])
                     contract, contract_sha = live["contract"], live["contract_sha256"]
@@ -791,7 +798,8 @@ class RDSAdvisor:
                     history.extend(rows)
                     skipped_goal_records.extend(skipped)
                 if db is not None:
-                    collect(db, directory, contract_sha, history, skipped_goal_records)
+                    collect(db, directory, contract_sha, history, skipped_goal_records,
+                            contracts=checkpoint_contracts if kind == "project" else None)
                 elif not inherited and not review["flags"]:
                     return None
             finally:

@@ -109,10 +109,31 @@ def restore_checkpoint(root, checkpoint_id, live_snapshot, *, kind):
     old = record["snapshot"]
     conflicts = []
     if _sha(live_snapshot["contract"]) != record["contract_sha256"]:
-        conflicts.append({"field": "contract", "reason": "Live contract differs; do not resume under the old binding"})
+        ancestor = False
+        if kind == 'project':
+            from rds_project import ProjectStore
+            from rds_method_revision import contract_history, pending_revision
+            store = ProjectStore(root)
+            try:
+                with store._db(True) as ledger:
+                    ledger.execute('BEGIN')
+                    lineage = contract_history(ledger)
+                    ancestor = (pending_revision(ledger) is None
+                                and _sha(live_snapshot['contract']) == lineage[-1]['sha256']
+                                and any(h['sha256'] == record['contract_sha256']
+                                        and h['contract'] == old.get('contract') for h in lineage))
+            except (ValueError, OSError, sqlite3.Error):
+                ancestor = False
+        if not ancestor:
+            conflicts.append({"field": "contract", "reason": "Live contract differs; do not resume under the old binding"})
     for reason in live_snapshot.get("binding_check", {}).get("errors", []):
         conflicts.append({"field": "bindings", "reason": reason})
     updates = []
+    if _sha(live_snapshot['contract']) != record['contract_sha256'] and not any(
+            c['field'] == 'contract' for c in conflicts):
+        updates.append({'field': 'contract', 'reason': 'Verified method ancestor retained as history; current method and authorization remain live'})
+    if live_snapshot.get('method_revision_pending'):
+        conflicts.append({'field': 'method_revision', 'reason': 'Resume the durable prepared method revision before execution'})
     for field in ("budget", "exposures", "active_branch", "hypotheses", "final_plan"):
         if old.get(field) != live_snapshot.get(field):
             updates.append({"field": field, "reason": "Live state is authoritative; checkpoint state is retained only as history"})
