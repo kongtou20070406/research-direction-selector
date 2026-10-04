@@ -8,7 +8,7 @@ from fractions import Fraction
 from rds_verify_types import (MAX_CERTIFICATE_BYTES, bounded, canonical, digest,
                               rational, require)
 
-MAX_DIMENSION = 64
+MAX_DIMENSION = 128
 KINDS = {"affine_contraction", "affine_fixed_point", "affine_dynamics"}
 CERTIFICATE_KEYS = {"version", "spec_sha256", "kind", "dimension", "row_norms",
                     "induced_norm", "fixedpoint_residual", "obligations",
@@ -42,7 +42,7 @@ def _read_spec(spec):
             "Affine model requires matrix and bias")
     matrix = model["matrix"]
     require(isinstance(matrix, list) and 1 <= len(matrix) <= MAX_DIMENSION,
-            "Affine matrix dimension must be 1..64")
+            "Affine matrix dimension must be 1..128")
     dimension = len(matrix)
     matrix = [_vector(row, dimension, "Matrix row") for row in matrix]
     bias = _vector(model["bias"], dimension, "Bias")
@@ -53,6 +53,14 @@ def _read_spec(spec):
         require(0 < threshold <= 1, "Contraction threshold must satisfy 0 < threshold <= 1")
     point = _vector(spec["point"], dimension, "Point") if fixed_point else None
     return matrix, bias, threshold, point
+
+
+def estimate_cost(spec):
+    """Use matrix dimensions as a coarse exact-arithmetic work proxy."""
+    model = spec.get("model", {}) if isinstance(spec, dict) else {}
+    matrix = model.get("matrix", []) if isinstance(model, dict) else []
+    dimension = len(matrix) if isinstance(matrix, list) else 0
+    return {"phase": "exact_affine_check", "work_units": max(1, dimension * dimension)}
 
 
 def _sum(values):
