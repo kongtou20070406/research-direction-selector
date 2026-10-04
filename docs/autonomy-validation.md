@@ -136,7 +136,7 @@ Applicable full-suite, platform, native and formal CI results must be assessed
 at the resulting PR head. This report does not substitute a helper PASS for
 those shared-kernel checks, release acceptance or scientific evidence.
 
-## Draft rework evidence
+## Rework evidence
 
 The updated consumer checks its final control allowance after registration and
 review, bounds the whole model-response envelope, handles oversized originals
@@ -149,13 +149,13 @@ Nine distinct affected cases completed successfully across frozen development
 iterations: seven new allowance/oversize/integrity/old-adapter checks and two
 existing interrupted-adoption checks. The retained aggregate source iterations
 also include timeouts and invalid fixtures; they are not whole-suite PASS.
-In particular, the real baseline-before-repair CLI trajectory started but did
-not finish inside the aggregate allowance. Its final verdict is still required.
+The baseline-before-repair CLI trajectory did not finish inside those aggregate
+allowances. Its later completed affected check is reported separately below.
 
 The new opt-in post-commit MLP declaration, ledger event, ordinary registration
 and launch guards, host sample/weight replay, example and public regressions are
 implemented. Independent static review found an architecture scope mismatch,
-corrected to exactly two hidden layers. The actual CPU validation has not passed:
+corrected to exactly two hidden layers. The first CPU validation did not finish:
 its outer 60-second wait ended before the inner 100-second execution bound.
 Original recovery retained INTERRUPTED receipt
 `0078710b75ece6468e16244850ffb72989f8fc0045da800e5aa090b8da3afd24`,
@@ -172,7 +172,49 @@ timeout without a final verdict, retaining FAILED receipt
 `2f2dcfcc11f564657a701befe3ef5518be26f031eea46d4d2407e79c4a3d9831`
 and 19.453 measured seconds. Previous failure costs, caps and originals were
 not reset. These incomplete CPU checks are not evidence of a task PASS or FAIL,
-nor of MLP generalization or full autonomous research. This PR remains Draft
-until the real CPU positive/negative/recovery checks, baseline trajectory and
-applicable final-head CI have complete dispositions. Existing Issue108 usage
+nor of MLP generalization or full autonomous research. Existing Issue108 usage
 contention and the separately unsent n13 model input retain their original scope.
+
+## Completed affected checks
+
+A six-case frozen validation retained FAILED receipt
+`ed8f149dc4a3209c26ee67aa90a1059c314615aa0deca9527873f6bc038193f3`
+and 301.203 measured seconds. Four cases passed: actual CPU training followed
+by new-sample confirmation and receipt recovery, wrong weights as a finite
+counterexample, premature confirmation refusal without an attempt, and rejection
+of a forged self-verdict or altered samples. The two full-trajectory assertions
+incorrectly assumed one bounded drive pass would finish all steps. Original
+results instead retained completed pilot/repair receipts and correctly returned
+`HANDOFF_REQUIRED / CONTROLLER_WALL_ALLOWANCE_EXHAUSTED`.
+
+Only those two changed tests were rechecked at source commit `70310517`.
+SUCCEEDED receipt
+`6d3afe6fb6f32d5ef1d76c7dc79d50e94ad9cc685d57042525a2e54d821e76e5`
+retains two cases, zero failures/skips, and 217.5 measured seconds. The CPU
+trajectory now consumes a bounded yield in the same campaign, adopts the
+fixture proposal, performs actual backward/optimizer updates, commits one
+challenge after the candidate settles, and independently confirms its weights
+on newly generated samples. It then recovers the original reserved challenge
+and completed receipt without another seed or execution. The algorithm
+trajectory consumes its original paid baseline after adopting the new method;
+damaged original baseline bytes remain UNKNOWN even with supplied foreign
+history. Both tests check unchanged receipts/attempts, one fixture repair
+request, fixed campaign start/cap, and worker plus controller-event accounting.
+They do not establish an external model's invention ability or scientific gain.
+
+At the earlier head, Ubuntu 3.11 full CI found one identity regression whose
+global hash mock also changed the worker adapter identity. The corrected test
+changes only the provider executable identity and still requires launch refusal,
+zero dispatch intent and no attempt allocation. Its frozen source check at
+`ddde4a1` retained SUCCEEDED receipt
+`19fbea552e12c8f800fe872e60b3840806cde6e895876cff1374cc5f8e0683bd`,
+one case, zero failures/skips, and 3.219 measured seconds. Production admission
+guards and control allowances were not weakened.
+
+These iterations retain the original failures, frozen inputs and fees. Their
+original counts/receipts were imported, and Advisor recorded inspection of the
+failed assertions followed by independent review of the corrected evidence.
+Same-source passing cases are reused; the failed aggregate is not relabelled
+PASS. Applicable final-head full/platform/native/formal CI and independent
+acceptance remain separate merge gates. Population generalization, external
+challenge secrecy and research-policy gains remain UNKNOWN.
