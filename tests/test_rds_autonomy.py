@@ -59,7 +59,7 @@ class AutonomyTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value if isinstance(value, str) else json.dumps(value, allow_nan=False), encoding='utf-8')
 
-    def build(self, *, modes=None, slots=1, max_steps=4, timeout=4, budget=60):
+    def build(self, *, modes=None, slots=1, max_steps=4, timeout=4, budget=60, baseline=False):
         self.write('code.py', OLD)
         self.write('provider.py', PROVIDER.replace('MODES', repr(modes or {})).replace('NEW_SOURCE', repr(NEW)))
         shutil.copyfile(ROOT / 'scripts/rds_autonomy_worker.py', self.root / 'worker.py')
@@ -77,8 +77,8 @@ class AutonomyTests(unittest.TestCase):
         ref = {'path': 'protocol.json', 'sha256': file_sha(self.root / 'protocol.json')}
         bindings.append({'role': 'protocol', **ref})
         routes, nodes, repair_slots = [], [], []
-        for rid in ['solve'] + ['repair' + str(i + 1) for i in range(slots)]:
-            is_repair = rid != 'solve'
+        for rid in (['baseline'] if baseline else []) + ['solve'] + ['repair' + str(i + 1) for i in range(slots)]:
+            is_repair = rid.startswith('repair')
             response = 'outputs/' + rid + '.json'
             argv = [sys.executable, '-B', 'worker.py', '--run', rid] if is_repair else [sys.executable, '-B', 'code.py', response]
             outputs = output_paths(response) if is_repair else [response]
@@ -89,6 +89,8 @@ class AutonomyTests(unittest.TestCase):
             routes.append({'candidate': rid, 'manifest': manifest})
             pre = [{'fact': 'autonomy.' + (rid if is_repair else 'repair1') + ('.ready' if is_repair else '.adopted'),
                     'op': 'eq', 'value': True}]
+            if rid == 'baseline':
+                pre = []
             action = {'id': rid, 'kind': 'OBLIGATION_CHECK', 'target': 'score',
                       'description': 'Execute a bounded local controller fixture', 'claim': 'Finite software regression only',
                       'required_observables': ['score'],
@@ -180,6 +182,45 @@ class AutonomyTests(unittest.TestCase):
         self.assertNotEqual(result['status'], 'GOAL_CONFIRMED')  # No domain confirmation was declared.
         self.assertEqual(self.events('AUTONOMY_DRIVE_CLAIMED')[0]['controller_reservation'], 30)
         self.assert_single_model_cost(self.store.snapshot())
+
+    def test_prepare_only_retains_request_after_baseline_without_provider_dispatch(self):
+        self.build(baseline=True)
+        self.cli('project', 'drive', '--max-steps', '1')
+        before = self.store.snapshot()
+        self.assertEqual([r['id'] for r in before['runs']], ['baseline'])
+        start = self.events('CAMPAIGN_STARTED')[0]
+        prepared = self.cli('project', 'drive', '--prepare-only', '--max-steps', '4')
+        state = self.store.snapshot()
+        self.assertEqual(prepared['status'], 'MODEL_REQUEST_READY')
+        self.assertEqual(prepared['run_id'], 'repair1')
+        event = self.events(autonomy.REQUESTED)[0]
+        self.assertEqual(prepared['request'], event['request'])
+        self.assertEqual(prepared['parent_sha256'], event['parent_sha256'])
+        self.assertEqual(prepared['provider'], self.contract['advisor_policy']['autonomy']['provider'])
+        self.assertEqual(prepared['provider_timeout_seconds'], 2)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
+        self.assertEqual(state['runs'], before['runs'])
+        self.assertEqual(state['receipts'], before['receipts'])
+        self.assertGreater(state['budget']['wall_seconds']['spent_measured'], before['budget']['wall_seconds']['spent_measured'])
+        self.assertEqual(state['budget']['wall_seconds']['reserved'], 0)
+        again = self.cli('project', 'drive', '--prepare-only', '--max-steps', '4')
+        self.assertEqual(again['status'], 'MODEL_REQUEST_READY')
+        self.assertEqual(again['request'], prepared['request'])
+        self.assertEqual(len(self.events(autonomy.REQUESTED)), 1)
+        self.assertEqual(self.calls(), [])
+        self.cli('project', 'drive', '--max-steps', '4')
+        after = self.store.snapshot()
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual([r['id'] for r in after['runs']], ['baseline', 'repair1', 'solve'])
+        repair = next(r for r in after['receipts'] if r['run_id'] == 'repair1')
+        self.assertEqual(repair['autonomy_request'], prepared['request'])
+        self.assertEqual(next(r for r in after['receipts'] if r['run_id'] == 'baseline'), before['receipts'][0])
+        self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
+        self.cli('project', 'drive', '--prepare-only', '--max-steps', '4')
+        self.assert_single_model_cost(after)
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(self.events('CAMPAIGN_STARTED'), [start])
 
     def test_repair_cannot_start_without_a_program_owned_request(self):
         self.build()
@@ -275,7 +316,7 @@ class AutonomyTests(unittest.TestCase):
         before = self.store.snapshot()
         self.assertEqual(len(before['contract_history']), 2)
         self.assertEqual(self.calls(), ['repair1'])
-        self.cli('project', 'drive', '--max-steps', '4')
+        self.cli('project', 'drive', '--prepare-only', '--max-steps', '4')
         after = self.store.snapshot()
         self.assertEqual(len(after['contract_history']), 2)
         self.assertEqual(self.calls(), ['repair1'])
@@ -296,7 +337,7 @@ class AutonomyTests(unittest.TestCase):
         before = self.store.snapshot()
         self.assertIsNotNone(before['method_revision_pending'])
         self.assertEqual(self.calls(), ['repair1'])
-        self.cli('project', 'drive', '--max-steps', '4')
+        self.cli('project', 'drive', '--prepare-only', '--max-steps', '4')
         after = self.store.snapshot()
         self.assertIsNone(after['method_revision_pending'])
         self.assertEqual(self.calls(), ['repair1'])

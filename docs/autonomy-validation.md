@@ -22,9 +22,9 @@ is separate from the engineering evidence described here.
 | Death with no new budget is recoverable | One conservative dead-owner settlement across two blocked admissions; no worker/provider and no stranded reservation |
 | Model self-report cannot complete a task | Independent original certificate replay rejects unsigned PASS; domain UNKNOWN cannot become GOAL_CONFIRMED |
 
-The controller test module has 16 cases. A complete frozen execution through
+The controller test module has 17 cases. A complete frozen execution through
 `examples/self-development/run.py --test-pattern test_rds_autonomy.py` passed
-all 16 with no skips. This uses the actual RDS CLI, original receipt, checkpoint
+all 17 with no skips. This uses the actual RDS CLI, original receipt, checkpoint
 restoration, artifact import, cost/Advisor output and bounded rule replay.
 Its isolated demonstration-rule apply/rollback is not acceptance or merging of
 this feature's source. Earlier development failures are retained privately.
@@ -35,6 +35,16 @@ environment passed all 12 without skips, including 150 actual CPU SGD steps
 and independent recomputation from the saved weights. Mathematics uses exact
 certificate replay; algorithms use finite integer oracle and original matched
 input identities/costs. Missing torch remains UNKNOWN without installation.
+
+An additional 19 polynomial cases exercise complete exact rational values and
+structural Jacobian coverage, wrong values/derivatives, type/identity/size/bit
+limits, real original receipts and recovery. A focused confirmation-module run
+passed 43 checks (the new 19, the original domain 12 and the existing RSI 12),
+with one optional torch skip. The 119-variable synthetic capacity test is
+distinct from the actual public cover13 input below. The new prepare-only CLI
+check and two affected paid-result recovery cases passed separately; request
+preparation retains the original CAS and charges controller overhead without
+starting the repair provider.
 
 ## Public finite trajectories
 
@@ -70,6 +80,57 @@ universal correctness or improved runtime. Original trace token measurements
 are distinct from the project's wall-resource cap. Inherited provider hooks or
 external integrations need their own host acceptance; fixture checks do not
 prove coverage of them.
+
+## Real cover13 polynomial workload
+
+[The public workload harness](../examples/autonomy/n13_polynomial.py) reads only
+three public cover13 files pinned at DiskCoveringSolve commit
+`089584973f41e6374ce110f6e5b5ee456df19352`, checking both SHA-256 and the Git
+blob identity. It freezes 119 quadratic KKT polynomials (784 nonzero terms),
+119 variables, the public rational certificate midpoint and two predeclared
+perturbations. Each complete result contains 357 exact rational residuals and
+2,220 exact derivative values at 740 structural Jacobian positions per point.
+The independent evaluator reconstructs the public geometric equations; the
+host independently replays their sparse polynomial form and formal derivatives.
+
+The baseline and candidate each produce one complete retained three-point
+workload. Parent execution receipts own the whole-worker time, including startup
+and serialization; a same-process `perf_counter` report is diagnostic only.
+An earlier three-repeat preparatory driver retained only its last result and
+was superseded before model dispatch because it could count incomplete repeats
+as acceleration. Its original project/fees remain available; its timings are
+not evidence of a benefit. Single-worker comparisons do not establish a general
+speedup. Preparation, model/revision, confirmation and unsuccessful work remain
+separate costs in the total campaign report.
+
+This is an informed engineering benchmark using public proof-package inputs,
+not a restarted blind campaign. Exact evaluation does not prove that the point
+is a root, root uniqueness, continuous disk coverage, global optimality, or the
+radius's irreducible minimum polynomial. The prior full n=13 task had not
+obtained that univariate polynomial, and these mathematical obligations remain
+UNKNOWN. A local proposal is explicitly a tool/provider fixture; it does not
+measure an external model's autonomous invention ability. External Codex mode
+requires authorization for its concrete new input, independently of the earlier
+integer smoke request.
+
+The local tool fixture completed four real runs/receipts (baseline, proposal,
+candidate and independent confirmation), reached GOAL_CONFIRMED, and recovered
+with no new execution or altered original receipt. The proposed generic tool
+compiles sparse quadratics and uses a per-point common denominator for integer
+arithmetic, reducing each final rational once. It reads no baseline outputs and
+caches no case answers. Both complete original results matched the independent
+geometric evaluator and host replay at all declared values and derivative pairs.
+Original parent receipts measured baseline 3.23441059992183 s, candidate
+3.067478399956599 s, local proposal 2.7879621000029147 s, and confirmation
+4.331897499971092 s. The same owning ledger settled 42.227961100055836 s in
+total including control work, with zero reservation remaining. The small
+single-worker difference does not establish a stable benefit, and the complete
+tool-improvement/verification path costs more than one baseline application.
+These local results do not satisfy the separate external n=13 model request.
+
+The initial local full-suite process reached its 900-second hard wall without a
+final unittest verdict. That incomplete log is retained, and is not a full-suite
+PASS. Mandatory platform/full/native/formal checks apply to the final PR head.
 
 Applicable full-suite, platform, native and formal CI results must be assessed
 at the resulting PR head. This report does not substitute a helper PASS for

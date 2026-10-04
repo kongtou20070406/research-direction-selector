@@ -36,8 +36,8 @@ def _ref(store, contract, ref, role):
     return path
 
 
-def _json(path, expected):
-    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= MAX_BYTES,
+def _json(path, expected, *, max_bytes=MAX_BYTES):
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= max_bytes,
             'Domain confirmation input missing, linked, or too large')
     raw = path.read_bytes()
     import hashlib
@@ -76,8 +76,11 @@ def validate_policy(store, contract, policy):
     fields = {'kind', 'candidate_output', 'confirmation_output'}
     if value['domain'] == 'algorithms':
         fields |= {'baseline_run', 'baseline_output'}
-    require(isinstance(rules, dict) and set(rules) == fields and rules['kind'] == DOMAINS[value['domain']],
-            'Unsupported domain confirmation rules')
+    kinds = {'exact_certificate', 'polynomial_rational_evaluation'} if value['domain'] == 'mathematics' else {DOMAINS[value['domain']]}
+    require(isinstance(rules, dict) and set(rules) == fields and rules['kind'] in kinds,
+             'Unsupported domain confirmation rules')
+    if rules['kind'] == 'polynomial_rational_evaluation':
+        require(len(value['data']) == 1, 'Polynomial confirmation requires one frozen data file')
     candidate, confirmation = value['candidate_runs'][0], value['confirmation_runs'][0]
     for rid, key in ((candidate, 'candidate_output'), (confirmation, 'confirmation_output')):
         require(rules[key] in routes[rid]['outpaths'], 'Domain evidence must be an owned declared output')
@@ -118,10 +121,12 @@ def _receipt(store, state, rid):
     return receipt
 
 
-def _output(store, receipt, path):
+def _output(store, receipt, path, *, max_bytes=MAX_BYTES):
     from rds_owned_advisor import _read_original
     artifacts = [a for a in receipt['artifacts'] if a['kind'] == 'project_output' and a['path'] == path]
     require(len(artifacts) == 1, 'Domain original output missing or ambiguous')
+    require(type(artifacts[0].get('size')) is int and artifacts[0]['size'] <= max_bytes,
+            'Domain original exceeds bounded JSON size')
     raw = _read_original(store, artifacts[0], keep=True)
     require(raw is not None, 'Domain original exceeds bounded JSON size')
     return strict_json(raw.decode('utf-8-sig')), artifacts[0]
@@ -162,20 +167,31 @@ def inspect_confirmation(store, contract, state=None):
                 confirmation['bindings_before'] == confirmation['bindings_after'] == contract['bindings'],
                 'Domain input identity differs from the frozen contract')
         rules = value['rules']
-        payload, artifact = _output(store, candidate, rules['candidate_output'])
-        checked, checked_artifact = _output(store, confirmation, rules['confirmation_output'])
+        polynomial = rules['kind'] == 'polynomial_rational_evaluation'
+        bound = 1024 * 1024 if polynomial else MAX_BYTES
+        payload, artifact = _output(store, candidate, rules['candidate_output'], max_bytes=bound)
+        checked, checked_artifact = _output(store, confirmation, rules['confirmation_output'], max_bytes=bound)
         result['evidence'] = [{'run_id': candidate_id, 'receipt_sha256': candidate['sha256'], **artifact},
                               {'run_id': confirmation_id, 'receipt_sha256': confirmation['sha256'], **checked_artifact}]
         require(isinstance(checked, dict) and checked.get('candidate_receipt_sha256') == candidate['sha256'] and
                 checked.get('claim_sha256') == value['claim']['sha256'] and
                 checked.get('evaluator_sha256') == value['evaluator']['sha256'],
                 'Confirmation payload is not bound to its candidate/claim/evaluator')
-        claim = _json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256'])
+        claim = _json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256'], max_bytes=bound)
         require(file_sha(_ref(store, contract, value['evaluator'], 'evaluator')) == value['evaluator']['sha256'],
                 'Frozen evaluator changed')
-        data = [_json(_ref(store, contract, ref, 'data'), ref['sha256']) for ref in value['data']]
+        data = [_json(_ref(store, contract, ref, 'data'), ref['sha256'], max_bytes=bound) for ref in value['data']]
         verdict = 'UNKNOWN'
-        if value['domain'] == 'mathematics':
+        if polynomial:
+            from rds_polynomial_confirmation import check_output
+            require(checked.get('inputs_sha256') == value['data'][0]['sha256'],
+                    'Polynomial evaluator input identity differs')
+            replay = check_output(claim, data[0], payload, value['data'][0]['sha256'])
+            verdict = replay['status']
+            result.update(assurance='FINITE_EXACT_QQ_POLYNOMIAL_EVALUATION', finite_arithmetic=replay,
+                          declared_statement_only=True, root_uniqueness='UNKNOWN', disk_covering='UNKNOWN',
+                          global_optimality='UNKNOWN', minimal_polynomial='UNKNOWN')
+        elif value['domain'] == 'mathematics':
             from rds_verify import checked_result
             require(isinstance(payload, dict), 'Original mathematical certificate must be an object')
             replay = checked_result(claim, payload.get('certificate', payload))

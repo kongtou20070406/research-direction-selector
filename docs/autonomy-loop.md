@@ -16,6 +16,21 @@ executions in this pass. Frozen `autonomy.max_steps` limits all registered runs
 across calls, including model work. Original budget, failures and campaign
 deadline survive every pass, repair, adoption and recovery.
 
+To inspect concrete model input before dispatch, use the same controller:
+
+```powershell
+python -B scripts/rds_cli.py --root <owned-project> project drive --prepare-only --max-steps 8
+```
+
+Ordinary selected steps and recovery of already paid results continue. When the
+next selected step is a repair worker, the command returns `MODEL_REQUEST_READY`
+with `run_id`, the original CAS `request` reference, `parent_sha256`, frozen
+`provider` identity and `provider_timeout_seconds`. It does not start that worker
+or write a new provider dispatch intent. Request preparation and control work
+still use the original ledger budget. Repeating preparation retains the same
+request; a later `project drive` without this flag consumes that original input.
+The cumulative step cap and uncertain-delivery reconciliation still apply.
+
 ## Declaration and authority
 
 Declare `advisor_policy.autonomy` before initialization: `schema:1`, `max_steps`

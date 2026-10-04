@@ -58,6 +58,55 @@ Scientific support and policy gain remain `UNKNOWN` and false respectively.
 
 ## Mathematics
 
+`rules.kind=polynomial_rational_evaluation` is a separate finite QQ arithmetic
+profile. Its frozen claim is exactly
+`{"schema":1,"kind":"polynomial_rational_evaluation","quantities":["values"]}`,
+or quantities `["values","sparse_jacobian"]`. It does not use the certificate
+backend below. It supports up to 128 variables, 128 polynomials, eight rational
+points and 16,384 sparse terms, each of total degree at most two. These are
+capacity bounds, not evidence that any particular scientific system is solved.
+
+One frozen data JSON contains exactly `schema:1`, an ordered `variables` list,
+`polynomials` and `points`. A polynomial is
+`{"id":"F0","terms":[{"coefficient":"3/2","powers":[[0,2]]}]}`.
+Powers contain increasing variable indices and positive integer exponents;
+duplicate monomials, zero coefficients, booleans and floating indices are
+rejected. An empty term list represents the zero polynomial. A point is
+`{"id":"p0","coordinates":["0", "-1/2"]}`, covering all declared variables.
+Variable, polynomial and point identities must be unique within their lists.
+
+QQ inputs use `str(Fraction(value))` canonical strings: integers such as `0`
+and `-1`, otherwise reduced `p/q` with a positive denominator. Decimal,
+exponent, float and expression inputs are rejected, never evaluated as code.
+Input numerators/denominators allow 1,024 bits, including approximately 90-digit
+rational certificate coordinates. Intermediate results and submitted outputs
+allow 8,192 bits. This profile bounds each original claim, data, candidate and
+confirmation JSON file to 1 MiB; the other profiles retain their existing
+2 MiB JSON bound. Arithmetic or size limits yield UNKNOWN.
+
+The candidate output is exactly `schema:1`, `inputs_sha256` (the original data
+file hash), `point_ids`, `polynomial_ids`, and `values`. Values form a matrix
+ordered first by point and then polynomial, with every entry a canonical QQ
+string. With sparse Jacobian requested it also includes `jacobian`, one ordered
+list per point of `[polynomial_index, variable_index, "QQ"]` entries.
+Structural derivative coordinates are independently derived from the original
+terms, sorted by polynomial then variable, and all must appear even when a
+derivative evaluates to zero at a particular point. Candidate declarations do
+not determine sparsity. The independently executed frozen evaluator output
+additionally binds `inputs_sha256`, along with the receipt/claim/evaluator
+identities described above. The host independently recomputes values and
+derivatives from the frozen data using exact Fraction arithmetic.
+
+Well-formed unequal arithmetic produces FAIL with a located expected/actual
+counterexample. Missing entries, malformed formats, changed identities or a
+contradictory evaluator self-verdict remain UNKNOWN. PASS supports only equality
+of these declared finite evaluations. It does not prove KKT feasibility, a
+unique root, disk covering, global optimality or a minimal polynomial; each of
+those conclusions and scientific support remain UNKNOWN. In particular, an
+original goal must not equate this finite arithmetic check with solving the
+13-disk covering problem. The included 119-variable quadratic regression is a
+synthetic capacity case, not the original covering system or a research result.
+
 `rules.kind=exact_certificate` reads the candidate's original framework result
 or certificate and replays it with `rds_verify.checked_result` against the
 frozen claim. Supported example: `x -> x/2 + 1/2` has contraction norm below one

@@ -342,9 +342,10 @@ def controller_reservation(store, db):
     return active['controller_reservation'] if active and active['pid'] == os.getpid() else 0.
 
 
-def drive(store, max_steps=8):
+def drive(store, max_steps=8, prepare_only=False):
     """Perform a bounded foreground pass; wait/unknown/deadline needs a later pass."""
     require(type(max_steps) is int and 1 <= max_steps <= 64, 'drive max_steps must be 1..64')
+    require(type(prepare_only) is bool, 'drive prepare_only must be Boolean')
     from rds_owned_advisor import review, _state
     with store._db(True) as db:
         contract = store._contract(db)
@@ -429,6 +430,20 @@ def drive(store, max_steps=8):
                     'reason': requested, 'tried_runs': [r['id'] for r in state['runs']],
                     'repair_results': [e for e in events if e['kind'] == PROCESSED],
                     'scientific_impossibility': 'UNKNOWN'}
+                break
+            if prepare_only and manifest['id'] in {s['run_id'] for s in config['repair_slots']}:
+                # Paid-result recovery above still runs. Pause only before the
+                # selected repair worker, retaining the verified original input.
+                if manifest['id'] not in {r['id'] for r in state['runs']}:
+                    require(len(state['runs']) < config['max_steps'], 'AUTONOMY_TOTAL_STEP_LIMIT')
+                event = next(e for e in events if e['kind'] == REQUESTED and e['run_id'] == manifest['id'])
+                from rds_math import blob
+                request = strict_json(blob(store.root, event['request']).decode('utf-8'))
+                require(request['parent_sha256'] == digest(state['contract']), 'Repair request parent is stale')
+                result.update(status='MODEL_REQUEST_READY', run_id=manifest['id'],
+                              request=deepcopy(event['request']), parent_sha256=request['parent_sha256'],
+                              provider_timeout_seconds=request['provider_timeout_seconds'],
+                              provider=deepcopy(request['provider']))
                 break
             if manifest['id'] not in {r['id'] for r in state['runs']}:
                 require(time.monotonic() - started - worker_wall < allowance, 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
