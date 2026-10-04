@@ -72,6 +72,15 @@ cache can be slower than regenerating such cheap proofs; these samples establish
 neither a worst-case latency bound nor GPU savings. Native Lean compilation, when
 configured, is a separate operation and is not a millisecond database timing.
 
+Run `python -B benchmark/affine_scale.py --dimension 64 --dimension 128` for the
+opt-in dense exact-affine proof-chain profile. It times parsing, rational witness
+solving, typed-plan construction, native proof generation, certificate replay and
+full verification separately; it reports Python `tracemalloc` peak and certificate
+bytes while keeping the 512-MiB Lean process cap visible. Larger cases are not part
+of default CI. A 256D dense run did not complete within the 90-second local profile
+window, so the current supported ceiling is 128D. These synthetic exact maps are a
+software-path stress case, not a neural-network, GPU or training-readiness claim.
+
 Regenerate packets from the private sibling corpus:
 
 ```powershell
