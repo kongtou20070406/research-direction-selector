@@ -1124,6 +1124,9 @@ def cmd_project(args):
         return _project_result(store, store.execute(args.id, background=args.background))
     if args.action == "recover":
         return _project_result(store, store.recover(args.id))
+    if args.action == "drive":
+        from rds_autonomy import drive
+        return drive(store, args.max_steps, prepare_only=args.prepare_only)
     if args.action == "advance":
         require(_owned_project(args.root) is not None,
                 'project advance requires a frozen advisor_policy; legacy projects use project next')
@@ -1496,6 +1499,9 @@ def parser():
     pr_advance = pr_actions.add_parser("advance", help="Execute one program-selected route and receive its result automatically")
     pr_advance.add_argument("--background", action="store_true", help="Use the existing authorized background runner")
     pr_advance.add_argument("--brief", "--digest", action="store_true", help="Retain the receipt and advice and return a bounded digest")
+    pr_drive = pr_actions.add_parser("drive", help="Drive a bounded owned research loop, including authorized model repair")
+    pr_drive.add_argument("--max-steps", type=int, default=8, help="Foreground executions this pass; cumulative frozen cap remains authoritative")
+    pr_drive.add_argument("--prepare-only", action="store_true", help="Retain a reviewable model request and pause before its repair worker; ordinary work and recovery continue")
     pr_actions.add_parser("recover").add_argument("--id", required=True)
     pr_actions.add_parser("next", help="Print the single next actionable project step and its command").add_argument("--brief", "--digest", action="store_true")
     pr_actions.add_parser("compare", help="Compare recorded arms against the precommitted min_useful_delta")

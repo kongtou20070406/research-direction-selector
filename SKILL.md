@@ -47,7 +47,15 @@ ON applicable research request:
     IF project has advisor_policy:
         RUN advise --brief FROM the current ledger and owned dependency graph
         READ selection, coverage gaps/errors and the saved report when needed
-        RUN project advance --brief FOR at most one program-selected authorized step
+        IF advisor_policy declares autonomy:
+            READ docs/autonomy-loop.md
+            RUN project drive --max-steps <bounded-pass> TO recover and continue the same ledger
+            TREAT obstacles as inputs for different permitted routes or method/tool proposals
+            CONSUME original repair/rejection receipts; do not repeat uncertain delivery
+            KEEP scoped exhaustion distinct from scientific impossibility
+            REQUIRE program-replayed domain confirmation before claiming goal completion
+        ELSE:
+            RUN project advance --brief FOR at most one program-selected authorized step
         KEEP original receipt + automatic Advisor update; unknown remains UNKNOWN
         IF advisor_policy declares tool_bindings:
             READ tool_utilization FOR obligation applicability, actual calls and decision consumers
@@ -100,6 +108,7 @@ All commands below use `CLI` above. Links load detail on demand.
 | First plain-language request | Follow [quick start](docs/quickstart.md): copyable prompts, first project, `[RDS-REJECT]` recovery | [Project runner](examples/project-runner/README.md) |
 | Start locked campaign | `project init --contract <contract.json>`; freeze `advisor_policy` for program-owned selection | [Contract template](docs/project-contract.md), [owned Advisor](docs/program-owned-advisor.md) |
 | Advance campaign | `project next` to inspect; `project advance --brief` executes one selected step in a policy-bound project | [Owned Advisor](docs/program-owned-advisor.md), [development loop](docs/development-loop.md) |
+| Drive bounded research loop | `project drive --max-steps <n>`; frozen `autonomy`, ordinary repair routes, persistent costs and optional domain confirmation | [Research drive](docs/autonomy-loop.md), [domain confirmation](docs/domain-confirmation.md) |
 | Improve a blocked tool | `project improve --code-path <path> --id <revision>`, then `project revise --proposal <path>` | [Forecasts and tool improvement](docs/predictive-feasibility.md) |
 | Choose research direction | Policy-bound: `advise --brief`; legacy: `advise --context <context.json> --graph <graph.json> --brief`, then `--choose <candidate-id> --record <checkpoint-id>` | [Choice review](docs/agent-entry.md#review-the-research-choice), [research discipline](references/research-discipline.md) |
 | Audit evidence | `artifacts import --manifest <manifest.json>` | [Agent entry](docs/agent-entry.md) |

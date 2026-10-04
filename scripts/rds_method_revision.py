@@ -109,6 +109,9 @@ def _transition(old, new, changes):
                     'Revision cannot change frozen input/evaluator/config bindings')
     require(old.get('advisor_policy', {}).get('context') == new.get('advisor_policy', {}).get('context'),
             'Revision cannot change decision, goals or scope')
+    for protected in ('autonomy', 'confirmation'):
+        require(old.get('advisor_policy', {}).get(protected) == new.get('advisor_policy', {}).get(protected),
+                'Revision cannot change protected controller/confirmation declaration: ' + protected)
     forecast = old.get('advisor_policy', {}).get('feasibility')
     if forecast is not None:
         updated = new.get('advisor_policy', {}).get('feasibility')
@@ -183,7 +186,10 @@ def _code_sha(contract):
 def _idle(store, db):
     require(not any(r['status'] in {'RESERVED', 'RUNNING'} for r in store._runs(db)),
             'Method revision requires no reserved or running attempts')
-    require(all(abs(r[0]) < 1e-9 for r in db.execute('SELECT reserved FROM budget')),
+    from rds_autonomy import controller_reservation
+    held = controller_reservation(store, db)
+    require(all(abs(r['reserved'] - (held if r['resource'] == 'wall_seconds' else 0.)) < 1e-9
+                for r in db.execute('SELECT resource,reserved FROM budget')),
             'Method revision requires no outstanding budget reservations')
 
 

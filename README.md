@@ -227,6 +227,8 @@ A checked mathematical statement does not establish task performance, causal iso
 
 [Program-owned campaigns](docs/program-owned-advisor.md) freeze the goal predicates, permitted routes and result readers. `project advance` executes at most one program-selected route, settles its receipt, collects declared outputs into the current evidence graph and returns the next Advisor report. Completed routes retain evidence without occupying executable candidate slots. Collection recovery reuses retained results rather than repeating the completed experiment. Projects without `advisor_policy` retain their caller-directed behavior.
 
+[Bounded research drive](docs/autonomy-loop.md) connects repeated selection to authorized model proposals when a method is blocked, validates tool changes through the existing workbench/revision gate, and continues with retained costs and evidence. [Domain confirmation](docs/domain-confirmation.md) checks exact mathematical certificates, finite integer algorithm cases, and CPU tensor metrics separately from execution success. These scoped checks do not establish general scientific autonomy or independent research gains.
+
 Advisor connects the original goal to current facts and constraints within the available candidate space. Results can enable a route, close the declared goal, expose a blocker or motivate a reformulation proposal. Agents still supply new hypotheses, check application assumptions and work with domain-specific verifiers; the program does not silently widen a frozen policy. This restricts caller cherry-picking within declared RDS entries, not commands outside RDS.
 
 `scripts/rds_advisor.py` uses recorded evidence and the methodology graph to propose next steps:
