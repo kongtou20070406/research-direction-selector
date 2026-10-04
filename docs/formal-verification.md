@@ -14,9 +14,9 @@ This checkout builds on the mathematical implementation introduced by [PR #2](ht
 | Declared scalar boundary | Optional SymPy; `SYMBOLIC_CHECKED`; unsupported cases yield `UNKNOWN`. | Typed statements, an exact affine-rational certificate generator and a separate checker. | Extend coverage while preserving statement and evidence bindings. |
 | Certificate reuse | No independently checked certificate path. | Bound scalar certificates and a rebuildable generic proof cache; hits are independently checked. Solving stays outside the short reservation write transaction. | Preserve dependency bindings as adapters expand. |
 | Network properties | No network verifier. | Registered rational Linear/ReLU bounds, margins and positive-scale equivariance. | Broader operators and explicit export/runtime correspondence. |
-| Matrix and dynamics properties | `dynamics` is unsupported and returns `UNKNOWN`. | Registered rational affine contraction/fixed-point checks and scoped spectral-radius checks. | Broader dynamics and norms with separate sound checkers. |
+| Matrix and dynamics properties | `dynamics` is unsupported and returns `UNKNOWN`. | Registered rational affine contraction/fixed-point checks, a witness synthesizer that reduces the model to Lean coordinate goals, and scoped spectral-radius checks. | Broader dynamics and norms with separate sound checkers. |
 | Native Lean | No native Lean adapter. | Closed Rat templates plus the optional pinned mathlib library and conditional Ville/Hoeffding/DPI theorem audits. | Instantiated statistical protocols and checked empirical applicability. |
-| Framework, tensors and exports | No general theorem command or model export. | `formal` CLI, finite theorem modules, concrete exact tensor checks and a restricted Python model-export API. | General symbolic tensors and further checked translations. |
+| Framework, tensors and exports | No general theorem command or model export. | `formal` CLI, finite theorem modules, a typed proof-plan runner, concrete exact tensor checks and a restricted Python model-export API. | More artifact schemas and compatible adapters. |
 
 The interfaces below describe this checkout. The [original implementation contract](https://github.com/kongtou20070406/research-direction-selector/blob/995e8eb98f75697ef1ce43a9991f0686e5c29caa/references/formal_framework.md) records the earlier source revision; use the installed revision's registrations and tests. The initial PR commit `8eadae9` covered only the scalar certificate path and is not the interface snapshot described here.
 
@@ -27,7 +27,8 @@ The implementation uses `scripts/rds_verify.py` and the `formal` CLI, with finit
 | Specification kind | Framework rule / supported obligation |
 | --- | --- |
 | `scalar_threshold` | `scalar.threshold_separation`: defined closed-domain control bound and a rational treatment witness. |
-| `lean_obligation` | `lean.rational_relation`: native Lean checking of a fixed-template closed rational `eq`, `lt` or `le` proposition. |
+| `lean_obligation` / `lean_vector_obligation` | `lean.rational_relation`: native Lean checking of a fixed-template closed rational relation or a conjunction of up to 32 coordinate relations. |
+| `affine_fixed_point_synthesis` | `dynamics.affine_fixed_point_synthesis`: bounded exact rational witness search for a 1..32D map or an ordered chain of up to 8 maps, followed by registered composition and fixed-point checks plus native Lean coordinate proofs. |
 | `statistical_obligation` | `lean.statistical_obligation`: native audit of a pinned conditional Ville, Hoeffding or Markov mutual-information DPI theorem; empirical application remains `UNKNOWN`. |
 | `affine_contraction` / `affine_fixed_point` / `affine_dynamics` | `matrix.infinity_contraction` / `matrix.fixed_point` / `dynamics.affine`: induced infinity norm, a specified fixed point, or both. |
 | `matrix_spectral_bound` / `matrix_spectral_exact` | `matrix.gershgorin` / `matrix.spectral_radius`: triangular matrices are decided exactly; other matrices use a sufficient bound for the former and remain `UNKNOWN` for the latter. An inconclusive sufficient bound remains `UNKNOWN`. |
@@ -36,6 +37,19 @@ The implementation uses `scripts/rds_verify.py` and the `formal` CLI, with finit
 | `tensor_identity` / `tensor_bounds` | `tensor.exact_identity` / `tensor.exact_bounds`: concrete finite tensor calculations, not arbitrary symbolic tensor identities. |
 | `finite_rational_multiplication_commutes` | `theory.finite_rational_multiplication_commutes`: exhaustive proof on a declared finite rational domain closed under multiplication, with a native Lean certificate for every ordered pair. |
 | `theorem_module` | Named finite statements composed using `logic.and_intro`; not a new Lean language. |
+
+Trusted adapters can use the reusable `execute_proof_plan` / `replay_proof_plan`
+interface in `rds_verify.py`. A plan declares typed artifacts and step statement
+templates. `{"$artifact":"fixed_point","index":0}` binds a vector coordinate into
+a child statement; the framework checks the artifact type, resolves the value, routes
+the resulting `kind` through the registered rule, and requires the declared assurance.
+Replay resolves the same bindings again and calls each registered certificate checker.
+Schema 1 currently supports `exact_rational_vector` and
+`exact_rational_affine_model` artifacts up to dimension 32, plus ordered
+`exact_rational_affine_chain` artifacts containing 2..8 maps. Unsupported artifact
+types and proof rules remain `UNKNOWN`. Identical child statements with the same rule
+and required assurance reuse the first checked child certificate. Plans are trusted
+adapter output, not another user-supplied executable language.
 
 The bounded multiplication rule can be named in a theorem module, referenced through
 `$ref`, reused by multiple conjunctions, and checked through the existing formal CLI
@@ -48,6 +62,56 @@ widened. The result concerns only the listed domain; it does not establish unive
 commutativity, scientific acceptance, or application behavior. Those assurance fields
 remain UNKNOWN. EGraph output remains available from the separate progression command
 as a bounded diagnostic and is not used as proof evidence.
+
+### A solver-to-Lean proof chain
+
+`affine_fixed_point_synthesis` accepts a rational affine map or an ordered sequence of
+affine transformations without requiring the caller to supply a fixed point. Exact
+bounded Gaussian elimination emits a typed
+`exact_rational_vector` candidate. Its reusable proof plan carries the model and
+candidate as typed artifacts, binds them into a `matrix.fixed_point` check, and binds
+candidate coordinates into generated equality statements. A composed map adds a
+`matrix.affine_compose` step that recomputes exact matrix products and offsets from
+the ordered source maps. The framework routes each step by statement kind; no tool
+names, artifact indexes or coordinate goals have to be wired by the caller. All
+coordinate equalities form one bounded conjunction checked by the native Lean rule,
+so a 32D map uses one Lean process. See
+[`affine_fixed_point_synthesis.json`](../examples/formal/affine_fixed_point_synthesis.json)
+and [`affine_fixed_point_synthesis_scalar.json`](../examples/formal/affine_fixed_point_synthesis_scalar.json),
+and [`affine_composed_fixed_point.json`](../examples/formal/affine_composed_fixed_point.json).
+
+The exact host adapter evaluates each affine row at the candidate and constructs a
+closed rational equality. The registered Python fixed-point checker checks the map
+and candidate; Lean kernel-checks each reduced equality. Lean does not directly prove
+the unreduced matrix expression. On replay, the adapter recomputes each row from the
+original map and candidate, reconstructs the typed plan, checks artifact compatibility
+and registry routing, then replays the Python and native Lean certificates. The
+candidate solver cannot establish `PASS` by itself. The returned certificate binds the
+typed source maps, composed model, candidate and ordered child proofs to the full
+input; the same named theorem result can be referenced from multiple nodes in a
+theorem module.
+
+The search/check split is intentional. Certificate replay does not rerun Gaussian
+elimination; it recomputes the exact coordinate values from the source map and
+candidate, rebuilds the child statements, then replays their Lean certificates. An
+inconsistent singular system, malformed model, resource limit or unavailable native
+Lean is `UNKNOWN`; this rule does not certify that no fixed point exists. Dimensions
+are capped at 32, a composed chain at 8 maps, and an input at 256 KiB. Exact fractions
+are bounded to 4096-bit numerators and denominators; generated certificates are capped
+at 2 MiB, native Lean uses a 512 MiB process memory cap, and the vector theorem has a
+10-second time budget. The result establishes a fixed point for the declared rational
+affine map or its exact ordered composition only. It does not prove uniqueness,
+contraction, convergence, or behavior of a corresponding training implementation;
+scientific and application assurance remain `UNKNOWN`.
+
+```powershell
+python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/affine_fixed_point_synthesis.json --output affine-proof.json
+python -B scripts/rds_cli.py --root . formal check --spec examples/formal/affine_fixed_point_synthesis.json --certificate affine-proof.json
+python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/affine_fixed_point_synthesis_scalar.json --output affine-scalar-proof.json
+python -B scripts/rds_cli.py --root . formal check --spec examples/formal/affine_fixed_point_synthesis_scalar.json --certificate affine-scalar-proof.json
+python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/affine_composed_fixed_point.json --output affine-composed-proof.json
+python -B scripts/rds_cli.py --root . formal check --spec examples/formal/affine_composed_fixed_point.json --certificate affine-composed-proof.json
+```
 
 `verify(spec)` produces and independently checks evidence; `check_certificate(spec, certificate)` checks its validity, and `checked_result` reconstructs the conclusion. A valid **FAIL** certificate can also pass certificate validation: valid evidence is not necessarily a true proposition. Results include `status`, `assurance`, `backend`, `semantics`, `spec_sha256`, `verifier_sha256` and a certificate when decided. CLI `check` accepts a framework certificate or a complete framework result containing it; it reconstructs the verdict rather than trusting the result's reported status. CLI exit codes are 0/1/2 for PASS/FAIL/UNKNOWN. These commands need no initialized research contract.
 
@@ -71,13 +135,13 @@ The receipt identifies `claim_relation: declared_side_condition_only` and `obser
 
 ### Native Lean: the implemented narrow interface
 
-The registered `lean_obligation` adapter accepts exactly `schema`, `kind`, `relation`, `left` and `right`. `schema` is 1, `relation` is `eq`, `lt` or `le`, and both sides are exact rational literals; numeric JSON floats are rejected. The [existing example](https://github.com/kongtou20070406/research-direction-selector/blob/995e8eb98f75697ef1ce43a9991f0686e5c29caa/examples/formal/lean_obligation.json) is:
+The registered `lean_obligation` adapter accepts exactly `schema`, `kind`, `relation`, `left` and `right`. `schema` is 1, `relation` is `eq`, `lt` or `le`, and both sides are exact rational literals; numeric JSON floats are rejected. The `lean_vector_obligation` form accepts 1..32 such relations and checks their conjunction in one native Lean process. The [existing scalar example](https://github.com/kongtou20070406/research-direction-selector/blob/995e8eb98f75697ef1ce43a9991f0686e5c29caa/examples/formal/lean_obligation.json) is:
 
 ```json
 {"schema":1,"kind":"lean_obligation","relation":"lt","left":"1/2","right":"3/4"}
 ```
 
-The adapter discovers already installed native binaries, preferring the pinned package toolchain; it does not download Lean and rejects elan and `.elan/bin` shims. Optionally set `RDS_LEAN_EXECUTABLE` to an existing absolute native toolchain binary, replacing the example path below. Invalid explicit configuration remains `UNKNOWN`. When no native binary is installed, closed rational relations degrade to independently replayed exact Python certificates with `CERTIFICATE_CHECKED` assurance.
+The adapter discovers already installed native binaries, preferring the pinned package toolchain; it does not download Lean and rejects elan and `.elan/bin` shims. Optionally set `RDS_LEAN_EXECUTABLE` to an existing absolute native toolchain binary, replacing the example path below. Invalid explicit configuration remains `UNKNOWN`. When no native binary is installed, closed rational relations can use independently replayed exact Python certificates with `CERTIFICATE_CHECKED` assurance. An affine proof plan requires `LEAN_KERNEL_CHECKED` for its generated coordinate conjunction, so fallback arithmetic alone leaves that composition `UNKNOWN`.
 
 ```powershell
 $env:RDS_LEAN_EXECUTABLE = 'C:\path\to\native-toolchain\bin\lean.exe'
@@ -89,7 +153,7 @@ The adapter renders a fixed `RDS.obligation` theorem using Lean's Rat definition
 
 A native closed rational atomic result reports `LEAN_KERNEL_CHECKED`, `backend: lean4_closed_rational` and `semantics: closed_Lean_Rat_relation`. False propositions, compilation failure and resource limits are UNKNOWN, not checked refutations. A mixed theorem module reports outer `CERTIFICATE_CHECKED`; a module with only native leaves can report `LEAN_KERNEL_CHECKED`. Neither label removes its unresolved application premises. Arbitrary Lean text, user tactics, general mathlib translation and proofs about executed training graphs are not supported. The separately built [native statistical library](lean-native.md) audits conditional laws under an allowlist of mathlib's foundational axioms and preserves unresolved application premises, including inside theorem modules.
 
-The bounded tactic names are `rule`, `gershgorin`, `spectral_radius`, `scale_invariance`, `lean4` and `interval`. `rule` selects the registered backend; `lean4` applies to `lean_obligation` and `statistical_obligation`. Other named tactics select their compatible kinds. Empty or duplicate chains are rejected, incompatible tactics are UNKNOWN, and explicit `--tactics` bypasses the default disk cache.
+The bounded tactic names are `rule`, `gershgorin`, `spectral_radius`, `scale_invariance`, `lean4` and `interval`. `rule` selects the registered backend; `lean4` applies to `lean_obligation`, `lean_vector_obligation` and `statistical_obligation`. Other named tactics select their compatible kinds. Empty or duplicate chains are rejected, incompatible tactics are UNKNOWN, and explicit `--tactics` bypasses the default disk cache.
 
 ### Historical prototype: a separate experimental path
 
@@ -168,6 +232,7 @@ Declared formal admission requires `PASS`; both `FAIL` and `UNKNOWN` block it. M
 | `AST_ONLY` | Restricted syntax; no declared mathematical property. Available on `main`. |
 | `SYMBOLIC_CHECKED` | Optional symbolic result without an independently checked certificate. Available on `main`. |
 | `CERTIFICATE_CHECKED` | Bound exact domain certificates or a finite module were independently checked. Available on `main`; a module can combine Python and native Lean leaves. |
+| `COMPOSITION_CHECKED` | A trusted adapter bound an exact-rational candidate to registered exact composition and fixed-point checks plus native Lean proofs for all generated coordinate equalities. It proves only the declared affine fixed-point witness. |
 | `LEAN_KERNEL_CHECKED` | The registered atomic closed Rat template was checked again with native Lean and an empty-axiom audit. Available on `main` with the configured native toolchain; not general model verification. |
 | `EXACT_OBSERVATION_CHECKED` | Executed scalar samples checked exactly. Available on `main`, separately from the admission certificate. |
 | `EXACT_COUNTEREXAMPLE_CHECKED` | The direct network adapter's exact forward witness refutes the declared model property. The generic framework wraps a checked FAIL as `CERTIFICATE_CHECKED`. |
