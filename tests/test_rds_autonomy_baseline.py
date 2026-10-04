@@ -47,9 +47,28 @@ class BaselineLineageCLITests(unittest.TestCase):
             baseline_receipt = paid['receipts'][0]
             self.assertEqual(baseline_receipt['run_id'], 'baseline')
             self.assertEqual(baseline_receipt['run_status'], 'SUCCEEDED')
-            completed = cli('project', 'drive', '--max-steps', '5')
+            retained = {baseline_receipt['run_id']: baseline_receipt}
+            executed = []
+            for _ in range(5):
+                completed = cli('project', 'drive', '--max-steps', '5')
+                current = store.snapshot()
+                for receipt in current['receipts']:
+                    if receipt['run_id'] in retained:
+                        self.assertEqual(receipt, retained[receipt['run_id']])
+                    retained[receipt['run_id']] = receipt
+                for run in completed['executed']:
+                    self.assertNotIn(run['run_id'], [r['run_id'] for r in executed])
+                    executed.append(run)
+                if completed['status'] == 'GOAL_CONFIRMED':
+                    break
+                self.assertEqual(completed['status'], 'HANDOFF_REQUIRED', completed)
+                self.assertEqual(completed['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', completed)
             self.assertEqual(completed['status'], 'GOAL_CONFIRMED', completed)
+            self.assertEqual([r['run_id'] for r in executed], ['failed-pilot', 'repair', 'candidate', 'confirmation'])
             state = store.snapshot()
+            with store._db(True) as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM events WHERE json_extract(body,'$.kind')='AUTONOMY_MODEL_REQUESTED'").fetchone()[0], 1)
+                started = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED'").fetchone()[0]
             candidate = next(r for r in state['receipts'] if r['run_id'] == 'candidate')
             self.assertNotEqual(candidate['effective_contract_sha256'], baseline_receipt['effective_contract_sha256'])
             self.assertEqual(next(r for r in state['receipts'] if r['run_id'] == 'baseline'), baseline_receipt)
@@ -63,7 +82,21 @@ class BaselineLineageCLITests(unittest.TestCase):
             self.assertEqual(after['runs'], state['runs'])
             self.assertEqual(after['receipts'], state['receipts'])
             self.assertEqual(after['exposures'], state['exposures'])
-            self.assertEqual(after['budget']['wall_seconds']['charged_estimate'], state['budget']['wall_seconds']['charged_estimate'])
+            with store._db(True) as db:
+                events = [json.loads(r['body']) for r in db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind') IN ('AUTONOMY_DRIVE_CLAIMED','AUTONOMY_DRIVE_RELEASED') ORDER BY id")]
+                self.assertEqual(db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED'").fetchone()[0], started)
+            claims = {e['owner']: e['controller_reservation'] for e in events if e['kind'] == 'AUTONOMY_DRIVE_CLAIMED'}
+            workers = [r['resources']['wall_seconds'] for r in after['receipts']]
+            spent = sum(r['measured'] or 0 for r in workers)
+            charged = sum(r['charged_estimate'] for r in workers)
+            for event in events:
+                if event['kind'] == 'AUTONOMY_DRIVE_RELEASED':
+                    wall = event['controller_wall_seconds']
+                    spent += min(wall, claims[event['owner']])
+                    charged += max(0, wall - claims[event['owner']])
+            self.assertAlmostEqual(after['budget']['wall_seconds']['spent_measured'], spent, places=6)
+            self.assertAlmostEqual(after['budget']['wall_seconds']['charged_estimate'], charged, places=6)
+            self.assertEqual(after['budget']['wall_seconds']['cap'], paid['budget']['wall_seconds']['cap'])
             # Original byte damage must remain UNKNOWN, even if supplied history
             # claims that an arbitrary ancestor is valid.
             output = root / 'outputs/baseline.json'

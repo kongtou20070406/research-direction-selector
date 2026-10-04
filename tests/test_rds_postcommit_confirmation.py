@@ -88,9 +88,22 @@ class PostcommitConfirmationTests(unittest.TestCase):
             return {'returncode':p.returncode,'stderr':p.stderr}
         return json.loads(p.stdout)
 
-    def events(self):
+    def events(self,kind=post.EVENT):
         with self.store._db(True) as db:
-            return [json.loads(r['body']) for r in db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id",(post.EVENT,))]
+            return [json.loads(r['body']) for r in db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id",(kind,))]
+
+    def assert_costs(self,state):
+        claims={e['owner']:e['controller_reservation'] for e in self.events('AUTONOMY_DRIVE_CLAIMED')}
+        releases=self.events('AUTONOMY_DRIVE_RELEASED')
+        workers=[r['resources']['wall_seconds'] for r in state['receipts']]
+        spent=sum(r['measured'] or 0 for r in workers)
+        charged=sum(r['charged_estimate'] for r in workers)
+        for event in releases:
+            wall=event['controller_wall_seconds']
+            spent+=min(wall,claims[event['owner']])
+            charged+=max(0,wall-claims[event['owner']])
+        self.assertAlmostEqual(state['budget']['wall_seconds']['spent_measured'],spent,places=6)
+        self.assertAlmostEqual(state['budget']['wall_seconds']['charged_estimate'],charged,places=6)
 
     @unittest.skipUnless(TORCH,'optional CPU torch dependency unavailable')
     def test_actual_training_and_new_samples_through_owned_execution(self):
@@ -117,9 +130,27 @@ class PostcommitConfirmationTests(unittest.TestCase):
     @unittest.skipUnless(TORCH,'optional CPU torch dependency unavailable')
     def test_real_mlp_repair_and_reserved_challenge_recover_with_one_seed(self):
         self.build()
-        first=self.cli('project','drive','--max-steps','3')
-        self.assertEqual(len(first['executed']),3,first)
+        original_cap=self.store.snapshot()['budget']['wall_seconds']['cap']
+        executed=[]
+        retained={}
+        for _ in range(4):
+            first=self.cli('project','drive','--max-steps',str(3-len(executed)))
+            current=self.store.snapshot()
+            for receipt in current['receipts']:
+                if receipt['run_id'] in retained:
+                    self.assertEqual(receipt,retained[receipt['run_id']])
+                retained[receipt['run_id']]=receipt
+            for run in first['executed']:
+                self.assertNotIn(run['run_id'],[r['run_id'] for r in executed])
+                executed.append(run)
+            if len(executed)==3:
+                break
+            self.assertEqual(first['status'],'HANDOFF_REQUIRED',first)
+            self.assertEqual(first['reason'],'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED',first)
+        self.assertEqual([r['run_id'] for r in executed],['failed-pilot','repair','candidate'])
         state=self.store.snapshot()
+        requested=self.events('AUTONOMY_MODEL_REQUESTED')
+        self.assertEqual(len(requested),1)
         self.assertEqual(len(state['contract_history']),2)
         self.assertEqual(self.events(),[])
         candidate=next(r for r in state['receipts'] if r['run_id']=='candidate')
@@ -129,9 +160,23 @@ class PostcommitConfirmationTests(unittest.TestCase):
         self.cli('project','create','--manifest','confirm-manifest.json')
         original_event=self.events()
         self.assertEqual(len(original_event),1)
-        resumed=self.cli('project','drive','--max-steps','1')
+        for _ in range(3):
+            resumed=self.cli('project','drive','--max-steps','2')
+            if resumed['status']=='GOAL_CONFIRMED':
+                break
+            self.assertEqual(resumed['status'],'HANDOFF_REQUIRED',resumed)
+            self.assertEqual(resumed['reason'],'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED',resumed)
         self.assertEqual(resumed['status'],'GOAL_CONFIRMED',resumed)
         after=self.store.snapshot()
+        for run_id,receipt in retained.items():
+            self.assertEqual(next(r for r in after['receipts'] if r['run_id']==run_id),receipt)
+        self.assertEqual(len(after['receipts']),4)
+        self.assertEqual(self.events('AUTONOMY_MODEL_REQUESTED'),requested)
+        self.assertEqual(after['budget']['wall_seconds']['reserved'],0)
+        self.assertEqual(after['budget']['wall_seconds']['cap'],original_cap)
+        started=self.events('CAMPAIGN_STARTED')
+        self.assertEqual(len(started),1)
+        self.assert_costs(after)
         result=inspect_confirmation(self.store,after['contract'])
         self.assertEqual(result['task_confirmation'],'PASS',result)
         self.assertEqual(result['confirmation_independence'],'GENERATED_AFTER_WEIGHT_COMMIT')
@@ -147,6 +192,8 @@ class PostcommitConfirmationTests(unittest.TestCase):
         self.assertEqual(again['status'],'GOAL_CONFIRMED',again)
         self.assertEqual(self.store.snapshot()['receipts'],after['receipts'])
         self.assertEqual(self.store.snapshot()['exposures'],after['exposures'])
+        self.assertEqual(self.events('CAMPAIGN_STARTED'),started)
+        self.assert_costs(self.store.snapshot())
         self.assertEqual(self.events(),original_event)
         # Damage the committed CAS bytes; no new seed or attempt may conceal it.
         from rds_math import blob
