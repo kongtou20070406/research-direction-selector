@@ -1,0 +1,250 @@
+"""Actual CLI: infeasible plan -> editable tool -> adoption -> fresh pilots -> frozen verifier.
+
+All inputs are the public integer-sum fixture. A verified result here establishes
+this software workflow, not general research policy gain or algorithmic scaling.
+Set RDS_EVOLUTION_ARTIFACT_ROOT to retain raw CLI transcripts and original logs.
+"""
+from copy import deepcopy
+from contextlib import closing
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from rds_project import canonical, digest, file_sha
+
+_spec = importlib.util.spec_from_file_location('_tool_evolution_public', ROOT / 'examples/predictive-feasibility/prepare.py')
+fixture = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(fixture)
+
+
+class ToolEvolutionFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='rds-tool-evolution-flow-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.calls = []
+        self.addCleanup(self.retain_evidence)
+
+    def retain_evidence(self):
+        destination = os.environ.get('RDS_EVOLUTION_ARTIFACT_ROOT')
+        if not destination:
+            return
+        target = Path(destination).resolve() / self._testMethodName
+        target.mkdir(parents=True, exist_ok=True)
+        (target / 'cli-transcript.json').write_text(canonical(self.calls), encoding='utf-8')
+        for relative in ('.rds/project-artifacts', 'outputs'):
+            source = self.root / relative
+            if source.exists():
+                shutil.copytree(source, target / relative, dirs_exist_ok=True)
+        for name in ('contract.json', 'proposal-final.json', 'snapshot-final.json', 'snapshot-before-revision.json'):
+            if (self.root / name).exists():
+                shutil.copyfile(self.root / name, target / name)
+
+    def cli(self, *args, ok=True):
+        argv = [sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(self.root), *map(str, args)]
+        env = {**os.environ, 'RDS_USAGE_DB': str(self.root / '.rds/usage-flow.sqlite3')}
+        result = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=35, env=env)
+        self.calls.append({'argv': argv, 'returncode': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr})
+        if ok:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def write(self, name, value):
+        path = self.root / name
+        path.write_text(canonical(value), encoding='utf-8')
+        return path
+
+    def launches(self):
+        path = self.root / 'outputs/launches.txt'
+        return path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+
+    def genesis_record(self):
+        with closing(sqlite3.connect(self.root / '.rds/project.sqlite3')) as db:
+            return db.execute('SELECT id,sha256,body FROM contract').fetchall()
+
+    def campaign(self):
+        with closing(sqlite3.connect(self.root / '.rds/project.sqlite3')) as db:
+            return db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED'").fetchall()
+
+    def initialize_slow_only(self):
+        contract = fixture.prepare(self.root)
+        self.template = deepcopy(contract['advisor_policy'])
+        # At genesis the fast command is authorized but its implementation/route
+        # is unavailable. The edited candidate must actually introduce it.
+        old = (self.root / 'solver.py').read_text(encoding='utf-8')
+        old = old.replace('elif mode == "fast":\n    result = {"value": 99*100//2}\n', '')
+        (self.root / 'solver.py').write_text(old, encoding='utf-8')
+        self.old_code = (self.root / 'solver.py').read_bytes()
+        code_sha = file_sha(self.root / 'solver.py')
+        for binding in contract['bindings']:
+            if binding['role'] == 'code':
+                binding['sha256'] = code_sha
+            if binding['role'] == 'protocol':
+                path = self.root / binding['path']
+                protocol = json.loads(path.read_text(encoding='utf-8'))
+                protocol['code_sha256'] = code_sha
+                path.write_text(canonical(protocol), encoding='utf-8')
+                binding['sha256'] = file_sha(path)
+        for route in self.template['routes']:
+            ref = route['manifest']['protocol']
+            ref['sha256'] = file_sha(self.root / ref['path'])
+        self.verify2 = deepcopy(next(r for r in self.template['routes'] if r['manifest']['id'] == 'pilot-verify'))
+        self.verify2['candidate'] = 'pilot-verify2'
+        self.verify2['manifest'].update(id='pilot-verify2',
+                                      argv=[sys.executable, '-B', 'verifier.py', 'pilot-verify2', 'pilot-verify', 'outputs/pilot-verify2.json'],
+                                      outpaths=['outputs/pilot-verify2.json'])
+        # This exact future argv is granted before init, reusing a bound protocol.
+        contract['allowed_commands'].append(self.verify2['manifest']['argv'])
+        policy = deepcopy(self.template)
+        removed = {'pilot-fast', 'fast'}
+        policy['routes'] = [r for r in policy['routes'] if r['manifest']['id'] not in removed]
+        policy['observations'] = [o for o in policy['observations'] if o['run_id'] not in removed]
+        policy['graph']['nodes'] = [n for n in policy['graph']['nodes'] if n['id'] not in removed]
+        next(n for n in policy['graph']['nodes'] if n['id'] == 'pilot-verify')['executable']['preconditions'] = []
+        next(n for n in policy['graph']['nodes'] if n['id'] == 'pilot-slow')['executable']['preconditions'] = [
+            {'fact': 'run.pilot-verify.succeeded', 'op': 'eq', 'value': True}]
+        config = policy['feasibility']
+        config['pilots'] = ['pilot-verify', 'pilot-slow']
+        config['models'].pop('fast')
+        config['plans'] = [p for p in config['plans'] if p['id'] == 'slow']
+        config['max_pilot_wall_seconds'] = 20
+        contract['budget']['wall_seconds'] = 200
+        contract['advisor_policy'] = policy
+        self.genesis = deepcopy(contract)
+        self.evaluator = (self.root / 'verifier.py').read_bytes()
+        self.cli('project', 'init', '--contract', self.write('contract.json', contract))
+
+    def evolve_and_verify(self, correct):
+        self.initialize_slow_only()
+        for expected in ('pilot-verify', 'pilot-slow'):
+            result = self.cli('project', 'advance')
+            self.assertIn('receipt', result, result)
+            self.assertEqual(result['receipt']['run_id'], expected)
+            self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED', result)
+        blocked = self.cli('project', 'next')
+        self.assertIsNone(blocked['selected_run'])
+        self.assertEqual(blocked['feasibility']['plans'][0]['status'], 'INFEASIBLE')
+        self.assertGreater(blocked['feasibility']['plans'][0]['lower_wall_seconds'],
+                           blocked['feasibility']['plans'][0]['available_wall_seconds'])
+        self.assertIn('project improve', blocked['feasibility']['repair_request']['tool_workbench_command'])
+        before = self.cli('project', 'status')
+        self.write('snapshot-before-revision.json', before)
+        row, campaign = self.genesis_record(), self.campaign()
+        slow = next(r['manifest'] for r in self.genesis['advisor_policy']['routes'] if r['manifest']['id'] == 'slow')
+        self.cli('project', 'create', '--manifest', self.write('slow-denied.json', slow), ok=False)
+        self.assertEqual(self.launches(), ['pilot-verify', 'pilot-slow'])
+        bundle = self.cli('project', 'improve', '--code-path', 'solver.py', '--id', 'closed-form-tool')
+        request_bytes = Path(bundle['request']).read_bytes()
+        self.assertFalse(bundle['execution_started'])
+        self.assertEqual((self.root / 'solver.py').read_bytes(), self.old_code)
+        self.assertEqual(self.launches(), ['pilot-verify', 'pilot-slow'])
+        self.assertEqual(self.cli('project', 'status')['budget'], before['budget'])
+        candidate = Path(bundle['candidate_source'])
+        body = self.old_code.decode('utf-8')
+        # Model-like tool construction: new closed-form function, no 15 s wait,
+        # and a future fast entrypoint. The verifier is never edited.
+        formula = 'n*(n-1)//2' if correct else 'n*(n+1)//2'
+        body = 'def closed_form_sum(n):\n    return ' + formula + '\n' + body
+        body = body.replace('    time.sleep(15)\n', '').replace('sum(range(100))', 'closed_form_sum(100)')
+        body = body.replace('pathlib.Path(output).write_text',
+                            'elif mode == "fast":\n    result = {"value": closed_form_sum(100)}\npathlib.Path(output).write_text')
+        candidate.write_text(body, encoding='utf-8')
+        proposal_path = Path(bundle['proposal'])
+        proposal = json.loads(proposal_path.read_text(encoding='utf-8'))
+        policy = proposal['policy']
+        for run_id in ('pilot-fast', 'fast'):
+            policy['routes'].append(deepcopy(next(r for r in self.template['routes'] if r['manifest']['id'] == run_id)))
+            policy['graph']['nodes'].append(deepcopy(next(n for n in self.template['graph']['nodes'] if n['id'] == run_id)))
+            policy['observations'].append(deepcopy(next(o for o in self.template['observations'] if o['run_id'] == run_id)))
+        policy['routes'].append(deepcopy(self.verify2))
+        node = deepcopy(next(n for n in self.template['graph']['nodes'] if n['id'] == 'pilot-verify'))
+        node['id'] = node['executable']['action']['id'] = 'pilot-verify2'
+        node['executable']['preconditions'] = [{'fact': 'run.pilot-fast.succeeded', 'op': 'eq', 'value': True}]
+        node['executable']['action']['required_observables'] = ['pilot-verify2.result']
+        policy['graph']['nodes'].append(node)
+        policy['observations'].append({'fact': 'pilot-verify2.result', 'run_id': 'pilot-verify2',
+                                       'path': 'outputs/pilot-verify2.json', 'selector': {'pointer': '/score'}})
+        config = policy['feasibility']
+        config['pilots'].extend(['pilot-fast', 'pilot-verify2'])
+        config['models']['fast'] = deepcopy(self.template['feasibility']['models']['fast'])
+        config['models']['verify']['pilot_runs'] = ['pilot-verify2']
+        config['plans'].append(deepcopy(next(p for p in self.template['feasibility']['plans'] if p['id'] == 'fast')))
+        proposal['reason'] = 'Introduce a closed-form tool after the measured enumeration plan exceeded the same remaining allowance'
+        proposal_path.write_text(canonical(proposal), encoding='utf-8')
+        refresh = self.cli('project', 'improve', '--code-path', 'solver.py', '--id', 'closed-form-tool')
+        self.assertEqual(Path(refresh['request']).read_bytes(), request_bytes)
+        self.assertEqual(refresh['candidate_sha256'], file_sha(candidate))
+        self.assertEqual((self.root / 'solver.py').read_bytes(), self.old_code)
+        self.assertEqual(self.launches(), ['pilot-verify', 'pilot-slow'])
+        adopted = self.cli('project', 'revise', '--proposal', refresh['proposal'])
+        self.assertEqual(adopted['status'], 'ADOPTED')
+        self.write('proposal-final.json', json.loads(proposal_path.read_text(encoding='utf-8')))
+        revised = self.cli('project', 'status')
+        self.assertEqual(revised['budget'], before['budget'])
+        self.assertEqual(revised['receipts'], before['receipts'])
+        self.assertEqual(revised['runs'], before['runs'])
+        self.assertEqual(revised['exposures'], before['exposures'])
+        self.assertEqual(self.genesis_record(), row)
+        self.assertEqual(self.campaign(), campaign)
+        self.assertEqual(len(revised['contract_history']), 2)
+        self.assertEqual(revised['contract']['allowed_commands'], self.genesis['allowed_commands'])
+        self.assertEqual(revised['contract']['budget'], {'wall_seconds': 200})
+        self.assertEqual(revised['contract']['stop_policy']['wall_seconds'], 180)
+        self.assertEqual(revised['contract']['advisor_policy']['context'], self.genesis['advisor_policy']['context'])
+        self.assertEqual((self.root / 'verifier.py').read_bytes(), self.evaluator)
+        fresh = self.cli('project', 'next')
+        self.assertEqual(fresh['selected_run'], 'pilot-fast')
+        fast_plan = next(p for p in fresh['feasibility']['plans'] if p['id'] == 'fast')
+        self.assertEqual(fast_plan['status'], 'UNKNOWN')
+        self.assertNotIn('fast', fresh['feasibility']['admitted_runs'])
+        for expected in ('pilot-fast', 'pilot-verify2', 'fast', 'verify'):
+            result = self.cli('project', 'advance')
+            self.assertIn('receipt', result, result)
+            self.assertEqual(result['receipt']['run_id'], expected, result)
+            self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED', result)
+        observed = json.loads((self.root / 'outputs/verify.json').read_text(encoding='utf-8'))
+        self.assertEqual(observed['verified'], correct)
+        self.assertEqual(observed['observed'], 4950 if correct else 5050)
+        final = self.cli('project', 'next')
+        if correct:
+            self.assertEqual(final['feasibility']['next_action'], 'GOAL_PREDICATES_CONFIRMED')
+            self.assertIsNone(final['selected_run'])
+        else:
+            self.assertNotEqual(final['feasibility']['next_action'], 'GOAL_PREDICATES_CONFIRMED')
+        snap = self.cli('project', 'status')
+        self.write('snapshot-final.json', snap)
+        self.assertEqual(len(snap['receipts']), 6)
+        self.assertEqual(snap['budget']['wall_seconds']['reserved'], 0)
+        self.assertGreater(snap['budget']['wall_seconds']['spent_measured'], before['budget']['wall_seconds']['spent_measured'])
+        self.assertEqual(self.campaign(), campaign)
+        self.assertEqual(self.genesis_record(), row)
+        self.assertEqual(self.launches(), ['pilot-verify', 'pilot-slow', 'pilot-fast', 'pilot-verify2', 'fast', 'verify'])
+        self.assertFalse((self.root / 'outputs/slow.json').exists())
+        self.assertEqual((self.root / 'verifier.py').read_bytes(), self.evaluator)
+        with closing(sqlite3.connect(self.root / '.rds/project.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM contract').fetchone()[0], 1)
+        costs = {r['run_id']: r['resources']['wall_seconds']['measured'] for r in snap['receipts']}
+        self.assertAlmostEqual(final['feasibility']['pilot_budget']['spent_or_charged'],
+                               sum(v for k, v in costs.items() if k.startswith('pilot')), places=6)
+        self.assertEqual(final['feasibility']['pilot_budget']['cap'], 20)
+
+    def test_complete_evolution_and_independent_verification_same_ledger(self):
+        self.evolve_and_verify(correct=True)
+
+    def test_wrong_new_tool_cannot_self_certify_the_goal(self):
+        self.evolve_and_verify(correct=False)
+
+
+if __name__ == '__main__':
+    unittest.main()
