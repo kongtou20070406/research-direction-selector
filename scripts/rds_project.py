@@ -766,8 +766,12 @@ class ProjectStore:
                             and recorded.get("contract_sha256") == predecessor["contract_sha256"],
                             "Predecessor is frozen with the contract; use a new project root")
             else:
+                from rds_owned_tools import preparation_costs
+                native_preparation = preparation_costs(self, contract, db=db)
                 db.execute("INSERT INTO contract VALUES (1,?,?)", (digest(contract), canonical(contract)))
                 db.executemany("INSERT INTO budget(resource,cap) VALUES (?,?)", list(budget.items()))
+                from rds_owned_tools import charge_preparation
+                charge_preparation(self, db, contract, native_preparation)
                 if predecessor is not None:
                     db.execute("CREATE TABLE predecessor(id INTEGER PRIMARY KEY CHECK (id = 1),sha256 TEXT NOT NULL,body TEXT NOT NULL)")
                     for action in ("UPDATE", "DELETE"):
@@ -944,7 +948,12 @@ class ProjectStore:
             self._campaign_deadline(db, contract, admit=True)
             for resource, amount in estimates.items():
                 db.execute("UPDATE budget SET reserved=reserved+? WHERE resource=?", (amount, resource))
+            if advisor_token is not None:
+                run['owned_history_recorded'] = True
             db.execute("INSERT INTO runs VALUES (?,?,?)", (run_id, "RESERVED", canonical(run)))
+            if advisor_token is not None:
+                from rds_owned_history import capture_choice
+                capture_choice(self, db, run, advisor_token['decision'])
         return run
 
     @classmethod
@@ -1382,6 +1391,9 @@ class ProjectStore:
                 self._save(db, current)
                 db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, receipt["sha256"], canonical(receipt)))
                 db.execute("INSERT INTO events(body) VALUES (?)", (canonical({"kind": "ATTEMPT_FINISHED", "run_id": run_id, "sha256": receipt["sha256"]}),))
+            if self._run(db, run_id).get('owned_history_recorded') is True:
+                from rds_owned_history import capture_completion
+                capture_completion(self, db, self._run(db, run_id), receipt)
         self._advisor_finished(contract)
         return receipt
 
