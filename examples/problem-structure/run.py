@@ -18,7 +18,7 @@ from rds_project import ProjectStore, digest, file_sha
 from rds_tms_store import maintain
 
 
-def prepare(root, case='knowledge', budget=100):
+def prepare(root, case='knowledge', budget=100, owned=False):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=False)
     for name in ('candidate.py', 'evaluator.py'):
@@ -44,12 +44,31 @@ def prepare(root, case='knowledge', budget=100):
                              [('candidate.py', 'code'), ('config.json', 'config'), ('data.json', 'data'),
                               ('evaluator.py', 'evaluator'), ('protocol.json', 'protocol')]],
                 'allowed_commands': commands, 'output_roots': ['out'], 'budget': {'wall_seconds': budget}}
-    ProjectStore(root).initialize(contract)
     initial = {'schema': 1, 'nodes': [{'id': n, 'status': 'SUPPORTED' if n == 'observations' else 'UNKNOWN',
                 'source': 'synthetic initial problem', 'label': n} for n in ('observations', 'old-model', 'goal')],
                'hyperedges': [{'id': 'old-decomposition', 'premises': ['observations', 'old-model'],
                               'conclusion': 'goal', 'status': 'SUPPORTED', 'source': 'initial assumed decomposition'}], 'goals': ['goal']}
     maintain(root, initial=initial)
+    if owned:
+        manifests = [manifest(root, 'candidate', 'interaction'), manifest(root, 'candidate', verifier=True)]
+        def node(ident, conditions):
+            return {'id': ident, 'sources': ['synthetic frozen evaluator fixture'], 'executable': {
+                'decisions': ['next'], 'preconditions': conditions,
+                'action': {'id': ident, 'kind': 'PAIRED_TEST', 'target': 'result.correct', 'operation': 'finite-' + ident,
+                           'description': 'Candidate or independent finite evaluation',
+                           'competing_explanations': ['correct finite outputs', 'incorrect finite outputs'],
+                           'required_observables': ['result.correct'], 'outcomes': [
+                               {'observation': 'correct', 'next_decision': 'inspect original goal scope'},
+                               {'observation': 'incorrect', 'next_decision': 'try a different problem structure'}]}}}
+        contract['advisor_policy'] = {'schema': 1, 'context': {'decision': {
+            'id': 'next', 'goal_revision': 'finite-v1', 'scope': {'domain': 'synthetic-structure'},
+            'goal_conditions': [{'fact': 'result.correct', 'op': 'eq', 'value': True}]}},
+            'graph': {'nodes': [node('candidate', []), node('candidate-verifier', [
+                {'fact': 'run.candidate.succeeded', 'op': 'eq', 'value': True}])], 'edges': []},
+            'routes': [{'candidate': m['id'], 'manifest': m} for m in manifests],
+            'observations': [{'fact': 'result.correct', 'run_id': 'candidate-verifier', 'path': 'out/candidate-verdict.json',
+                              'format': 'json', 'selector': {'pointer': '/correct'}}]}
+    ProjectStore(root).initialize(contract)
     return root
 
 

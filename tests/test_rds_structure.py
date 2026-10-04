@@ -222,6 +222,34 @@ class StructureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'hash mismatch'):
                 action(self.root, 'candidate')
 
+    def test_owned_admission_collection_and_goal_consumption_are_reused(self):
+        other = fixture.prepare(Path(self.tmp.name) / 'owned', owned=True)
+        task = structure.request(other)['tasks'][0]
+        p = fixture.proposal(other, task)
+        structure.propose(other, p)
+        self.assertEqual(structure.advance(other, 'candidate')['goal_status'], 'PASS')
+        state = ProjectStore(other).snapshot()
+        self.assertEqual(len(state['receipts']), 2)
+        self.assertTrue(all(r.get('owned_history_recorded') for r in state['runs']))
+        from rds_owned_advisor import review
+        reported = review(ProjectStore(other))
+        self.assertEqual(reported['context']['facts']['result.correct']['value'], True)
+        self.assertEqual(structure.next_step(other)['status'], 'ORIGINAL_EVALUATOR_PASSED')
+        structure.activate(other, 'candidate')
+        review(ProjectStore(other))
+        structure.rollback(other, 'candidate')
+        self.assertIn('owned:goal:0', current(other)['dependency_map']['goals'])
+
+    def test_open_proposal_respects_as_of_and_excluded_nodes(self):
+        p = self.proposal()
+        task = structure._find(self.store, 'REQUEST', p['request_id'])
+        task['frontier']['as_of'] = '2000-01-01'
+        result = review_proposals(task['frontier'], task['frontier_spec'], {'schema_version': 1, 'proposals': [p]})
+        self.assertIn('UNKNOWN_AVAILABILITY', ';'.join(result['proposals'][0]['definition_errors']))
+        p['new_nodes'][0]['available_on'] = '2001-01-01'
+        result = review_proposals(task['frontier'], task['frontier_spec'], {'schema_version': 1, 'proposals': [p]})
+        self.assertIn('FUTURE_RECORD', ';'.join(result['proposals'][0]['definition_errors']))
+
 
 if __name__ == '__main__':
     unittest.main()

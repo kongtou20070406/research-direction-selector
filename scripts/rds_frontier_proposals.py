@@ -279,7 +279,7 @@ def review_exploration(frontier, spec, proposal):
     This opt-in contract is deliberately separate from the legacy bridge
     requirement. It never admits an executable experiment or a theorem.
     """
-    from rds_frontier import _source, _metadata
+    from rds_frontier import _source, _metadata, _date
     errors = []
     gap = next((g for g in frontier['gaps'] if g['id'] == proposal.get('gap_id')), None)
     if gap is None:
@@ -319,7 +319,9 @@ def review_exploration(frontier, spec, proposal):
     if not isinstance(nodes, list) or len(nodes) > 16 or not isinstance(relations, list) or len(relations) > 32:
         nodes, relations = [], []
         errors.append('Exploration nodes/relations exceed limits')
-    defined = {n['id'] for n in spec.get('nodes', [])}
+    excluded = {r['id'] for r in frontier.get('excluded', []) if r.get('record_type') == 'nodes'}
+    limits = frontier.get('truncation', {}).get('limits', {})
+    defined = {n['id'] for n in [n for n in spec.get('nodes', []) if n['id'] not in excluded][:limits.get('max_nodes', 512)]}
     for node in nodes:
         if (not isinstance(node, dict) or not _text(node.get('id')) or node['id'] in defined
                 or node.get('kind') not in {'observable', 'model', 'concept', 'requirement', 'operation'}
@@ -327,6 +329,15 @@ def review_exploration(frontier, spec, proposal):
             errors.append('New concepts require fresh ID, kind, label and source')
         else:
             defined.add(node['id'])
+            try:
+                _metadata(node['source'], 'new concept source')
+                if frontier.get('as_of'):
+                    if node.get('available_on') is None:
+                        errors.append('New concept has UNKNOWN_AVAILABILITY at as_of')
+                    elif _date(node['available_on'], 'concept available_on') > _date(frontier['as_of'], 'as_of'):
+                        errors.append('New concept is a FUTURE_RECORD at as_of')
+            except ValueError as exc:
+                errors.append(str(exc))
     if proposal.get('action_kind') == 'knowledge_expansion' and not nodes and not relations:
         errors.append('Knowledge expansion must add a concept or relation')
     for relation in relations:

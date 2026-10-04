@@ -49,7 +49,15 @@ def _events(store, db=None):
 def _find(store, kind, ident):
     found = [e for e in _events(store) if e['kind'] == PREFIX + kind and e.get('id') == ident]
     require(len(found) <= 1, 'Duplicate structure identity')
-    return _read_ref(store, found[0]['record']) if found else None
+    if not found:
+        return None
+    value = _read_ref(store, found[0]['record'])
+    require(value.get('id') == ident, 'Structure record/event identity mismatch')
+    if kind == 'REQUEST':
+        require(digest(value['scope']) == value['scope_sha256'], 'Request scope hash mismatch')
+    if kind == 'PROPOSAL':
+        require(value['proposal_sha256'] == digest(value['proposal']), 'Retained proposal hash mismatch')
+    return value
 
 
 def _put(store, kind, ident, value, *, expected=None, check_snapshot=False):
@@ -154,6 +162,9 @@ def request(root, limit=3):
     require(type(limit) is int and 1 <= limit <= 8, 'Task limit must be 1..8')
     store = ProjectStore(root)
     with _meter(store, 'request'):
+        if 'advisor_policy' in store.snapshot()['contract']:
+            from rds_owned_advisor import review
+            review(store)  # Collect program-owned goals before freezing the task scope.
         state, saved = store.snapshot(), current(root)
         require(saved is not None, 'Declare dependencies before structure exploration')
         spec = saved['dependency_map']
@@ -451,6 +462,7 @@ def activate(root, ident):
     store = ProjectStore(root)
     prior = current(root)
     if prior and (prior.get('revision') or {}).get('kind') == PREFIX + 'ACTIVATION' and prior['revision']['id'] == ident:
+        _check_feedback(store, _find(store, 'PROPOSAL', ident), _find(store, 'FEEDBACK', ident))
         return {'status': 'EXPERIMENTAL_STRUCTURE_ACTIVE', 'id': ident, 'snapshot_sha256': prior['sha256'], 'logical_relations_adopted': 0}
     with _meter(store, 'activate'):
         row, observed = _find(store, 'PROPOSAL', ident), _find(store, 'FEEDBACK', ident)
