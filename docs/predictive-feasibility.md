@@ -34,7 +34,14 @@ conditional lower/upper predictions; these are not statistical confidence bounds
 Only the first remaining step of a feasible plan is admitted. Its complete
 CPU/GPU/other accounting allowances must fit too; these allowances are distinct
 from physical measurements. Existing reservations are attributed to their owning
-steps. The original campaign T0 and deadline apply to all methods. Input, code,
+steps. A plan cannot order a step before another step whose completion it directly
+requires. Cost feasibility also remains separate from execution readiness: if
+ordinary prerequisites block every admitted route, `next` and `advance` return an
+explicit prerequisite repair request without launching a worker or bypassing the
+dependency gate. External evidence and disjunctive alternatives are assessed by
+the ordinary runtime checks.
+
+The original campaign T0 and deadline apply to all methods. Input, code,
 numerical protocol or runtime changes invalidate old pilots. Measured device scope
 currently supports `hardware: "local-cpu"` only. Accelerator/backend forecasts
 remain `UNKNOWN`; the host fingerprint does not instrument GPU devices, clocks or

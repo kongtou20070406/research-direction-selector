@@ -23,7 +23,7 @@ class ToolWorkbenchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='rds-workbench-')
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.contract = fixture.prepare(self.root)
         self.store = ProjectStore(self.root)
 

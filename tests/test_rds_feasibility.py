@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,10 @@ class FeasibilityTests(unittest.TestCase):
     def cli(self, *args, ok=True):
         proc = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(self.root), *args],
                               capture_output=True, text=True, encoding='utf-8', timeout=25)
+        if os.environ.get('RDS_FEASIBILITY_TEST_LOG'):
+            with Path(os.environ['RDS_FEASIBILITY_TEST_LOG']).open('a', encoding='utf-8') as log:
+                log.write(json.dumps({'test': self.id(), 'root': str(self.root), 'args': args,
+                                      'returncode': proc.returncode, 'stdout': proc.stdout, 'stderr': proc.stderr}) + '\n')
         if ok:
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             return json.loads(proc.stdout)
@@ -57,6 +62,8 @@ class FeasibilityTests(unittest.TestCase):
         return results
 
     def test_complete_plan_denies_slow_before_launch_and_independently_verifies_fast(self):
+        next(n for n in self.contract['advisor_policy']['graph']['nodes'] if n['id'] == 'verify')['executable']['preconditions'] = [
+            {'fact': 'run.fast.succeeded', 'op': 'eq', 'value': True}]
         self.initialize()
         self.pilots()
         report = feasibility.assess(self.store, self.state())
@@ -85,6 +92,55 @@ class FeasibilityTests(unittest.TestCase):
         self.assertEqual(len(snap['receipts']), 5)
         self.assertEqual(snap['budget']['wall_seconds']['reserved'], 0)
         self.assertGreater(snap['budget']['wall_seconds']['spent_measured'], 0)
+
+    def test_cli_rejects_required_success_order_conflict_before_freeze(self):
+        policy = self.contract['advisor_policy']
+        next(n for n in policy['graph']['nodes'] if n['id'] == 'verify')['executable']['preconditions'] = [
+            {'fact': 'run.fast.succeeded', 'op': 'eq', 'value': True}]
+        next(p for p in policy['feasibility']['plans'] if p['id'] == 'fast')['steps'] = ['verify', 'fast']
+        (self.root / 'contract.json').write_text(json.dumps(self.contract), encoding='utf-8')
+        proc = self.cli('project', 'init', '--contract', str(self.root / 'contract.json'), ok=False)
+        self.assertIn('Completion plan order conflict', proc.stdout + proc.stderr)
+        self.assertEqual(self.launches(), [])
+
+    def test_order_check_preserves_prior_external_and_disjunctive_dependencies(self):
+        policy = self.contract['advisor_policy']
+        verify = next(n for n in policy['graph']['nodes'] if n['id'] == 'verify')['executable']
+        for condition in [
+                {'fact':'run.fast.succeeded','op':'eq','value':True},
+                {'fact':'run.fast.completed','op':'ne','value':False},
+                {'fact':'run.fast.status','op':'in','value':['COMPLETED','FAILED']}]:
+            verify['preconditions'] = [condition]
+            feasibility.validate(self.store, self.contract, policy)  # Earlier fast is legal; absent fast in slow plan is external.
+            with self.assertRaisesRegex(ValueError, 'order conflict'):
+                feasibility._validate_step_order(policy, ['verify', 'fast'])
+        for condition in [
+                {'fact':'run.fast.succeeded','op':'in','value':[True,False]},
+                {'fact':'run.fast.status','op':'in','value':['COMPLETED','UNREGISTERED']},
+                {'fact':'slow.result','op':'eq','value':4950}]:
+            verify['preconditions'] = [condition]
+            feasibility._validate_step_order(policy, ['verify', 'fast'])
+
+    def test_real_next_and_advance_keep_cost_feasible_prerequisite_block_explicit(self):
+        next(n for n in self.contract['advisor_policy']['graph']['nodes'] if n['id'] == 'fast')['executable']['preconditions'] = [
+            {'fact': 'slow.result', 'op': 'eq', 'value': 4950}]
+        self.initialize()
+        self.pilots()
+        before = self.store.snapshot()
+        for command in ('next', 'advance'):
+            report = self.cli('project', command)
+            self.assertIsNone(report['selected_run'])
+            self.assertIsNotNone(report['next_move'])
+            self.assertEqual(report['feasibility']['next_action'], 'RESOLVE_EXECUTION_PREREQUISITES')
+            self.assertEqual(report['feasibility']['execution_readiness'], 'BLOCKED')
+            self.assertIsNotNone(report['feasibility']['repair_request'])
+            self.assertIn('EXECUTION_PREREQUISITE_BLOCK', [w['kind'] for w in report['warnings']])
+            self.assertEqual(next(p for p in report['feasibility']['plans'] if p['id']=='fast')['status'], 'FEASIBLE')
+        after = self.store.snapshot()
+        self.assertEqual(after['runs'], before['runs'])
+        self.assertEqual(after['budget'], before['budget'])
+        self.assertEqual(after['receipts'], before['receipts'])
+        self.assertEqual(self.launches(), ['pilot-slow', 'pilot-fast', 'pilot-verify'])
 
     def test_unknown_is_explicit_and_only_bounded_pilot_is_selected(self):
         self.initialize()

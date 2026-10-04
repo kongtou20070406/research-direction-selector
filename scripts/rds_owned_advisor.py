@@ -541,8 +541,22 @@ def review(store, persist=True):
                 pilot_order = {p: i for i, p in enumerate(feasibility['bounded_pilots'])}
                 eligible.sort(key=lambda r: pilot_order.get(r['manifest']['id'], len(pilot_order)))
             if not active and not eligible and not goal_confirmed:
-                result['next_move'] = feasibility['repair_request']
-                result['warnings'].append({'kind': 'PREDICTIVE_FEASIBILITY_BLOCK', 'plans': feasibility['plans']})
+                if allowed:
+                    # Cost admission does not establish execution readiness. The
+                    # ordinary dependency/method gates above retain authority.
+                    feasibility['execution_readiness'] = 'BLOCKED'
+                    feasibility['next_action'] = 'RESOLVE_EXECUTION_PREREQUISITES'
+                    feasibility['repair_request'] = {
+                        'kind': 'RESOLVE_PREMISE', 'authorization': 'UNCHANGED',
+                        'reason': 'Forecast-admitted routes have no currently eligible execution step; resolve the ordinary prerequisites without bypassing them',
+                        'admitted_runs': sorted(allowed),
+                        'prompt': 'Inspect the current candidate prerequisite and method reports; obtain the missing original evidence or propose an authorized method revision, then run project next. Preserve the goal, budget and dependency gates.'}
+                    if result['next_move'] is None:
+                        result['next_move'] = deepcopy(feasibility['repair_request'])
+                elif feasibility['repair_request'] is not None:
+                    result['next_move'] = feasibility['repair_request']
+                result['warnings'].append({'kind': 'EXECUTION_PREREQUISITE_BLOCK' if allowed
+                                          else 'PREDICTIVE_FEASIBILITY_BLOCK', 'plans': feasibility['plans']})
         frontier = [r for r in eligible if not ready[r['candidate']].get('dominated_by')]
         chosen = (active or frontier or eligible)
         if not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':

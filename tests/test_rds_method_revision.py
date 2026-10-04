@@ -200,6 +200,54 @@ class MethodRevisionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'CAS integrity'):
             self.store.snapshot()
 
+    def test_owned_cli_continues_with_checkpoints_before_and_after_revision(self):
+        failed = self.execute_route('r1')
+        self.assertEqual(failed['run_status'], 'FAILED')
+        before = self.store.snapshot()
+        save_checkpoint(self.root, 'before-tool', before, kind='project')
+        revision.apply(self.store, self.proposal())
+        revised = self.store.snapshot()
+        save_checkpoint(self.root, 'after-tool', revised, kind='project')
+        self.assertEqual(revised['budget'], before['budget'])
+        self.assertEqual(revised['receipts'], before['receipts'])
+        for action in ('next', 'advance'):
+            completed = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'),
+                                       '--root', str(self.root), 'project', action],
+                                      capture_output=True, text=True, encoding='utf-8', timeout=20)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            result = json.loads(completed.stdout)
+            if action == 'next':
+                self.assertEqual(result['selected_run'], 'r2')
+                self.assertEqual(self.store.snapshot()['runs'], before['runs'])
+            else:
+                self.assertEqual(result['receipt']['run_id'], 'r2')
+                self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
+                self.assertEqual(result['advisor']['status'], 'REVIEWED')
+        live = self.store.snapshot()
+        self.assertEqual(len(live['runs']), 2)
+        self.assertEqual(live['receipts'][0], failed)
+        self.assertEqual(live['budget']['wall_seconds']['cap'], 30)
+        self.assertGreater(live['budget']['wall_seconds']['spent_measured'],
+                           before['budget']['wall_seconds']['spent_measured'])
+        self.assertEqual(live['budget']['wall_seconds']['reserved'], 0)
+
+    def test_owned_history_rejects_self_consistent_foreign_checkpoint_contract(self):
+        save_checkpoint(self.root, 'foreign-tool', self.store.snapshot(), kind='project')
+        revision.apply(self.store, self.proposal())
+        with self.store._db() as db:
+            record = json.loads(db.execute("SELECT body FROM checkpoints WHERE id='foreign-tool'").fetchone()[0])
+            record['snapshot']['contract']['budget']['wall_seconds'] = 300
+            record['contract_sha256'] = digest(record['snapshot']['contract'])
+            raw = canonical(record)
+            # Simulate offline corruption beyond the normal append-only writer.
+            db.execute('DROP TRIGGER checkpoint_no_update')
+            db.execute("UPDATE checkpoints SET body=?,sha=? WHERE id='foreign-tool'", (raw, digest(record)))
+        from rds_owned_advisor import review
+        with self.assertRaisesRegex(ValueError, 'Checkpoint contract mismatch'):
+            review(self.store)
+        self.assertEqual(self.store.snapshot()['runs'], [])
+        self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['spent_measured'], 0)
+
     def test_append_only_events_reject_update(self):
         revision.apply(self.store, self.proposal())
         with self.store._db() as db:

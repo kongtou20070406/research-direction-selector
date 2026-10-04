@@ -18,6 +18,35 @@ def runtime_fingerprint():
                    'python': platform.python_version()})
 
 
+def _validate_step_order(policy, steps):
+    """Reject only direct predicates that require a later step to finish.
+
+    Other plans, external evidence and disjunctive values may supply legal
+    alternatives. They remain subject to the ordinary runtime dependency gate.
+    """
+    candidates = {r['manifest']['id']: r['candidate'] for r in policy['routes']}
+    configs = {n.get('executable', {}).get('action', {}).get('id'): n.get('executable', {})
+               for n in policy['graph']['nodes']}
+    terminal = {'COMPLETED', 'FAILED', 'INTERRUPTED'}
+    for index, step in enumerate(steps):
+        for condition in configs.get(candidates[step], {}).get('preconditions', []):
+            if not isinstance(condition, dict):
+                continue
+            fact, op, value = condition.get('fact'), condition.get('op', 'eq'), condition.get('value')
+            for producer in steps[index:]:
+                needs_finish = False
+                if fact in {f'run.{producer}.succeeded', f'run.{producer}.completed'}:
+                    needs_finish = ((op == 'eq' and value is True) or (op == 'ne' and value is False)
+                                    or (op == 'in' and isinstance(value, list) and bool(value)
+                                        and all(v is True for v in value)))
+                elif fact == f'run.{producer}.status':
+                    needs_finish = ((op == 'eq' and isinstance(value, str) and value in terminal)
+                                    or (op == 'in' and isinstance(value, list) and bool(value)
+                                        and all(isinstance(v, str) and v in terminal for v in value)))
+                require(not needs_finish,
+                        f"Completion plan order conflict: '{step}' requires '{producer}' to finish first")
+
+
 def validate(store, contract, policy):
     config = policy.get('feasibility')
     if config is None:
@@ -62,6 +91,7 @@ def validate(store, contract, policy):
         steps = plan['steps']
         require(isinstance(steps, list) and 1 <= len(steps) <= 64 and len(set(steps)) == len(steps)
                 and all(s in routes and s not in pilots for s in steps), 'Plan must name distinct non-pilot routes')
+        _validate_step_order(policy, steps)
         require(isinstance(plan['goal_facts'], list) and set(plan['goal_facts']) == goals,
                 'Completion plan must deliver every unchanged goal predicate')
         require(all(observations.get(g) in steps or any(g == f'run.{s}.{k}' for s in steps
