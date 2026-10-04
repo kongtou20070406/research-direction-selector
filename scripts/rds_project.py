@@ -727,7 +727,12 @@ class ProjectStore:
                 pins, _ = ProjectStore(source)._ledger_pins()
             except (ValueError, sqlite3.Error) as exc:
                 raise ValueError(f"Predecessor ledger cannot be superseded: {exc}") from exc
-            predecessor = {"schema": 1, "root_path": os.path.relpath(source, self.root), **pins,
+            try:
+                root_path = os.path.relpath(source, self.root)
+            except ValueError:
+                # Windows has no relative path across drives or to a UNC share; traversal joins an absolute path as-is.
+                root_path = str(source)
+            predecessor = {"schema": 1, "root_path": root_path, **pins,
                            "assurance": "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION"}
         self.state_dir.mkdir(exist_ok=True)
         with self._db() as db:
