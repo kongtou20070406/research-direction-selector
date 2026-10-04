@@ -701,6 +701,14 @@ def brief(root, value, version, formal=False):
         if owned.get('next_move'):
             move = owned['next_move']
             summary['next_move'] = move.get('kind', move) if isinstance(move, dict) else move
+        if owned.get('feasibility'):
+            forecast = owned['feasibility']
+            summary['feasibility'] = {'next_action':forecast['next_action'],
+                'plans':[{'id':p['id'],'status':p['status']} for p in forecast['plans'][:4]],
+                'pilot_budget':forecast['pilot_budget']}
+            repair = forecast.get('repair_request')
+            if repair:
+                summary['tool_workbench_command'] = repair['tool_workbench_command']
         coverage = owned.get('coverage', {})
         summary['coverage'] = {key: coverage.get(key, 0) for key in ('runs', 'receipts', 'artifacts', 'parsed_observations')}
         summary['coverage']['unparsed_outputs'] = len(coverage.get('unparsed_outputs', []))
