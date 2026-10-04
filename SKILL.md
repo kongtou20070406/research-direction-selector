@@ -49,6 +49,11 @@ ON applicable research request:
         READ selection, coverage gaps/errors and the saved report when needed
         RUN project advance --brief FOR at most one program-selected authorized step
         KEEP original receipt + automatic Advisor update; unknown remains UNKNOWN
+        IF advisor_policy declares tool_bindings:
+            READ tool_utilization FOR obligation applicability, actual calls and decision consumers
+            USE only qualified current-input candidates within frozen routes and budget
+            KEEP UNKNOWN and unconsumed outputs visible; do not optimize for command counts
+            READ docs/owned-tool-consumers.md FOR the finite native application interface
         IF collection failed: recover collection; NEVER repeat completed training
         IF predictive plan is blocked or a method failed:
             READ docs/predictive-feasibility.md and the returned repair_request

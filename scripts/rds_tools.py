@@ -142,7 +142,44 @@ raise SystemExit(0 if report['status'] == 'PASS' else 1)
 '''
 
 
+def _preparation_contract(store, db):
+    table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+    if table and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
+        contract = store._contract(db)
+        require('tool_bindings' not in contract.get('advisor_policy', {}),
+                'Qualify finite tool inputs before this owned project init; live work must use its frozen budget and routes')
+        return True  # Initialized legacy flow retains its existing native entry.
+    return False
+
+
+def _begin_preparation(store, request):
+    """Freeze qualification intent against init in the existing root ledger."""
+    from rds_artifacts import strict_json
+    with store._db() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if _preparation_contract(store, db):
+            return
+        db.execute('CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,body TEXT NOT NULL)')
+        for operation in ('UPDATE', 'DELETE'):
+            db.execute(f"CREATE TRIGGER IF NOT EXISTS events_no_{operation.lower()} BEFORE {operation} ON events "
+                       "BEGIN SELECT RAISE(ABORT,'events are append-only'); END")
+        rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_STARTED' LIMIT 129").fetchall()
+        require(len(rows) <= 128, 'Native preparation intents exceed 128')
+        existing = [strict_json(row['body']) for row in rows
+                    if strict_json(row['body'])['request']['token'] == request['token']]
+        event = {'kind': 'TOOL_PREPARATION_STARTED', 'request': request, 'request_sha256': digest(request)}
+        if existing:
+            require(len(existing) == 1 and existing[0] == event, 'Native preparation identity changed')
+        else:
+            require(len(rows) < 128, 'Native preparation intents exceed 128')
+            db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
+
+
 def validate(root, name, case_file, timeout=10, ledger=None):
+    store = ProjectStore(root)
+    if store.path.is_file():
+        with store._db(True) as db:
+            _preparation_contract(store, db)  # Early diagnostic; repeat atomically before launch.
     name = _name(name)
     candidate = get(root, 'tool:' + name)
     require(candidate is not None, 'Extract a named tool candidate first')
@@ -156,6 +193,12 @@ def validate(root, name, case_file, timeout=10, ledger=None):
                     'ledger': str(Path(ledger).resolve()) if ledger else None})[:32]
     workspace = Path(root).resolve() / '.rds' / 'rsi' / 'tool-checks' / token
     require(workspace.resolve().is_relative_to(Path(root).resolve()), 'Tool workspace escapes project')
+    _begin_preparation(store, {'token': token, 'candidate': {'id': candidate['id'], 'sha256': digest(candidate)},
+                             'cases_sha256': hashlib.sha256(cases).hexdigest(),
+                             'driver_sha256': hashlib.sha256(driver).hexdigest(), 'timeout_seconds': timeout,
+                             'ledger': str(Path(ledger).resolve()) if ledger else None,
+                             'job_root': (workspace / '.rds/exec/tool-check').relative_to(store.root).as_posix(),
+                             'validation_id': 'validation:' + token})
     workspace.mkdir(parents=True, exist_ok=True)
     for filename, raw in [('candidate.py', code), ('cases.json', cases), ('driver.py', driver)]:
         path = workspace / filename
@@ -171,6 +214,7 @@ def validate(root, name, case_file, timeout=10, ledger=None):
                            ledger=None, choose=None)
     run = execute(args)
     receipt = run.get('receipt')
+    require(receipt is not None, 'Native preparation is unresolved; inspect or recover the original child without rerunning it')
     status = ('LOCAL_CASES_PASSED' if receipt and receipt['run_status'] == 'SUCCEEDED' else
               'FAILED' if receipt and receipt['run_status'] == 'FAILED' else 'UNKNOWN')
     record = put(root, 'validation:' + token, 'tool-validation', canonical({'receipt': receipt}).encode('utf-8'),

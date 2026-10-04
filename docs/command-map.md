@@ -60,6 +60,7 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `rsi validate` | Execute finite local qualification cases | Extracted `--name`, `--cases`, bounded timeout; supply `--ledger` when charging an existing research budget | [Local tools](native-research.md) |
 | `rsi register` | Register an eligible validated local function | `--name`; `--validation` may be omitted only for one passing validation; rechecks bindings and receipt | [Local tools](native-research.md) |
 | `rsi use` | Verify and optionally export a retained function | Registered `--name`; optional project `--output`; changed/refuted evidence blocks reuse | [Local tools](native-research.md) |
+| `rsi prepare-application` | Prepare a qualified finite function for a current owned obligation | Before project init: exact tool, inputs/cases, goal/action, exported code, fixed driver/request, output and observation; returns bindings and argv without starting work | [Owned tool consumers](owned-tool-consumers.md) |
 
 ## Mathematical verification
 

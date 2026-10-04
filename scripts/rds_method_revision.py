@@ -214,6 +214,9 @@ def _policy_change(store, db, old, new):
         require([o for o in previous['observations'] if o['run_id'] == run_id]
                 == [o for o in revised.get('observations', []) if o['run_id'] == run_id],
                 'Registered observations are immutable: ' + run_id)
+        require([b for b in previous.get('tool_bindings', []) if b['run_id'] == run_id]
+                == [b for b in revised.get('tool_bindings', []) if b['run_id'] == run_id],
+                'Registered tool application is immutable: ' + run_id)
     from rds_owned_advisor import validate_policy
     validate_policy(store, new)
 

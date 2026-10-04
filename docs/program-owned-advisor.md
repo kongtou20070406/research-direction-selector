@@ -3,6 +3,9 @@
 For optional complete-plan forecasts, bounded pilots and same-ledger executable
 tool improvement, see [predictive feasibility](predictive-feasibility.md).
 
+For locally qualified Python functions applied through frozen routes and read
+by current decision predicates, see [owned tool consumers](owned-tool-consumers.md).
+
 This workflow addresses [#119](https://github.com/kongtou20070406/research-direction-selector/issues/119): an agent submitting only its preferred direction or favorable results must not control the evidence used to choose its next run.
 
 The researcher establishes the goal, permitted commands, result readers and budget in the frozen project contract. After initialization, RDS receives run results, builds the current evidence graph, derives Advisor inputs and selects the next executable route. The agent can request a bounded next step and inspect its reasons. It cannot replace the inputs to this workflow with another context or a handwritten success summary.

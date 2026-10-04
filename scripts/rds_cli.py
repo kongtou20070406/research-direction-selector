@@ -1442,6 +1442,13 @@ def parser():
     rsi_use.add_argument('--output', '-o', help='Export a verified local module to a project-relative .py file without overwriting')
     rsi_list = rsi_actions.add_parser('list', help='Discover local tool entries; registration is not a fresh reuse check')
     rsi_list.add_argument('--name', help='Inspect one exact local tool name without dumping unrelated records')
+    rsi_prepare = rsi_actions.add_parser('prepare-application', help='Export a qualified finite task candidate before frozen project init; no execution')
+    for field in ('name', 'inputs', 'cases', 'code-path', 'driver', 'request', 'output',
+                  'decision', 'candidate', 'run-id', 'obligation'):
+        rsi_prepare.add_argument('--' + field, required=True)
+    rsi_prepare.add_argument('--action-file', required=True, help='Exact action JSON, including target and operation')
+    rsi_prepare.add_argument('--observation-fact', action='append', required=True,
+                             help='Owned JSON observations that can carry this result into a decision')
     for child in rsi_actions.choices.values():
         child.add_argument('--json', action='store_true')
     commands.add_parser("init").add_argument("--contract", required=True)
@@ -1702,8 +1709,12 @@ def _main():
             from rds_math import command
             result = command(args)
         elif args.command == 'rsi':
-            from rds_tools import command
-            result = command(args)
+            if args.action == 'prepare-application':
+                from rds_tool_application import prepare
+                result = prepare(args)
+            else:
+                from rds_tools import command
+                result = command(args)
         elif args.command == 'guard':
             from rds_guard import evaluate
             result = evaluate(args.policy, args.root)
