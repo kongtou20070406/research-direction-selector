@@ -503,7 +503,7 @@ def _selected_support_cone(spec, node_id, closure, derivations):
 
 def review_hypergraph(value, *, locator="input", retract_nodes=(), retract_rules=(),
                       refute_nodes=(), refute_rules=(), change_source=None, trace=None, updates=(),
-                      update_locators=(), audit_receipts_enabled=False):
+                      update_locators=(), audit_receipts_enabled=False, read_receipt=None):
     """Own input compilation, status changes and one current dependency analysis.
 
     The returned dependency_map is the next input: callers submit changes and
@@ -525,7 +525,7 @@ def review_hypergraph(value, *, locator="input", retract_nodes=(), retract_rules
     except ValueError as exc:
         input_review["errors"].append({"path": "$", "reason": str(exc)})
         return incomplete()
-    grounded = frozenset(audit_receipts(spec)['grounded_receipts']) if audit_receipts_enabled else frozenset()
+    grounded = frozenset(audit_receipts(spec, read_receipt)['grounded_receipts']) if audit_receipts_enabled else frozenset()
     previous_closure, previous_derivations, _, _ = _supported_closure(nodes, edges, grounded)
     original_spec = spec
     candidate = deepcopy(spec)
@@ -623,7 +623,8 @@ def review_hypergraph(value, *, locator="input", retract_nodes=(), retract_rules
                 # Withdraw support without destroying the original evidence binding.
                 # The change's source is recorded in the persisted revision.
                 record.update(status=changes[key])
-    result = analyze_hypergraph(revised, audit_receipts_enabled=audit_receipts_enabled)
+    result = analyze_hypergraph(revised, audit_receipts_enabled=audit_receipts_enabled,
+                               read_receipt=read_receipt)
     result.update(status="INCOMPLETE" if result["truncated"] else "ANALYZED",
                   dependency_map=revised, input_review=input_review, authorization="UNCHANGED")
     if applied:
@@ -679,74 +680,95 @@ def _operator_verdict_target(spec, target_token):
     _require(False, "unknown " + kind + " target: " + ident)
 
 
-def apply_operator_verdict(spec, target_token, operator_receipt, *, locator="operator-verdict"):
-    """Ingest one operator execution verdict into the dependency map (Issue #49).
+def _bounded_verdict_json(value):
+    """Refuse non-finite/oversize verdict data before copying or changing a map."""
+    size = 0
+    try:
+        for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(value):
+            size += len(chunk.encode("utf-8"))
+            if size > 8 * 1024 * 1024:
+                raise ValueError("operator verdict and dependency declaration exceed 8 MiB")
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise ValueError("operator verdict requires bounded, finite JSON data: " + str(exc)) from exc
 
-    A deterministic bridge between a runnable operator's structured result and
-    the declared TMS: PASS with a receipt-binding keeps the token's support
-    obligation open to the existing grounded-receipt audit (a self-declared
-    PASS is not support); CONTRADICTED with a witness refutes the target and
-    recomputes the closure and minimal missing-evidence sets through the
-    normal review; anything else leaves the map unchanged. The verdict and
-    witness are archived in the refuted record's source locator, so no second
-    ledger or manual JSON edit is needed. Declared impact never verifies
-    scientific truth: ASSURANCE is unchanged.
+
+def apply_operator_verdict(spec, target_token, operator_receipt, *, locator="operator-verdict"):
+    """Apply a scoped operator verdict through the existing TMS and receipt audit.
+
+    PASS can declare support only with a grounded succeeded execution receipt.
+    A bounded_finite_model FAIL/COUNTEREXAMPLE_FOUND is adapted to CONTRADICTED;
+    other FAIL results remain unproven. Refutations require an operator, exact
+    input digest and finite bounded witness. The revision archives the change
+    alongside the full previous source; the original source remains intact.
+    Execution evidence and declared impact never verify scientific truth.
     """
     from rds_hypergraph_input import prepare_input
     spec, input_review = prepare_input(spec, locator)
     _require(not input_review["errors"],
              "invalid dependency map: " + "; ".join(row["reason"] for row in input_review["errors"][:3]))
     _require(isinstance(operator_receipt, dict), "operator receipt must be an object")
-    status = operator_receipt.get("status")
+    _bounded_verdict_json({"dependency_map": spec, "operator_receipt": operator_receipt})
+    received_status = operator_receipt.get("status")
+    status = received_status
+    if status == "FAIL":
+        status = "CONTRADICTED" if (operator_receipt.get("operator") == "bounded_finite_model"
+                                    and operator_receipt.get("assurance") == "COUNTEREXAMPLE_FOUND") else "ERROR"
     _require(status in ("PASS", "CONTRADICTED", "UNKNOWN", "ERROR"),
-             "operator verdict status must be PASS, CONTRADICTED, UNKNOWN or ERROR")
+             "operator verdict status must be PASS, CONTRADICTED, UNKNOWN or ERROR; "
+             "only bounded_finite_model FAIL/COUNTEREXAMPLE_FOUND is a refutation")
     kind, ident, record = _operator_verdict_target(spec, target_token)
+    token = kind + ":" + ident
+    key = "nodes" if kind == "node" else "hyperedges"
+    read_receipt = receipt_reader()
+    metadata = {"target_token": token, "status": status, "received_status": received_status,
+                "effect": "UNCHANGED"}
+    if status == "PASS" and operator_receipt.get("evidence") is not None:
+        binding = _evidence(operator_receipt["evidence"], kind, ident)
+        candidate = deepcopy(spec)
+        next(row for row in candidate[key] if row["id"] == ident)["evidence"] = binding
+        audit = audit_receipts(candidate, read_receipt)
+        target_audit = next(row for row in audit["audits"] if token in row["used_by"])
+        metadata["receipt_audit"] = target_audit
+        if target_audit["status"] == "GROUNDED":
+            updated = {**deepcopy(record), "status": "SUPPORTED", "evidence": binding}
+            result = review_hypergraph(spec, locator=locator, updates=[{key: [updated], "goals": []}],
+                                      audit_receipts_enabled=True, read_receipt=read_receipt)
+            _require(not result["input_review"]["errors"], "invalid support update: " +
+                     str(result["input_review"]["errors"][:3]))
+            metadata.update(effect="SUPPORTED", meaning="Grounded execution receipt permits declared support; not statement verification")
+            result["operator_verdict"] = metadata
+            return result
     if status != "CONTRADICTED":
-        # PASS/UNKNOWN/ERROR: nothing is claimed beyond the existing map. A PASS
-        # without a grounded receipt stays a proof obligation, fail-closed.
-        result = review_hypergraph(spec, locator=locator)
-        result["operator_verdict"] = {
-            "target_token": kind + ":" + ident, "status": status,
-            "effect": "UNCHANGED",
-            "meaning": "Declared map unchanged; support still requires grounded receipt evidence" if status == "PASS"
-                       else "Unproven verdict retains the current status and obligations"}
+        result = review_hypergraph(spec, locator=locator, audit_receipts_enabled=True,
+                                  read_receipt=read_receipt)
+        metadata["meaning"] = ("PASS requires a grounded execution receipt; declared status unchanged" if status == "PASS"
+                               else "Unproven verdict retains the current status and obligations")
+        result["operator_verdict"] = metadata
         return result
     witness = operator_receipt.get("witness")
     _require(isinstance(witness, (dict, list, str, int, float)) and witness is not None,
              "a CONTRADICTED verdict requires a witness value")
     operator_name = operator_receipt.get("operator")
-    _require(isinstance(operator_name, str) and operator_name.strip(),
-             "operator receipt must name the operator")
+    _require(isinstance(operator_name, str) and operator_name.strip(), "operator receipt must name the operator")
     input_digest = operator_receipt.get("input_sha256")
-    if input_digest is not None:
-        _require(isinstance(input_digest, str) and len(input_digest) == 64
-                 and all(c in "0123456789abcdefABCDEF" for c in input_digest),
-                 "input_sha256 must have 64 hexadecimal characters")
-        input_digest = input_digest.lower()
-    archive = {"locator": (str(locator) + "#witness/" + kind + "/" + ident),
-               "operator": operator_name.strip(),
-               "verdict_status": "CONTRADICTED",
-               "input_sha256": input_digest,
-               "witness": witness}
-    if isinstance(record.get("source"), str):
-        archive["previous_locator"] = record["source"]
-    elif isinstance(record.get("source"), dict) and isinstance(record["source"].get("locator"), str):
-        archive["previous_locator"] = record["source"]["locator"]
-    refuted = deepcopy(spec)
-    for row in refuted["nodes" if kind == "node" else "hyperedges"]:
-        if row.get("id") == ident:
-            row["source"] = archive
-            break
-    result = review_hypergraph(refuted, locator=locator,
-                               **({"refute_nodes": [ident]} if kind == "node" else {"refute_rules": [ident]}))
-    result["operator_verdict"] = {
-        "target_token": kind + ":" + ident, "status": "CONTRADICTED", "effect": "REFUTED",
-        "operator": operator_name.strip(), "input_sha256": input_digest, "witness": witness,
-        "lost_support": result.get("revision", {}).get("lost_support", []),
-        "minimal_missing_evidence_sets": {goal: row["minimal_missing_evidence_sets"]
-                                          for goal, row in result["goals"].items()},
-        "meaning": "Witness refutes the declared record; remaining routes and the recalculated "
-                   "blocker sets above are declared impact, not scientific verification"}
+    _require(isinstance(input_digest, str) and len(input_digest) == 64
+             and all(c in "0123456789abcdefABCDEF" for c in input_digest),
+             "input_sha256 must have 64 hexadecimal characters")
+    input_digest = input_digest.lower()
+    archive = {"locator": str(locator) + "#witness/" + kind + "/" + ident,
+               "operator": operator_name.strip(), "verdict_status": "CONTRADICTED",
+               "received_status": received_status, "input_sha256": input_digest, "witness": witness}
+    _bounded_verdict_json({"dependency_map": spec, "change_source": archive})
+    result = review_hypergraph(spec, locator=locator, change_source=archive,
+                              audit_receipts_enabled=True, read_receipt=read_receipt,
+                              **({"refute_nodes": [ident]} if kind == "node" else {"refute_rules": [ident]}))
+    _require(not result["input_review"]["errors"], "invalid refutation: " + str(result["input_review"]["errors"][:3]))
+    metadata.update(effect="REFUTED", operator=operator_name.strip(), input_sha256=input_digest,
+                    witness=deepcopy(witness), lost_support=result.get("revision", {}).get("lost_support", []),
+                    minimal_missing_evidence_sets={goal: row["minimal_missing_evidence_sets"]
+                                                   for goal, row in result["goals"].items()},
+                    meaning="Witness refutes the declared record; remaining routes and blockers are declared impact, not scientific verification")
+    result["operator_verdict"] = metadata
     return result
 
 
