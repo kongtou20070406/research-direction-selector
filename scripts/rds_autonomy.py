@@ -20,6 +20,21 @@ PROCESSED = 'AUTONOMY_MODEL_PROCESSED'
 MAX_BYTES = 2 * 1024 * 1024
 
 
+class ModelResultIntegrityError(ValueError):
+    """Original evidence failures are not feedback about a new method."""
+
+
+def _processed_once(db, body):
+    previous = [e for e in _events(db, (PROCESSED,)) if e['run_id'] == body['run_id']]
+    require(len(previous) <= 1, 'Duplicate processed model result')
+    if previous:
+        require({k: v for k, v in previous[0].items() if k != 'sha256'} == body,
+                'Processed model result conflicts with its retained outcome')
+        return previous[0]['outcome']
+    _append(db, body)
+    return body['outcome']
+
+
 def _hash_event(body):
     return digest({k: v for k, v in body.items() if k != 'sha256'})
 
@@ -66,9 +81,8 @@ def validate_policy(store, contract, policy):
         path = store._path(slot['worker_path'])
         bindings = [b for b in contract['bindings'] if store._path(b['path']) == path]
         require(len(bindings) == 1 and bindings[0]['role'] == 'code' and
-                bindings[0]['sha256'] == file_sha(Path(__file__).with_name('rds_autonomy_worker.py')) and
                 slot['worker_path'] not in contract['method_evolution']['code_paths'],
-                'Repair worker must be the immutable program adapter')
+                'Repair worker must have an immutable genesis code binding')
         route = routes[slot['run_id']]
         argv = route['manifest']['argv']
         require(len(argv) == 5 and argv[1:] == ['-B', slot['worker_path'], '--run', slot['run_id']] and
@@ -177,13 +191,23 @@ def bind_run(store, db, contract, run):
     if config:
         require(len(store._runs(db)) < config['max_steps'], 'AUTONOMY_TOTAL_STEP_LIMIT')
     if config and run['id'] in {s['run_id'] for s in config['repair_slots']}:
+        _check_worker_adapter(store, contract, run['id'])
         event = next((e for e in records(store, db, contract) if e['kind'] == REQUESTED and e['run_id'] == run['id']), None)
         require(event is not None and event['parent_sha256'] == run['effective_contract_sha256'], 'Repair request parent is stale')
         run['autonomy_request'] = deepcopy(event['request'])
 
 
+def _check_worker_adapter(store, contract, rid):
+    slot = next(s for s in contract['advisor_policy']['autonomy']['repair_slots'] if s['run_id'] == rid)
+    path = store._path(slot['worker_path'])
+    bound = next(b for b in contract['bindings'] if store._path(b['path']) == path)
+    require(file_sha(path) == bound['sha256'] == file_sha(Path(__file__).with_name('rds_autonomy_worker.py')),
+            'Unsupported adapter for a new model attempt; retain and inspect original settled evidence')
+
+
 def check_run(store, db, contract, run):
     if 'autonomy_request' in run:
+        _check_worker_adapter(store, contract, run['id'])
         from rds_math import blob
         request = strict_json(blob(store.root, run['autonomy_request']).decode('utf-8'))
         require(request['run_id'] == run['id'] and request['parent_sha256'] == run['effective_contract_sha256'],
@@ -251,23 +275,59 @@ def process_result(store, event, receipt):
     from rds_method_revision import apply
     from rds_tool_workbench import prepare
     from rds_owned_advisor import _read_original
-    request = strict_json(blob(store.root, event['request']).decode('utf-8'))
     rid = event['run_id']
-    with store._db(True) as db:
-        prepared = next((e for e in _events(db, ('AUTONOMY_PROPOSAL_VALIDATED',)) if e['run_id'] == rid), None)
+    try:
+        request = strict_json(blob(store.root, event['request']).decode('utf-8'))
+        with store._db(True) as db:
+            db.execute('BEGIN')
+            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
+            run = store._run(db, rid)
+            require(row is not None and store._receipt(row) == receipt and
+                    receipt['attempt_id'] == run['attempt_id'] and receipt['manifest_sha256'] == run['manifest_sha256'] and
+                    receipt['argv'] == run['manifest']['argv'] and receipt['executor_sha256'] == run['executor_sha256'] and
+                    receipt['process_status'] == run['status'],
+                    'Model result is not the retained original receipt')
+            require(db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                               "AND json_extract(body,'$.run_id')=? AND json_extract(body,'$.sha256')=?",
+                               (rid, receipt['sha256'])).fetchone(), 'Model result lacks original completion')
+            for artifact in receipt['artifacts']:
+                _read_original(store, artifact)  # Includes raw provider/trace; no current-code rebinding during recovery.
+            done = [e for e in _events(db, (PROCESSED,)) if e['run_id'] == rid]
+            require(len(done) <= 1, 'Duplicate processed model result')
+            if done:
+                require(done[0]['receipt_sha256'] == receipt['sha256'], 'Processed model receipt differs')
+                return done[0]['outcome']
+    except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
+        raise ModelResultIntegrityError(str(exc)) from exc
+    try:
+        with store._db(True) as db:
+            prepared = next((e for e in _events(db, ('AUTONOMY_PROPOSAL_VALIDATED',)) if e['run_id'] == rid), None)
+        if prepared:
+            require(prepared['receipt_sha256'] == receipt['sha256'], 'Retained proposal receipt differs')
+    except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
+        raise ModelResultIntegrityError(str(exc)) from exc
     if prepared:
-        require(prepared['receipt_sha256'] == receipt['sha256'], 'Retained proposal receipt differs')
-        proposal = strict_json(blob(store.root, prepared['proposal']).decode('utf-8'))
+        try:
+            proposal = strict_json(blob(store.root, prepared['proposal']).decode('utf-8'))
+        except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
+            raise ModelResultIntegrityError(str(exc)) from exc
     else:
         outcome, reason, proposal = 'MODEL_OUTCOME_UNKNOWN', 'Provider has no original successful response', None
         if receipt['run_status'] == 'SUCCEEDED':
-            item = next((a for a in receipt['artifacts'] if a['path'] == request['response_path']), None)
-            require(item is not None, 'Model response is not owned')
-            response = strict_json(_read_original(store, item, keep=True).decode('utf-8'))
-            require(response['request_sha256'] == event['request']['sha256'] and response['run_id'] == rid and
-                    response['provider'] == request['provider'], 'Model response/request/provider identity differs')
-            outcome, reason = response['status'].upper(), response['reason']
-            if response['status'] == 'proposed':
+            try:
+                item = next((a for a in receipt['artifacts'] if a['path'] == request['response_path']), None)
+                require(item is not None, 'Model response is not owned')
+                raw = _read_original(store, item, keep=True)
+                response = strict_json(raw.decode('utf-8')) if raw is not None else None
+                if response is not None:
+                    require(response['request_sha256'] == event['request']['sha256'] and response['run_id'] == rid and
+                            response['provider'] == request['provider'], 'Model response/request/provider identity differs')
+                    outcome, reason = response['status'].upper(), response['reason']
+                else:
+                    reason = 'ORIGINAL_MODEL_RESPONSE_JSON_BYTE_LIMIT'
+            except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
+                raise ModelResultIntegrityError(str(exc)) from exc
+            if response is not None and response['status'] == 'proposed':
                 require(isinstance(response['source'], str) and response['source'].strip() and
                         len(response['source'].encode('utf-8')) <= MAX_BYTES and
                         isinstance(response['reason'], str) and 1 <= len(response['reason'].strip()) <= 2048,
@@ -289,14 +349,14 @@ def process_result(store, event, receipt):
         if proposal is None:
             with store._db() as db:
                 db.execute('BEGIN IMMEDIATE')
-                _append(db, {'kind': PROCESSED, 'run_id': rid, 'receipt_sha256': receipt['sha256'],
-                             'outcome': outcome, 'reason': reason})
+                _processed_once(db, {'kind': PROCESSED, 'run_id': rid, 'receipt_sha256': receipt['sha256'],
+                                     'outcome': outcome, 'reason': reason})
             return outcome
     result = apply(store, proposal)
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
-        _append(db, {'kind': PROCESSED, 'run_id': rid, 'receipt_sha256': receipt['sha256'],
-                     'outcome': 'ADOPTED', 'revision_id': proposal['id'], 'revision_sha256': result['contract_sha256']})
+        _processed_once(db, {'kind': PROCESSED, 'run_id': rid, 'receipt_sha256': receipt['sha256'],
+                             'outcome': 'ADOPTED', 'revision_id': proposal['id'], 'revision_sha256': result['contract_sha256']})
     return 'ADOPTED'
 
 
@@ -386,6 +446,8 @@ def drive(store, max_steps=8, prepare_only=False):
                 original = unfinished[0]
                 try:
                     process_result(store, original, receipts[original['run_id']])
+                except ModelResultIntegrityError:
+                    raise  # Repair original evidence; never buy another method.
                 except (ValueError, KeyError, TypeError, UnicodeError) as exc:
                     # An invalid suggestion is feedback for the next distinct
                     # authorized method, not an excuse to repeat this attempt.
@@ -394,9 +456,9 @@ def drive(store, max_steps=8, prepare_only=False):
                         from rds_method_revision import pending_revision
                         require(pending_revision(db) is None,
                                 'Prepared adoption needs exact retained recovery: ' + str(exc))
-                        _append(db, {'kind': PROCESSED, 'run_id': original['run_id'],
-                                     'receipt_sha256': receipts[original['run_id']]['sha256'],
-                                     'outcome': 'PROPOSAL_REJECTED', 'reason': str(exc)})
+                        _processed_once(db, {'kind': PROCESSED, 'run_id': original['run_id'],
+                                             'receipt_sha256': receipts[original['run_id']]['sha256'],
+                                             'outcome': 'PROPOSAL_REJECTED', 'reason': str(exc)})
                 continue
             if len(executed) >= max_steps:
                 break
@@ -448,8 +510,16 @@ def drive(store, max_steps=8, prepare_only=False):
             if manifest['id'] not in {r['id'] for r in state['runs']}:
                 require(time.monotonic() - started - worker_wall < allowance, 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
                 store.register(manifest)
+            def admit(db, run):
+                require(time.monotonic() - started - worker_wall < allowance,
+                        'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
+                claims = _events(db, ('AUTONOMY_DRIVE_CLAIMED', 'AUTONOMY_DRIVE_RELEASED'))
+                require(claims[-1]['kind'] == 'AUTONOMY_DRIVE_CLAIMED' and claims[-1]['owner'] == owner,
+                        'Controller no longer owns its admission allowance')
+            admit_check = time.monotonic() - started - worker_wall
+            require(admit_check < allowance, 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
             before = time.monotonic()
-            receipt = store.execute(manifest['id'])
+            receipt = store.execute(manifest['id'], admission_guard=admit)
             elapsed = time.monotonic() - before
             wall = receipt.get('resources', {}).get('wall_seconds', {})
             worker_wall += min(elapsed, wall.get('measured') or wall.get('charged_estimate') or 0.)

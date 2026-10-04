@@ -42,7 +42,10 @@ reply={'status':'needs_authorization' if mode=='authority' else 'proposed',
        'source':'' if mode=='authority' else source,
        'policy_json':'' if mode=='authority' else json.dumps(policy),
        'reason':'Explicit deterministic fixture response, not a model'}
-print(json.dumps(reply))
+if mode in ('envelope_bound','raw_bound'):
+    reply['source'] += '#' * (2*1024*1024-len(json.dumps(reply,separators=(',',':')).encode('utf-8'))-1)
+    if mode=='raw_bound': reply['source'] += 'x'*1024
+sys.stdout.buffer.write(json.dumps(reply,separators=(',',':')).encode('utf-8')+b'\\n')
 '''
 
 
@@ -59,10 +62,19 @@ class AutonomyTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value if isinstance(value, str) else json.dumps(value, allow_nan=False), encoding='utf-8')
 
-    def build(self, *, modes=None, slots=1, max_steps=4, timeout=4, budget=60, baseline=False):
+    def build(self, *, modes=None, slots=1, max_steps=4, timeout=4, budget=60, baseline=False, control_wall=None,
+              legacy_worker=False):
         self.write('code.py', OLD)
         self.write('provider.py', PROVIDER.replace('MODES', repr(modes or {})).replace('NEW_SOURCE', repr(NEW)))
         shutil.copyfile(ROOT / 'scripts/rds_autonomy_worker.py', self.root / 'worker.py')
+        if legacy_worker:
+            # Freeze the pre-fix publication behavior as a legacy producer.
+            # Admission, paid provider process and original receipts remain real.
+            worker = (self.root / 'worker.py').read_text(encoding='utf-8')
+            start = worker.index('    encoded = canonical(result).encode(\'utf-8\')')
+            end = worker.index('    return 0  # Process completion', start)
+            worker = worker[:start] + "    paths[0].write_text(canonical(result), encoding='utf-8')\n" + worker[end:]
+            self.write('worker.py', worker)
         self.write('config.json', {})
         self.write('data.json', [1])
         self.write('evaluator.json', {'expected': 6})
@@ -105,6 +117,8 @@ class AutonomyTests(unittest.TestCase):
                   'provider': {'kind': 'fixture', 'argv': [sys.executable, '-B', 'provider.py'],
                                'executable_sha256': file_sha(sys.executable),
                                'model': None, 'effort': None, 'service_tier': None}}
+        if control_wall is not None:
+            config['controller_wall_seconds'] = control_wall
         policy = {'schema': 1, 'context': {'decision': {'id': 'next', 'goal_revision': 'controller-fixture-v1',
                     'scope': {'domain': 'finite software fixture'}, 'goal_conditions': [{'fact': 'score', 'op': 'eq', 'value': 6}]}},
                   'graph': {'nodes': nodes, 'edges': []}, 'routes': routes,
@@ -117,8 +131,8 @@ class AutonomyTests(unittest.TestCase):
         self.write('contract.json', self.contract)
         self.store.initialize(self.contract)
 
-    def cli(self, *args):
-        p = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(self.root), *args],
+    def cli(self, *args, program=None):
+        p = subprocess.run([sys.executable, '-B', str(program or ROOT / 'scripts/rds_cli.py'), '--root', str(self.root), *args],
                            capture_output=True, text=True, encoding='utf-8', timeout=35,
                            env={**os.environ, 'RDS_USAGE_DB': str(self.root / 'usage.sqlite3')})
         self.trace.append({'argv': list(args), 'returncode': p.returncode, 'stdout': p.stdout, 'stderr': p.stderr})
@@ -182,6 +196,153 @@ class AutonomyTests(unittest.TestCase):
         self.assertNotEqual(result['status'], 'GOAL_CONFIRMED')  # No domain confirmation was declared.
         self.assertEqual(self.events('AUTONOMY_DRIVE_CLAIMED')[0]['controller_reservation'], 30)
         self.assert_single_model_cost(self.store.snapshot())
+
+    def test_reserved_route_does_not_start_after_control_allowance(self):
+        self.build(baseline=True, control_wall=.001)
+        route = next(r['manifest'] for r in self.contract['advisor_policy']['routes'] if r['candidate'] == 'baseline')
+        self.store.register(route)
+        before = self.store.snapshot()
+        result = self.cli('project', 'drive', '--max-steps', '1')
+        after = self.store.snapshot()
+        self.assertEqual(result['status'], 'HANDOFF_REQUIRED', result)
+        self.assertIn('CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', result['reason'])
+        self.assertEqual(after['runs'][0]['status'], 'RESERVED')
+        self.assertIsNone(after['runs'][0]['attempt_id'])
+        self.assertEqual(after['receipts'], before['receipts'])
+        self.assertEqual(after['budget']['wall_seconds']['reserved'], before['budget']['wall_seconds']['reserved'])
+        self.assertGreater(after['budget']['wall_seconds']['spent_measured'] + after['budget']['wall_seconds']['charged_estimate'], 0)
+        self.assertEqual(self.calls(), [])
+
+    def test_registration_and_execute_review_cannot_bypass_admission_allowance(self):
+        import time
+        for slow_boundary in ('register', '_advisor_prepare_run'):
+            with self.subTest(boundary=slow_boundary):
+                # The real review/registration remains intact; only its elapsed
+                # work is delayed, so no verdict or worker result is mocked.
+                root = self.root / slow_boundary
+                root.mkdir()
+                self.root, self.store = root, ProjectStore(root)
+                self.build(baseline=True, control_wall=1.)
+                original = getattr(self.store, slow_boundary)
+                def delayed(*args, **kwargs):
+                    result = original(*args, **kwargs)
+                    time.sleep(1.05)
+                    return result
+                with patch.object(self.store, slow_boundary, side_effect=delayed):
+                    result = autonomy.drive(self.store, max_steps=1)
+                state = self.store.snapshot()
+                self.assertEqual(result['status'], 'HANDOFF_REQUIRED', result)
+                self.assertIn('CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', result['reason'])
+                self.assertEqual(len(state['runs']), 1)
+                self.assertIsNone(state['runs'][0]['attempt_id'])
+                self.assertEqual(state['runs'][0]['status'], 'RESERVED')
+                self.assertEqual(state['receipts'], [])
+                self.assertGreaterEqual(result['controller_wall_seconds'], 1.05)
+                self.assertEqual(self.calls(), [])
+
+    def test_oversize_provider_originals_stay_unknown_without_a_second_paid_slot(self):
+        for mode, reason in (('envelope_bound', 'MODEL_RESPONSE_ENVELOPE_BYTE_LIMIT'),
+                             ('raw_bound', 'PROVIDER_RESPONSE_BYTE_LIMIT')):
+            with self.subTest(mode=mode):
+                root = self.root / mode
+                root.mkdir()
+                self.root, self.store = root, ProjectStore(root)
+                self.build(modes={'repair1': mode}, slots=2, timeout=5)
+                result = self.cli('project', 'drive', '--max-steps', '4')
+                self.assertEqual(result['status'], 'RECONCILE_MODEL_DELIVERY_REQUIRED', result)
+                response = (root / 'outputs/repair1.json').read_bytes()
+                self.assertLessEqual(len(response), autonomy.MAX_BYTES)
+                self.assertEqual(json.loads(response)['reason'], reason)
+                self.assertGreaterEqual((root / 'outputs/repair1.json.trace.jsonl').stat().st_size, autonomy.MAX_BYTES)
+                original = self.store.snapshot()
+                processed = self.events(autonomy.PROCESSED)
+                self.assertEqual(len(processed), 1)
+                self.assertIn(processed[0]['outcome'], {'UNKNOWN', 'MODEL_OUTCOME_UNKNOWN'})
+                event = self.events(autonomy.REQUESTED)[0]
+                self.assertEqual(autonomy.process_result(self.store, event, original['receipts'][0]), processed[0]['outcome'])
+                self.cli('project', 'drive', '--max-steps', '4')
+                self.assertEqual(self.calls(), ['repair1'])
+                self.assertEqual(self.events(autonomy.PROCESSED), processed)
+                self.assert_single_model_cost(original)
+
+    def test_model_original_tamper_is_not_a_rejected_method_or_fresh_purchase(self):
+        self.build(slots=2)
+        event, receipt = self.run_repair()
+        response = self.root / 'outputs/repair1.json'
+        original = response.read_bytes()
+        tampered = original.replace(b'proposed', b'xroposed', 1)
+        self.assertEqual(len(original), len(tampered))
+        response.write_bytes(tampered)
+        with self.assertRaises(autonomy.ModelResultIntegrityError):
+            autonomy.process_result(self.store, event, receipt)
+        self.assertEqual(self.events(autonomy.PROCESSED), [])
+        blocked = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(blocked['status'], 'HANDOFF_REQUIRED', blocked)
+        self.assertEqual(self.events(autonomy.PROCESSED), [])
+        self.assertEqual(self.calls(), ['repair1'])
+        response.write_bytes(original)
+        recovered = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(len(self.events('METHOD_REVISION_ADOPTED')), 1)
+        self.assertEqual(self.events(autonomy.PROCESSED)[0]['outcome'], 'ADOPTED')
+        self.assertNotEqual(recovered['status'], 'HANDOFF_REQUIRED', recovered)
+
+    def test_legacy_paid_oversize_envelope_is_processed_unknown_once(self):
+        self.build(modes={'repair1': 'envelope_bound'}, slots=2, timeout=5, legacy_worker=True)
+        event = self.request()
+        # A frozen producer distribution supports its own original adapter. The
+        # updated consumer never admits that old adapter as a fresh attempt.
+        producer = self.root / 'legacy-producer'
+        producer.mkdir()
+        for original in (ROOT / 'scripts').glob('*.py'):
+            shutil.copyfile(original, producer / original.name)
+        shutil.copyfile(self.root / 'worker.py', producer / 'rds_autonomy_worker.py')
+        route = next(r['manifest'] for r in self.contract['advisor_policy']['routes'] if r['candidate'] == 'repair1')
+        self.write('legacy-manifest.json', route)
+        self.cli('project', 'create', '--manifest', str(self.root / 'legacy-manifest.json'), program=producer / 'rds_cli.py')
+        receipt = self.cli('project', 'execute', '--id', 'repair1', program=producer / 'rds_cli.py')['receipt']
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED', receipt)
+        response = self.root / 'outputs/repair1.json'
+        self.assertGreater(response.stat().st_size, autonomy.MAX_BYTES)
+        original = self.store.snapshot()
+        self.assertEqual(autonomy.process_result(self.store, event, receipt), 'MODEL_OUTCOME_UNKNOWN')
+        processed = self.events(autonomy.PROCESSED)
+        self.assertEqual(processed[0]['reason'], 'ORIGINAL_MODEL_RESPONSE_JSON_BYTE_LIMIT')
+        self.assertEqual(autonomy.process_result(self.store, event, receipt), 'MODEL_OUTCOME_UNKNOWN')
+        self.assertEqual(self.events(autonomy.PROCESSED), processed)
+        recovered = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(recovered['status'], 'RECONCILE_MODEL_DELIVERY_REQUIRED', recovered)
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assert_single_model_cost(original)
+
+    def test_old_adapter_cannot_authorize_a_new_model_attempt(self):
+        self.build(legacy_worker=True)
+        result = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(result['status'], 'HANDOFF_REQUIRED', result)
+        self.assertIn('Unsupported adapter', result['reason'])
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.store.snapshot()['runs'], [])
+        self.assertEqual(self.store.snapshot()['receipts'], [])
+
+    def test_corrupt_validated_proposal_is_evidence_failure_not_method_feedback(self):
+        self.build(slots=2)
+        event, receipt = self.run_repair()
+        with patch.object(revision, 'apply', side_effect=OSError('Interrupted before method prepare')):
+            with self.assertRaisesRegex(OSError, 'Interrupted before method prepare'):
+                autonomy.process_result(self.store, event, receipt)
+        with self.store._db() as db:
+            row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='AUTONOMY_PROPOSAL_VALIDATED'").fetchone()
+            original = row['body']
+            damaged = json.loads(original)
+            damaged['receipt_sha256'] = 'f' * 64
+            # Preserve append-only originals. A forged retained record cannot
+            # become method feedback even if it is appended after validation.
+            db.execute('INSERT INTO events(body) VALUES (?)', (json.dumps(damaged),))
+        blocked = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(blocked['status'], 'HANDOFF_REQUIRED', blocked)
+        self.assertEqual(self.events(autonomy.PROCESSED), [])
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(self.events('METHOD_REVISION_ADOPTED'), [])
 
     def test_prepare_only_retains_request_after_baseline_without_provider_dispatch(self):
         self.build(baseline=True)

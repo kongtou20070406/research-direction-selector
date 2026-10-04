@@ -135,3 +135,44 @@ PASS. Mandatory platform/full/native/formal checks apply to the final PR head.
 Applicable full-suite, platform, native and formal CI results must be assessed
 at the resulting PR head. This report does not substitute a helper PASS for
 those shared-kernel checks, release acceptance or scientific evidence.
+
+## Draft rework evidence
+
+The updated consumer checks its final control allowance after registration and
+review, bounds the whole model-response envelope, handles oversized originals
+once as UNKNOWN, and treats damaged originals as a handoff requiring integrity
+repair. Old settled adapter evidence can be read, while fresh model attempts
+still require the current bound distribution. Algorithm baseline reuse checks
+the original paid run against verified ancestor contracts and protected inputs.
+
+Nine distinct affected cases completed successfully across frozen development
+iterations: seven new allowance/oversize/integrity/old-adapter checks and two
+existing interrupted-adoption checks. The retained aggregate source iterations
+also include timeouts and invalid fixtures; they are not whole-suite PASS.
+In particular, the real baseline-before-repair CLI trajectory started but did
+not finish inside the aggregate allowance. Its final verdict is still required.
+
+The new opt-in post-commit MLP declaration, ledger event, ordinary registration
+and launch guards, host sample/weight replay, example and public regressions are
+implemented. Independent static review found an architecture scope mismatch,
+corrected to exactly two hidden layers. The actual CPU validation has not passed:
+its outer 60-second wait ended before the inner 100-second execution bound.
+Original recovery retained INTERRUPTED receipt
+`0078710b75ece6468e16244850ffb72989f8fc0045da800e5aa090b8da3afd24`,
+charged 100 seconds conservatively, and did not restart it. Raw output retained
+one successful architecture/seed check, a negative fixture selecting a pilot
+instead of confirmation, and a refusal-output parsing error. Those two fixtures
+were corrected; the full training/repair/challenge trajectory was unfinished.
+Recovery of its original inner campaign requires model-delivery reconciliation
+and created no replacement model call.
+
+A subsequent direct real-training/profile check used only that original
+iteration's remaining 20-second allowance. It reached its 18-second execution
+timeout without a final verdict, retaining FAILED receipt
+`2f2dcfcc11f564657a701befe3ef5518be26f031eea46d4d2407e79c4a3d9831`
+and 19.453 measured seconds. Previous failure costs, caps and originals were
+not reset. These incomplete CPU checks are not evidence of a task PASS or FAIL,
+nor of MLP generalization or full autonomous research. This PR remains Draft
+until the real CPU positive/negative/recovery checks, baseline trajectory and
+applicable final-head CI have complete dispositions. Existing Issue108 usage
+contention and the separately unsent n13 model input retain their original scope.

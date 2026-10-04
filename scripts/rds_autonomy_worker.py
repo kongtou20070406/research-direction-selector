@@ -149,6 +149,8 @@ def execute(root, rid):
     result = {'schema': 1, 'run_id': rid, 'request_sha256': ref['sha256'], 'provider': provider,
               'status': 'unknown', 'source': '', 'policy_json': '', 'reason': error or 'Provider outcome unavailable',
               'returncode': returncode, 'timed_out': timed_out, 'usage': 'UNKNOWN'}
+    if provider['kind'] == 'fixture' and paths[1].stat().st_size > MAX_BYTES:
+        result['reason'] = 'PROVIDER_RESPONSE_BYTE_LIMIT'
     if returncode == 0 and not timed_out and not error:
         if paths[4].stat().st_size <= MAX_BYTES:
             raw = paths[4].read_bytes()
@@ -160,8 +162,19 @@ def execute(root, rid):
                     raise ValueError('Provider reply fields must be strings')
                 result.update(reply)
             except (ValueError, TypeError, UnicodeError) as exc:
-                result['reason'] = str(exc)
-    paths[0].write_text(canonical(result), encoding='utf-8')
+                if result['reason'] != 'PROVIDER_RESPONSE_BYTE_LIMIT':
+                    result['reason'] = str(exc)
+        else:
+            result['reason'] = 'PROVIDER_RESPONSE_BYTE_LIMIT'
+    encoded = canonical(result).encode('utf-8')
+    if len(encoded) > MAX_BYTES:
+        # Keep the paid provider originals intact. A partial proposal cannot
+        # become a smaller, adoptable result by truncating its source/policy.
+        result.update(status='unknown', source='', policy_json='', reason='MODEL_RESPONSE_ENVELOPE_BYTE_LIMIT')
+        encoded = canonical(result).encode('utf-8')
+    if len(encoded) > MAX_BYTES:
+        raise ValueError('Bounded unknown model envelope exceeds byte limit')
+    paths[0].write_bytes(encoded)
     return 0  # Process completion and usable model proposal remain distinct.
 
 

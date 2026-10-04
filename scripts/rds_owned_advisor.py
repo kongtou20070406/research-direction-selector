@@ -194,6 +194,9 @@ def _state(store, db):
     if 'autonomy' in contract.get('advisor_policy', {}):
         from rds_autonomy import records
         state['autonomy_records'] = records(store, db, contract)
+    from rds_postcommit_confirmation import enabled, records as confirmation_records
+    if enabled(contract):
+        state['confirmation_challenges'] = confirmation_records(store, db, contract)
     return state
 
 

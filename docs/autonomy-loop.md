@@ -98,6 +98,19 @@ paid provider outcome requires reconciliation before another model dispatch;
 other eligible ordinary routes can still proceed. Suggestions cannot widen
 authority or remove a budget limit.
 
+The whole UTF-8 response envelope, including worker metadata, is bounded to
+2 MiB. Provider originals remain available as evidence when the envelope is
+too large; they are not truncated into an adoptable proposal. Recovery of an
+older successful oversized response records one controlled UNKNOWN and blocks
+another paid repair slot pending reconciliation. Damage to original artifacts,
+receipt identity or a validated proposal is an evidence failure requiring
+handoff, rather than a rejected method that authorizes another purchase.
+
+An old immutable adapter's settled originals may be inspected by the updated
+consumer. Starting any new model attempt still requires the bound adapter to
+match the running distribution. Reading paid evidence does not renew dispatch
+authority.
+
 Each pass reserves its control allowance before dispatch. Only worker cost from
 the original receipt is subtracted from controller elapsed time: admission,
 post-receipt Advisor/confirmation and adoption work are charged too. Release
@@ -105,6 +118,12 @@ records measured control work, refunds unused reservation and charges any
 measured overrun. A crashed pass keeps its conservative allocation. Token/USD
 usage remains UNKNOWN unless separately measured. Bootstrapping/orchestration
 outside `drive` are separate costs in a complete research evaluation.
+
+Admission rechecks the control allowance and current verified owner after
+registration and Advisor checks, immediately before allocating a new attempt.
+This also applies to previously RESERVED routes. Exhaustion retains that
+reservation, allocates no attempt and settles actual control cost; it cannot
+be bypassed by spending the remaining allowance during registration or review.
 
 ## Confirmation and completion
 
@@ -117,7 +136,7 @@ cannot skip the frozen confirmation route. Only the composite goal can yield
 | --- | --- | --- |
 | Mathematics | Replay original exact certificate against frozen claim | Declared proposition; empirical application premises can remain unknown |
 | Algorithms | Recompute integer oracle; compare original same-input baseline/candidate cost | Finite cases and one whole-run observation |
-| Deep learning | CPU training example and FP32 inference from retained weights | Finite MSE can pass while confirmation independence stays unknown |
+| Deep learning | Shared-data linear profile or explicit post-commit two-hidden-layer CPU MLP | Shared-data task stays UNKNOWN; future-sample MLP checks are finite, without population/secrecy claims |
 
 The DL example ends `DOMAIN_CONFIRMATION_UNKNOWN`: current shared bindings
 record its confirmation data as exposed. No threshold is lowered to claim
@@ -125,6 +144,13 @@ independent evidence. Waiting for an original attempt, yielding a bounded pass,
 exhausted resources, missing originals and missing authority have distinct
 explanations. A later pass recovers paid results before new work; none of these
 outcomes certifies scientific impossibility.
+
+The opt-in `--dl-profile postcommit_mlp` freezes a different declaration at
+genesis. It commits a program-generated future-sample challenge after original
+weights settle; it does not migrate the shared-data example's existing goal.
+See the finite profile and retained validation limits in
+[domain confirmation](domain-confirmation.md) and
+[validation](autonomy-validation.md).
 
 ## Actual entry points
 
@@ -135,6 +161,7 @@ python -B examples/autonomy/run.py --workspace ../autonomy-math --domain mathema
 python -B examples/autonomy/run.py --workspace ../autonomy-algorithm --domain algorithms
 # Use an existing Python environment with torch; no dependency is installed.
 python -B examples/autonomy/run.py --workspace ../autonomy-dl --domain deep_learning
+python -B examples/autonomy/run.py --workspace ../autonomy-mlp --domain deep_learning --dl-profile postcommit_mlp
 ```
 
 These default to fixture and preserve CLI transcripts, ledger and receipts.

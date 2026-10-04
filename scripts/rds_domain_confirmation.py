@@ -77,10 +77,15 @@ def validate_policy(store, contract, policy):
     if value['domain'] == 'algorithms':
         fields |= {'baseline_run', 'baseline_output'}
     kinds = {'exact_certificate', 'polynomial_rational_evaluation'} if value['domain'] == 'mathematics' else {DOMAINS[value['domain']]}
+    if value['domain'] == 'deep_learning':
+        kinds.add('torch_postcommit_mlp')
     require(isinstance(rules, dict) and set(rules) == fields and rules['kind'] in kinds,
              'Unsupported domain confirmation rules')
     if rules['kind'] == 'polynomial_rational_evaluation':
         require(len(value['data']) == 1, 'Polynomial confirmation requires one frozen data file')
+    if rules['kind'] == 'torch_postcommit_mlp':
+        from rds_postcommit_confirmation import validate_claim
+        validate_claim(_json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256']))
     candidate, confirmation = value['candidate_runs'][0], value['confirmation_runs'][0]
     for rid, key in ((candidate, 'candidate_output'), (confirmation, 'confirmation_output')):
         require(rules[key] in routes[rid]['outpaths'], 'Domain evidence must be an owned declared output')
@@ -118,6 +123,35 @@ def _receipt(store, state, rid):
     require(run is not None and run['attempt_id'] == receipt['attempt_id'] and
             run['manifest_sha256'] == receipt['manifest_sha256'] and run['status'] == receipt['process_status'],
             'Domain receipt differs from its original run')
+    return receipt
+
+
+def _matched_baseline(store, state, contract, value):
+    """Reuse a paid baseline only through this ledger's verified ancestors."""
+    from rds_method_revision import contract_history
+    rid = value['rules']['baseline_run']
+    receipt = _receipt(store, state, rid)
+    require(receipt is not None and receipt['run_status'] == 'SUCCEEDED' and receipt.get('process_started') is True,
+            'Matched baseline evidence is unavailable')
+    with store._db(True) as db:
+        db.execute('BEGIN')
+        run = store._run(db, rid)
+        require(store._observe(db, run) == receipt, 'Baseline differs from its retained operation')
+        require(receipt.get('effective_contract_sha256') == run.get('effective_contract_sha256'),
+                'Baseline run/receipt contract identities differ')
+        history = contract_history(db)
+        require(history[-1]['contract'] == contract, 'Current baseline comparison contract is stale')
+        ancestor = next((h['contract'] for h in history if h['sha256'] == receipt.get('effective_contract_sha256')), None)
+        require(ancestor is not None, 'Baseline contract is outside verified method lineage')
+        require(receipt['bindings_before'] == receipt['bindings_after'] == ancestor['bindings'] and
+                ancestor['advisor_policy']['confirmation'] == value and
+                ancestor['advisor_policy']['context'] == contract['advisor_policy']['context'],
+                'Baseline comparison declaration or original bindings differ')
+        original = next((r['manifest'] for r in ancestor['advisor_policy']['routes'] if r['manifest']['id'] == rid), None)
+        require(original == run['manifest'], 'Baseline operation is not its ancestor-authorized route')
+        require({(b['path'], b['role'], b['sha256']) for b in ancestor['bindings'] if b['role'] in {'config', 'data', 'evaluator'}} ==
+                {(b['path'], b['role'], b['sha256']) for b in contract['bindings'] if b['role'] in {'config', 'data', 'evaluator'}},
+                'Baseline data, claim or evaluator differs')
     return receipt
 
 
@@ -212,10 +246,7 @@ def inspect_confirmation(store, contract, state=None):
                         all(type(x) is int and abs(x) <= 2 ** 63 for x in xs) for xs in cases),
                     'Integer oracle cases exceed the finite type/size bound')
             oracle = [sum(x * x for x in xs) for xs in cases]
-            baseline = _receipt(store, state, rules['baseline_run'])
-            require(baseline is not None and baseline['run_status'] == 'SUCCEEDED' and
-                    baseline['bindings_before'] == baseline['bindings_after'] == contract['bindings'],
-                    'Matched baseline evidence is unavailable')
+            baseline = _matched_baseline(store, state, contract, value)
             base_values, base_artifact = _output(store, baseline, rules['baseline_output'])
             for output in (payload, base_values):
                 require(isinstance(output, dict) and output.get('inputs_sha256') == value['data'][0]['sha256'] and
@@ -232,6 +263,11 @@ def inspect_confirmation(store, contract, state=None):
                                            'baseline_wall_seconds': b['measured'], 'ratio': a['measured'] / b['measured'],
                                            'general_speedup': 'UNKNOWN'})
             result['evidence'].append({'run_id': rules['baseline_run'], 'receipt_sha256': baseline['sha256'], **base_artifact})
+        elif rules['kind'] == 'torch_postcommit_mlp':
+            from rds_postcommit_confirmation import inspect as inspect_postcommit
+            replay = inspect_postcommit(store, contract, candidate, confirmation, payload, checked)
+            verdict = replay['task_confirmation']
+            result.update(replay)
         else:
             require(isinstance(claim, dict) and set(claim) == {'schema', 'kind', 'input_dimension', 'max_mse'} and
                     type(claim['schema']) is int and claim['schema'] == 1 and claim['kind'] == 'torch_linear_regression' and

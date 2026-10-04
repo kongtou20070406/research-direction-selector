@@ -56,6 +56,60 @@ checking operation completes, including a checked counterexample, and retain
 the task verdict in its output. Execution faults retain unsuccessful receipts.
 Scientific support and policy gain remain `UNKNOWN` and false respectively.
 
+An algorithm baseline completed before an adopted method change may be reused
+only through this ledger's verified contract ancestry. Its original run,
+receipt, output bytes and ancestor-authorized route must agree; the protected
+goal, comparison data, claim and evaluator must match the current declaration.
+The candidate and confirmation still bind the current contract. Recovery
+consumes the original paid baseline without rerunning it or rewriting its
+receipt. A caller-supplied history cannot supply ancestry, and changed original
+baseline bytes remain UNKNOWN.
+
+## CPU MLP with post-commit samples
+
+An additional opt-in deep-learning declaration uses
+`rules.kind="torch_postcommit_mlp"`. The default shared-data linear profile
+keeps its original UNKNOWN task boundary. The new claim is exactly:
+
+```json
+{"schema":1,"kind":"torch_postcommit_mlp","layers":[1,8,8,1],"activation":"tanh","sampler":"sha256_uniform_v1","label":"cubic_mean_v1","sample_count":32,"max_mse":0.01}
+```
+
+The supported architecture has two hidden layers, each dimension in 1–16,
+scalar output, CPU FP32 inference and 1–256 future samples. Training data stays
+bound by the existing contract. After the candidate's successful original
+receipt and weight bytes settle, ordinary registration of the preauthorized
+confirmation route creates one program seed in the existing CAS and commits a
+hash-bound `DOMAIN_CHALLENGE_COMMITTED` event in the same reservation transaction.
+The event binds genesis, current contract, candidate receipt, original weight
+artifact, declaration and confirmation manifest. Starting the worker rechecks
+those identities. Ledger order requires candidate completion before challenge
+commitment; a supplied seed, wall clock or `heldout` flag is not evidence.
+
+`sha256_uniform_v1` derives each coordinate from SHA-256 of the 32-byte seed
+followed by unsigned big-endian 32-bit sample and coordinate indices. Its first
+seven bytes produce `2*u/2^56-1`. `cubic_mean_v1` labels a row with the mean of
+`0.5*x^3-0.2*x+0.1`. These small public procedures are frozen before training.
+Candidate JSON is `{"layers":[{"weight":[[...]],"bias":[...]},...]}`, matching
+the declared three affine layers with tanh between them. Each retained finite
+number is bounded in magnitude to 1e6. The host evaluates the hash-acquired
+JSON values rather than reopening weights or importing candidate code.
+
+The original confirmation report binds `challenge_sha256` and `weights_sha256`
+in addition to the existing receipt/claim/evaluator identities, and retains
+the exact `samples:{x,y}`. The host regenerates those samples and recomputes
+MSE. Threshold success or a counterexample yields finite task PASS or FAIL;
+identity/order/dependency gaps, contradictory self-verdicts or changed original
+bytes yield UNKNOWN. Recovery uses the same committed seed, attempt and paid
+receipt. Duplicate challenge events are rejected; failed confirmation cannot
+redraw that candidate's samples. An uncommitted transaction can leave orphan
+CAS bytes; they are not a committed challenge or a launched attempt.
+
+The resulting `GENERATED_AFTER_WEIGHT_COMMIT` scope means new finite samples
+after those weights were fixed. External secrecy, population generalization,
+scientific support and measured research-policy gain remain UNKNOWN. No GPU,
+new service, dataset access boundary or default goal migration is introduced.
+
 ## Mathematics
 
 `rules.kind=polynomial_rational_evaluation` is a separate finite QQ arithmetic

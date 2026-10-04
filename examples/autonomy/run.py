@@ -81,8 +81,56 @@ answer={'candidate_receipt_sha256':receipt['sha256'],'claim_sha256':sha('claim.j
 pathlib.Path('outputs/confirmation.json').write_text(json.dumps(answer),encoding='utf-8')
 """
 
+POSTCOMMIT_EVALUATOR = """import json,pathlib,sys
+sys.path.insert(0,'engine')
+from rds_project import ProjectStore,canonical
+from rds_math import blob
+from rds_domain_confirmation import _json,_ref
+from rds_postcommit_confirmation import records,_candidate,samples,metric
+store=ProjectStore('.')
+with store._db(True) as db:
+    db.execute('BEGIN')
+    contract=store._contract(db)
+    declaration=contract['advisor_policy']['confirmation']
+    event=records(store,db,contract)[0]
+    receipt,weights,artifact=_candidate(store,db,contract,declaration)
+claim=_json(_ref(store,contract,declaration['claim'],'config'),declaration['claim']['sha256'])
+challenge=json.loads(blob(store.root,event['challenge']).decode('utf-8'))
+data=samples(claim,challenge['seed'])
+loss=metric(claim,weights,data)
+answer={'candidate_receipt_sha256':receipt['sha256'],'claim_sha256':declaration['claim']['sha256'],
+        'evaluator_sha256':declaration['evaluator']['sha256'],'challenge_sha256':event['challenge']['sha256'],
+        'weights_sha256':artifact['sha256'],'samples':data,'mse':loss,
+        'verdict':'PASS' if loss<=claim['max_mse'] else 'FAIL'}
+pathlib.Path('outputs/confirmation.json').write_text(canonical(answer),encoding='utf-8')
+"""
 
-def build(root, domain, provider='fixture', codex_path=None, python=sys.executable):
+
+def postcommit_sources():
+    claim = {'schema':1,'kind':'torch_postcommit_mlp','layers':[1,8,8,1],'activation':'tanh',
+             'sampler':'sha256_uniform_v1','label':'cubic_mean_v1','sample_count':32,'max_mse':.01}
+    x = [[i/32] for i in range(-32,33)]
+    data = {'x':x,'y':[.5*v[0]**3-.2*v[0]+.1 for v in x]}
+    old = """import json,pathlib,sys
+widths=[1,8,8,1]
+layers=[{'weight':[[0.]*n for _ in range(m)],'bias':[0.]*m} for n,m in zip(widths[:-1],widths[1:])]
+pathlib.Path(sys.argv[1]).write_text(json.dumps({'layers':layers}),encoding='utf-8')
+"""
+    new = """import json,pathlib,sys,torch
+torch.set_num_threads(1);torch.manual_seed(5)
+d=json.loads(pathlib.Path('data.json').read_text(encoding='utf-8'))
+x=torch.tensor(d['x'],dtype=torch.float32,device='cpu');y=torch.tensor(d['y'],dtype=torch.float32,device='cpu').reshape(-1,1)
+model=torch.nn.Sequential(torch.nn.Linear(1,8),torch.nn.Tanh(),torch.nn.Linear(8,8),torch.nn.Tanh(),torch.nn.Linear(8,1)).to('cpu')
+optimizer=torch.optim.Adam(model.parameters(),lr=.03)
+for step in range(400):
+    optimizer.zero_grad();loss=torch.mean((model(x)-y)**2);loss.backward();optimizer.step()
+layers=[{'weight':layer.weight.detach().tolist(),'bias':layer.bias.detach().tolist()} for layer in model if isinstance(layer,torch.nn.Linear)]
+pathlib.Path(sys.argv[1]).write_text(json.dumps({'layers':layers}),encoding='utf-8')
+"""
+    return old, new, claim, data, 'torch_postcommit_mlp'
+
+
+def build(root, domain, provider='fixture', codex_path=None, python=sys.executable, dl_profile='shared_linear'):
     root = Path(root).resolve()
     if root == REPO or root.is_relative_to(REPO) or (root.exists() and any(root.iterdir())):
         raise ValueError('Choose a new empty sibling workspace; never overwrite research state')
@@ -93,12 +141,14 @@ def build(root, domain, provider='fixture', codex_path=None, python=sys.executab
         target = root / 'engine' / original.name
         target.parent.mkdir(exist_ok=True)
         shutil.copyfile(original, target)
-    old, new, claim, data, kind = sources(domain)
+    if dl_profile not in {'shared_linear', 'postcommit_mlp'} or (dl_profile == 'postcommit_mlp' and domain != 'deep_learning'):
+        raise ValueError('postcommit_mlp requires the deep_learning domain')
+    old, new, claim, data, kind = postcommit_sources() if dl_profile == 'postcommit_mlp' else sources(domain)
     write(root, 'candidate.py', old)
     write(root, 'claim.json', claim)
     write(root, 'data.json', data)
     write(root, 'config.json', {'domain': domain, 'scope': 'finite public engineering trajectory'})
-    write(root, 'evaluator.py', EVALUATOR)
+    write(root, 'evaluator.py', POSTCOMMIT_EVALUATOR if dl_profile == 'postcommit_mlp' else EVALUATOR)
     # This explicit fixture is not a model call; real Codex is an opt-in provider.
     write(root, 'provider.py', "import json,sys\nrequest=json.loads(sys.stdin.read().split('\\n',1)[1])\n" +
           'print(json.dumps({"status":"proposed","source":' + repr(new) +
@@ -176,13 +226,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', required=True)
     parser.add_argument('--domain', choices=['mathematics', 'algorithms', 'deep_learning'], required=True)
+    parser.add_argument('--dl-profile', choices=['shared_linear','postcommit_mlp'], default='shared_linear')
     parser.add_argument('--provider', choices=['fixture', 'codex_exec'], default='fixture')
     parser.add_argument('--codex-path', help='Native installed codex executable; credentials/settings stay in existing host stores')
     args = parser.parse_args()
     if args.provider == 'codex_exec' and not args.codex_path:
         parser.error('codex_exec requires --codex-path')
     root = Path(args.workspace).resolve()
-    build(root, args.domain, args.provider, args.codex_path)
+    build(root, args.domain, args.provider, args.codex_path, dl_profile=args.dl_profile)
     for name, argv in [('init', ['project', 'init', '--contract', str(root / 'contract.json')]),
                        ('drive', ['project', 'drive', '--max-steps', '8']),
                        ('recover-drive', ['project', 'drive', '--max-steps', '8'])]:
@@ -202,7 +253,7 @@ def main():
                'receipts': [r['sha256'] for r in receipts], 'scientific_support': 'UNKNOWN'}
     write(root, 'trajectory-summary.json', summary)
     actual = json.loads(summary['recovered_drive'])
-    expected = 'DOMAIN_CONFIRMATION_UNKNOWN' if args.domain == 'deep_learning' else 'GOAL_CONFIRMED'
+    expected = 'DOMAIN_CONFIRMATION_UNKNOWN' if args.domain == 'deep_learning' and args.dl_profile == 'shared_linear' else 'GOAL_CONFIRMED'
     if actual['status'] != expected or len(runs) != (5 if args.domain == 'algorithms' else 4) or len(receipts) != len(runs):
         raise SystemExit('Trajectory has not met its bounded acceptance; inspect ' + str(root / 'trajectory-summary.json'))
     first = json.loads(summary['drive'])

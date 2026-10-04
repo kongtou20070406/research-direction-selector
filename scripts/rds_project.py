@@ -331,6 +331,9 @@ class ProjectStore:
             require(row["spent"] + row["charged"] + row["reserved"] <= row["cap"] + 1e-9,
                     f"Insufficient {resource} budget before start")
         contract = self._contract(db)
+        if 'confirmation' in contract.get('advisor_policy', {}):
+            from rds_postcommit_confirmation import check_run as check_confirmation_run
+            check_confirmation_run(self, db, contract, run)
         if 'autonomy' in contract.get('advisor_policy', {}):
             from rds_autonomy import check_run
             check_run(self, db, contract, run)
@@ -952,6 +955,9 @@ class ProjectStore:
                 require(key not in claims, "Output is already claimed by another run")
                 db.execute("INSERT INTO output_claims VALUES (?,?)", (key, run_id))
             self._campaign_deadline(db, contract, admit=True)
+            if 'confirmation' in contract.get('advisor_policy', {}):
+                from rds_postcommit_confirmation import bind_run as bind_confirmation_run
+                bind_confirmation_run(self, db, contract, run)
             for resource, amount in estimates.items():
                 db.execute("UPDATE budget SET reserved=reserved+? WHERE resource=?", (amount, resource))
             if advisor_token is not None:
@@ -1081,7 +1087,10 @@ class ProjectStore:
         run["run_status"] = "SUCCEEDED" if run["status"] == "COMPLETED" else run["status"]
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
-    def execute(self, run_id, background=False):
+    def execute(self, run_id, background=False, *, admission_guard=None):
+        # An internal caller may restrict admission after all ordinary checks.
+        # This callback grants no authority and is never supplied by the CLI.
+        require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
@@ -1097,6 +1106,8 @@ class ProjectStore:
             require(run["status"] == "RESERVED" and run["attempt_id"] is None, "Run already dispatched or started; recover never reruns it")
             self._advisor_check(db, run["manifest"], advisor_token)
             self._check_start(db, run)
+            if admission_guard is not None:
+                require(admission_guard(db, run) is None, "Admission guard must allow or raise")
             run["attempt_id"] = uuid.uuid4().hex
             if background:
                 run["scheduler"] = {"task_id": "RDS-Project-" + run["attempt_id"], "status": "REGISTERING"}
@@ -1366,7 +1377,7 @@ class ProjectStore:
                                                      if run["scheduler"] else None)}
         if stop_reason is not None:
             receipt["stop_reason"] = stop_reason
-        for field in ('effective_contract_sha256', 'runtime_fingerprint', 'autonomy_request'):
+        for field in ('effective_contract_sha256', 'runtime_fingerprint', 'autonomy_request', 'confirmation_challenge'):
             if field in run:
                 receipt[field] = run[field]
         if run["manifest"].get("maintenance") is not None:
