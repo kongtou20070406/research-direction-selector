@@ -102,6 +102,26 @@ Registration rechecks the actual evaluator/candidate/case bindings, successful r
 
 `LOCAL_CASES_ONLY` is finite local qualification, not mathematical soundness, fresh confirmation, policy improvement or main-repository adoption. No property expectations, scientific thresholds or policy-gain percentages are invented. The next useful research step must actually consume the tool; successful registration alone is not a research benefit.
 
+## Compare a tool revision at fixed precision
+
+After a failure suggests a tool change, check the replacement on the same declared work before using its speed as a selection reason:
+
+```text
+python -B scripts/rds_cli.py --root <project> rsi compare --baseline <old-name> --candidate <new-name> --cases cases.json --precision-key precision --precision 16000 -t 10 --min-speedup 1.1 --ledger <existing-wall-budget-project>
+```
+
+Both names must identify extracted local functions with different source bytes. Every oracle case must explicitly pass the same positive integer precision keyword. The command preserves the original case bytes in CAS and appends a dependency-bound comparison plan as an ordinary native `note` **before either validation starts**. The plan fixes source identities, cases, precision, wall cap, runtime context, order and the descriptive ratio threshold. Its validation identities are scoped to that plan: a previous standalone `rsi validate` cannot become a retrospectively predeclared comparison. Both checks use the existing evaluator and native execution receipts; neither is auto-registered or adopted.
+
+The comparison rechecks the actual frozen sources, evaluator, cases, receipts and output artifacts. An incorrect case result returns `correctness=FAIL` and has no speedup verdict. A process failure without a case verdict, timeout or unresolved execution remains UNKNOWN. Both checks charge the optional parent wall ledger before dispatch. If the second allowance cannot fit, it is not launched: the plan, completed first check and original charge survive. Repeating the unchanged request reads retained native jobs without a new attempt or charge. A charge interrupted before the native job was saved requires inspection and grants no replacement launch. Parent budgets with program-owned Advisor, execution or stop/maintenance policies continue to require their existing project execution paths.
+
+A retained RESERVED/RUNNING job without a receipt returns UNKNOWN with its job locator. It does not create an immutable terminal validation/result, and an unresolved baseline prevents candidate dispatch. Inspect or recover that original job through its native execution path, then read the same comparison again; the allowance and attempt identity remain retained.
+
+Only positive, explicitly measured receipt `wall_seconds` in seconds can form the ratio `baseline / candidate`; reservations, charged estimates and missing costs never become measured values. Missing or differing host/Python/executable context yields UNKNOWN. The default digest includes correctness, fixed precision, case count, measured walls, ratio, reasons and a full record locator. `--json` exposes original receipt/validation locators. Exit codes are 0 for a completed descriptive comparison, 1 for incorrect local output or an RDS admission rejection, and 2 for unknown performance.
+
+`OBSERVED_SPEEDUP` means that this **single** wall observation per tool meets the prospectively supplied ratio; `NO_OBSERVED_SPEEDUP` records the opposite observation. The fixed order is baseline then candidate. Wall cost includes child startup, imports, case evaluation and result serialization; controller preparation and comparison bookkeeping are outside that receipt measurement. System load, variability, CPU time and peak memory are not measured, and a later invocation reuses these historical observations. This is not a statistical improvement gate. To claim stable acceleration, use a separately authorized repeated/interleaved protocol. The explicit precision parameter checks workload identity; it does not prove arbitrary source code honors precision internally or solves the original research obligation.
+
+The [public integer-root example](../examples/tool-comparison/README.md) uses the same 16000 decimal scale in Newton and standard-library implementations with exact, independently specified answers. It is a synthetic software comparison, not the disk-covering polynomial problem. General external CAS executables are outside the conservative local-function subset. Whole research trajectories, solver failures and exact mathematical certificates still require their original execution and verification paths.
+
 ## Optional cooperation and upstream contributions
 
 When MRS is installed and its record workflow is authorized, use its original records/exports as explicit sources and retain their identities. Do not automatically scan another Skill directory, initialize an MRS library, translate its review status into local independent review or copy its implementation. RDS keeps the objective, asset provenance and dependency obligations needed by its own workflow; MRS can supply richer archival/exchange behavior when requested.

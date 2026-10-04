@@ -62,6 +62,7 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `rsi register` | Register an eligible validated local function | `--name`; `--validation` may be omitted only for one passing validation; rechecks bindings and receipt | [Local tools](native-research.md) |
 | `rsi use` | Verify and optionally export a retained function | Registered `--name`; optional project `--output`; changed/refuted evidence blocks reuse | [Local tools](native-research.md) |
 | `rsi prepare-application` | Prepare a qualified finite function for a current owned obligation | Before project init: exact tool, inputs/cases, goal/action, exported code, fixed driver/request, output and observation; returns bindings and argv without starting work | [Owned tool consumers](owned-tool-consumers.md) |
+| `rsi compare` | Compare a tool revision on identical fixed-precision oracle cases | Extracted `--baseline`/`--candidate`; `--cases`, `--precision-key`, `--precision`; prospective `--min-speedup`; optional `--ledger` charges both checks; single measured walls only | [Fixed-precision comparison](native-research.md#compare-a-tool-revision-at-fixed-precision) |
 
 ## Mathematical verification
 

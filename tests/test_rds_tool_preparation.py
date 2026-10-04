@@ -219,6 +219,54 @@ class ToolPreparationTests(unittest.TestCase):
         self.assertEqual(self.qualify()['status'], 'LOCAL_CASES_PASSED')
         self.assertEqual(self.intents(), [])
 
+    def test_interrupted_comparison_blocks_owned_init_and_recovers_original_qualification(self):
+        from rds_tool_compare import compare
+        from rds_math import records
+        for name, expression in (('before', 'a + b'), ('after', 'b + a')):
+            self.write(name + '.py', 'def add(a, b, *, precision):\n    return ' + expression + '\n')
+            tools.extract(self.root, self.root / (name + '.py'), 'add', name)
+        self.write_json('comparison-cases.json', [{'args': [1, 2], 'kwargs': {'precision': 12}, 'expected': 3}])
+
+        def check():
+            return compare(self.root, 'before', 'after', self.root / 'comparison-cases.json',
+                           'precision', 12, timeout=3)
+
+        with patch.object(ProjectStore, 'execute', side_effect=RuntimeError('interrupted after reservation')):
+            with self.assertRaisesRegex(RuntimeError, 'after reservation'):
+                check()
+        unresolved = check()
+        self.assertEqual(unresolved['status'], 'UNKNOWN')
+        self.assertIsNone(unresolved['id'])
+        self.assertFalse(any(r['kind'] == 'tool-validation' for r in records(self.root)))
+        with self.assertRaisesRegex(ValueError, 'unresolved'):
+            self.store.initialize(self.contract)
+
+        # Resume the retained, still unstarted native job explicitly; do not
+        # buy a replacement qualification or rewrite a completed receipt.
+        baseline_job = ProjectStore(unresolved['baseline']['job_root'])
+        original = baseline_job.execute('tool-check')
+        completed = check()
+        self.assertIsNotNone(completed['id'])
+        self.assertEqual(completed['execution_started'], {'before': False, 'after': True})
+        self.assertEqual(baseline_job.snapshot()['receipts'][0], original)
+        again = check()
+        self.assertEqual(again['id'], completed['id'])
+        self.assertEqual(again['execution_started'], {'before': False, 'after': False})
+        self.assertEqual(len(self.intents()), 2)
+        state = self.store.initialize(self.contract)
+        costs = []
+        for intent in self.intents():
+            job = ProjectStore(self.root / intent['request']['job_root'])
+            snapshot = job.snapshot()
+            self.assertEqual(len(snapshot['receipts']), 1)
+            self.assertEqual(len(snapshot['runs']), 1)
+            self.assertEqual(snapshot['runs'][0]['attempt_id'], snapshot['receipts'][0]['attempt_id'])
+            with job._db(True) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED'").fetchone()[0], 1)
+            costs.append(snapshot['receipts'][0]['resources']['wall_seconds']['measured'])
+        self.assertAlmostEqual(state['budget']['wall_seconds']['charged_estimate'], sum(costs))
+        self.assertEqual(self.store.initialize(self.contract)['budget'], state['budget'])
+
 
 if __name__ == '__main__':
     unittest.main()
