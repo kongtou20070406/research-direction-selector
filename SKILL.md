@@ -50,6 +50,14 @@ ON applicable research request:
         RUN project advance --brief FOR at most one program-selected authorized step
         KEEP original receipt + automatic Advisor update; unknown remains UNKNOWN
         IF collection failed: recover collection; NEVER repeat completed training
+        IF predictive plan is blocked or a method failed:
+            READ docs/predictive-feasibility.md and the returned repair_request
+            RUN project improve FOR an already authorized code path
+            USE receipt diagnostics + source hints TO create/improve a tool
+            EDIT candidate; refresh improve; adopt project revise in the same ledger
+            REQUIRE fresh bounded pilots + unchanged independent goal verification
+            KEEP failed costs, attempts, exposure and original campaign deadline
+            IF no authorized viable method remains: REPORT that outcome
         NEVER replace context/graph/choice OR bypass with quick/theory allowance
     ELSE IF substantive research direction choice:
         SUPPLY serious alternatives/explanations + sources + distinguishing observation
@@ -87,6 +95,7 @@ All commands below use `CLI` above. Links load detail on demand.
 | First plain-language request | Follow [quick start](docs/quickstart.md): copyable prompts, first project, `[RDS-REJECT]` recovery | [Project runner](examples/project-runner/README.md) |
 | Start locked campaign | `project init --contract <contract.json>`; freeze `advisor_policy` for program-owned selection | [Contract template](docs/project-contract.md), [owned Advisor](docs/program-owned-advisor.md) |
 | Advance campaign | `project next` to inspect; `project advance --brief` executes one selected step in a policy-bound project | [Owned Advisor](docs/program-owned-advisor.md), [development loop](docs/development-loop.md) |
+| Improve a blocked tool | `project improve --code-path <path> --id <revision>`, then `project revise --proposal <path>` | [Forecasts and tool improvement](docs/predictive-feasibility.md) |
 | Choose research direction | Policy-bound: `advise --brief`; legacy: `advise --context <context.json> --graph <graph.json> --brief`, then `--choose <candidate-id> --record <checkpoint-id>` | [Choice review](docs/agent-entry.md#review-the-research-choice), [research discipline](references/research-discipline.md) |
 | Audit evidence | `artifacts import --manifest <manifest.json>` | [Agent entry](docs/agent-entry.md) |
 | Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md) |

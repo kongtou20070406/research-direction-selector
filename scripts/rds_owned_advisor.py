@@ -10,6 +10,7 @@ import hashlib
 import math
 from pathlib import Path
 import sqlite3
+import time
 
 from rds_artifacts import ArtifactFact, _extract, strict_json
 from rds_project import canonical, digest, number, require
@@ -33,7 +34,8 @@ def validate_policy(store, contract):
     if 'advisor_policy' not in contract:
         return None
     policy = contract['advisor_policy']
-    require(isinstance(policy, dict) and set(policy) == {'schema', 'context', 'graph', 'routes', 'observations'},
+    require(isinstance(policy, dict) and {'schema', 'context', 'graph', 'routes', 'observations'} <= set(policy)
+            and set(policy) <= {'schema', 'context', 'graph', 'routes', 'observations', 'feasibility'},
             'advisor_policy needs schema, context, graph, routes and observations')
     require(type(policy['schema']) is int and policy['schema'] == 1, 'advisor_policy schema must be 1')
     require(len(canonical(policy).encode('utf-8')) <= MAX_JSON_BYTES, 'advisor_policy exceeds 2 MiB')
@@ -67,6 +69,14 @@ def validate_policy(store, contract):
         require(admitted, f"Owned action '{action_id}' would never be admitted by the Advisor: {reason}; "
                 "correct it before project init, because advisor_policy freezes with the contract")
     routes = policy['routes']
+    retained = {}
+    history = []
+    if store.path.is_file() and 'method_evolution' in contract:
+        with store._db(True) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
+                from rds_method_revision import contract_history
+                history = contract_history(db)
+                retained = {r['id']: r for r in store._runs(db)}
     require(isinstance(routes, list) and 1 <= len(routes) <= 64, 'Owned routes must contain 1..64 manifests')
     ids, candidates, output_owners = {}, set(), set()
     manifest_fields = {'schema', 'id', 'arm', 'control_id', 'protocol', 'argv', 'outpaths',
@@ -94,9 +104,14 @@ def validate_policy(store, contract):
             number(amount, 'owned estimate.' + resource)
         require(estimates.get('wall_seconds', -1) >= timeout, 'Frozen wall estimate must cover timeout')
         protocol = spec.get('protocol')
+        historic = retained.get(ident)
+        contracts = [contract]
+        if historic and historic['manifest'] == spec:
+            contracts += [h['contract'] for h in history if h['sha256'] ==
+                          historic.get('effective_contract_sha256', history[0]['sha256'])]
         require(isinstance(protocol, dict) and set(protocol) == {'path', 'sha256'} and any(
             b.get('role') == 'protocol' and all(b.get(k) == protocol[k] for k in protocol)
-            for b in contract.get('bindings', [])), 'Frozen route protocol is not contract-bound')
+            for c in contracts for b in c.get('bindings', [])), 'Frozen route protocol is not contract-bound')
         outputs = spec.get('outpaths')
         require(isinstance(outputs, list) and len(outputs) <= 64 and (outputs or spec['arm'] == 'tool'),
                 'Frozen outputs must be a bounded list')
@@ -131,6 +146,8 @@ def validate_policy(store, contract):
     # Existing graph validation and method checks remain authoritative.
     from rds_advisor_search import search_directions
     search_directions(graph, {**deepcopy(context), 'facts': {}})
+    from rds_feasibility import validate
+    validate(store, contract, policy)
     return policy
 
 
@@ -149,8 +166,55 @@ def _state(store, db):
                            (receipt['run_id'], receipt['sha256'])).fetchone() is not None,
                 'Owned receipt has no matching completion event')
         completed.append(receipt['sha256'])
+    campaign = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED' ORDER BY id LIMIT 1").fetchone()
+    history = [{'sha256': digest(contract), 'contract': contract}]
+    if 'method_evolution' in contract:
+        from rds_method_revision import contract_history
+        history = contract_history(db)
     return {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
-            'budget': budget, 'completion_events': completed}
+            'budget': budget, 'completion_events': completed,
+            'contract_history': history,
+            'exposures': [strict_json(row['body']) for row in db.execute('SELECT body FROM exposures ORDER BY id')],
+            'campaign_started': strict_json(campaign['body']) if campaign else None}
+
+
+def _fingerprint(state):
+    """Bind admission state, excluding only a running worker's elapsed telemetry."""
+    projected = {**state, 'runs': [
+        {k: v for k, v in run.items() if k != 'observed_wall_seconds'}
+        if run['status'] == 'RUNNING' else run for run in state['runs']]}
+    return digest(projected)
+
+
+def _telemetry(state):
+    now = time.time()
+    return {'snapshot_at': now, 'checked_at': now, 'running': [
+        {'run_id': run['id'], 'attempt_id': run['attempt_id'],
+         'lower_bound_seconds': run['observed_wall_seconds'],
+         'latest_seconds': run['observed_wall_seconds']}
+        for run in state['runs'] if run['status'] == 'RUNNING']}
+
+
+def _reconcile(state, fingerprint, telemetry, reason):
+    """Accept monotonic elapsed updates only; caller owns the coherent read/lock."""
+    require(_fingerprint(state) == fingerprint, reason)
+    require(isinstance(telemetry, dict) and isinstance(telemetry.get('running'), list),
+            'Owned admission telemetry is missing or malformed')
+    active = {run['id']: run for run in state['runs'] if run['status'] == 'RUNNING'}
+    require(len(telemetry['running']) == len(active), 'Owned admission telemetry coverage differs')
+    seen = set()
+    for window in telemetry['running']:
+        require(isinstance(window, dict) and window.get('run_id') in active
+                and window['run_id'] not in seen, 'Owned admission telemetry identity differs')
+        seen.add(window['run_id'])
+        run = active[window['run_id']]
+        require(window.get('attempt_id') == run['attempt_id'], 'Owned admission telemetry attempt differs')
+        lower = number(window.get('lower_bound_seconds'), 'telemetry lower bound')
+        latest = number(window.get('latest_seconds'), 'telemetry latest bound')
+        require(lower <= latest <= run['observed_wall_seconds'],
+                'Owned running telemetry regressed; inspect retained state')
+        window['latest_seconds'] = run['observed_wall_seconds']
+    telemetry['checked_at'] = time.time()
 
 
 def _original(store, relative):
@@ -230,7 +294,9 @@ def _collect(store, state):
             require(receipt.get('exit_code') == 0 and receipt.get('process_started') is True
                     and receipt['timeout'] is False and receipt.get('errors') == [],
                     'Successful owned receipt has incompatible process outcome: ' + rid)
-            require(receipt.get('bindings_before') == receipt.get('bindings_after') == state['contract']['bindings'],
+            bound_contract = next((h['contract'] for h in state['contract_history']
+                                   if h['sha256'] == run.get('effective_contract_sha256', state['contract_history'][0]['sha256'])), None)
+            require(bound_contract is not None and receipt.get('bindings_before') == receipt.get('bindings_after') == bound_contract['bindings'],
                     'Successful owned receipt input bindings differ: ' + rid)
         source = {'locator': 'owned receipt ' + receipt['sha256']}
         nodes.append(_node('receipt:' + rid, 'SUPPORTED', source, receipt_sha256=receipt['sha256'],
@@ -380,7 +446,8 @@ def review(store, persist=True):
     with store._db(True) as db:
         db.execute('BEGIN')
         state = _state(store, db)
-    fingerprint = digest(state)
+    fingerprint = _fingerprint(state)
+    telemetry = _telemetry(state)
     policy = validate_policy(store, state['contract'])
     nodes, edges, coverage, files = _collect(store, state)
     saved = current(store.root)
@@ -405,7 +472,8 @@ def review(store, persist=True):
     snapshot_sha = saved['sha256'] if saved else None
     if persist:
         def validate_current(db):
-            require(digest(_state(store, db)) == fingerprint, 'Owned state changed during evidence collection; retry review')
+            _reconcile(_state(store, db), fingerprint, telemetry,
+                       'Owned state changed during evidence collection; retry review')
         snapshot_sha = save(store.root, spec, expected=snapshot_sha, source_base=store.root,
                             validate_current=validate_current)
         actual = current(store.root)
@@ -413,6 +481,7 @@ def review(store, persist=True):
         spec = actual['dependency_map']
     result = {'status': 'REVIEWED' if policy else 'COLLECTION_ONLY', 'assurance': ASSURANCE,
               'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN', 'fingerprint': fingerprint,
+              'telemetry': telemetry,
               'coverage': coverage, 'snapshot_sha256': snapshot_sha, 'selected_run': None, 'selected_manifest': None,
               'recommendations': [], 'warnings': [], 'next_move': None, 'evidence_files': files}
     if policy:
@@ -456,6 +525,24 @@ def review(store, persist=True):
                 continue
             if all(amount <= budget.get(resource, 0) for resource, amount in manifest['resource_estimates'].items()):
                 eligible.append(route)
+        from rds_feasibility import assess
+        feasibility = assess(store, state)
+        if feasibility is not None:
+            result['feasibility'] = feasibility
+            goal_confirmed = selection.get('goal', {}).get('status') == 'TRUE'
+            if goal_confirmed:
+                feasibility['next_action'] = 'GOAL_PREDICATES_CONFIRMED'
+                feasibility['repair_request'] = None
+            allowed = set(feasibility['admitted_runs'])
+            active = [r for r in active if r['manifest']['id'] in allowed]
+            eligible = [r for r in eligible if r['manifest']['id'] in allowed]
+            if feasibility['bounded_pilots']:
+                # A missing ETA is resolved by bounded measurement before a long route.
+                pilot_order = {p: i for i, p in enumerate(feasibility['bounded_pilots'])}
+                eligible.sort(key=lambda r: pilot_order.get(r['manifest']['id'], len(pilot_order)))
+            if not active and not eligible and not goal_confirmed:
+                result['next_move'] = feasibility['repair_request']
+                result['warnings'].append({'kind': 'PREDICTIVE_FEASIBILITY_BLOCK', 'plans': feasibility['plans']})
         frontier = [r for r in eligible if not ready[r['candidate']].get('dominated_by')]
         chosen = (active or frontier or eligible)
         if not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
@@ -481,14 +568,15 @@ def prepare_admission(store, spec):
             and report['selected_manifest'] == spec, 'Owned Advisor did not select this frozen manifest; inspect project next')
     return {'fingerprint': report['fingerprint'], 'selected_run': report['selected_run'],
             'manifest_sha256': digest(spec), 'evidence_files': report['evidence_files'],
-            'snapshot_sha256': report['snapshot_sha256']}
+            'snapshot_sha256': report['snapshot_sha256'], 'telemetry': deepcopy(report['telemetry'])}
 
 
 def check_admission(store, db, spec, token):
     """No nested write connection: called under the caller's BEGIN IMMEDIATE."""
     require(isinstance(token, dict) and token.get('selected_run') == spec.get('id')
             and token.get('manifest_sha256') == digest(spec), 'Owned admission manifest binding mismatch')
-    require(digest(_state(store, db)) == token['fingerprint'], 'Owned state changed after Advisor selection; retry admission')
+    _reconcile(_state(store, db), token['fingerprint'], token.get('telemetry'),
+               'Owned state changed after Advisor selection; retry admission')
     snapshot = db.execute('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
     require(snapshot is not None and snapshot['sha256'] == token['snapshot_sha256'],
             'Owned dependency snapshot changed after Advisor selection; retry admission')
@@ -498,6 +586,8 @@ def check_admission(store, db, spec, token):
     blob(store.root, saved['map'])  # Hash-bound CAS read, no nested ledger connection.
     for item in token['evidence_files']:
         _read_original(store, item)
+    from rds_feasibility import check_start
+    check_start(store, db, spec['id'])
     return True
 
 

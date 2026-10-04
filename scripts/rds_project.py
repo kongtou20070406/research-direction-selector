@@ -253,7 +253,7 @@ class ProjectStore:
             if "advisor_policy" not in contract:
                 return None
             run = self._run(db, run_id)
-            if (allow_observation and "execution_policy" in contract
+            if (allow_observation and ("execution_policy" in contract or "method_evolution" in contract)
                     and (run["status"] != "RESERVED" or run["attempt_id"] is not None)):
                 return None
         return self._advisor_prepare(run["manifest"], contract)
@@ -320,6 +320,8 @@ class ProjectStore:
         return claims
 
     def _check_start(self, db, run):
+        from rds_method_revision import pending_revision
+        require(pending_revision(db) is None, 'Resume prepared method revision before executing')
         # This run is already reserved. Do not charge its estimate a second time,
         # but do not let that reservation override costs settled since admission.
         for resource, amount in run["resource_estimates"].items():
@@ -329,6 +331,9 @@ class ProjectStore:
             require(row["spent"] + row["charged"] + row["reserved"] <= row["cap"] + 1e-9,
                     f"Insufficient {resource} budget before start")
         contract = self._contract(db)
+        if contract.get('advisor_policy', {}).get('feasibility') is not None:
+            from rds_feasibility import check_start
+            check_start(self, db, run['id'])
         claims = self._output_claims(db)
         self._campaign_deadline(db, contract)
         if 'maintenance' in run['manifest']:
@@ -345,14 +350,16 @@ class ProjectStore:
         """One immutable deadline per owning ledger, including idle/recovery time."""
         if 'stop_policy' not in contract:
             return None
+        # Method adoption changes the effective digest, never the owning T0.
+        genesis_sha = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()[0]
         row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED' ORDER BY id LIMIT 1").fetchone()
         if row is None:
             require(admit, 'Stop policy: campaign admission is missing')
-            event = {'kind': 'CAMPAIGN_STARTED', 'contract_sha256': digest(contract), 'started_at': time.time()}
+            event = {'kind': 'CAMPAIGN_STARTED', 'contract_sha256': genesis_sha, 'started_at': time.time()}
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
         else:
             event = json.loads(row['body'])
-            require(event['contract_sha256'] == digest(contract), 'Stop policy: campaign binding differs')
+            require(event['contract_sha256'] == genesis_sha, 'Stop policy: campaign binding differs')
         deadline = event['started_at'] + contract['stop_policy']['wall_seconds']
         require(time.time() < deadline, 'Stop policy: CAMPAIGN_DEADLINE')
         return deadline
@@ -437,11 +444,8 @@ class ProjectStore:
         # Native research records can share this database before project init.
         require(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone(),
                 UNINITIALIZED)
-        row = db.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
-        require(row is not None, "Project contract is missing")
-        value = json.loads(row["body"])
-        require(digest(value) == row["sha256"], "Contract integrity failure")
-        return value
+        from rds_method_revision import effective_contract
+        return effective_contract(db)
 
     def _bindings(self, contract):
         found = []
@@ -615,7 +619,7 @@ class ProjectStore:
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
-                                  "primary_metric", "objective_sha256", "execution_policy", "stop_policy", "maintenance_allowance", "advisor_policy"}, "Unknown contract fields")
+                                  "primary_metric", "objective_sha256", "execution_policy", "stop_policy", "maintenance_allowance", "advisor_policy", "method_evolution"}, "Unknown contract fields")
         if "primary_metric" in contract:
             metric = contract["primary_metric"]
             require(isinstance(metric, dict) and set(metric) == {"name", "direction", "min_useful_delta"},
@@ -668,6 +672,8 @@ class ProjectStore:
             binding_roles.add((path, b["role"]))
             roles.add(b["role"])
         require(ROLES <= roles, "code/config/data/evaluator/protocol bindings required")
+        from rds_method_revision import validate_envelope
+        validate_envelope(self, contract)
         # A protocol file freezes with the contract, so a conflict here would reject every run that names it.
         for b in contract["bindings"]:
             if b["role"] != "protocol":
@@ -891,6 +897,9 @@ class ProjectStore:
                    "executor_sha256": file_sha(executor), "attempt_id": None, "worker_pid": None,
                    "pid": None, "started_at": None, "finished_at": None, "observed_wall_seconds": 0.0,
                    "scheduler": None}
+            from rds_feasibility import runtime_fingerprint
+            run['effective_contract_sha256'] = digest(contract)
+            run['runtime_fingerprint'] = runtime_fingerprint()
             require(executor_sha256 is None or run['executor_sha256'] == executor_sha256,
                     'Execution policy: command executable changed before registration')
             if 'execution_policy' in contract:
@@ -898,6 +907,10 @@ class ProjectStore:
                     contract.get('objective_sha256'), arm=spec['arm'], executor_sha256=run['executor_sha256'])
             advisor_token = self._advisor_prepare(spec, contract)
             db.execute("BEGIN IMMEDIATE")
+            from rds_method_revision import pending_revision
+            require(pending_revision(db) is None, 'Resume prepared method revision before registering')
+            require(digest(self._contract(db)) == run['effective_contract_sha256'],
+                    'Method revision changed during run registration')
             self._advisor_check(db, spec, advisor_token)
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
             retained = self._runs(db)
@@ -1062,7 +1075,9 @@ class ProjectStore:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
             self._runs(db)
-            if 'execution_policy' in self._contract(db) and (run['status'] != 'RESERVED' or run['attempt_id'] is not None):
+            contract = self._contract(db)
+            if (('execution_policy' in contract or 'method_evolution' in contract)
+                    and (run['status'] != 'RESERVED' or run['attempt_id'] is not None)):
                 return self._observe(db, run)
             require(run["status"] == "RESERVED" and run["attempt_id"] is None, "Run already dispatched or started; recover never reruns it")
             self._advisor_check(db, run["manifest"], advisor_token)
@@ -1114,7 +1129,15 @@ class ProjectStore:
                            (run['id'], receipt['sha256'])).fetchone() is not None,
                 'Existing receipt has no matching owned completion event')
         if receipt.get('run_status') == 'SUCCEEDED':
-            require(receipt.get('bindings_before') == bindings == receipt.get('bindings_after'),
+            original_bindings = bindings
+            if 'method_evolution' in contract:
+                from rds_method_revision import contract_history
+                history = contract_history(db)
+                ancestor = next((h['contract'] for h in history if h['sha256'] ==
+                                 run.get('effective_contract_sha256', history[0]['sha256'])), None)
+                require(ancestor is not None, 'Existing run contract is outside verified method lineage')
+                original_bindings = ancestor['bindings']
+            require(receipt.get('bindings_before') == original_bindings == receipt.get('bindings_after'),
                     'Existing successful receipt input bindings differ')
             inventory = {entry['path']: entry['sha256'] for entry in receipt.get('artifacts', [])}
             for output in run['manifest']['outpaths']:
@@ -1328,6 +1351,9 @@ class ProjectStore:
                                                      if run["scheduler"] else None)}
         if stop_reason is not None:
             receipt["stop_reason"] = stop_reason
+        for field in ('effective_contract_sha256', 'runtime_fingerprint'):
+            if field in run:
+                receipt[field] = run[field]
         if run["manifest"].get("maintenance") is not None:
             receipt["maintenance"] = True
             receipt['maintenance_review'] = run['maintenance_review']
@@ -1394,6 +1420,12 @@ class ProjectStore:
                     "runs": self._runs(db),
                     "exposures": [json.loads(r["body"]) for r in db.execute("SELECT body FROM exposures ORDER BY id")],
                     "receipts": [self._receipt(r) for r in db.execute("SELECT run_id,sha256,body FROM receipts ORDER BY run_id")]}
+            if 'method_evolution' in contract:
+                from rds_method_revision import contract_history, pending_revision
+                snapshot['contract_history'] = contract_history(db)
+                pending = pending_revision(db)
+                snapshot['method_revision_pending'] = ({'id': pending['id'], 'sha256': pending['sha256']}
+                                                       if pending else None)
         if check_bindings:
             found, errors = self._bindings(contract)
             snapshot["binding_check"] = {"files": found, "errors": errors}
