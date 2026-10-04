@@ -215,6 +215,23 @@ class VerdictBridgeTests(unittest.TestCase):
                 self.assertEqual(result["authorization"], "UNCHANGED")
                 self.assertEqual(m, original)
 
+    def test_witness_storage_refuses_key_coercion_and_preserves_json_identity(self):
+        from rds_hypergraph_input import load_input
+        m = two_route_map()
+        original = deepcopy(m)
+        for witness in ({1: "numeric"}, {1: "numeric", "1": "text"},
+                        {"nested": [{False: "boolean"}]}, {"tuple": (1, 2)}):
+            with self.subTest(witness=witness), self.assertRaises(ValueError):
+                apply_operator_verdict(m, "node:a", verdict(witness=witness))
+            self.assertEqual(m, original)
+        witness = {"1": "text", "nested": [False, None, 1, 1.25, {"step": "counterexample"}]}
+        result = apply_operator_verdict(m, "node:a", verdict(witness=witness))
+        reloaded, repairs = load_input(json.dumps(result, allow_nan=False))
+        self.assertEqual(repairs, [])
+        self.assertEqual(reloaded["revision"]["changes"][0]["source"]["witness"], witness)
+        self.assertEqual(reloaded["operator_verdict"]["witness"], witness)
+        self.assertEqual(m, original)
+
     def test_missing_failed_corrupt_and_cross_root_receipts_do_not_support(self):
         import sqlite3
         for case in ("missing", "failed", "corrupt", "cross-root"):

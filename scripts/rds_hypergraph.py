@@ -682,8 +682,21 @@ def _operator_verdict_target(spec, target_token):
 
 def _bounded_verdict_json(value):
     """Refuse non-finite/oversize verdict data before copying or changing a map."""
+    def check(item):
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise ValueError("JSON object keys must be strings; witness identity must survive storage")
+                check(child)
+        elif isinstance(item, list):
+            for child in item:
+                check(child)
+        elif type(item) not in (str, int, float, bool, type(None)):
+            raise ValueError("supply JSON objects, arrays and scalar values without type coercion")
+
     size = 0
     try:
+        check(value)
         for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(value):
             size += len(chunk.encode("utf-8"))
             if size > 8 * 1024 * 1024:
