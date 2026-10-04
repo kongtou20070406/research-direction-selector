@@ -164,7 +164,9 @@ class StructureTests(unittest.TestCase):
         p = self.proposal()
         structure.propose(self.root, p)
         with self.store._db() as db:
-            db.execute("UPDATE budget SET charged=cap-2.1")
+            # Leave exactly the intended control allowance after ALL prior
+            # measured/reserved work; elapsed request time is not assumed.
+            db.execute("UPDATE budget SET charged=cap-spent-reserved-2.1")
         self.assertEqual(structure.next_step(self.root)['blocked'][0]['reason'], 'BUDGET_EXHAUSTED')
         with self.assertRaisesRegex(ValueError, 'Insufficient'):
             structure.advance(self.root, 'candidate')
@@ -249,6 +251,23 @@ class StructureTests(unittest.TestCase):
         p['new_nodes'][0]['available_on'] = '2001-01-01'
         result = review_proposals(task['frontier'], task['frontier_spec'], {'schema_version': 1, 'proposals': [p]})
         self.assertIn('FUTURE_RECORD', ';'.join(result['proposals'][0]['definition_errors']))
+
+    def test_replanning_packet_exposes_actual_negative_results(self):
+        other = fixture.prepare(Path(self.tmp.name) / 'negative', 'negative')
+        task = structure.request(other)['tasks'][0]
+        p = fixture.proposal(other, task, strategy='linear', action='structural_reconstruction')
+        structure.propose(other, p)
+        observed = structure.advance(other, p['id'])
+        self.assertEqual(observed['status'], 'TEST_REFUTED')
+        packet = structure.request(other)['tasks'][0]
+        receipts = ProjectStore(other).snapshot()['receipts']
+        self.assertEqual(packet['receipts'], [r['sha256'] for r in receipts])
+        self.assertEqual([r['run_id'] for r in packet['settled_evidence']], [r['run_id'] for r in receipts])
+        self.assertTrue(all(r['original_results'] for r in packet['settled_evidence']))
+        self.assertEqual(packet['prior_feedback'][0]['receipts'], observed['receipts'])
+        self.assertEqual(packet['prior_feedback'][0]['next_decision'], observed['next_decision'])
+        self.assertEqual(packet['prior_feedback'][0]['status'], 'TEST_REFUTED')
+        self.assertIn('wall_seconds', packet['budget'])
 
 
 if __name__ == '__main__':
