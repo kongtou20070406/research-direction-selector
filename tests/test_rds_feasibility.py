@@ -191,6 +191,30 @@ class FeasibilityTests(unittest.TestCase):
         self.assertEqual(self.launches(), [])
         self.assertEqual(self.store.snapshot()['budget']['cpu_seconds']['charged_estimate'], 0)
 
+    def test_future_verifier_hard_wall_reservation_blocks_before_any_launch(self):
+        def configure(c):
+            verify = next(r['manifest'] for r in c['advisor_policy']['routes'] if r['manifest']['id']=='verify')
+            verify['timeout_seconds'] = 101
+            verify['resource_estimates']['wall_seconds'] = 102
+        self.initialize(configure)
+        report = self.cli('project', 'next')
+        self.assertIsNone(report['selected_run'])
+        self.assertEqual({p['status'] for p in report['feasibility']['plans']}, {'INFEASIBLE'})
+        self.assertEqual(report['feasibility']['repair_request']['kind'], 'IMPROVE_TOOL')
+        self.assertEqual(self.launches(), [])
+
+    def test_hard_reservation_is_not_substituted_for_remaining_deadline_eta(self):
+        self.initialize()
+        state = self.state()
+        state['campaign_started'] = {'started_at':100}
+        def tiny_forecast(store, state, run_id, manifest, model):
+            return {'status':'CONDITIONAL_FORECAST','run_id':run_id,
+                    'lower_wall_seconds':.1,'upper_wall_seconds':.1}
+        with patch.object(feasibility, '_estimate', side_effect=tiny_forecast):
+            report = feasibility.assess(self.store, state, now=278)  # Original deadline280; two seconds remain.
+        self.assertEqual(next(p for p in report['plans'] if p['id']=='fast')['status'], 'FEASIBLE')
+        self.assertIn('fast', report['admitted_runs'])
+
 
 if __name__ == '__main__':
     unittest.main()

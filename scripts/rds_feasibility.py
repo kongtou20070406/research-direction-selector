@@ -157,7 +157,8 @@ def assess(store, state, *, now=None):
         failed = [s for s in remaining if s in receipts]
         recovered_reservations = sum(runs[s]['resource_estimates']['wall_seconds'] for s in remaining
                                      if runs.get(s, {}).get('status') in {'RESERVED', 'RUNNING'})
-        available = unreserved + recovered_reservations
+        accounting_available = unreserved + recovered_reservations
+        available = accounting_available
         if deadline is not None:
             available = min(available, max(0, deadline - now))
         estimates = [_estimate(store, state, s, routes[s], config['models'].get(s)) for s in remaining if s not in failed]
@@ -173,12 +174,24 @@ def assess(store, state, *, now=None):
             accounting.append({'resource':name, 'required_allowance':required, 'available_allowance':available_other,
                                'basis':'DECLARED_ACCOUNTING_ALLOWANCE_NOT_RUNTIME_PREDICTION'})
         overhead = plan['recovery_wall_seconds'] + plan['delivery_wall_seconds']
+        wall_requirements = []
+        previous_upper = 0
+        index = {e['run_id']:e for e in estimates}
+        for s in remaining:
+            wall_requirements.append({'run_id':s,'required_allowance':routes[s]['resource_estimates']['wall_seconds'],
+                'available_before_conditional_previous_steps':max(0, accounting_available - previous_upper),
+                'basis':'HARD_RESERVATION_SEPARATE_FROM_CONDITIONAL_RUNTIME'})
+            previous_upper += index.get(s, {}).get('upper_wall_seconds') or 0
         lower = overhead + sum(e['lower_wall_seconds'] for e in estimates)
         upper = None if any(e['upper_wall_seconds'] is None for e in estimates) else overhead + sum(e['upper_wall_seconds'] for e in estimates)
         if failed:
             status, reason = 'REPAIR_REQUIRED', 'A preserved failed step needs a new method identity and evidence'
         elif any(r['required_allowance'] > r['available_allowance'] for r in accounting):
             status, reason = 'INFEASIBLE', 'Complete plan lacks a declared resource allowance for execution and final verification'
+        elif any(r['required_allowance'] > r['available_before_conditional_previous_steps'] for r in wall_requirements):
+            status, reason = 'INFEASIBLE', 'A required solve/verification step cannot obtain its hard wall reservation'
+        elif any(e['upper_wall_seconds'] is not None and e['upper_wall_seconds'] > routes[e['run_id']]['timeout_seconds'] for e in estimates):
+            status, reason = 'INFEASIBLE', 'Conditional completion forecast exceeds a required step hard timeout'
         elif lower > available:
             status, reason = 'INFEASIBLE', 'Even the conditional lower forecast exceeds remaining complete-plan allowance'
         elif upper is not None and upper <= available:
@@ -195,7 +208,7 @@ def assess(store, state, *, now=None):
         plans.append({'id': plan['id'], 'status': status, 'reason': reason, 'remaining_steps': remaining,
                       'lower_wall_seconds': lower, 'upper_wall_seconds': upper, 'available_wall_seconds': available,
                       'recovery_wall_seconds': plan['recovery_wall_seconds'], 'delivery_wall_seconds': plan['delivery_wall_seconds'],
-                      'accounting_requirements':accounting, 'steps': estimates})
+                      'accounting_requirements':accounting, 'wall_reservation_requirements':wall_requirements, 'steps': estimates})
     pilots = []
     for p in config['pilots']:
         reservation = routes[p]['resource_estimates']['wall_seconds']
