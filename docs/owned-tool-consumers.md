@@ -85,6 +85,9 @@ Both rates use only the current `APPLICABLE` bindings as denominator, with
 `UNKNOWN` counts remain separate. A zero denominator yields `null` rates and
 `zero_denominator=NOT_APPLICABLE`; it is not zero utilization or success.
 The declared binding scope is the inventory boundary, not every tool on disk.
+Exact Python call inputs retain JSON types and mapping order: `true`, `1` and
+`1.0` are distinct, and changing kwargs or nested mapping order needs new
+qualification. Only the outer `args`/`kwargs` record order is irrelevant.
 A tool may be used while its output has no decision consumer: that is reported
 as `RESULT_NOT_READ_BY_DECISION` and does not count as consumption. Consumption
 can include an unfavorable result; it does not imply goal success.

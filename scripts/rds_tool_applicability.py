@@ -220,7 +220,8 @@ def inspect(store, binding, *, contract, action=None, facts=None,
             all(isinstance(item, dict) and set(item) == {'args', 'kwargs'}
                 and isinstance(item['args'], list) and isinstance(item['kwargs'], dict) for item in inputs),
             'Task inputs must contain 1..64 explicit args/kwargs records')
-    if inputs != [{'args': c.get('args', []), 'kwargs': c.get('kwargs', {})} for c in cases]:
+    from rds_tool_application import task_input_identity
+    if task_input_identity(inputs) != task_input_identity([{'args': c.get('args', []), 'kwargs': c.get('kwargs', {})} for c in cases]):
         return {**result, 'status': 'INAPPLICABLE', 'reason': 'Current task inputs differ from exact validated cases'}
     code = assets.read_bytes(store._path(binding['code_path']))
     tool_code = assets.blob(store.root, tool['asset'])

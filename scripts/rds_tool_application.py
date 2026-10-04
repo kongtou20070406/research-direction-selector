@@ -5,11 +5,23 @@ compares original finite expectations. It is ordinary trusted project code,
 not an OS sandbox, a general domain checker or scientific proof.
 """
 import hashlib
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
 
 from rds_project import ProjectStore, canonical, digest, require
+
+
+def task_input_identity(inputs):
+    """Preserve Python-observable JSON types and mapping order in call values."""
+    require(isinstance(inputs, list) and 1 <= len(inputs) <= 64 and
+            all(isinstance(item, dict) and set(item) == {'args', 'kwargs'}
+                and isinstance(item['args'], list) and isinstance(item['kwargs'], dict) for item in inputs),
+            'Task inputs must contain 1..64 explicit args/kwargs records')
+    # Only the outer args/kwargs record order is irrelevant to the call.
+    return json.dumps([{'args': item['args'], 'kwargs': item['kwargs']} for item in inputs],
+                      separators=(',', ':'), ensure_ascii=False, allow_nan=False)
 
 
 APPLICATION_DRIVER = '''import hashlib, importlib.util, json, pathlib, sys
@@ -27,15 +39,19 @@ if request['schema'] != 1:
 code = raw(request['tool'])
 inputs = json.loads(raw(request['inputs']).decode('utf-8-sig'))
 cases = json.loads(raw(request['cases']).decode('utf-8-sig'))
-if not inputs or len(inputs) != len(cases) or len(inputs) > 64:
+if (not isinstance(inputs, list) or not inputs or len(inputs) != len(cases) or len(inputs) > 64
+        or not all(isinstance(item, dict) and set(item) == {'args', 'kwargs'}
+                   and isinstance(item['args'], list) and isinstance(item['kwargs'], dict) for item in inputs)):
     raise ValueError('Application needs exact finite task cases')
+normalized = [{'args': item['args'], 'kwargs': item['kwargs']} for item in inputs]
+qualified = [{'args': case.get('args', []), 'kwargs': case.get('kwargs', {})} for case in cases]
+if json.dumps(normalized, allow_nan=False) != json.dumps(qualified, allow_nan=False):
+    raise ValueError('Task inputs differ from finite qualification')
 namespace = {'__name__': 'rds_applied_tool'}
 exec(compile(code, request['tool']['path'], 'exec'), namespace)
 entry = namespace[request['entry']]
 rows = []
 for i, (item, case) in enumerate(zip(inputs, cases)):
-    if item != {'args': case.get('args', []), 'kwargs': case.get('kwargs', {})}:
-        raise ValueError('Task inputs differ from finite qualification')
     try:
         result = entry(*item['args'], **item['kwargs'])
         passed = 'expected' in case and json.dumps(result, sort_keys=True, allow_nan=False) == json.dumps(case['expected'], sort_keys=True, allow_nan=False)
@@ -82,7 +98,8 @@ def prepare(args):
     cases = _cases(cases_raw)
     from rds_artifacts import strict_json
     inputs = strict_json(inputs_raw.decode('utf-8-sig'))
-    require(inputs == [{'args': c.get('args', []), 'kwargs': c.get('kwargs', {})} for c in cases],
+    # Call values include JSON types and Python-observable mapping order.
+    require(task_input_identity(inputs) == task_input_identity([{'args': c.get('args', []), 'kwargs': c.get('kwargs', {})} for c in cases]),
             'Tool qualification must cover exactly the current task inputs')
     require(hashlib.sha256(cases_raw).hexdigest() == validation['data']['cases_sha256'],
             'Current task cases differ from the verified local validation')

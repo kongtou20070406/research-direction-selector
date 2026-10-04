@@ -47,9 +47,10 @@ class OwnedToolsCLITests(unittest.TestCase):
         return p
 
     def setup_campaign(self, *, consumed=True, wrong_inputs=False, qualification=True, negative_first=False,
-                       disconnected=False, interface='full'):
-        cases = [{'args': [[1, 2, 3]], 'expected': 14}, {'args': [[-3, 3]], 'expected': 18}]
-        self.write('source.py', 'def sum_squares(values):\n    return sum(v * v for v in values)\n')
+                       disconnected=False, interface='full', inputs_override=None, initialize=True,
+                       cases_override=None, source_override=None):
+        cases = cases_override if cases_override is not None else [{'args': [[1, 2, 3]], 'expected': 14}, {'args': [[-3, 3]], 'expected': 18}]
+        self.write('source.py', source_override if source_override is not None else 'def sum_squares(values):\n    return sum(v * v for v in values)\n')
         self.write('cases.json', cases)
         inputs = [{'args': c['args'], 'kwargs': c.get('kwargs', {})} for c in cases]
         self.write('inputs.json', inputs)
@@ -84,8 +85,8 @@ class OwnedToolsCLITests(unittest.TestCase):
         self.assertEqual(prepared['authorization'], 'UNCHANGED')
         self.binding = prepared['binding']
         bindings = prepared['required_bindings']
-        if wrong_inputs:
-            self.write('inputs.json', [{'args': [[5]], 'kwargs': {}}])
+        if wrong_inputs or inputs_override is not None:
+            self.write('inputs.json', inputs_override if inputs_override is not None else [{'args': [[5]], 'kwargs': {}}])
             sha = hashlib.sha256((self.root / 'inputs.json').read_bytes()).hexdigest()
             next(b for b in bindings if b['path'] == 'inputs.json')['sha256'] = sha
             self.binding['qualification']['task_inputs']['sha256'] = sha
@@ -96,7 +97,7 @@ class OwnedToolsCLITests(unittest.TestCase):
                     'config_sha256': next(b['sha256'] for b in bindings if b['role'] == 'config'),
                     'data_sha256': next(b['sha256'] for b in bindings if b['role'] == 'data'),
                     'data_split': 'finite-software-development', 'init': 'none', 'seed': 0, 'checkpoint': 'none',
-                    'schedule': 'two bounded calls', 'sample_work': {'cases': 2}, 'numeric_protocol': 'Python integer'}
+                    'schedule': 'finite bounded calls', 'sample_work': {'cases': len(cases)}, 'numeric_protocol': 'Python JSON values'}
         self.write('protocol.json', protocol)
         protocol_ref = {'path': 'protocol.json', 'sha256': hashlib.sha256((self.root / 'protocol.json').read_bytes()).hexdigest()}
         bindings.append({'role': 'protocol', **protocol_ref})
@@ -134,7 +135,8 @@ class OwnedToolsCLITests(unittest.TestCase):
             else:
                 self.contract['advisor_policy']['tool_bindings'] = []
         self.write('contract.json', self.contract)
-        return self.call('project', 'init', '--contract', str(self.root / 'contract.json'))
+        if initialize:
+            return self.call('project', 'init', '--contract', str(self.root / 'contract.json'))
 
     def rows(self, table):
         with self.store._db(True) as db:
@@ -241,6 +243,89 @@ class OwnedToolsCLITests(unittest.TestCase):
         self.assertIsNone(result['selected_run'])
         self.assertEqual(result['tool_utilization']['counts']['unknown'], 1)
         self.assertEqual(self.store.snapshot()['runs'], [])
+
+    def assert_mismatch_cannot_execute(self):
+        before = self.store.snapshot()
+        for command in ('next', 'advance'):
+            result = self.call('project', command)
+            self.assertIsNone(result['selected_run'])
+            self.assertEqual(result['tool_utilization']['counts']['inapplicable'], 1)
+            self.assertEqual(result['tool_utilization']['counts']['used'], 0)
+        after = self.store.snapshot()
+        self.assertEqual(after['budget'], before['budget'])
+        self.assertEqual(after['runs'], [])
+        self.assertEqual(after['receipts'], [])
+        self.assertFalse((self.root / 'outputs/application.json').exists())
+
+    def test_bool_cannot_inherit_int_qualification_or_start_owned_route(self):
+        self.setup_campaign(inputs_override=[{'args': [[True, 2, 3]], 'kwargs': {}},
+                                             {'args': [[-3, 3]], 'kwargs': {}}])
+        self.assert_mismatch_cannot_execute()
+
+    def test_float_cannot_inherit_int_qualification_or_start_owned_route(self):
+        self.setup_campaign(inputs_override=[{'args': [[1.0, 2, 3]], 'kwargs': {}},
+                                             {'args': [[-3, 3]], 'kwargs': {}}])
+        self.assert_mismatch_cannot_execute()
+
+    def test_keyword_order_change_cannot_inherit_qualification(self):
+        self.setup_campaign(cases_override=[{'args': [], 'kwargs': {'b': 2, 'a': 1}, 'expected': ['b', 'a']}],
+                            source_override='def sum_squares(**kwargs):\n    return list(kwargs)\n',
+                            inputs_override=[{'args': [], 'kwargs': {'a': 1, 'b': 2}}])
+        self.assert_mismatch_cannot_execute()
+
+    def test_nested_mapping_order_change_cannot_inherit_qualification(self):
+        self.setup_campaign(cases_override=[{'args': [{'b': 2, 'a': 1}], 'expected': ['b', 'a']}],
+                            source_override='def sum_squares(values):\n    return list(values)\n',
+                            inputs_override=[{'args': [{'a': 1, 'b': 2}], 'kwargs': {}}])
+        self.assert_mismatch_cannot_execute()
+
+    def test_prepare_and_fixed_driver_preserve_keyword_order(self):
+        self.setup_campaign(cases_override=[{'args': [], 'kwargs': {'b': 2, 'a': 1}, 'expected': ['b', 'a']}],
+                            source_override='def sum_squares(**kwargs):\n    return list(kwargs)\n', initialize=False)
+        self.write('inputs.json', [{'kwargs': {'a': 1, 'b': 2}, 'args': []}])
+        rejected = self.call('rsi', 'prepare-application', '--name', 'squares', '--inputs', 'inputs.json',
+                             '--cases', 'cases.json', '--code-path', 'qualified.py', '--driver', 'apply.py',
+                             '--request', 'request.json', '--output', 'outputs/application.json',
+                             '--decision', str(self.root / 'decision.json'), '--action-file', str(self.root / 'action.json'),
+                             '--candidate', 'apply', '--run-id', 'apply', '--obligation', 'task.status',
+                             '--observation-fact', 'task.status', ok=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('exactly the current task inputs', rejected.stdout + rejected.stderr)
+        request = json.loads((self.root / 'request.json').read_text(encoding='utf-8'))
+        request['inputs']['sha256'] = hashlib.sha256((self.root / 'inputs.json').read_bytes()).hexdigest()
+        self.write('ordered-request.json', request)
+        executed = subprocess.run([sys.executable, '-B', 'apply.py', 'ordered-request.json'], cwd=self.root,
+                                  capture_output=True, text=True, encoding='utf-8', timeout=10)
+        self.assertNotEqual(executed.returncode, 0)
+        self.assertIn('Task inputs differ from finite qualification', executed.stderr)
+        self.assertFalse((self.root / 'outputs/application.json').exists())
+
+    def test_prepare_and_fixed_driver_reject_type_mismatch(self):
+        self.setup_campaign(initialize=False)
+        exported = {name: (self.root / name).read_bytes() for name in ('qualified.py', 'apply.py', 'request.json')}
+        for value in (True, 1.0):
+            with self.subTest(value=value):
+                self.write('inputs.json', [{'args': [[value, 2, 3]], 'kwargs': {}},
+                                           {'args': [[-3, 3]], 'kwargs': {}}])
+                rejected = self.call('rsi', 'prepare-application', '--name', 'squares', '--inputs', 'inputs.json',
+                                     '--cases', 'cases.json', '--code-path', 'qualified.py', '--driver', 'apply.py',
+                                     '--request', 'request.json', '--output', 'outputs/application.json',
+                                     '--decision', str(self.root / 'decision.json'), '--action-file', str(self.root / 'action.json'),
+                                     '--candidate', 'apply', '--run-id', 'apply', '--obligation', 'task.status',
+                                     '--observation-fact', 'task.status', ok=False)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn('exactly the current task inputs', rejected.stdout + rejected.stderr)
+                self.assertEqual({name: (self.root / name).read_bytes() for name in exported}, exported)
+                # Exercise the fixed driver independently of the early owned gate:
+                # even a consistently rehashed request cannot inherit other JSON types.
+                request = json.loads(exported['request.json'])
+                request['inputs']['sha256'] = hashlib.sha256((self.root / 'inputs.json').read_bytes()).hexdigest()
+                self.write('typed-request.json', request)
+                executed = subprocess.run([sys.executable, '-B', 'apply.py', 'typed-request.json'], cwd=self.root,
+                                          capture_output=True, text=True, encoding='utf-8', timeout=10)
+                self.assertNotEqual(executed.returncode, 0)
+                self.assertIn('Task inputs differ from finite qualification', executed.stderr)
+                self.assertFalse((self.root / 'outputs/application.json').exists())
 
     def test_refutation_after_review_blocks_admission(self):
         self.setup_campaign()

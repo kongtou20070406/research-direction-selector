@@ -151,6 +151,14 @@ class ToolApplicabilityTests(unittest.TestCase):
         self.binding['qualification'] = self.binding['application'] = None
         self.assertEqual(self.inspect()['status'], 'UNKNOWN')
 
+    def test_equal_python_values_with_different_json_types_are_inapplicable(self):
+        for value in (True, 1.0):
+            with self.subTest(value=value):
+                self.write_json('inputs.json', [{'args': [value, 2], 'kwargs': {}},
+                                                {'args': [-1, 2], 'kwargs': {}}])
+                self.rebound('inputs.json')
+                self.assertEqual(self.inspect()['status'], 'INAPPLICABLE')
+
     def test_refuted_native_result_is_inapplicable(self):
         assets.put(self.root, 'refute:add', 'refutation', b'counterexample scope review',
                    dependencies=[self.tool['id']], data={'target': self.tool['id']})
