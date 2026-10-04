@@ -64,7 +64,10 @@ def prepare(root):
         path = 'protocol-' + run_id + '.json'
         write(path, protocol)
         bindings.append({'path':path,'role':'protocol','sha256':sha(path)})
-        timeout = 20 if run_id == 'slow' else 7
+        # Final forecasts include process startup and a conservative safety
+        # factor. Freeze enough hard headroom before any run; pilot limits and
+        # the total campaign budget remain independently bounded.
+        timeout = 7 if run_id.startswith('pilot') else 20
         manifest = {'schema':1,'id':run_id,'arm':'tool','control_id':None,
                     'protocol':{'path':path,'sha256':sha(path)},
                     'argv':[sys.executable,'-B','verifier.py' if 'verify' in run_id else 'solver.py',run_id,mode,'outputs/'+run_id+'.json'],
