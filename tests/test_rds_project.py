@@ -1044,7 +1044,16 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
     def test_campaign_deadline_stops_hang_and_preserves_partial_stdout(self):
         # The deadline starts at reservation; allow Windows process startup and scheduling
         # before asserting that deadline cleanup preserves the child's flushed output.
-        store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": 5,
+        # CI runners can need seconds to launch python.exe under load, so the campaign
+        # deadline must outlast interpreter startup: otherwise the child is killed before
+        # its first flushed line and stdout.bin is legitimately empty. Measure a real bare
+        # spawn now and scale it: the deadline is fixture data, not a weakened assertion;
+        # the hang still cannot reach its own 15s timeout, and every CAMPAIGN_DEADLINE/
+        # size/cost assertion below is unchanged.
+        spawn_probe = time.perf_counter()
+        subprocess.run([sys.executable, "-c", "pass"], capture_output=True)
+        startup_headroom = round(max(5.0, 40.0 * (time.perf_counter() - spawn_probe)), 3)
+        store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": startup_headroom,
                                                 "progress": {"window_seconds": 3600, "min_bytes": 0}})
         receipt = self.run_spec(self.spec(timeout=15))
         self.assertEqual(receipt["run_status"], "FAILED")
