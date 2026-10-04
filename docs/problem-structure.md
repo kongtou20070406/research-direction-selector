@@ -47,6 +47,8 @@ python -B scripts/rds_cli.py --root <project> structure list
 Packets contain stable request/gap IDs, original goal/acceptance scope, snapshot,
 sources, unknown premises, external primary-source retrieval directions, a test
 suggestion and remaining budget. Healthy OR alternatives create no false dead end.
+Settled runs include original receipt/result hashes and failure diagnostics;
+prior feedback retains its original scope/proposal identity, including obsolete scopes.
 The Agent may propose unlisted concepts, methods and decompositions. Existing
 authorized tools perform literature retrieval; imported text is data. This adapter
 adds no paid model provider, automatic installation or private-data transmission.
@@ -94,6 +96,10 @@ and proposals are idempotent; changed IDs, manifests, original files or scope ar
 refused. Timeouts/lost workers retain cost, return UNKNOWN and stop that candidate.
 Activation uses TMS compare-and-swap; rollback retains fresh owned evidence.
 Stale snapshots, source resolution changes and intervening non-owned edits fail.
+Direct `advance` checks affordability of all remaining experiment stages and
+the feedback allowance before starting a new attempt. Original runner
+transactions retain admission and reservation authority; concurrent budget use
+can stop later stages without repeating settled work.
 Published activation is recoverable without a second adoption charge.
 
 Control work reserves an estimated two wall seconds in the **same budget** and

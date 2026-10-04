@@ -198,7 +198,7 @@ def request(root, limit=3):
                      'goal_status': analysis['goals'][goal], 'frontier_spec': data, 'frontier': frontier, 'original_map': spec,
                      'sources': gap['evidence_refs'], 'unknown_premises': gap['anchors'],
                      'settled_evidence': settled, 'prior_feedback': [{k: r[k] for k in
-                         ('id', 'status', 'goal_status', 'receipts', 'next_decision', 'reason')} for r in prior_feedback],
+                         ('id', 'scope_sha256', 'proposal_sha256', 'status', 'goal_status', 'receipts', 'next_decision', 'reason')} for r in prior_feedback],
                      'external_search': ['Find current primary sources for missing concepts and applicability conditions',
                                          'Find competing formulations; the initial decomposition may be wrong'],
                      'experiment_suggestion': 'Compare different predictions or computational routes with a frozen independent evaluator',

@@ -265,6 +265,8 @@ class StructureTests(unittest.TestCase):
         self.assertEqual([r['run_id'] for r in packet['settled_evidence']], [r['run_id'] for r in receipts])
         self.assertTrue(all(r['original_results'] for r in packet['settled_evidence']))
         self.assertEqual(packet['prior_feedback'][0]['receipts'], observed['receipts'])
+        self.assertEqual(packet['prior_feedback'][0]['scope_sha256'], observed['scope_sha256'])
+        self.assertEqual(packet['prior_feedback'][0]['proposal_sha256'], observed['proposal_sha256'])
         self.assertEqual(packet['prior_feedback'][0]['next_decision'], observed['next_decision'])
         self.assertEqual(packet['prior_feedback'][0]['status'], 'TEST_REFUTED')
         self.assertIn('wall_seconds', packet['budget'])
