@@ -1434,6 +1434,15 @@ def parser():
     rsi_validate.add_argument('--cases', required=True)
     rsi_validate.add_argument('--timeout', '-t', type=float, default=10)
     rsi_validate.add_argument('--ledger', help='Charge a supplied operational wall-budget ledger before validation')
+    rsi_compare = rsi_actions.add_parser('compare', help='Compare measured local tool cost on identical fixed-precision cases')
+    rsi_compare.add_argument('--baseline', required=True)
+    rsi_compare.add_argument('--candidate', required=True)
+    rsi_compare.add_argument('--cases', required=True)
+    rsi_compare.add_argument('--precision-key', required=True, help='Explicit precision keyword present in every case')
+    rsi_compare.add_argument('--precision', required=True, type=int)
+    rsi_compare.add_argument('--timeout', '-t', type=float, default=10)
+    rsi_compare.add_argument('--min-speedup', type=float, default=1.1, help='Prospective descriptive wall-time ratio threshold; greater than one')
+    rsi_compare.add_argument('--ledger', help='Charge both validations to the existing operational wall-budget ledger')
     rsi_register = rsi_actions.add_parser('register')
     rsi_register.add_argument('--name', required=True)
     rsi_register.add_argument('--validation', help='Optional only when one passing local validation exists')
@@ -1800,7 +1809,14 @@ def _main():
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json
         if compact:
             from rds_quick import brief
-            print(json.dumps(brief(args.root, result, VERSION), ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            summary = brief(args.root, result, VERSION)
+            if args.command == 'rsi' and args.action == 'compare':
+                summary.update({k: result[k] for k in ('correctness', 'comparable_context', 'speedup_ratio',
+                                                      'precision', 'precision_key', 'case_count', 'samples_per_tool',
+                                                      'variability', 'plan_id', 'execution_started', 'total_budget')})
+                summary['wall_seconds'] = {k: result[k]['wall_seconds'] for k in ('baseline', 'candidate')}
+                summary['reasons'] = result['reasons']
+            print(json.dumps(summary, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
         if args.command == "exec" and (result.get("receipt") or {}).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
@@ -1814,6 +1830,8 @@ def _main():
             return 2
         if args.command == 'rsi' and args.action == 'validate':
             return {'LOCAL_CASES_PASSED': 0, 'FAILED': 1, 'UNKNOWN': 2}[result['status']]
+        if args.command == 'rsi' and args.action == 'compare':
+            return 1 if result['correctness'] == 'FAIL' else 2 if result['status'] == 'UNKNOWN' else 0
         if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and result.get('receipt', result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
         if result.get('status') == 'COLLECTION_FAILED' or (result.get('advisor') or {}).get('status') == 'COLLECTION_FAILED':
