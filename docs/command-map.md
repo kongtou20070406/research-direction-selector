@@ -1,6 +1,6 @@
 # Public command map
 
-Use this map when the short Skill route table does not cover the task. It covers all 63 leaf command paths across 25 top-level commands in `scripts/rds_cli.py`'s current `parser()`, plus relevant Advisor options and documented helper entry points. Aliases do not add capabilities. This is a discovery map, not a requirement to invoke every function.
+Use this map when the short Skill route table does not cover the task. It covers all 65 leaf command paths across 25 top-level commands in `scripts/rds_cli.py`'s current `parser()`, plus relevant Advisor options and documented helper entry points. Aliases do not add capabilities. This is a discovery map, not a requirement to invoke every function.
 
 ```text
 skill_dir := directory containing SKILL.md
@@ -33,6 +33,8 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | --- | --- | --- | --- |
 | `exec` | Freeze and run one authorized tool job | Explicit command after `--`, bounded `--timeout`, inputs and expected `--output`; prospective selection pairs `--context` with `--ledger` | [Command wrapper](agent-entry.md), [Execution policy](execution-policy.md) |
 | `project init` | Lock a project execution contract | `--contract` with real bindings, commands, outputs and authorized budget | [Contract](project-contract.md), [Project runner](development-loop.md) |
+| `project improve` | Prepare diagnostics, editable tool code and a revision proposal | Frozen `method_evolution`, authorized `--code-path` and bounded `--id`; no adoption or child launch | [Tool improvement](predictive-feasibility.md) |
+| `project revise` | Adopt or resume a bounded executable method change in the same ledger | `--proposal`, unchanged goals/evaluator/budget/commands, idle attempts and exact parent identity | [Tool improvement](predictive-feasibility.md) |
 | `project create` | Register an execution and reserve resources | Initialized project and `--manifest` matching its contract | [Project runner](development-loop.md) |
 | `project execute` | Execute a registered project run | Existing `--id`, valid bindings and resources; `--background` is the authorized Windows scheduler path | [Project runner](development-loop.md) |
 | `project recover` | Reconcile an existing interrupted attempt | Existing `--id`; inspect retained state and artifacts rather than duplicating the attempt | [Project runner](development-loop.md) |
@@ -58,6 +60,7 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `rsi validate` | Execute finite local qualification cases | Extracted `--name`, `--cases`, bounded timeout; supply `--ledger` when charging an existing research budget | [Local tools](native-research.md) |
 | `rsi register` | Register an eligible validated local function | `--name`; `--validation` may be omitted only for one passing validation; rechecks bindings and receipt | [Local tools](native-research.md) |
 | `rsi use` | Verify and optionally export a retained function | Registered `--name`; optional project `--output`; changed/refuted evidence blocks reuse | [Local tools](native-research.md) |
+| `rsi compare` | Compare a tool revision on identical fixed-precision oracle cases | Extracted `--baseline`/`--candidate`; `--cases`, `--precision-key`, `--precision`; prospective `--min-speedup`; optional `--ledger` charges both checks; single measured walls only | [Fixed-precision comparison](native-research.md#compare-a-tool-revision-at-fixed-precision) |
 
 ## Mathematical verification
 

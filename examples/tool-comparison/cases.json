@@ -1,0 +1,5 @@
+[
+  {"args": [-1], "kwargs": {"precision": 16000}, "expected": -1},
+  {"args": [0], "kwargs": {"precision": 16000}, "expected": 0},
+  {"args": [1], "kwargs": {"precision": 16000}, "expected": 0}
+]
