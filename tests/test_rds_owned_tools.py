@@ -338,6 +338,77 @@ class OwnedToolsCLITests(unittest.TestCase):
                 check_admission(self.store, db, self.manifest, token)
         self.assertEqual(self.store.snapshot()['runs'], [])
 
+    def test_large_original_result_remains_unknown_without_repeated_execution(self):
+        expected = 'x' * 2097000
+        self.setup_campaign(cases_override=[{'args': [[0]], 'expected': expected}],
+                            source_override="def sum_squares(values):\n    return 'x' * 2097000\n")
+        from rds_owned_advisor import MAX_JSON_BYTES
+        self.assertLessEqual((self.root / 'cases.json').stat().st_size, MAX_JSON_BYTES)
+        finished = self.call('project', 'advance')
+        receipt = finished['receipt']
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+        artifact = next(a for a in receipt['artifacts'] if a['kind'] == 'project_output')
+        self.assertGreater(artifact['size'], MAX_JSON_BYTES)
+
+        def assert_unknown(report):
+            self.assertNotEqual(report['status'], 'COLLECTION_FAILED')
+            self.assertEqual(report['coverage']['errors'], [])
+            self.assertEqual(report['coverage']['parsed_observations'], 0)
+            self.assertTrue(any(g.get('fact') == 'task.status' for g in report['coverage']['gaps']))
+            fact = report['context']['facts']['task.status']
+            self.assertFalse(fact['reliable'])
+            self.assertIsNone(fact['value'])
+            self.assertEqual(fact['source']['sha256'], artifact['sha256'])
+            self.assertEqual(fact['source']['receipt_id'], receipt['sha256'])
+            use = report['tool_utilization']
+            self.assertEqual(use['counts']['applicable'], 1)
+            self.assertEqual(use['counts']['used'], 0)
+            self.assertEqual(use['counts']['consumed'], 0)
+            row = use['tools'][0]
+            self.assertEqual(row['use_status'], 'UNKNOWN_NO_CALL_EVIDENCE')
+            self.assertEqual(row['consumption_status'], 'ORIGINAL_JSON_BYTE_LIMIT')
+            self.assertEqual(row['result_sha256'], artifact['sha256'])
+            self.assertEqual(row['result_size_bytes'], artifact['size'])
+            self.assertFalse(row['result_consumed'])
+            self.assertIsNone(report['selected_run'])
+
+        assert_unknown(finished['advisor'])
+        before = self.store.snapshot()
+        assert_unknown(self.call('project', 'next'))
+        self.call('project', 'recover', '--id', 'apply')
+        assert_unknown(self.call('project', 'next'))
+        assert_unknown(self.call('project', 'advance'))
+        after = self.store.snapshot()
+        for key in ('runs', 'receipts', 'budget', 'exposures'):
+            self.assertEqual(after[key], before[key], key)
+        self.assertEqual(len(after['receipts']), 1)
+        output = self.root / artifact['path']
+        original = output.read_bytes()
+        self.assertEqual(hashlib.sha256(original).hexdigest(), artifact['sha256'])
+        # A large original still needs full integrity checking before it can
+        # be classified as unreadable evidence rather than corrupt evidence.
+        offset = original.index(b'x')
+        try:
+            output.write_bytes(original[:offset] + b'y' + original[offset + 1:])
+            rejected = self.call('project', 'next', ok=False)
+            self.assertNotEqual(rejected.returncode, 0)
+            damaged = json.loads(rejected.stdout)
+            self.assertEqual(damaged['status'], 'COLLECTION_FAILED')
+            self.assertTrue(any('hash mismatch' in e['reason'] for e in damaged['coverage']['errors']))
+            self.assertEqual(damaged['tool_utilization']['counts']['consumed'], 0)
+        finally:
+            output.write_bytes(original)
+        assert_unknown(self.call('project', 'next'))
+        restored = self.store.snapshot()
+        for key in ('runs', 'receipts', 'budget', 'exposures'):
+            self.assertEqual(restored[key], before[key], key)
+        self.assertEqual(sum(e['kind'] == 'TOOL_RESULT_CONSUMED' for e in self.rows('events')), 0)
+        evidence_root = os.environ.get('RDS_TEST_EVIDENCE_ROOT')
+        if evidence_root:
+            path = Path(evidence_root) / self._testMethodName
+            path.mkdir(parents=True, exist_ok=True)
+            (path / 'cli-transcript.json').write_text(json.dumps(self.trace, ensure_ascii=False), encoding='utf-8')
+
     def test_changed_application_bytes_do_not_turn_old_receipt_into_use(self):
         self.setup_campaign()
         finished = self.call('project', 'advance')

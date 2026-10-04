@@ -188,6 +188,12 @@ def consumption(store, state, facts, reports, selection, searches=()):
                         and receipt['bindings_before'] == bound_contract['bindings'],
                         'Actual application driver/input provenance is unavailable')
                 raw = _read_original(store, artifact, keep=True)
+                if raw is None:
+                    row.update(consumption_status='ORIGINAL_JSON_BYTE_LIMIT',
+                               result_sha256=artifact['sha256'], result_size_bytes=artifact['size'],
+                               use_reason='Verified original result exceeds the JSON parse byte limit')
+                    results.append(row)
+                    continue
                 result = strict_json(raw.decode('utf-8-sig'))
                 from rds_math import get
                 tool = get(store.root, binding['tool']['id'])

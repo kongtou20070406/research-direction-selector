@@ -270,6 +270,7 @@ def _collect(store, state):
     receipts = {r['run_id']: r for r in state['receipts']}
     require(set(receipts) <= set(runs), 'Receipt has no owned run')
     nodes, edges, files, originals, errors = [], [], [], {}, []
+    oversized_json = {}
     coverage = {'runs': len(runs), 'receipts': len(receipts), 'artifacts': 0,
                 'parsed_observations': 0, 'declared_outputs': [], 'unparsed_outputs': [], 'gaps': [], 'errors': errors}
     requested = {(o['run_id'], o['path']) for o in policy['observations']} if policy else set()
@@ -336,6 +337,8 @@ def _collect(store, state):
                 files.append({k: item[k] for k in ('path', 'sha256', 'size')})
                 if raw is not None:
                     originals[key] = raw
+                elif key in requested:
+                    oversized_json[key] = {k: item[k] for k in ('path', 'sha256', 'size')}
                 node_status = 'SUPPORTED'
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 errors.append({'run_id': rid, 'path': item['path'], 'reason': str(exc)})
@@ -378,6 +381,10 @@ def _collect(store, state):
                 'source': {'locator': 'pending owned output ' + rid + ':' + relative}, 'reason': 'Run output is pending'}
         if receipt is not None:
             try:
+                if (rid, relative) in oversized_json:
+                    fact['source'] = {**oversized_json[rid, relative], 'receipt_id': receipt['sha256'],
+                                      'locator': 'verified original over JSON parse byte limit'}
+                    raise ValueError('Verified original JSON exceeds the ' + str(MAX_JSON_BYTES) + '-byte parse limit')
                 require((rid, relative) in originals, 'Declared output missing, changed or over JSON byte limit')
                 value, locator, _ = _extract(strict_json(originals[rid, relative].decode('utf-8-sig')), obs['selector'], 'json')
                 require(value is None or isinstance(value, (str, bool, int, float)), 'Owned observation must be a JSON scalar')
@@ -399,7 +406,7 @@ def _collect(store, state):
                 # A failed attempt legitimately may have no measurement. It
                 # can still support a declared diagnostic route through its
                 # lifecycle facts. Corrupt successful evidence fails closed.
-                destination = errors if receipt['run_status'] == 'SUCCEEDED' else coverage['gaps']
+                destination = errors if receipt['run_status'] == 'SUCCEEDED' and (rid, relative) not in oversized_json else coverage['gaps']
                 destination.append({'run_id': rid, 'fact': fid, 'reason': str(exc)})
         nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'], owned_fact=fact))
     return nodes, edges, coverage, files
