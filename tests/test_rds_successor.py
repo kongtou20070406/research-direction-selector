@@ -437,6 +437,52 @@ class SuccessorTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertIn("[RDS-REJECT] Predecessor has no project ledger", completed.stderr)
         self.assertFalse((missing / ".rds").exists())
+        # Roots that have a relative path keep storing it.
+        self.assertFalse(os.path.isabs(ProjectStore(root)._predecessor()["root_path"]))
+
+    def test_a_predecessor_with_no_relative_path_is_linked_by_absolute_path(self):
+        # On Windows no relative path exists between two drives, or a drive and a UNC share; relpath raises (#185).
+        before = ledger_dump(self.first)
+        root, contract = self.phase("second")
+        no_relative = ValueError("path is on mount 'C:', start on mount 'D:'")
+        with mock.patch("rds_project.os.path.relpath", side_effect=no_relative):
+            ProjectStore(root).initialize(contract, supersedes=str(self.first))
+            ProjectStore(root).initialize(contract, supersedes=str(self.first))  # Same link: unchanged.
+            other, other_contract = self.phase("other")
+            ProjectStore(other).initialize(other_contract)
+            with self.assertRaisesRegex(ValueError, "Predecessor is frozen with the contract"):
+                ProjectStore(root).initialize(contract, supersedes=str(other))
+        self.assertEqual(ProjectStore(root)._predecessor()["root_path"], str(self.first.resolve()))
+        [hop] = ProjectStore(root).snapshot()["predecessor_chain"]
+        self.assertEqual((hop["status"], Path(hop["root"])), ("VERIFIED", self.first.resolve()))
+        self.assertEqual(ledger_dump(self.first), before)
+
+    @unittest.skipUnless(os.name == "nt", "drive letters are a Windows path boundary")
+    def test_cli_links_roots_on_different_windows_drives(self):
+        try:
+            far = Path(tempfile.mkdtemp(prefix="rds-successor-drive-", dir=ROOT.parent))
+        except OSError:
+            self.skipTest("no writable directory beside the checkout")
+        self.addCleanup(shutil.rmtree, far, True)
+        if far.drive.lower() == Path(self.tmp.name).resolve().drive.lower():
+            self.skipTest("the checkout and the temporary directory are on the same drive")
+
+        def init(root, contract, predecessor):
+            (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+            completed = subprocess.run([sys.executable, "-B", str(ROOT / "scripts" / "rds_cli.py"), "--root", str(root),
+                                        "project", "init", "--contract", str(root / "contract.json"),
+                                        "--supersedes", str(predecessor)], capture_output=True, encoding="utf-8", timeout=30)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            [hop] = json.loads(completed.stdout)["predecessor_chain"]
+            self.assertEqual((hop["status"], Path(hop["root"])), ("VERIFIED", Path(predecessor).resolve()))
+
+        # Temporary drive to checkout drive, then back.
+        middle = far / "middle"
+        shutil.copytree(self.first, middle, ignore=shutil.ignore_patterns(".rds", "outputs"))
+        init(middle, dict(self.contract, description="middle"), self.first)
+        last, contract = self.phase("last")
+        init(last, contract, middle)
+        self.assertEqual([hop["status"] for hop in ProjectStore(last).snapshot()["predecessor_chain"]], ["VERIFIED"] * 2)
 
 
 if __name__ == "__main__":
