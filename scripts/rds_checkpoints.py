@@ -65,10 +65,13 @@ def read_checkpoint(db, checkpoint_id, *, root):
         raise ValueError('Checkpoint integrity failure: ' + checkpoint_id)
     from rds_artifacts import strict_json
     record = strict_json(raw)
-    if (record.get('schema') != SCHEMA or record.get('id') != checkpoint_id
-            or record.get('kind') not in {'project', 'reference'}
+    if (not isinstance(record, dict) or record.get('schema') != SCHEMA or record.get('id') != checkpoint_id
+            or record.get('kind') not in {'project', 'reference'}):
+        raise ValueError('Checkpoint identity mismatch: ' + checkpoint_id)
+    if (not isinstance(record.get('snapshot'), dict)
+            or not isinstance(record['snapshot'].get('contract'), dict)
             or _sha(record['snapshot']['contract']) != record.get('contract_sha256')):
-        raise ValueError('Checkpoint identity or contract mismatch: ' + checkpoint_id)
+        raise ValueError('Checkpoint contract mismatch: ' + checkpoint_id)
     from rds_advisor import validate_checkpoint_decision
     validate_checkpoint_decision(record.get('decision', {}), checkpoint_id, Path(root).resolve() / '.rds')
     return {'record': record, 'sha256': sha}

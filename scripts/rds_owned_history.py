@@ -62,7 +62,7 @@ def history_cut(store, db, *, pending_choice=None, pending_completion=None):
         record = retained['record']
         require(record['kind'] == 'project' and record['contract_sha256'] in lineage
                 and record['snapshot']['contract'] == lineage[record['contract_sha256']],
-                'Owned history checkpoint contract is outside verified lineage')
+                'Checkpoint contract mismatch: Owned history checkpoint contract is outside verified lineage')
         cut.append({'id': row[0], 'sha256': retained['sha256']})
         records[row[0]] = record
     for run in marked:
