@@ -215,6 +215,14 @@ class StructureTests(unittest.TestCase):
         self.assertIn('owned:new-observation', ids)
         self.assertNotIn('candidate-concept', ids)
 
+    def test_imported_proposal_ids_cannot_inject_printed_commands(self):
+        p = self.proposal()
+        for ident in ('candidate; echo injected', 'candidate\nstructure activate', '--help', "candidate'payload"):
+            p['id'] = ident
+            with self.assertRaisesRegex(ValueError, 'Invalid structure proposal ID'):
+                structure.propose(self.root, p)
+        self.assertFalse(any(e['kind'] == 'STRUCTURE_PROPOSAL' for e in structure._events(self.store)))
+
     def test_rollback_refuses_intervening_goal_change(self):
         p = self.proposal()
         structure.propose(self.root, p)

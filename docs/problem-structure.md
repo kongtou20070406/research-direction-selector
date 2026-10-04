@@ -57,6 +57,8 @@ not required for this increment.
 
 See `proposal()` in [the case builder](../examples/problem-structure/run.py).
 Along with assumptions, predictions, test and outcome decisions, submit:
+Proposal IDs start with an alphanumeric character and contain only alphanumerics,
+hyphens or underscores (up to80characters), so printed commands contain no imported shell text.
 
 | Field | Meaning and consumer |
 | --- | --- |

@@ -246,7 +246,9 @@ def _live(store, req, allow_owned_updates=False):
 def propose(root, proposal):
     store = ProjectStore(root)
     require(isinstance(proposal, dict) and len(canonical(proposal).encode('utf-8')) <= MAX_BYTES, 'Invalid structure proposal')
-    require(isinstance(proposal.get('id'), str) and 1 <= len(proposal['id']) <= 80, 'Invalid structure proposal ID')
+    ident = proposal.get('id')
+    require(isinstance(ident, str) and 1 <= len(ident) <= 80 and ident[0].isalnum()
+            and all(c.isalnum() or c in '-_' for c in ident), 'Invalid structure proposal ID')
     previous = _find(store, 'PROPOSAL', proposal['id'])
     if previous:
         require(previous['proposal_sha256'] == digest(proposal), 'Proposal ID reused with changed content')
