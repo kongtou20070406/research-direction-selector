@@ -12,13 +12,72 @@
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 [![tests](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml)
 
-将研究目标、证据和约束连接到有用的下一步——由 Advisor 引导决策，由内核检查有界执行。
+**Agent 出主意，程序来记账。**
+
+面向 Codex、Claude Code 等编程 Agent 的本地科研内核。它在实验开始前冻结"要证明什么"，每个昂贵任务只跑一次，留下 Agent 改不了的回执，并记住哪些路已经走不通。下一步依据记录在案的证据，而不是上下文窗口里的记忆。
 
 [English](README.md) · **简体中文** · [日本語](README.ja-JP.md)
 
 </div>
 
 <br />
+
+## 为什么需要 RDS
+
+Agent 的算力昂贵、结果随机、难以优化；程序的算力便宜、行为确定、可以测试。可在 Agent 驱动的科研里，几乎所有事情都压在 Agent 身上：最初的目标、承诺的指标、已经花钱跑过的实验、剩余预算、已经失败的想法。长任务、额度限制和换会话，正是这份记忆最容易断掉的地方。
+
+RDS 把其中所有不需要判断的记账工作从 Agent 身上移走，放进本地只追加的账本。Agent 只保留只有它能做的部分：提出假说、决定比较什么，并和你一起解读证据。
+
+| 没有 RDS，Agent 会…… | 有了 RDS…… |
+| :--- | :--- |
+| 忘了慢任务已经在跑，又重跑一次、花两份钱 | 每个已注册的运行只执行一次；相同调用直接返回已有回执 |
+| 看到结果后再改指标或阈值 | 指标、阈值、数据和评价器在首次运行前按哈希绑定 |
+| 把退出码 0 当成"成功了" | 未满足的目标谓词保持 `FALSE`；缺失或不确定的支持保持 `UNKNOWN` |
+| 换个会话又去试一条早被否掉的路线 | 账本跨会话保存；Advisor 会标记重复已否决路线和来回摇摆的决定 |
+| 靠记忆估算剩余预算 | 派发前预留墙钟和 CPU 预算；失败与超时的尝试同样计入 |
+
+## 已测到的，而非承诺的
+
+我们用真实 Agent 在有标准答案的合成任务上测试 RDS，正面和负面结果都公开。
+
+- **有额度的昂贵运行。** 在一个上线决策任务中（gpt-6-luna，medium 推理强度，每组 12 次，查询延迟分别为 20 秒和 60 秒）：把实验者的计划作为提示文本交给 Agent，有 6/12 次因重复查询浪费额度，4/12 次得出错误决定，且每次错误都发生在重复查询之后。同一份计划冻结后交由 RDS 内核执行，错误为 0/12，出现重复查询的只有 1/12；那一次是 Agent 在内核运行尚未结束时直接调用了查询脚本。错误决定的双侧 Fisher 检验 p ≈ 0.09（[设计与数据](https://github.com/kongtou20070406/research-direction-selector/issues/166#issuecomment-5974529436)）。
+- **RDS（暂时）帮不上忙的地方。** 在复查成本很低的陷阱任务上，不用 RDS 的 Codex 在三档推理强度、共 80 次试验中没有一次得出错误结论。RDS 在这些任务上没有提高正确率；它带来的是回执、可恢复性和防逃逸，代价是多花 20%–50% 的时间（[h1–h3 报告](https://github.com/kongtou20070406/research-direction-selector/issues/120#issuecomment-5969647240)）。
+
+这些都是小样本，且只测了一个模型系列。它们只支持一个窄结论：内核的价值在于对昂贵工作做到恰好一次、可审计的执行。它们不能说明 RDS 让模型成为更好的科学家。如何把科研指导变成可测量的收益，正是 [5.9 规划讨论](https://github.com/kongtou20070406/research-direction-selector/issues/166)的重点。
+
+## 两分钟上手
+
+**1. 让 Agent 安装。** 把下面这段交给 Codex、Claude Code 或任何具备终端访问能力的 Agent：
+
+```text
+从以下地址安装 Research Direction Selector：
+https://github.com/kongtou20070406/research-direction-selector
+将其作为 research-direction-selector 智能体 Skill。
+保留完整仓库，包括 scripts、references 和 examples。
+使用当前项目的 .agents/skills 目录，并验证 CLI 版本。
+然后阅读 SKILL.md，从我的实际研究问题开始协作。
+```
+
+**2. 包裹一条昂贵命令。** 不需要契约或 JSON。在你的项目目录中运行（Python 3.11+，仅需标准库）：
+
+```powershell
+python -B .agents/skills/research-direction-selector/scripts/rds_cli.py --root . exec --name train-001 -t 600 -o outputs/result.json train.py
+```
+
+RDS 会把输入复制到冻结的任务目录，预留时间上限，运行任务，并在 `.rds/` 中记录回执。再次运行同一条命令，它返回 `EXISTING_JOB`，不会再花一次钱。绑定、输出和限制见[包裹命令](docs/agent-entry.md#wrap-a-command)。
+
+**3. 用日常语言提问。** 例如：
+
+```text
+用 RDS 检查为什么指标不再提升。利用现有日志区分训练问题和容量限制。
+用 RDS 审查这两个同时改变多项因素的消融实验。设计一个最小公平比较，以区分不同解释。
+用 RDS 继续这个项目。先检查剩余预算和已完成的运行，再提出新工作。
+用 RDS 评估当前的收缩性假说，并为支持的形式化陈述生成经过检查的证据。
+```
+
+更多可复制的提示词，以及遇到 `[RDS-REJECT]` 时该怎么做，见[快速入门](docs/quickstart.zh-CN.md)。
+
+---
 
 ## 科研闭环的两端
 
@@ -28,9 +87,9 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 **程序端** — 本地 CLI（`scripts/rds_cli.py`）将支持的行动绑定到源码、输入与资源，检查准入并保存结果和回执。具有冻结 `advisor_policy` 的项目会更新程序持有的状态，并由 Advisor 在派发前选择下一条允许的路线。
 
-闭环为 **目标与约束 → Advisor 决策 → 受约束执行 → 结果与回执 → 更新研究状态 → Advisor**。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。未满足的目标谓词保持 `FALSE`；缺失或不确定的科学支持保持 `UNKNOWN`。
+闭环为 **目标与约束 → Advisor 决策 → 受约束执行 → 结果与回执 → 更新研究状态 → Advisor**。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
-[5.8 完整目标与协作计划](docs/5.8-vision.zh-CN.md)公开目标关联的选路闭环、可检验的转向、按需理论工具库和可分工事项，区分已有实现与待审开发；5.8.0 仍未发布。
+当前版本为 5.8.0。[5.8 完整目标与协作计划](docs/5.8-vision.zh-CN.md)说明了它所依托的目标关联决策闭环；5.9 的规划在 [#166](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
 ---
 
@@ -69,37 +128,17 @@ flowchart TD
 - **`.rds/` 项目记录、Obelisk 历史接口和判断图谱（`judgment-graph.yaml`）**主要属于 **③ 研究状态与记忆**，供其他组件读取。
 - **L1–L5** 是研究框架中讨论的[能力层级](docs/research-autonomy.md)，不是额外组件。
 
-**3 个基础组件 + 2 个增强组件** 是同一闭环中的五项职责。Advisor 是证据与下一行动之间的决策接口；这不意味着每个连接都已自主执行，也不证明闭环提高了科学收益。见[科研工作流](docs/research-workflow.zh-CN.md)和[自主程度边界](docs/research-autonomy.md)。
+五个组件是同一闭环中的五项职责。Advisor 是证据与下一行动之间的决策接口；这不意味着每个连接都已自主执行，也不证明闭环提高了科学收益。见[科研工作流](docs/research-workflow.zh-CN.md)和[自主程度边界](docs/research-autonomy.md)。
 
 ---
 
 ## Skill：以 Agent 为入口的科研指导
 
-你可以在 Agent 中这样使用 RDS：
-
-```text
-用 RDS 检查为什么指标不再提升。利用现有日志区分训练问题和容量限制。
-用 RDS 审查这两个同时改变多项因素的消融实验。设计一个最小公平比较，以区分不同解释。
-用 RDS 继续这个项目。先检查剩余预算和已完成的运行，再提出新工作。
-用 RDS 评估当前的收缩性假说，并为支持的形式化陈述生成经过检查的证据。
-```
+Skill 是 Agent 阅读的部分。它告诉 Agent 何时调用内核、如何表述公平比较，以及如何报告结果而不把 `UNKNOWN` 说成成功。
 
 ### 安装
 
-Claude Code、Codex 插件及带简短调用状态的 OMP 扩展见[宿主插件打包指南](docs/host-plugins.md)。原有独立 Skill 安装方式继续支持。
-
-#### 让 Agent 安装（推荐）
-
-将以下配置指令直接交给 Codex、Claude Code 或任何具备终端访问能力的 Agent：
-
-```text
-从以下地址安装 Research Direction Selector：
-https://github.com/kongtou20070406/research-direction-selector
-将其作为 research-direction-selector 智能体 Skill。
-保留完整仓库，包括 scripts、references 和 examples。
-使用当前项目的 .agents/skills 目录，并验证 CLI 版本。
-然后阅读 SKILL.md，从我的实际研究问题开始协作。
-```
+推荐的 Agent 安装方式见[两分钟上手](#两分钟上手)。Claude Code、Codex 插件及带简短调用状态的 OMP 扩展见[宿主插件打包指南](docs/host-plugins.md)。原有独立 Skill 安装方式继续支持。
 
 #### 手动安装
 
@@ -112,12 +151,7 @@ git clone https://github.com/kongtou20070406/research-direction-selector.git "$e
 
 ## 确定性的执行与验收内核
 
-内核（`scripts/rds_cli.py`）仅使用 Python 3.11+ 标准库：
-
-CLI 默认在本机记录调用。用 `python -B scripts/rds_cli.py usage --days 7` 查看每天的次数，
-或用 `usage --since 2026-09-01 --until 2026-10-01` 查看包含起止日期的区间。
-加 `--json` 可取得命令分类和逐日统计。开始记录前的日期显示“未记录”；详见
-[调用日志](docs/cli-usage.md)。
+内核（`scripts/rds_cli.py`）仅使用 Python 3.11+ 标准库。单条命令用 `exec` 包裹；需要预先登记的对照比较时，使用项目契约。
 
 从仓库根目录运行以下 CPU 演示，并使用全新的空目录 `./my-project`。准备步骤会为对照组和实验组创建绑定契约及清单；本演示不构成科学结论的确认。执行与回执细节见[项目执行器示例](examples/project-runner/README.md)。
 
@@ -143,6 +177,11 @@ python -B scripts/rds_cli.py --root ./my-project project status
 `python -B scripts/rds_cli.py --root ./my-project project next`，
 即可打印当前应做的一步（注册、执行、恢复、对比或记录决定）及其可运行命令；
 智能体重复这一步即可驱动整个循环，无需记住上面的命令序列。
+
+CLI 默认在本机记录调用。用 `python -B scripts/rds_cli.py usage --days 7` 查看每天的次数，
+或用 `usage --since 2026-09-01 --until 2026-10-01` 查看包含起止日期的区间。
+加 `--json` 可取得命令分类和逐日统计。开始记录前的日期显示“未记录”；详见
+[调用日志](docs/cli-usage.md)。
 
 ---
 
@@ -191,13 +230,14 @@ Advisor 在已有候选空间内，将原始目标连接到当前事实与约束
 `scripts/rds_advisor.py` 利用已记录的证据和方法论图谱提出下一步建议：
 - **先有证据，再做诊断** — 单个 loss 值不足以支持过拟合或欠拟合诊断。成对曲线或可比较的观测为候选解释提供背景。
 - **先定位，再干预** — 遇到 NaN/Inf 时，建议优先定位第一个非有限值，并检查精度或更新路径，再调整数值保护措施。
+- **回顾循环历史** — 已记录的检查点让 Advisor 能标记重复先前否决的路线、重新打开的审查，以及在同几个选项之间来回摇摆的决定。
 - **图谱引导候选方案** — 方法论规则组织诊断线索和探索候选方案。候选排序不能证明因果效应、帕累托最优性，或某项实验满足所有规则义务。
 
 ```powershell
 python -B scripts/rds_cli.py --root ./my-project advise
 ```
 
-真实 CLI 工作流和回归测试验证的是上述工程行为。即使两个命令都成功，目标谓词仍可能为 `FALSE`；即使达到数值阈值，科学支持仍可能为 `UNKNOWN`。更好的科研决策或 RSI 策略收益需要在未用过的案例上，以相同总预算进行公平的前瞻比较，并计入失败和评估成本；这里尚未确立该收益。
+真实 CLI 工作流和回归测试验证的是上述工程行为。即使两个命令都成功，目标谓词仍可能为 `FALSE`；即使达到数值阈值，科学支持仍可能为 `UNKNOWN`。更好的科研决策或 RSI 策略收益需要在未用过的案例上，以相同总预算进行公平的前瞻比较，并计入失败和评估成本；目前已测到的结果见[已测到的，而非承诺的](#已测到的而非承诺的)。
 
 ---
 
@@ -244,6 +284,19 @@ scripts/rds_adversary.py         RSI 对抗性变体与评测候选方案（组�
 benchmark/                       历史决策包与红队基准
 tests/                           完整回归测试套件
 ```
+
+---
+
+## 参与进来
+
+RDS 公开开发。眼下最有用的贡献不只是代码：
+
+- **能难住 Agent 的任务。** 一个让不用 RDS 的 Agent 得出错误结论的合成任务，对我们比一个新功能更有价值。欢迎提交基准夹具、评分器和 Agent 试验报告（[#169](https://github.com/kongtou20070406/research-direction-selector/issues/169)）。
+- **你的科研工作流。** 告诉我们你的 Agent 在哪里弄丢了运行记录、预算或被否掉的想法。真实的失败模式决定路线图。
+- **宿主与适配器。** 更多 Agent 宿主的插件、执行后端和形式化验证适配器。
+- **翻译与文档。** README 有英文、中文和日文版本，欢迎指正。
+
+从[贡献指南](CONTRIBUTING.zh-CN.md)开始，浏览[开放的 issue](https://github.com/kongtou20070406/research-direction-selector/issues)，或者新开一个 issue 描述你的科研问题。
 
 ---
 
