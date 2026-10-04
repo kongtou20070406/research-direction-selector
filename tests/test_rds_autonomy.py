@@ -427,10 +427,16 @@ class AutonomyTests(unittest.TestCase):
         with self.store._db(True) as db:
             run = self.store._run(db, 'repair1')
             contract = self.store._contract(db)
-            with patch.object(autonomy, 'file_sha', return_value='0' * 64):
+            provider=Path(contract['advisor_policy']['autonomy']['provider']['argv'][0]).resolve()
+            original_sha=autonomy.file_sha
+            def changed_provider(path):
+                return '0'*64 if Path(path).resolve()==provider else original_sha(path)
+            with patch.object(autonomy, 'file_sha', side_effect=changed_provider):
                 with self.assertRaisesRegex(ValueError, 'executable changed'):
                     autonomy.check_run(self.store, db, contract, run)
         self.assertEqual(self.calls(), [])
+        self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
+        self.assertIsNone(next(r for r in self.store.snapshot()['runs'] if r['id']=='repair1')['attempt_id'])
 
     def test_failed_provider_is_not_reexecuted_or_recharged(self):
         self.build(modes={'repair1': 'exit'})
