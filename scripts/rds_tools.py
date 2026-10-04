@@ -7,8 +7,11 @@ import ast
 import builtins
 import hashlib
 import json
+import os
 from pathlib import Path
+import platform
 import re
+import sys
 from types import SimpleNamespace
 
 from rds_math import blob, get, put, read_bytes, records
@@ -175,11 +178,53 @@ def _begin_preparation(store, request):
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
 
 
-def validate(root, name, case_file, timeout=10, ledger=None):
+def _validation_context():
+    """Observed local runtime identity, not a measurement of system load."""
+    host = platform.node()
+    try:
+        executable = file_sha(sys.executable)
+    except OSError:
+        executable = None
+    return {'schema': 'rds-local-runtime-v1',
+            'host_sha256': hashlib.sha256(host.encode('utf-8')).hexdigest() if host else None,
+            'system': platform.system(), 'release': platform.release(), 'machine': platform.machine(),
+            'processor': platform.processor(), 'logical_cpus': os.cpu_count(),
+            'python': sys.version, 'implementation': sys.implementation.name,
+            'executable_sha256': executable}
+
+
+def _charge_validation(ledger, workspace, token, timeout):
+    """Retain a previously charged native attempt, including interrupted jobs."""
+    parent = ProjectStore(ledger)
+    state = parent.snapshot(check_bindings=True)
+    require(not state['binding_check']['errors'], 'Parent validation budget bindings changed')
+    request = {'tool_validation': token}
+    with parent._db(True) as db:
+        contract = parent._contract(db)
+        require('advisor_policy' not in contract and 'stop_policy' not in contract
+                and 'maintenance_allowance' not in contract and 'execution_policy' not in contract
+                and set(contract['budget']) == {'wall_seconds'},
+                'Tool validation requires an ordinary wall-only parent ledger')
+        rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                          "AND json_extract(body,'$.job_root')=? LIMIT 2", (str(workspace),)).fetchall()
+    if not rows:
+        return _charge_ledger(ledger, workspace, request, timeout)
+    prior = json.loads(rows[0]['body'])
+    require(len(rows) == 1 and prior['request_sha256'] == digest(request)
+            and prior['resource'] == 'wall_seconds' and prior['amount'] == timeout,
+            'Retained validation allowance differs; no new charge or launch')
+    job_root = workspace / '.rds' / 'exec' / 'tool-check'
+    require(job_root.is_dir(), 'Charged validation has no retained native job; inspect it without another launch')
+    job = ProjectStore(job_root)
+    require(job.path.is_file(), 'Charged validation has no retained native job; inspect it without another launch')
+    require(not job.snapshot(check_bindings=True)['binding_check']['errors'], 'Retained validation bindings changed')
+
+
+def validate(root, name, case_file, timeout=10, ledger=None, *, comparison=None):
     store = ProjectStore(root)
     if store.path.is_file():
         with store._db(True) as db:
-            _preparation_contract(store, db)  # Early diagnostic; repeat atomically before launch.
+            _preparation_contract(store, db)  # Repeat atomically before launch.
     name = _name(name)
     candidate = get(root, 'tool:' + name)
     require(candidate is not None, 'Extract a named tool candidate first')
@@ -188,8 +233,18 @@ def validate(root, name, case_file, timeout=10, ledger=None):
     timeout = number(timeout, 'tool timeout', True)
     require(timeout <= 60, 'Tool validation is bounded to 60 seconds')
     driver = DRIVER.replace('ENTRY', candidate['data']['entry']).encode('utf-8')
+    context = _validation_context()
+    scope = None
+    if comparison is not None:
+        plan = get(root, comparison['id'])
+        require(plan == comparison and plan['kind'] == 'note'
+                and plan['data'].get('type') == 'tool-comparison-plan'
+                and {'id': candidate['id'], 'sha256': digest(candidate)} in plan['dependencies'],
+                'Tool comparison needs its declared bound plan')
+        scope = {'id': plan['id'], 'sha256': digest(plan)}
     token = digest({'candidate': digest(candidate), 'cases': hashlib.sha256(cases).hexdigest(),
                     'driver': hashlib.sha256(driver).hexdigest(), 'controller': file_sha(__file__), 'timeout': timeout,
+                    'measurement_context': context, 'comparison': scope,
                     'ledger': str(Path(ledger).resolve()) if ledger else None})[:32]
     workspace = Path(root).resolve() / '.rds' / 'rsi' / 'tool-checks' / token
     require(workspace.resolve().is_relative_to(Path(root).resolve()), 'Tool workspace escapes project')
@@ -208,13 +263,18 @@ def validate(root, name, case_file, timeout=10, ledger=None):
             with path.open('xb') as stream:
                 stream.write(raw)
     if ledger:
-        _charge_ledger(ledger, workspace, {'tool_validation': token}, timeout)
+        _charge_validation(ledger, workspace, token, timeout)
     args = SimpleNamespace(root=str(workspace), name='tool-check', timeout=timeout, argv=['driver.py'],
                            bind=['data=cases.json'], output=['outputs/result.json'], background=False,
                            ledger=None, choose=None)
     run = execute(args)
     receipt = run.get('receipt')
-    require(receipt is not None, 'Native preparation is unresolved; inspect or recover the original child without rerunning it')
+    if receipt is None:
+        # A retained RESERVED/RUNNING native job has no final evidence yet.
+        # Do not freeze UNKNOWN under the eventual terminal validation identity.
+        return {'status': 'UNKNOWN', 'id': None, 'name': name, 'job_root': run['job_root'],
+                'execution_started': run['execution_started'], 'mathematical_status': 'UNKNOWN',
+                'research_policy_gain_measured': False}
     status = ('LOCAL_CASES_PASSED' if receipt and receipt['run_status'] == 'SUCCEEDED' else
               'FAILED' if receipt and receipt['run_status'] == 'FAILED' else 'UNKNOWN')
     record = put(root, 'validation:' + token, 'tool-validation', canonical({'receipt': receipt}).encode('utf-8'),
@@ -222,13 +282,15 @@ def validate(root, name, case_file, timeout=10, ledger=None):
                      'job_root': str(Path(run['job_root']).relative_to(Path(root).resolve())),
                      'run_id': 'tool-check', 'receipt_sha256': digest(receipt) if receipt else None,
                      'cases_sha256': hashlib.sha256(cases).hexdigest(), 'confirmation': 'REUSED_DEVELOPMENT_CASES',
+                     'measurement_context': context, 'comparison': scope,
                      'total_budget': 'CHARGED_PARENT_LEDGER' if ledger else 'UNKNOWN'})
     return {'status': status, 'id': record['id'], 'name': name, 'job_root': run['job_root'],
             'execution_started': run['execution_started'], 'mathematical_status': 'UNKNOWN', 'research_policy_gain_measured': False}
 
 
-def _check_validation(root, value, candidate):
-    require(value and value['kind'] == 'tool-validation' and value['data']['status'] == 'LOCAL_CASES_PASSED'
+def _validation_receipt(root, value, candidate):
+    """Recheck native provenance before interpreting either success or failure."""
+    require(value and value['kind'] == 'tool-validation'
             and value['dependencies'] == [{'id': candidate['id'], 'sha256': digest(candidate)}], 'No bound passing local validation')
     workspace = (Path(root).resolve() / value['data']['job_root']).resolve()
     require(workspace.is_relative_to((Path(root).resolve() / '.rds' / 'rsi' / 'tool-checks').resolve()), 'Validation job escapes project')
@@ -239,19 +301,30 @@ def _check_validation(root, value, candidate):
     require(read_bytes(job / 'candidate.py') == blob(root, candidate['asset'])
             and read_bytes(job / 'driver.py') == DRIVER.replace('ENTRY', candidate['data']['entry']).encode('utf-8')
             and file_sha(job / 'cases.json') == value['data']['cases_sha256'], 'Validation code or cases do not match')
-    cases = _cases(read_bytes(job / 'cases.json'))
+    _cases(read_bytes(job / 'cases.json'))
     receipt = next((r for r in state['receipts'] if r['run_id'] == value['data']['run_id']), None)
-    require(receipt and receipt['run_status'] == 'SUCCEEDED' and digest(receipt) == value['data']['receipt_sha256'],
-            'Validation receipt is not the bound successful run')
+    require(receipt and digest(receipt) == value['data']['receipt_sha256'],
+            'Validation receipt is not the bound native run')
     for item in receipt['artifacts']:
         path = workspace / item['path']
         require(path.is_file() and file_sha(path) == item['sha256'], 'Validation artifact changed')
+    return receipt
+
+
+def _check_validation(root, value, candidate):
+    require(value and value['kind'] == 'tool-validation' and value['data'].get('status') == 'LOCAL_CASES_PASSED',
+            'No bound passing local validation')
+    receipt = _validation_receipt(root, value, candidate)
+    require(receipt['run_status'] == 'SUCCEEDED', 'Validation receipt is not the bound successful run')
+    job = Path(root).resolve() / value['data']['job_root']
+    cases = _cases(read_bytes(job / 'cases.json'))
     report = json.loads(read_bytes(job / 'outputs' / 'result.json'))
     require(report == {'status': 'PASS', 'case_count': len(cases),
                        'cases': [{'case': i, 'passed': True} for i in range(len(cases))]}, 'Local cases did not all pass')
     targets = {v['data'].get('target') for v in records(root) if v['kind'] == 'refutation'}
     require(not targets.intersection({candidate['id'], value['id'], 'tool-adoption:' + candidate['data']['name'], 'objective'}),
             'A declared refutation requires review before tool reuse')
+    return receipt
 
 
 def register(root, name, validation_id=None):
@@ -288,6 +361,10 @@ def command(args):
         return extract(args.root, args.source, args.entry, args.name)
     if args.action == 'validate':
         return validate(args.root, args.name, args.cases, args.timeout, args.ledger)
+    if args.action == 'compare':
+        from rds_tool_compare import compare
+        return compare(args.root, args.baseline, args.candidate, args.cases, args.precision_key,
+                       args.precision, args.timeout, args.min_speedup, args.ledger)
     if args.action == 'register':
         return register(args.root, args.name, args.validation)
     if args.action == 'use':
