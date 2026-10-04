@@ -99,7 +99,7 @@ def main():
     mode.add_argument("--scaffold")
     mode.add_argument("--test-operator")
     mode.add_argument("--progression", metavar="SPEC",
-                      help="Run the bounded finite-model -> EGraph -> native Lean example")
+                      help="Run the bounded finite-model -> EGraph -> native Lean chain; schema 2 derives its fixed contract")
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--out", help="Create a new output file; requires --scaffold")
     args = parser.parse_args()
