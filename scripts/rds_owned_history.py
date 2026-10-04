@@ -207,8 +207,9 @@ def _check_choice(store, db, run, decision, snapshot):
             and all(decision['owned_history'].get(k) == v for k, v in expected.items()),
             'Owned decision differs from its committed run')
     scope = contract['advisor_policy']['context']['decision']
+    from rds_domain_confirmation import goal_conditions
     require(decision['question_id'] == scope['id'] and decision['goal_revision'] == scope['goal_revision']
-            and decision['scope'] == scope['scope'] and decision.get('goal_conditions') == scope['goal_conditions'],
+            and decision['scope'] == scope['scope'] and decision.get('goal_conditions') == goal_conditions(contract['advisor_policy']),
             'Owned decision changes frozen goal or scope')
     route = next((r for r in contract['advisor_policy']['routes'] if r['manifest'] == run['manifest']), None)
     require(route is not None and decision['candidate']['action']['id'] == route['candidate']

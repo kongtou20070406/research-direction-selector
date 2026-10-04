@@ -1,0 +1,427 @@
+"""Real bounded controller/worker executions using an explicit fixture provider.
+
+The provider is deterministic local test code, never a model or scientific
+effectiveness trial. Counts, receipts and budget assertions inspect originals.
+"""
+from copy import deepcopy
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from rds_project import ProjectStore, canonical, digest, file_sha
+from rds_owned_advisor import review
+import rds_autonomy as autonomy
+import rds_method_revision as revision
+from rds_autonomy_worker import output_paths
+
+OLD = "import json,pathlib,sys\nvalue=0\npathlib.Path(sys.argv[1]).write_text(json.dumps({'score':value}),encoding='utf-8')\n"
+NEW = "import json,pathlib,sys\nvalue=sum([1,2,3])\npathlib.Path(sys.argv[1]).write_text(json.dumps({'score':value}),encoding='utf-8')\n"
+PROVIDER = '''import json,pathlib,sys,time
+request=json.loads(sys.stdin.read().split('\\n',1)[1])
+rid=request['run_id']
+with pathlib.Path('provider-calls.jsonl').open('a',encoding='utf-8') as log:
+    log.write(json.dumps({'run_id':rid,'parent':request['parent_sha256']})+'\\n')
+mode=MODES.get(rid,'good')
+if mode=='exit': raise SystemExit(9)
+if mode=='timeout': time.sleep(5)
+if mode=='malformed': print('not JSON'); raise SystemExit(0)
+policy=request['policy']
+next(n for n in policy['graph']['nodes'] if n['id']=='solve')['executable']['preconditions']=[
+    {'fact':'autonomy.'+rid+'.adopted','op':'eq','value':True}]
+source=request['base_source'] if mode=='bad' else NEW_SOURCE
+reply={'status':'needs_authorization' if mode=='authority' else 'proposed',
+       'source':'' if mode=='authority' else source,
+       'policy_json':'' if mode=='authority' else json.dumps(policy),
+       'reason':'Explicit deterministic fixture response, not a model'}
+print(json.dumps(reply))
+'''
+
+
+class AutonomyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='rds-autonomy-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.store = ProjectStore(self.root)
+        self.trace = []
+
+    def write(self, name, value):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value if isinstance(value, str) else json.dumps(value, allow_nan=False), encoding='utf-8')
+
+    def build(self, *, modes=None, slots=1, max_steps=4, timeout=4, budget=60):
+        self.write('code.py', OLD)
+        self.write('provider.py', PROVIDER.replace('MODES', repr(modes or {})).replace('NEW_SOURCE', repr(NEW)))
+        shutil.copyfile(ROOT / 'scripts/rds_autonomy_worker.py', self.root / 'worker.py')
+        self.write('config.json', {})
+        self.write('data.json', [1])
+        self.write('evaluator.json', {'expected': 6})
+        paths = [('code', 'code.py'), ('code', 'worker.py'), ('code', 'provider.py'),
+                 ('config', 'config.json'), ('data', 'data.json'), ('evaluator', 'evaluator.json')]
+        bindings = [{'role': role, 'path': path, 'sha256': file_sha(self.root / path)} for role, path in paths]
+        protocol = {role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role)
+                    for role in ('code', 'config', 'data')}
+        protocol.update(data_split='public-controller-fixture', init='none', seed=0, checkpoint='none',
+                        schedule='bounded fixture calls', sample_work={'cases': 1}, numeric_protocol='Python integer')
+        self.write('protocol.json', protocol)
+        ref = {'path': 'protocol.json', 'sha256': file_sha(self.root / 'protocol.json')}
+        bindings.append({'role': 'protocol', **ref})
+        routes, nodes, repair_slots = [], [], []
+        for rid in ['solve'] + ['repair' + str(i + 1) for i in range(slots)]:
+            is_repair = rid != 'solve'
+            response = 'outputs/' + rid + '.json'
+            argv = [sys.executable, '-B', 'worker.py', '--run', rid] if is_repair else [sys.executable, '-B', 'code.py', response]
+            outputs = output_paths(response) if is_repair else [response]
+            duration = timeout if is_repair else 2
+            manifest = {'schema': 1, 'id': rid, 'arm': 'tool', 'control_id': None, 'protocol': ref,
+                        'argv': argv, 'outpaths': outputs, 'timeout_seconds': duration,
+                        'resource_estimates': {'wall_seconds': duration}}
+            routes.append({'candidate': rid, 'manifest': manifest})
+            pre = [{'fact': 'autonomy.' + (rid if is_repair else 'repair1') + ('.ready' if is_repair else '.adopted'),
+                    'op': 'eq', 'value': True}]
+            action = {'id': rid, 'kind': 'OBLIGATION_CHECK', 'target': 'score',
+                      'description': 'Execute a bounded local controller fixture', 'claim': 'Finite software regression only',
+                      'required_observables': ['score'],
+                      'outcomes': [{'observation': 'verified', 'next_decision': 'review original result'},
+                                   {'observation': 'counterexample', 'next_decision': 'repair from original failure'},
+                                   {'observation': 'unresolved', 'next_decision': 'retain unknown'}]}
+            nodes.append({'id': rid, 'sources': ['explicit local fixture'],
+                          'executable': {'decisions': ['next'], 'preconditions': pre, 'action': action}})
+            if is_repair:
+                repair_slots.append({'run_id': rid, 'code_path': 'code.py', 'worker_path': 'worker.py', 'response_path': response})
+        config = {'schema': 1, 'max_steps': max_steps, 'repair_slots': repair_slots,
+                  'provider': {'kind': 'fixture', 'argv': [sys.executable, '-B', 'provider.py'],
+                               'executable_sha256': file_sha(sys.executable),
+                               'model': None, 'effort': None, 'service_tier': None}}
+        policy = {'schema': 1, 'context': {'decision': {'id': 'next', 'goal_revision': 'controller-fixture-v1',
+                    'scope': {'domain': 'finite software fixture'}, 'goal_conditions': [{'fact': 'score', 'op': 'eq', 'value': 6}]}},
+                  'graph': {'nodes': nodes, 'edges': []}, 'routes': routes,
+                  'observations': [{'fact': 'score', 'run_id': 'solve', 'path': 'outputs/solve.json', 'selector': {'pointer': '/score'}}],
+                  'autonomy': config}
+        self.contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': [r['manifest']['argv'] for r in routes],
+                         'output_roots': ['outputs'], 'budget': {'wall_seconds': budget}, 'advisor_policy': policy,
+                         'method_evolution': {'schema': 1, 'max_revisions': 4, 'code_paths': ['code.py']},
+                         'stop_policy': {'schema': 1, 'wall_seconds': 120, 'progress': {'window_seconds': 20, 'min_bytes': 0}}}
+        self.write('contract.json', self.contract)
+        self.store.initialize(self.contract)
+
+    def cli(self, *args):
+        p = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(self.root), *args],
+                           capture_output=True, text=True, encoding='utf-8', timeout=35,
+                           env={**os.environ, 'RDS_USAGE_DB': str(self.root / 'usage.sqlite3')})
+        self.trace.append({'argv': list(args), 'returncode': p.returncode, 'stdout': p.stdout, 'stderr': p.stderr})
+        evidence = os.environ.get('RDS_AUTONOMY_EVIDENCE')
+        if evidence:
+            directory = Path(evidence) / self._testMethodName
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / 'cli-transcript.json').write_text(json.dumps(self.trace), encoding='utf-8')
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return json.loads(p.stdout)
+
+    def events(self, kind=None):
+        with self.store._db(True) as db:
+            values = [json.loads(row['body']) for row in db.execute('SELECT body FROM events ORDER BY id')]
+        return [v for v in values if kind is None or v['kind'] == kind]
+
+    def calls(self):
+        path = self.root / 'provider-calls.jsonl'
+        return [json.loads(line)['run_id'] for line in path.read_text().splitlines()] if path.exists() else []
+
+    def request(self):
+        report = review(self.store)
+        self.assertIsNone(report['selected_run'])
+        self.assertEqual(autonomy.request_repair(self.store, report), 'REQUESTED')
+        return self.events(autonomy.REQUESTED)[0]
+
+    def run_repair(self):
+        event = self.request()
+        route = next(r['manifest'] for r in self.contract['advisor_policy']['routes'] if r['manifest']['id'] == event['run_id'])
+        self.store.register(route)
+        receipt = self.store.execute(event['run_id'])
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED', receipt)
+        return event, receipt
+
+    def assert_single_model_cost(self, before, rid='repair1'):
+        after = self.store.snapshot()
+        self.assertEqual([r['sha256'] for r in after['receipts']], [r['sha256'] for r in before['receipts']])
+        # Repeated foreground passes have a real controller cost. The original
+        # worker cost stays in the same receipt; only measured control work grows.
+        worker_wall = sum(r['resources']['wall_seconds']['measured'] or 0 for r in after['receipts'])
+        controller_wall = sum(e['controller_wall_seconds'] for e in self.events('AUTONOMY_DRIVE_RELEASED'))
+        self.assertAlmostEqual(after['budget']['wall_seconds']['spent_measured'], worker_wall + controller_wall, places=6)
+        self.assertGreaterEqual(after['budget']['wall_seconds']['spent_measured'], before['budget']['wall_seconds']['spent_measured'])
+        self.assertEqual(after['budget']['wall_seconds']['charged_estimate'], 0)
+        self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
+        self.assertEqual(len([r for r in after['runs'] if r['id'] == rid]), 1)
+        self.assertEqual(len(self.events('AUTONOMY_MODEL_DISPATCH_INTENT')), 1)
+
+    def test_actual_cli_repair_adoption_and_application_one_ledger(self):
+        self.build()
+        result = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual([r['id'] for r in self.store.snapshot()['runs']], ['repair1', 'solve'])
+        self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
+        self.assertEqual(len(self.events('METHOD_REVISION_ADOPTED')), 1)
+        event = self.events(autonomy.REQUESTED)[0]
+        receipt = next(r for r in self.store.snapshot()['receipts'] if r['run_id'] == 'repair1')
+        self.assertEqual(receipt['autonomy_request'], event['request'])
+        self.assertEqual(receipt['effective_contract_sha256'], event['parent_sha256'])
+        self.assertEqual(result['scientific_support'], 'UNKNOWN')
+        self.assertNotEqual(result['status'], 'GOAL_CONFIRMED')  # No domain confirmation was declared.
+        self.assertEqual(self.events('AUTONOMY_DRIVE_CLAIMED')[0]['controller_reservation'], 30)
+        self.assert_single_model_cost(self.store.snapshot())
+
+    def test_repair_cannot_start_without_a_program_owned_request(self):
+        self.build()
+        manifest = self.contract['advisor_policy']['routes'][1]['manifest']
+        with self.assertRaisesRegex(ValueError, 'did not select|request'):
+            self.store.register(manifest)
+        self.assertEqual(self.store.snapshot()['runs'], [])
+        self.assertEqual(self.calls(), [])
+
+    def test_request_cas_tamper_rejects_reserved_launch(self):
+        self.build()
+        event = self.request()
+        self.store.register(self.contract['advisor_policy']['routes'][1]['manifest'])
+        before = self.store.snapshot()
+        path = Path(event['request']['path'])
+        path.write_bytes(path.read_bytes() + b' ')
+        with self.assertRaises(ValueError):
+            self.store.execute('repair1')
+        self.assertEqual(self.calls(), [])
+        after = self.store.snapshot()
+        self.assertEqual(after['budget'], before['budget'])
+        self.assertEqual(after['runs'][0]['attempt_id'], None)
+        self.assertEqual(after['receipts'], [])
+
+    def test_changed_provider_code_rejects_before_model_dispatch(self):
+        self.build()
+        self.request()
+        self.store.register(self.contract['advisor_policy']['routes'][1]['manifest'])
+        self.write('provider.py', 'raise SystemExit(0)\n')
+        receipt = self.store.execute('repair1')
+        self.assertEqual(receipt['run_status'], 'FAILED')
+        self.assertIs(receipt['process_started'], False)
+        self.assertIsNone(receipt['pid'])
+        self.assertTrue(any('provider.py' in error for error in receipt['errors']), receipt['errors'])
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
+        self.assertEqual(len(self.store.snapshot()['receipts']), 1)
+
+    def test_provider_executable_identity_is_rechecked_before_launch(self):
+        self.build()
+        self.request()
+        self.store.register(self.contract['advisor_policy']['routes'][1]['manifest'])
+        with self.store._db(True) as db:
+            run = self.store._run(db, 'repair1')
+            contract = self.store._contract(db)
+            with patch.object(autonomy, 'file_sha', return_value='0' * 64):
+                with self.assertRaisesRegex(ValueError, 'executable changed'):
+                    autonomy.check_run(self.store, db, contract, run)
+        self.assertEqual(self.calls(), [])
+
+    def test_failed_provider_is_not_reexecuted_or_recharged(self):
+        self.build(modes={'repair1': 'exit'})
+        self.cli('project', 'drive', '--max-steps', '4')
+        before = self.store.snapshot()
+        self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assert_single_model_cost(before)
+        response = json.loads((self.root / 'outputs/repair1.json').read_text())
+        self.assertEqual(response['returncode'], 9)
+        self.assertEqual(response['usage'], 'UNKNOWN')
+        self.assertFalse((self.root / 'outputs/solve.json').exists())
+
+    def test_malformed_provider_reply_stays_unknown_without_another_call(self):
+        self.build(modes={'repair1': 'malformed'})
+        self.cli('project', 'drive', '--max-steps', '4')
+        before = self.store.snapshot()
+        self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assert_single_model_cost(before)
+        self.assertEqual(len(self.events('METHOD_REVISION_ADOPTED')), 0)
+        self.assertFalse((self.root / 'outputs/solve.json').exists())
+
+    def test_timed_out_provider_retains_original_attempt_and_fee(self):
+        self.build(modes={'repair1': 'timeout'}, timeout=3)
+        self.cli('project', 'drive', '--max-steps', '4')
+        before = self.store.snapshot()
+        self.cli('project', 'drive', '--max-steps', '4')
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assert_single_model_cost(before)
+        self.assertTrue(json.loads((self.root / 'outputs/repair1.json').read_text())['timed_out'])
+        self.assertGreater(before['budget']['wall_seconds']['spent_measured'], 0)
+
+    def test_adopted_then_controller_crash_resumes_exact_proposal(self):
+        self.build()
+        original = autonomy._append
+        def crash(db, event):
+            if event['kind'] == autonomy.PROCESSED and event.get('outcome') == 'ADOPTED':
+                raise RuntimeError('synthetic crash after method adoption')
+            return original(db, event)
+        with patch.object(autonomy, '_append', side_effect=crash):
+            with self.assertRaisesRegex(RuntimeError, 'after method adoption'):
+                autonomy.drive(self.store, 4)
+        before = self.store.snapshot()
+        self.assertEqual(len(before['contract_history']), 2)
+        self.assertEqual(self.calls(), ['repair1'])
+        self.cli('project', 'drive', '--max-steps', '4')
+        after = self.store.snapshot()
+        self.assertEqual(len(after['contract_history']), 2)
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(next(r for r in after['receipts'] if r['run_id']=='repair1'), before['receipts'][0])
+        self.assertEqual(len(self.events(autonomy.PROCESSED)), 1)
+        self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
+
+    def test_prepared_partial_copy_resumes_without_another_model_call(self):
+        self.build()
+        original, copies = revision._replace, []
+        def interrupt(path, raw):
+            copies.append(str(path))
+            if len(copies) == 2:
+                raise OSError('synthetic partial copy')
+            return original(path, raw)
+        with patch.object(revision, '_replace', side_effect=interrupt):
+            autonomy.drive(self.store, 4)
+        before = self.store.snapshot()
+        self.assertIsNotNone(before['method_revision_pending'])
+        self.assertEqual(self.calls(), ['repair1'])
+        self.cli('project', 'drive', '--max-steps', '4')
+        after = self.store.snapshot()
+        self.assertIsNone(after['method_revision_pending'])
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(len(after['contract_history']), 2)
+        self.assertEqual(next(r for r in after['receipts'] if r['run_id']=='repair1'), before['receipts'][0])
+
+    def test_total_step_cap_survives_multiple_drive_invocations(self):
+        self.build(max_steps=1)
+        self.cli('project', 'drive', '--max-steps', '1')
+        before = self.store.snapshot()
+        start = self.events('CAMPAIGN_STARTED')[0]
+        result = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertIn('TOTAL_STEP_LIMIT', result.get('reason', ''))
+        self.assertEqual(len(self.store.snapshot()['runs']), 1)
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assert_single_model_cost(before)
+        self.assertEqual(self.events('CAMPAIGN_STARTED'), [start])
+        self.assertFalse((self.root / 'outputs/solve.json').exists())
+
+    def test_short_drive_passes_preserve_budget_deadline_and_receipts(self):
+        self.build()
+        self.cli('project', 'drive', '--max-steps', '1')
+        before = self.store.snapshot()
+        start = self.events('CAMPAIGN_STARTED')[0]
+        self.cli('project', 'drive', '--max-steps', '1')
+        self.cli('project', 'drive', '--max-steps', '1')
+        after = self.store.snapshot()
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(len(after['runs']), 2)
+        self.assertEqual(len(after['receipts']), 2)
+        self.assertEqual(self.events('CAMPAIGN_STARTED'), [start])
+        self.assertEqual(after['budget']['wall_seconds']['cap'], before['budget']['wall_seconds']['cap'])
+        self.assertGreater(after['budget']['wall_seconds']['spent_measured'], before['budget']['wall_seconds']['spent_measured'])
+        self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
+        self.assertEqual(next(r for r in after['receipts'] if r['run_id']=='repair1'), before['receipts'][0])
+
+    def test_controller_reservation_prevents_spending_its_headroom_on_a_worker(self):
+        self.build(budget=30)
+        result = self.cli('project', 'drive', '--max-steps', '4')
+        state = self.store.snapshot()
+        self.assertEqual(result['status'], 'BUDGET_EXHAUSTED')
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(state['runs'], [])
+        self.assertEqual(state['receipts'], [])
+        self.assertEqual(state['budget']['wall_seconds']['cap'], 30)
+        self.assertEqual(state['budget']['wall_seconds']['reserved'], 0)
+        self.assertGreater(state['budget']['wall_seconds']['spent_measured'], 0)
+        self.assertEqual(self.events('AUTONOMY_DRIVE_CLAIMED')[0]['controller_reservation'], 30)
+
+    def test_dead_controller_settlement_survives_exhausted_new_admission(self):
+        self.build(budget=30)
+        owner, allowance = autonomy._claim(self.store)
+        before = self.store.snapshot()
+        self.assertEqual(allowance, 30)
+        self.assertEqual(before['budget']['wall_seconds']['reserved'], 30)
+        self.assertEqual(before['budget']['wall_seconds']['charged_estimate'], 0)
+        with patch.object(autonomy, '_alive', return_value=False):
+            first = autonomy.drive(self.store, 4)
+            settled = self.store.snapshot()
+            second = autonomy.drive(self.store, 4)
+        self.assertEqual(first['status'], 'CONTROLLER_ADMISSION_BLOCKED')
+        self.assertEqual(second['status'], 'CONTROLLER_ADMISSION_BLOCKED')
+        self.assertIn('no remaining wall budget', first['reason'])
+        self.assertIn('no remaining wall budget', second['reason'])
+        after = self.store.snapshot()
+        self.assertEqual(after['budget'], settled['budget'])
+        self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
+        self.assertEqual(after['budget']['wall_seconds']['charged_estimate'], 30)
+        self.assertEqual(after['budget']['wall_seconds']['spent_measured'], 0)
+        releases = self.events('AUTONOMY_DRIVE_RELEASED')
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(releases[0]['owner'], owner)
+        self.assertEqual(releases[0]['reason'], 'OWNER_DEAD_NO_WORKER_RELAUNCH')
+        self.assertEqual(len(self.events('AUTONOMY_DRIVE_CLAIMED')), 1)
+        self.assertEqual(after['runs'], [])
+        self.assertEqual(after['receipts'], [])
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
+        with self.store._db(True) as db:
+            revision._idle(self.store, db)
+
+    def test_rejected_first_proposal_uses_next_slot_with_original_cost_retained(self):
+        self.build(modes={'repair1': 'bad'}, slots=2)
+        self.cli('project', 'drive', '--max-steps', '4')
+        if not (self.root / 'outputs/solve.json').exists():
+            self.cli('project', 'drive', '--max-steps', '4')
+        state = self.store.snapshot()
+        self.assertEqual(self.calls(), ['repair1', 'repair2'])
+        self.assertEqual(len(state['runs']), 3)
+        self.assertEqual(len(state['receipts']), 3)
+        self.assertEqual(len(self.events('METHOD_REVISION_ADOPTED')), 1)
+        self.assertGreater(state['budget']['wall_seconds']['spent_measured'], 0)
+        self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
+
+    def test_self_signed_domain_pass_cannot_complete_controller_goal(self):
+        spec = importlib.util.spec_from_file_location('_autonomy_domain_fixture', ROOT / 'tests/test_rds_domain_confirmation.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        helper = module.DomainConfirmationTests('test_candidate_self_signed_pass_has_no_certificate')
+        helper.root, helper.store = self.root, self.store
+        self.write('provider.py', 'raise SystemExit(99)\n')
+        original = ProjectStore.initialize
+        def initialize(store, contract, **kwargs):
+            contract = deepcopy(contract)
+            contract['bindings'].append({'role':'code','path':'provider.py','sha256':file_sha(self.root / 'provider.py')})
+            protocol = json.loads((self.root / 'protocol.json').read_text())
+            protocol['code_sha256'] = ProjectStore._role_sha(contract, 'code')
+            self.write('protocol.json', protocol)
+            sha = file_sha(self.root / 'protocol.json')
+            next(b for b in contract['bindings'] if b['role']=='protocol')['sha256'] = sha
+            for route in contract['advisor_policy']['routes']:
+                route['manifest']['protocol']['sha256'] = sha
+            contract['advisor_policy']['autonomy'] = {'schema':1,'max_steps':4,'repair_slots':[],
+                'provider':{'kind':'fixture','argv':[sys.executable,'-B','provider.py'],
+                            'executable_sha256':file_sha(sys.executable),'model':None,'effort':None,'service_tier':None}}
+            return original(store, contract, **kwargs)
+        with patch.object(ProjectStore, 'initialize', new=initialize):
+            helper.build(unsigned=True)
+        result = self.cli('project', 'drive', '--max-steps', '4')
+        self.assertNotEqual(result['status'], 'GOAL_CONFIRMED')
+        self.assertEqual(result['advisor']['confirmation']['task_confirmation'], 'UNKNOWN')
+        self.assertEqual(len(self.store.snapshot()['receipts']), 2)
+        self.assertTrue(all(r['run_status']=='SUCCEEDED' for r in self.store.snapshot()['receipts']))
+        self.assertEqual(self.calls(), [])
+
+
+if __name__ == '__main__':
+    unittest.main()

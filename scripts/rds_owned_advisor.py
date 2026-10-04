@@ -35,7 +35,7 @@ def validate_policy(store, contract):
         return None
     policy = contract['advisor_policy']
     require(isinstance(policy, dict) and {'schema', 'context', 'graph', 'routes', 'observations'} <= set(policy)
-            and set(policy) <= {'schema', 'context', 'graph', 'routes', 'observations', 'feasibility', 'tool_bindings'},
+            and set(policy) <= {'schema', 'context', 'graph', 'routes', 'observations', 'feasibility', 'tool_bindings', 'confirmation', 'autonomy'},
             'advisor_policy needs schema, context, graph, routes and observations')
     require(type(policy['schema']) is int and policy['schema'] == 1, 'advisor_policy schema must be 1')
     require(len(canonical(policy).encode('utf-8')) <= MAX_JSON_BYTES, 'advisor_policy exceeds 2 MiB')
@@ -130,7 +130,7 @@ def validate_policy(store, contract):
         require(isinstance(observation, dict) and set(observation) <= {'fact', 'run_id', 'path', 'selector', 'format'}
                 and {'fact', 'run_id', 'path', 'selector'} <= set(observation), 'Invalid owned observation')
         fid, rid = observation['fact'], observation['run_id']
-        require(_text(fid) and not fid.startswith(('run.', 'owned-tool-gate.')) and fid not in fact_ids, 'Duplicate or reserved observation fact ID')
+        require(_text(fid) and not fid.startswith(('run.', 'owned-tool-gate.', 'autonomy.', 'confirmation.')) and fid not in fact_ids, 'Duplicate or reserved observation fact ID')
         require(rid in ids and observation['path'] in ids[rid]['outpaths'], 'Observation must name a frozen run output')
         selector = observation['selector']
         require(observation.get('format', 'json') == 'json' and isinstance(selector, dict)
@@ -151,6 +151,12 @@ def validate_policy(store, contract):
     if 'tool_bindings' in policy:
         from rds_tool_applicability import validate_bindings
         validate_bindings(store, contract, policy['tool_bindings'])
+    if 'confirmation' in policy:
+        from rds_domain_confirmation import validate_policy as validate_confirmation
+        validate_confirmation(store, contract, policy)
+    if 'autonomy' in policy:
+        from rds_autonomy import validate_policy as validate_autonomy
+        validate_autonomy(store, contract, policy)
     return policy
 
 
@@ -179,12 +185,16 @@ def _state(store, db):
         verified_history = history_cut(store, db)
     except (ValueError, KeyError, TypeError, OSError) as exc:
         raise ValueError('Repair checkpoint integrity before executing a candidate: ' + str(exc)) from exc
-    return {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
+    state = {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
             'budget': budget, 'completion_events': completed,
             'history_cut': verified_history,
             'contract_history': history,
             'exposures': [strict_json(row['body']) for row in db.execute('SELECT body FROM exposures ORDER BY id')],
             'campaign_started': strict_json(campaign['body']) if campaign else None}
+    if 'autonomy' in contract.get('advisor_policy', {}):
+        from rds_autonomy import records
+        state['autonomy_records'] = records(store, db, contract)
+    return state
 
 
 def _fingerprint(state):
@@ -402,6 +412,16 @@ def _collect(store, state):
                 destination = errors if receipt['run_status'] == 'SUCCEEDED' else coverage['gaps']
                 destination.append({'run_id': rid, 'fact': fid, 'reason': str(exc)})
         nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'], owned_fact=fact))
+    if policy and 'autonomy' in policy:
+        from rds_autonomy import collect
+        collect(store, state, nodes, files)
+    if policy and 'confirmation' in policy:
+        from rds_domain_confirmation import inspect_confirmation
+        confirmation = inspect_confirmation(store, state['contract'], state)
+        fid = 'confirmation.task_status'
+        fact = {'id': fid, 'kind': 'DERIVED', 'value': confirmation['task_confirmation'], 'reliable': True,
+                'source': {'locator': 'program replay of frozen domain evidence ' + digest(confirmation)}}
+        nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], owned_fact=fact))
     return nodes, edges, coverage, files
 
 
@@ -467,7 +487,9 @@ def review(store, persist=True):
             'limits': {**previous.get('limits', {}), 'max_nodes': 4096, 'max_hyperedges': 4096}}
     if policy:
         facts = _facts(spec)
-        for index, condition in enumerate(policy['context']['decision']['goal_conditions']):
+        from rds_domain_confirmation import goal_conditions as confirmation_goals
+        effective_goals = confirmation_goals(policy)
+        for index, condition in enumerate(effective_goals):
             evaluated = evaluate_condition(condition, facts)
             ident = 'goal:' + str(index)
             spec['nodes'].append(_node(ident, {'TRUE': 'SUPPORTED', 'FALSE': 'CONTRADICTED', 'UNKNOWN': 'UNKNOWN'}[evaluated['truth']],
@@ -495,6 +517,8 @@ def review(store, persist=True):
               'recommendations': [], 'warnings': [], 'next_move': None, 'evidence_files': files}
     if policy:
         context = deepcopy(policy['context'])
+        if 'confirmation' in policy:
+            context['decision']['goal_conditions'] = effective_goals
         context['facts'] = _facts(spec)
         context['dependency_map'] = spec
         budget = {r['resource']: max(0, r['cap'] - r['spent'] - r['charged'] - r['reserved']) for r in state['budget']}
@@ -588,6 +612,13 @@ def review(store, persist=True):
         if coverage['errors']:
             result['status'] = 'COLLECTION_FAILED'
             result['warnings'].append({'kind': 'OWNED_EVIDENCE_INCOMPLETE', 'errors': deepcopy(coverage['errors'])})
+        if 'confirmation' in policy:
+            from rds_domain_confirmation import inspect_confirmation
+            try:
+                result['confirmation'] = inspect_confirmation(store, state['contract'], state)
+            except (ValueError, KeyError, TypeError, OSError) as exc:
+                result.update(status='COLLECTION_FAILED', selected_run=None, selected_manifest=None)
+                result['warnings'].append({'kind': 'DOMAIN_CONFIRMATION_INTEGRITY', 'error': str(exc)})
     if persist:
         ref = cas_json(store.root, result)
         if result.get('tool_utilization'):

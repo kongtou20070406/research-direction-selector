@@ -78,6 +78,14 @@ Completed routes retain their evidence and dependency nodes but no longer consum
 
 ## Collection, graph and admission
 
+An optional frozen `autonomy` declaration connects repeated owned selection,
+bounded model repair, validated method adoption and continuation through
+`project drive`. Optional `confirmation` adds the program-replayed domain task
+gate to the original predicates, preventing candidate success from skipping
+confirmation. See [research drive](autonomy-loop.md) and
+[domain confirmation](domain-confirmation.md). Both use this same ledger and
+ordinary admission, without widening execution authority.
+
 RDS enumerates all registered runs and their owned receipts. It retains favorable and negative values, failures, timeouts, logs, declared outputs and unresolved readings. Original assets stay in the existing project artifacts/CAS; `owned:` nodes and relationships in the existing TMS map connect them to the current observations. Advisor consumes that program-produced state. The scope of completeness is the frozen run/output contract, not arbitrary disk contents, unregistered experiments or every possible scientific interpretation of a file.
 
 `advise` in this workflow accepts no caller context, graph, artifact selection, chosen candidate or handwritten decision record. `project advance` selects and executes one route. Existing `project create` and `project execute` also enforce the policy. Quick execution and the separate theory-allowance API cannot charge or execute work outside that selected route; configure permitted theory work as an ordinary frozen project route with declared outputs. Admission binds the exact manifest and current research state, and is checked again at the execution boundary before a child starts.

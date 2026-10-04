@@ -331,6 +331,9 @@ class ProjectStore:
             require(row["spent"] + row["charged"] + row["reserved"] <= row["cap"] + 1e-9,
                     f"Insufficient {resource} budget before start")
         contract = self._contract(db)
+        if 'autonomy' in contract.get('advisor_policy', {}):
+            from rds_autonomy import check_run
+            check_run(self, db, contract, run)
         if contract.get('advisor_policy', {}).get('feasibility') is not None:
             from rds_feasibility import check_start
             check_start(self, db, run['id'])
@@ -916,6 +919,9 @@ class ProjectStore:
             require(digest(self._contract(db)) == run['effective_contract_sha256'],
                     'Method revision changed during run registration')
             self._advisor_check(db, spec, advisor_token)
+            if 'autonomy' in contract.get('advisor_policy', {}):
+                from rds_autonomy import bind_run
+                bind_run(self, db, contract, run)
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
             retained = self._runs(db)
             if 'execution_policy' in contract:
@@ -1360,7 +1366,7 @@ class ProjectStore:
                                                      if run["scheduler"] else None)}
         if stop_reason is not None:
             receipt["stop_reason"] = stop_reason
-        for field in ('effective_contract_sha256', 'runtime_fingerprint'):
+        for field in ('effective_contract_sha256', 'runtime_fingerprint', 'autonomy_request'):
             if field in run:
                 receipt[field] = run[field]
         if run["manifest"].get("maintenance") is not None:
