@@ -473,16 +473,18 @@ class SuccessorTests(unittest.TestCase):
                                         "project", "init", "--contract", str(root / "contract.json"),
                                         "--supersedes", str(predecessor)], capture_output=True, encoding="utf-8", timeout=30)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            [hop] = json.loads(completed.stdout)["predecessor_chain"]
-            self.assertEqual((hop["status"], Path(hop["root"])), ("VERIFIED", Path(predecessor).resolve()))
+            chain = json.loads(completed.stdout)["predecessor_chain"]
+            self.assertEqual((chain[0]["status"], Path(chain[0]["root"])), ("VERIFIED", Path(predecessor).resolve()))
+            return chain
 
         # Temporary drive to checkout drive, then back.
         middle = far / "middle"
         shutil.copytree(self.first, middle, ignore=shutil.ignore_patterns(".rds", "outputs"))
-        init(middle, dict(self.contract, description="middle"), self.first)
+        self.assertEqual(len(init(middle, dict(self.contract, description="middle"), self.first)), 1)
         last, contract = self.phase("last")
-        init(last, contract, middle)
-        self.assertEqual([hop["status"] for hop in ProjectStore(last).snapshot()["predecessor_chain"]], ["VERIFIED"] * 2)
+        chain = init(last, contract, middle)
+        self.assertEqual([(hop["status"], Path(hop["root"])) for hop in chain],
+                         [("VERIFIED", middle.resolve()), ("VERIFIED", self.first.resolve())])
 
 
 if __name__ == "__main__":
