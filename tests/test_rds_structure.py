@@ -215,6 +215,20 @@ class StructureTests(unittest.TestCase):
         self.assertIn('owned:new-observation', ids)
         self.assertNotIn('candidate-concept', ids)
 
+    def test_rollback_refuses_intervening_goal_change(self):
+        p = self.proposal()
+        structure.propose(self.root, p)
+        structure.advance(self.root, p['id'])
+        structure.activate(self.root, p['id'])
+        from rds_tms_store import save
+        saved = current(self.root)
+        changed = deepcopy(saved['dependency_map'])
+        changed['goals'].append('observations')
+        save(self.root, changed, expected=saved['sha256'], source_base=self.root)
+        with self.assertRaisesRegex(ValueError, 'goal/scope'):
+            structure.rollback(self.root, p['id'])
+        self.assertEqual(current(self.root)['dependency_map'], changed)
+
     def test_result_reuse_and_activation_reject_changed_originals(self):
         p = self.proposal()
         structure.propose(self.root, p)

@@ -534,14 +534,21 @@ def rollback(root, ident):
                 body = json.loads(record['body'])
                 require(digest(body) == active['parent'], 'Activation ancestry hash mismatch')
                 active = {**body, 'sha256': active['parent'], 'dependency_map': json.loads(blob(store.root, body['map']))}
-                require(declared(active['dependency_map']) == declared(saved['dependency_map']), 'Intervening model edits prevent rollback')
+                require(declared(active['dependency_map']) == declared(saved['dependency_map'])
+                        and active['dependency_map']['goals'] == saved['dependency_map']['goals']
+                        and active['source_base_dir'] == saved['source_base_dir'],
+                        'Intervening model/goal/scope edits prevent rollback')
                 revision = active.get('revision')
             else:
                 raise ValueError('Activation ancestry exceeds bounded recovery scope')
         original = json.loads(blob(store.root, revision['previous_map']))
+        row = _find(store, 'PROPOSAL', ident)
+        req = _find(store, 'REQUEST', row['request_id'])
+        require(_binding_scope(store.snapshot(), saved) == req['scope'], 'Rollback goal/contract/scope changed')
         for key in ('nodes', 'hyperedges'):
             original[key] = [r for r in original[key] if not r['id'].startswith('owned:')] + [r for r in saved['dependency_map'][key] if r['id'].startswith('owned:')]
         def check(db):
+            require(digest(store._contract(db)) == req['scope']['contract_sha256'], 'Contract changed before rollback')
             require(not any(r['status'] not in TERMINAL for r in store._runs(db)), 'Settle active runs before rollback')
         snapshot = save(root, original, expected=saved['sha256'],
                         revision={'kind': PREFIX + 'ROLLBACK', 'id': ident, 'retained_candidate': saved['map']},
