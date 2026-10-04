@@ -172,13 +172,21 @@ def request(root, limit=3):
                 'Structure exploration map exceeds bounded task scope; retain a scoped dependency model first')
         analysis = review_hypergraph(spec)
         scope = _binding_scope(state, saved)
+        prior_feedback = [_read_ref(store, e['record']) for e in _events(store) if e['kind'] == PREFIX + 'FEEDBACK']
+        settled = [{'run_id': r['run_id'], 'receipt_sha256': r['sha256'], 'run_status': r['run_status'],
+                    'timeout': r.get('timeout'), 'exit_code': r.get('exit_code'),
+                    'errors': [str(v)[:512] for v in r.get('errors', [])[:8]],
+                    'original_results': [{k: a[k] for k in ('path', 'sha256', 'size') if k in a}
+                                         for a in r.get('artifacts', []) if a.get('kind') == 'project_output'],
+                    'resources': r.get('resources', {})} for r in state['receipts']]
         tasks = []
         for goal in spec['goals']:
             if analysis['goals'][goal]['status'] == 'DECLARED_SUPPORTED':
                 continue  # Healthy OR alternatives do not justify false dead-end claims.
             data, frontier, gap = _frontier(spec, goal)
             identity = {'snapshot_sha256': saved['sha256'], 'scope': scope, 'goal': goal,
-                        'receipts': [r['sha256'] for r in state['receipts']]}
+                        'receipts': [r['sha256'] for r in state['receipts']],
+                        'feedback_sha256': [digest(r) for r in prior_feedback]}
             rid = 'request-' + digest(identity)[:24]
             old = _find(store, 'REQUEST', rid)
             if old:
@@ -189,6 +197,8 @@ def request(root, limit=3):
             value = {'id': rid, **identity, 'scope_sha256': digest(scope), 'gap_id': gap['id'],
                      'goal_status': analysis['goals'][goal], 'frontier_spec': data, 'frontier': frontier, 'original_map': spec,
                      'sources': gap['evidence_refs'], 'unknown_premises': gap['anchors'],
+                     'settled_evidence': settled, 'prior_feedback': [{k: r[k] for k in
+                         ('id', 'status', 'goal_status', 'receipts', 'next_decision', 'reason')} for r in prior_feedback],
                      'external_search': ['Find current primary sources for missing concepts and applicability conditions',
                                          'Find competing formulations; the initial decomposition may be wrong'],
                      'experiment_suggestion': 'Compare different predictions or computational routes with a frozen independent evaluator',
@@ -201,6 +211,7 @@ def request(root, limit=3):
             if len(tasks) >= limit:
                 break
         return {'status': 'EXPLORATION_REQUESTED' if tasks else 'NO_UNRESOLVED_GOAL', 'tasks': tasks,
+                'live_budget': store.snapshot()['budget'],
                 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN',
                 'selection': 'UNRESOLVED_GOAL_DECLARATION_ORDER', 'omitted_goals': max(0, len(spec['goals']) - len(tasks))}
 
