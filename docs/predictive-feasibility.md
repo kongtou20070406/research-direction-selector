@@ -85,8 +85,12 @@ input identities. Protocol code hashes are derived by the program.
 Adoption retains old/new bytes in CAS and appends PREPARED/ADOPTED events to the
 same ledger. Pending adoption blocks execution and resumes only with the exact
 proposal; partial copies accept only retained old/new bytes. Original attempts,
-exposure and spending survive. Verified historical checkpoints supply context
-while restoration uses live costs and current bindings. Legacy contracts without
+exposure and spending survive. Verified historical checkpoints in the owning
+ledger supply context while restoration uses live costs and current bindings.
+Inherited history through `supersedes` currently becomes conservatively unavailable
+when its predecessor has method revisions; the Advisor reports that warning and
+continues using local history. This feature does not extend the predecessor
+history verifier. Legacy contracts without
 these optional fields retain their existing workflow.
 
 The agent must propose an executable improvement or state that no authorized
