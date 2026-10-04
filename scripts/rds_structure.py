@@ -376,11 +376,7 @@ def advance(root, ident):
         state = store.snapshot()
         _live(store, _find(store, 'REQUEST', row['request_id']), allow_owned_updates=True)
         run = next((r for r in state['runs'] if r['id'] == manifest['id']), None)
-        if run is None:
-            # Includes current owned Advisor, immutable bindings, deadline,
-            # resources and command authority. This adapter adds no bypass.
-            store.register(manifest)
-        else:
+        if run is not None:
             require(run['manifest_sha256'] == digest(manifest), 'Experiment run ID is bound to another manifest')
             if run['status'] in TERMINAL:
                 if run['status'] != 'COMPLETED':
@@ -393,6 +389,25 @@ def advance(root, ident):
                 if recovered.get('run_status') != 'SUCCEEDED':
                     return feedback(root, ident)
                 continue
+        # Direct callers must afford the remaining distinguishing experiment,
+        # including verification and same-ledger feedback control. Observe or
+        # recover existing attempts first; those do not need fresh admission.
+        # Runner transactions still own reservations; concurrent budget use
+        # may stop later work, but cannot cause settled attempts to repeat.
+        recorded = {r['id']: r for r in state['runs']}
+        pending = [m for m in row['proposal']['experiment']['runs']
+                   if m['id'] not in recorded or
+                   (recorded[m['id']]['status'] not in TERMINAL and recorded[m['id']]['attempt_id'] is None)]
+        for resource in state['budget']:
+            required = sum(m['resource_estimates'][resource] for m in pending)
+            if resource == 'wall_seconds':
+                required += 2.0
+            require(required <= state['budget'][resource]['remaining'],
+                    'Insufficient ' + resource + ' for remaining experiment and feedback')
+        if run is None:
+            # Includes current owned Advisor, immutable bindings, deadline,
+            # resources and command authority. This adapter adds no bypass.
+            store.register(manifest)
         receipt = store.execute(manifest['id'])
         if receipt.get('run_status') != 'SUCCEEDED':
             return feedback(root, ident)
