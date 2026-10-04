@@ -1,6 +1,23 @@
 # Public command map
 
-Use this map when the short Skill route table does not cover the task. It covers all 65 leaf command paths across 25 top-level commands in `scripts/rds_cli.py`'s current `parser()`, plus relevant Advisor options and documented helper entry points. Aliases do not add capabilities. This is a discovery map, not a requirement to invoke every function.
+Problem-model exploration uses `structure request|propose|next|drive|advance|feedback|activate|rollback|list|recover`.
+It requires an initialized project and current TMS, uses existing execution authority and budget,
+and returns open Agent tasks or independently checked observations. See [problem structure](problem-structure.md).
+
+Use this map when the short Skill route table does not cover the task. It covers all public leaf command paths in `scripts/rds_cli.py`'s current `parser()`, plus relevant Advisor options and documented helper entry points. Aliases do not add capabilities. This is a discovery map, not a requirement to invoke every function.
+
+| Command | Behavior | Prerequisite | Guide |
+| --- | --- | --- | --- |
+| `structure request` | Return bounded open Agent tasks | Initialized project and saved dependencies | [Problem structure](problem-structure.md) |
+| `structure propose` | Retain an experimental topology branch | Current request, sourced testable proposal and allowed manifests | [Problem structure](problem-structure.md) |
+| `structure next` | Consume feedback and select a distinguishing test | Same ledger and remaining budget | [Problem structure](problem-structure.md) |
+| `structure drive` | Bounded proposal/execution/feedback handoff | Existing admission and `--steps` in 1..8 | [Problem structure](problem-structure.md) |
+| `structure advance` | Run or recover candidate/verifier once | Retained `--id` and existing project execution authority | [Problem structure](problem-structure.md) |
+| `structure feedback` | Bind independent observations to originals | Actual receipts/results and matching scope/hash | [Problem structure](problem-structure.md) |
+| `structure activate` | Publish experimental topology | Supporting independent observation, unchanged goal, idle runs | [Problem structure](problem-structure.md) |
+| `structure rollback` | Restore original decomposition | Matching activation ancestry, retaining fresh owned facts | [Problem structure](problem-structure.md) |
+| `structure list` | Inspect retained branches and costs | Existing project | [Problem structure](problem-structure.md) |
+| `structure recover` | Reconcile interrupted controller cost once | Controller known dead; never steal live work | [Problem structure](problem-structure.md) |
 
 ```text
 skill_dir := directory containing SKILL.md
