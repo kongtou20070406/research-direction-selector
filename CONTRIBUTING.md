@@ -2,7 +2,28 @@
 
 **English** · [简体中文](CONTRIBUTING.zh-CN.md)
 
-An RDS change can pass its own tests while the advertised CLI option is unreachable, a missing measurement becomes a fact, or recovery repeats an expensive run. This guide starts with those failures. A contribution should make a concrete research decision or executable behavior easier to use and inspect.
+Thanks for looking. RDS is a small project with a sharp question: which parts of agent-driven research can a cheap, testable program carry, so that the expensive and unpredictable agent does not have to? You can help without touching the kernel.
+
+## Ways to contribute
+
+| You have… | Contribute | Where to start |
+| --- | --- | --- |
+| 10 minutes | A typo, a broken link, a clearer sentence in any README or guide | Open a PR directly |
+| A research workflow | An issue describing where your agent lost track of runs, budgets, goals or rejected ideas, with the setup you used | [New issue](https://github.com/kongtou20070406/research-direction-selector/issues/new/choose) |
+| An afternoon | A benchmark task where an unaided agent reaches a wrong conclusion, with a grader | [Contribute a benchmark task](#contribute-a-benchmark-task) |
+| A bug | A reproduction and, if you can, a focused fix | [Start with the problem](#start-with-the-problem) |
+| A feature idea | An issue first; a PR after the design is agreed | [Roadmap](docs/roadmap.md), [5.9 planning](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
+
+To set up a checkout, you need only Git and Python 3.11+:
+
+```powershell
+git clone https://github.com/kongtou20070406/research-direction-selector.git
+cd research-direction-selector
+python -B scripts/rds_cli.py --version
+python -B -m unittest discover -s tests -p "test_rds_quick*.py"
+```
+
+The rest of this guide explains what makes a change easy to review and merge. An RDS change can pass its own tests while the advertised CLI option is unreachable, a missing measurement becomes a fact, or recovery repeats an expensive run. This guide starts with those failures. A contribution should make a concrete research decision or executable behavior easier to use and inspect.
 
 Release numbering and publication follow the [versioning rules](docs/versioning.md). The five components are **Skill, execution and acceptance kernel, research state and memory, Advisor, and RSI**. M01–M06 are work items within those components: bounded artifact import, experiment composition, cost/control checks, project execution, rule acceptance and recovery. See the [roadmap](docs/roadmap.md) and [commands and scope](docs/development-loop.md). Program checks do not establish end-to-end scientific ability.
 
@@ -10,11 +31,11 @@ Release numbering and publication follow the [versioning rules](docs/versioning.
 
 Bug reports and focused bugfix PRs are welcome directly. Include the triggering input, exact reproduction, expected behavior and root cause. Discuss larger features, new schemas and substantial changes to research behavior in an issue before implementation; carry forward decisions already made rather than asking everyone to start over.
 
-Keep one concrete purpose per PR. Explain what the researcher gains and why existing concepts cannot express the change. Read the [workflow](docs/research-workflow.md), [terminology](docs/terminology.md) and neighbouring implementation before adding a field, state, file type or dependency.
+Keep one concrete purpose per PR. Explain what the researcher gains and why existing concepts cannot express the change. Prefer changes that move bookkeeping from the agent to the program: program work is cheaper, deterministic and testable, while agent work is expensive and hard to optimize. A check that the kernel can perform should not depend on the agent remembering to do it. Read the [workflow](docs/research-workflow.md), [terminology](docs/terminology.md) and neighbouring implementation before adding a field, state, file type or dependency.
 
 Fork [the repository](https://github.com/kongtou20070406/research-direction-selector/fork), make a branch from the intended base, and commit only your changed files. Describe the final problem and behavior, verification actually run, and material limits. Distinguish behavior already on the base ref, behavior introduced by the PR, and development candidates. Shared commands and evidence boundaries should agree across the READMEs and both contribution guides; a wording-only fix may affect just one language.
 
-Keep future README edits within the established layout: static banner, the two sides of the research loop, five components, Skill/install, kernel, mathematical checks, Advisor, history, tests, repository layout and license. Keep the main README in English and translations in their own files. Put detailed implementation and test reports in the linked guides rather than expanding the homepage.
+Keep future README edits within the established layout: static banner and tagline, why RDS, measured results, two-minute start, the two sides of the research loop, five components, Skill/install, kernel, mathematical checks, Advisor, history, tests, repository layout, get involved, star history and license. Keep the main README in English and translations in their own files. Put detailed implementation and test reports in the linked guides rather than expanding the homepage. Every number in a README links to a public report of its design and data; when newer evidence changes it, update or remove the number in all languages.
 
 ## Six checks that make a change reviewable
 
@@ -78,6 +99,19 @@ Preserve `PASS`, `FAIL` and `UNKNOWN` within their declared scope. Status and as
 Development cases are regression evidence. Independent research evaluation needs unused cases, recorded model/skill versions, decision-time information boundaries, matching total budgets and negative results; use the [benchmark protocol](benchmark/README.md). Research autonomy and RSI improvement remain separate claims; see [autonomy scope](docs/research-autonomy.md) and [RSI evidence](references/rsi-evidence.md).
 
 Respect the current researcher's goals, resources and experiment preferences. The [optional preference example](references/optional-preferences.md) avoids default multi-seed work unless observed instability could change the decision. It is an opt-in project preference, not a universal scientific requirement; suggestions and preference records do not expand resource authorization.
+
+## Contribute a benchmark task
+
+The open question for RDS is objective research benefit, and that question can only be answered on tasks where an unaided agent actually fails. On cheap-to-check traps, frontier agents already reach the right conclusion without help; see the [README results](README.md#measured-not-promised). A task that breaks that pattern is one of the most valuable contributions you can make. Discuss it in [#169](https://github.com/kongtou20070406/research-direction-selector/issues/169) or a new issue.
+
+A useful task has:
+
+- **A known answer and a grader** that reads only the agent's final artifacts (for example `DECISION.json`, query logs, receipts) and returns correct, partial or wrong with a reason. [PR #176](https://github.com/kongtou20070406/research-direction-selector/pull/176) proposes a format under `benchmark/capability/`.
+- **A failure an unaided agent actually makes.** Pilot it without RDS first. If the agent never fails, the task cannot show a benefit; report that result anyway.
+- **A real cost to getting it wrong:** a quota, a slow runner, an irreversible decision or a tempting shortcut, rather than a riddle.
+- **Minimal synthetic or public data**, generated by a seeded script, with no private datasets, sessions or credentials.
+
+When you report trials, include the model and reasoning effort, host and version, RDS commit, the exact prompt per arm, the number of trials per arm, every outcome including errors and negative results, and the mechanism behind each failure. Keep arms identical except for the factor under test. A small sample is fine if you say so.
 
 ## Performance and final acceptance
 

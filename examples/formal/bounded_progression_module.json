@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "kind": "theorem_module",
+  "definitions": {
+    "domain": ["0", "1"],
+    "map": {"matrix": [["1/2", "1/4"], ["0", "1/3"]], "bias": ["1/4", "2/3"]}
+  },
+  "theorems": [
+    {
+      "name": "multiplication_commutes_on_domain",
+      "statement": {
+        "schema": 1,
+        "kind": "finite_rational_multiplication_commutes",
+        "domain": {"$ref": "domain"}
+      },
+      "by": {"rule": "theory.finite_rational_multiplication_commutes"}
+    },
+    {
+      "name": "map_is_contracting",
+      "statement": {"schema": 1, "kind": "affine_contraction", "model": {"$ref": "map"}, "threshold": "1"},
+      "by": {"rule": "matrix.infinity_contraction"}
+    },
+    {
+      "name": "map_has_fixed_point",
+      "statement": {"schema": 1, "kind": "affine_fixed_point", "model": {"$ref": "map"}, "point": ["1", "1"]},
+      "by": {"rule": "matrix.fixed_point"}
+    },
+    {
+      "name": "commutativity_and_contraction",
+      "statement": {"kind": "all", "of": ["multiplication_commutes_on_domain", "map_is_contracting"]},
+      "by": {"rule": "logic.and_intro", "premises": ["multiplication_commutes_on_domain", "map_is_contracting"]}
+    },
+    {
+      "name": "commutativity_and_fixed_point",
+      "statement": {"kind": "all", "of": ["multiplication_commutes_on_domain", "map_has_fixed_point"]},
+      "by": {"rule": "logic.and_intro", "premises": ["multiplication_commutes_on_domain", "map_has_fixed_point"]}
+    }
+  ]
+}
