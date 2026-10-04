@@ -11,6 +11,10 @@ import re
 import sys
 
 from rds_verify_types import MAX_CERTIFICATE_BYTES, SEMANTICS, bounded_json, canonical, digest, require
+from rds_theory_progression import PROOF_ASSURANCE as BOUNDED_PROOF_ASSURANCE
+from rds_theory_progression import PROOF_KIND as BOUNDED_PROOF_KIND
+from rds_theory_progression import PROOF_RULE as BOUNDED_PROOF_RULE
+from rds_theory_progression import PROOF_SEMANTICS as BOUNDED_PROOF_SEMANTICS
 
 MAX_THEOREMS = 64
 MAX_NODES = 100000
@@ -76,6 +80,8 @@ REGISTRY = RuleRegistry((
     ProofRule("geometry.unit_disk_quadtree", ("unit_disk_cover",), "rds_disk_cover_verify"),
     ProofRule("geometry.unit_disk_rational_voronoi", ("unit_disk_rational_voronoi",),
               "rds_rational_voronoi_verify", support_files=("rds_unit_disk_voronoi_core.py",)),
+    ProofRule(BOUNDED_PROOF_RULE, (BOUNDED_PROOF_KIND,), "rds_theory_progression",
+              support_files=("rds_operators.py", "rds_lean_verify.py")),
 ))
 
 
@@ -328,6 +334,31 @@ def checked_result(spec, certificate):
             result["theorems"] = outcomes
         elif atomic:
             result["semantics"] = leaves[0].get("semantics", SEMANTICS)
+        bounded_scopes = {}
+        if outcomes is None and spec.get("kind") == BOUNDED_PROOF_KIND:
+            item = proof["certificate"]
+            if proof.get("rule") == BOUNDED_PROOF_RULE and item.get("assurance") == BOUNDED_PROOF_ASSURANCE:
+                bounded_scopes["claim"] = item["scope"]
+                result["assurance"] = BOUNDED_PROOF_ASSURANCE
+        elif outcomes is not None:
+            declarations, _ = _elaborate(spec)
+            for name, declaration in declarations.items():
+                item = proof["theorems"].get(name)
+                if (declaration["statement"].get("kind") == BOUNDED_PROOF_KIND
+                        and isinstance(item, dict) and item.get("rule") == BOUNDED_PROOF_RULE
+                        and isinstance(item.get("certificate"), dict)
+                        and item["certificate"].get("assurance") == BOUNDED_PROOF_ASSURANCE):
+                    scope = item["certificate"]["scope"]
+                    bounded_scopes[name] = scope
+                    result["theorems"][name].update({"assurance": BOUNDED_PROOF_ASSURANCE,
+                                                     "semantics": BOUNDED_PROOF_SEMANTICS,
+                                                     "proof_scope": scope,
+                                                     "scientific_assurance": "UNKNOWN",
+                                                     "application_status": "UNKNOWN"})
+        if bounded_scopes:
+            result["proof_scope"] = bounded_scopes
+            result["scientific_assurance"] = "UNKNOWN"
+            result["application_status"] = "UNKNOWN"
         conditional = [leaf for leaf in leaves if leaf.get("conditional_statement") is True]
         if conditional:
             result.update(conditional_statement=True, application_status="UNKNOWN",
