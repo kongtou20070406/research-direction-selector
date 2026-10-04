@@ -17,9 +17,11 @@ from rds_verify_types import MAX_CERTIFICATE_BYTES, canonical, digest, rational,
 
 BACKEND = "lean4_closed_rational"
 VERSION = 1
-KINDS = {"lean_obligation"}
+KINDS = {"lean_obligation", "lean_vector_obligation"}
 SEMANTICS = "closed_Lean_Rat_relation"
+VECTOR_SEMANTICS = "closed_Lean_Rat_vector_relations"
 TIMEOUT_SECONDS = 3
+VECTOR_TIMEOUT_SECONDS = 10
 MAX_OUTPUT_BYTES = 65536
 THEOREM = "RDS.obligation"
 AXIOM_AUDIT = "'RDS.obligation' does not depend on any axioms"
@@ -37,26 +39,43 @@ def render_source(spec):
     require(isinstance(spec, dict), "Specification must be an object")
     require(len(canonical(spec).encode("utf-8")) <= MAX_CERTIFICATE_BYTES,
             "Specification exceeds size limit")
-    require(set(spec) == {"schema", "kind", "relation", "left", "right"},
-            "Lean obligation requires schema, kind, relation, left and right")
     require(type(spec["schema"]) is int and spec["schema"] == 1, "Unsupported specification schema")
-    require(spec["kind"] == "lean_obligation", "Unsupported Lean obligation kind")
-    require(isinstance(spec["relation"], str) and spec["relation"] in RELATIONS,
-            "Supported Lean rational relations are eq, lt and le")
-    left, right = rational(spec["left"]), rational(spec["right"])
-
+    require(isinstance(spec.get("kind"), str) and spec["kind"] in KINDS,
+            "Unsupported Lean obligation kind")
     def literal(value):
         # mkRat/division have normalization lemmas or opaque arithmetic. The
         # reduced constructor lets the kernel check both invariants by decide.
         return (f"(Rat.mk' ({value.numerator} : Int) {value.denominator} "
                 "(by decide) (by decide))")
 
+    if spec["kind"] == "lean_obligation":
+        require(set(spec) == {"schema", "kind", "relation", "left", "right"},
+                "Lean obligation requires schema, kind, relation, left and right")
+        require(isinstance(spec["relation"], str) and spec["relation"] in RELATIONS,
+                "Supported Lean rational relations are eq, lt and le")
+        left, right = rational(spec["left"]), rational(spec["right"])
+        proposition = f"{literal(left)} {RELATIONS[spec['relation']]} {literal(right)}"
+    else:
+        require(spec["kind"] == "lean_vector_obligation" and
+                set(spec) == {"schema", "kind", "relations"},
+                "Vector Lean obligation requires a relations list")
+        relations = spec["relations"]
+        require(isinstance(relations, list) and 1 <= len(relations) <= 32,
+                "Vector Lean obligations require 1..32 rational relations")
+        propositions = []
+        for relation in relations:
+            require(isinstance(relation, dict) and
+                    set(relation) == {"relation", "left", "right"} and
+                    isinstance(relation["relation"], str) and relation["relation"] in RELATIONS,
+                    "Each vector relation requires a supported relation and two rationals")
+            left, right = rational(relation["left"]), rational(relation["right"])
+            propositions.append(f"({literal(left)} {RELATIONS[relation['relation']]} {literal(right)})")
+        proposition = " /\\ ".join(propositions)
     return ("import Init.Data.Rat.Basic\n"
             "set_option maxHeartbeats 100000\n"
             "set_option maxRecDepth 512\n"
             "namespace RDS\n"
-            f"theorem obligation : {literal(left)} {RELATIONS[spec['relation']]} "
-            f"{literal(right)} := by decide\n"
+            f"theorem obligation : {proposition} := by decide\n"
             "end RDS\n"
             "#print axioms RDS.obligation\n")
 
@@ -139,15 +158,17 @@ def _run(command, cwd, lean_path=None, timeout_seconds=None):
     return process.returncode, bytes(output).decode("utf-8")
 
 
-def _native_check(source):
+def _native_check(source, timeout_seconds=None):
     executable, fingerprint = _executable()
     with tempfile.TemporaryDirectory(prefix="rds-lean-") as folder:
-        code, version = _run([str(executable), "--version"], folder)
+        code, version = _run([str(executable), "--version"], folder,
+                             timeout_seconds=timeout_seconds)
         require(code == 0 and re.fullmatch(r"Lean \(version 4\.[0-9]+\.[^\r\n]+\)\s*", version),
                 "Executable did not identify itself as Lean 4")
         path = Path(folder) / "Obligation.lean"
         path.write_text(source, encoding="utf-8")
-        code, stdout = _run([str(executable), "--trust=0", "--memory=512", "--threads=1", str(path)], folder)
+        code, stdout = _run([str(executable), "--trust=0", "--memory=512", "--threads=1", str(path)],
+                            folder, timeout_seconds=timeout_seconds)
     require(code == 0, "Lean did not prove this closed rational obligation")
     require(stdout.strip() == AXIOM_AUDIT,
             "Lean proof is missing its axiom-free theorem audit")
@@ -161,7 +182,8 @@ def _certificate(spec, source, checked):
             "source_sha256": digest(source.encode("utf-8")), "source": source,
             "lean_version": checked["lean_version"],
             "lean_executable_sha256": checked["lean_executable_sha256"],
-            "theorem": THEOREM, "axioms": [], "semantics": SEMANTICS,
+            "theorem": THEOREM, "axioms": [],
+            "semantics": VECTOR_SEMANTICS if spec["kind"] == "lean_vector_obligation" else SEMANTICS,
             "assurance": "LEAN_KERNEL_CHECKED"}
 
 
@@ -169,13 +191,23 @@ def _fallback_certificate(spec):
     # The same strict renderer validates the entire declaration before Fraction
     # replay. False closed relations remain UNKNOWN, not scientific refutations.
     render_source(spec)
-    left, right = rational(spec["left"]), rational(spec["right"])
-    require({"eq": left == right, "lt": left < right, "le": left <= right}[spec["relation"]],
-            "Closed rational relation is false")
+    if spec["kind"] == "lean_obligation":
+        left, right = rational(spec["left"]), rational(spec["right"])
+        require({"eq": left == right, "lt": left < right, "le": left <= right}[spec["relation"]],
+                "Closed rational relation is false")
+        return {"schema": 1, "backend": FALLBACK_BACKEND, "version": VERSION,
+                "verdict": "PASS", "spec_sha256": digest(spec),
+                "left": str(left), "right": str(right), "relation": spec["relation"],
+                "assurance": "CERTIFICATE_CHECKED", "semantics": "closed_exact_rational_relation"}
+    relations = []
+    for relation in spec["relations"]:
+        left, right = rational(relation["left"]), rational(relation["right"])
+        require({"eq": left == right, "lt": left < right, "le": left <= right}[relation["relation"]],
+                "Closed rational vector relation is false")
+        relations.append({"left": str(left), "right": str(right), "relation": relation["relation"]})
     return {"schema": 1, "backend": FALLBACK_BACKEND, "version": VERSION,
-            "verdict": "PASS", "spec_sha256": digest(spec),
-            "left": str(left), "right": str(right), "relation": spec["relation"],
-            "assurance": "CERTIFICATE_CHECKED", "semantics": "closed_exact_rational_relation"}
+            "verdict": "PASS", "spec_sha256": digest(spec), "relations": relations,
+            "assurance": "CERTIFICATE_CHECKED", "semantics": "closed_exact_rational_vector_relations"}
 
 
 def verify_rational(spec):
@@ -195,7 +227,10 @@ def verify(spec, *, allow_fallback=True):
     try:
         source = render_source(spec)
         try:
-            checked = _native_check(source)
+            if spec["kind"] == "lean_vector_obligation":
+                checked = _native_check(source, timeout_seconds=VECTOR_TIMEOUT_SECONDS)
+            else:
+                checked = _native_check(source)
         except NoNativeLean as exc:
             if not allow_fallback:
                 raise
@@ -228,7 +263,10 @@ def check_certificate(spec, certificate):
         require(certificate.get("source") == source and
                 certificate.get("source_sha256") == digest(source.encode("utf-8")) and
                 certificate.get("spec_sha256") == digest(spec), "Certificate binding mismatch")
-        checked = _native_check(source)
+        if spec["kind"] == "lean_vector_obligation":
+            checked = _native_check(source, timeout_seconds=VECTOR_TIMEOUT_SECONDS)
+        else:
+            checked = _native_check(source)
         return certificate == _certificate(spec, source, checked)
     except (ValueError, TypeError, OSError, ZeroDivisionError, OverflowError, RecursionError, UnicodeError):
         return False
