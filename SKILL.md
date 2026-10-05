@@ -45,7 +45,11 @@ ON applicable research request:
                in advisor_policy; see docs/program-owned-advisor.md
         RETAIN serious alternatives/explanations and their distinguishing observations
     IF project has advisor_policy:
-        RUN advise --brief FROM the current ledger and owned dependency graph
+        RUN advise --working-set --brief FROM the current ledger and owned dependency graph
+        READ working_set goals, final selection, unresolved hypotheses and scoped feedback
+        IF working_set is UNAVAILABLE: inspect diagnostic/original report; do not infer a fresh choice
+        READ original/details_omitted locators BEFORE a consequential evidence-dependent choice
+        KEEP process failure distinct FROM prediction REFUTE; legacy/unbound evidence stays UNKNOWN
         READ selection, coverage gaps/errors and the saved report when needed
         IF advisor_policy declares autonomy:
             READ docs/autonomy-loop.md
