@@ -226,9 +226,19 @@ def evidence_excerpts(store, state, ids):
     with a wrong value leaves the model no task content to repair from.
     """
     from rds_owned_advisor import _read_original
-    def head(raw, size):
-        return {'size': size, 'truncated': size > EXCERPT_BYTES, 'text': raw[:EXCERPT_BYTES].decode('utf-8', 'replace')}
-    inputs, outputs, used = [], [], 0
+    used = 0
+    def head(raw):
+        # Inputs and outputs share one aggregate allowance, counted in retained UTF-8 text bytes:
+        # U+FFFD replacement can triple undecodable bytes, so the encoded text is cut again.
+        nonlocal used
+        limit = min(EXCERPT_BYTES, EXCERPT_TOTAL - used)
+        text = raw[:limit].decode('utf-8', 'replace')
+        encoded = text.encode('utf-8')
+        if len(encoded) > limit:
+            text = encoded[:limit].decode('utf-8', 'ignore')
+        used += len(text.encode('utf-8'))
+        return {'size': len(raw), 'truncated': len(raw) > limit or len(encoded) > limit, 'text': text}
+    inputs, outputs = [], []
     for binding in state['contract']['bindings']:
         if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL:
             continue
@@ -238,8 +248,7 @@ def evidence_excerpts(store, state, ids):
         raw = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != binding['sha256']:
             continue  # Binding failures are reported by ordinary admission, not repaired here.
-        inputs.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'], **head(raw, len(raw))})
-        used += min(len(raw), EXCERPT_BYTES)
+        inputs.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'], **head(raw)})
     receipts = sorted((r for r in state['receipts'] if r['run_id'] not in ids),
                       key=lambda r: (r.get('ended_at', 0), r['run_id']), reverse=True)
     for receipt in receipts:
@@ -250,8 +259,7 @@ def evidence_excerpts(store, state, ids):
             if raw is None:
                 continue
             outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
-                            'path': item['path'], 'sha256': item['sha256'], **head(raw, len(raw))})
-            used += min(len(raw), EXCERPT_BYTES)
+                            'path': item['path'], 'sha256': item['sha256'], **head(raw)})
     return {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
             'frozen_inputs': inputs, 'original_outputs': outputs}
 

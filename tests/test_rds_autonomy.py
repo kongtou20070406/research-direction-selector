@@ -4,6 +4,7 @@ The provider is deterministic local test code, never a model or scientific
 effectiveness trial. Counts, receipts and budget assertions inspect originals.
 """
 from copy import deepcopy
+import hashlib
 import importlib.util
 import json
 import os
@@ -416,6 +417,55 @@ class AutonomyTests(unittest.TestCase):
             self.assertLessEqual(len(entry['text']), 4)
             self.assertEqual(entry['truncated'], entry['size'] > 4)
         self.assertTrue(excerpts['original_outputs'][0]['truncated'])
+
+    def test_inputs_and_outputs_share_the_aggregate_excerpt_allowance(self):
+        self.build(baseline=True)
+        self.cli('project', 'drive', '--max-steps', '1')
+        from rds_owned_advisor import _state
+        with self.store._db(True) as db:
+            db.execute('BEGIN')
+            state = _state(self.store, db)
+        sizes = {p: (self.root / p).stat().st_size for p in ('config.json', 'data.json', 'evaluator.json', 'outputs/baseline.json')}
+        inputs = sizes['config.json'] + sizes['data.json'] + sizes['evaluator.json']
+        per_file = max(sizes.values()) + 1  # Every file would fit whole under the per-file limit alone.
+        for total, kept_inputs, kept_output in ((inputs + 5, None, 5), (sizes['config.json'] + 2, 2, None)):
+            with patch.object(autonomy, 'EXCERPT_BYTES', per_file), patch.object(autonomy, 'EXCERPT_TOTAL', total):
+                excerpts = autonomy.evidence_excerpts(self.store, state, set())
+            entries = excerpts['frozen_inputs'] + excerpts['original_outputs']
+            self.assertEqual(sum(len(e['text'].encode('utf-8')) for e in entries), total)
+            for entry in entries:
+                raw = (self.root / entry['path']).read_bytes()
+                self.assertEqual(entry['text'].encode('utf-8'), raw[:len(entry['text'].encode('utf-8'))])
+                self.assertEqual(entry['truncated'], len(entry['text'].encode('utf-8')) < len(raw))
+            last = entries[-1]
+            if kept_output is None:
+                # The remainder ran out inside the inputs: a partial input head, no evaluator, no outputs.
+                self.assertEqual([e['path'] for e in entries], ['config.json', 'data.json'])
+                self.assertEqual(len(last['text'].encode('utf-8')), kept_inputs)
+            else:
+                self.assertEqual([e['path'] for e in excerpts['frozen_inputs']], ['config.json', 'data.json', 'evaluator.json'])
+                self.assertEqual(last['path'], 'outputs/baseline.json')
+                self.assertEqual(len(last['text'].encode('utf-8')), kept_output)
+            self.assertTrue(last['truncated'])
+
+    def test_excerpt_text_bytes_stay_bounded_for_undecodable_and_split_characters(self):
+        # U+FFFD replacement is 3 UTF-8 bytes per undecodable byte; the bound is on retained text.
+        payloads = {'binary.bin': b'\xff' * 64, 'accents.txt': 'é'.encode('utf-8') * 8, 'exact.txt': b'abcd'}
+        bindings = []
+        for name, raw in payloads.items():
+            (self.root / name).write_bytes(raw)
+            bindings.append({'role': 'data', 'path': name, 'sha256': hashlib.sha256(raw).hexdigest()})
+        state = {'contract': {'bindings': bindings}, 'receipts': []}
+        with patch.object(autonomy, 'EXCERPT_BYTES', 5), patch.object(autonomy, 'EXCERPT_TOTAL', 64):
+            excerpts = autonomy.evidence_excerpts(self.store, state, set())['frozen_inputs']
+        texts = {e['path']: e['text'] for e in excerpts}
+        self.assertEqual(texts, {'binary.bin': '�', 'accents.txt': 'éé', 'exact.txt': 'abcd'})
+        self.assertEqual({e['path']: e['truncated'] for e in excerpts},
+                         {'binary.bin': True, 'accents.txt': True, 'exact.txt': False})
+        with patch.object(autonomy, 'EXCERPT_BYTES', 5), patch.object(autonomy, 'EXCERPT_TOTAL', 6):
+            excerpts = autonomy.evidence_excerpts(self.store, state, set())['frozen_inputs']
+        self.assertEqual([(e['path'], e['text'], e['truncated']) for e in excerpts],
+                         [('binary.bin', '�', True), ('accents.txt', 'é', True), ('exact.txt', 'a', True)])
 
     def test_repair_cannot_start_without_a_program_owned_request(self):
         self.build()
