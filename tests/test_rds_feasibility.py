@@ -271,6 +271,34 @@ class FeasibilityTests(unittest.TestCase):
         self.assertEqual(next(p for p in report['plans'] if p['id']=='fast')['status'], 'FEASIBLE')
         self.assertIn('fast', report['admitted_runs'])
 
+    def test_hosted_pilot_values_are_rejected_by_original_hard_timeout_gate(self):
+        self.initialize()
+        state = self.state()
+        manifests = {r['manifest']['id']: r['manifest'] for r in self.contract['advisor_policy']['routes']}
+        before = deepcopy(state)
+        # Synthetic estimator inputs reproduce the numeric admission branch.
+        # These declarations are not imported receipts or measured new attempts.
+        def pilot(run_id, seconds):
+            protocol = json.loads((self.root / manifests[run_id]['protocol']['path']).read_text(encoding='utf-8'))
+            return {'run_id': run_id, 'run_status': 'SUCCEEDED', 'timeout': False,
+                    'runtime_fingerprint': feasibility.runtime_fingerprint(),
+                    'bindings_before': state['contract']['bindings'], 'bindings_after': state['contract']['bindings'],
+                    'protocol': protocol, 'sha256': 'synthetic-unit-input',
+                    'resources': {'wall_seconds': {'measured': seconds}}}
+        for measured, upper in ((4.6477538, 27.8865228), (5.406, 32.436)):
+            with self.subTest(measured=measured):
+                state['receipts'] = [pilot('pilot-fast', measured), pilot('pilot-verify', .1)]
+                report = feasibility.assess(self.store, state)
+                fast = next(p for p in report['plans'] if p['id'] == 'fast')
+                self.assertAlmostEqual(fast['steps'][0]['upper_wall_seconds'], upper)
+                self.assertEqual(fast['status'], 'INFEASIBLE')
+                self.assertEqual(fast['reason'], 'Conditional completion forecast exceeds a required step hard timeout')
+                self.assertNotIn('fast', report['admitted_runs'])
+                self.assertEqual(state['runs'], before['runs'])
+                self.assertEqual(state['budget'], before['budget'])
+                self.assertEqual(self.store.snapshot()['receipts'], [])
+                self.assertEqual(self.launches(), [])
+
 
 if __name__ == '__main__':
     unittest.main()
