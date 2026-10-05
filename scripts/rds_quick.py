@@ -701,6 +701,14 @@ def brief(root, value, version, formal=False):
         if owned.get('next_move'):
             move = owned['next_move']
             summary['next_move'] = move.get('kind', move) if isinstance(move, dict) else move
+        if owned.get('feasibility'):
+            forecast = owned['feasibility']
+            summary['feasibility'] = {'next_action':forecast['next_action'],
+                'plans':[{'id':p['id'],'status':p['status']} for p in forecast['plans'][:4]],
+                'pilot_budget':forecast['pilot_budget']}
+            repair = forecast.get('repair_request')
+            if repair:
+                summary['tool_workbench_command'] = repair['tool_workbench_command']
         coverage = owned.get('coverage', {})
         summary['coverage'] = {key: coverage.get(key, 0) for key in ('runs', 'receipts', 'artifacts', 'parsed_observations')}
         summary['coverage']['unparsed_outputs'] = len(coverage.get('unparsed_outputs', []))
@@ -711,6 +719,10 @@ def brief(root, value, version, formal=False):
                                                      for row in coverage.get('declared_outputs', []))
         summary['coverage_errors'] = coverage.get('errors', [])[:3]
         summary['coverage_gaps'] = coverage.get('gaps', [])[:3]
+        if 'tool_utilization' in owned:
+            use = owned['tool_utilization']
+            summary['tool_utilization'] = {key: use[key] for key in
+                ('scope', 'counts', 'applicable_use_rate', 'applicable_consumption_rate')}
         warnings = [row['kind'] for row in owned.get('warnings', []) if 'kind' in row]
         summary['flags'] = list(dict.fromkeys(warnings + summary.get('flags', [])))[:5]
         summary['omitted_flags'] = max(0, len(set(warnings)) - len(summary['flags']))

@@ -11,7 +11,7 @@ import time
 
 COMMANDS = {"init", "hypothesis", "gate", "plan", "run", "data", "decide", "status",
             "project", "checkpoint", "artifacts", "formal", "meta", "history", "advise",
-            "advancement", "branch", "usage", "exec", "reject", "guard", "hypergraph", "math", "rsi", "host-hook"}
+            "advancement", "branch", "usage", "exec", "reject", "guard", "hypergraph", "math", "rsi", "host-hook", "structure"}
 ROOT_OPTIONS = {"--root", "--workspace", "--project-root", "-w", "-d", "--dir"}
 COMMAND_MACROS = {"verify": ("formal", "verify"), "prove": ("formal", "verify"), "证明": ("formal", "verify"),
                   "check": ("formal", "check"), "核查": ("formal", "check"),

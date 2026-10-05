@@ -1,6 +1,23 @@
 # Public command map
 
-Use this map when the short Skill route table does not cover the task. It covers all 63 leaf command paths across 25 top-level commands in `scripts/rds_cli.py`'s current `parser()`, plus relevant Advisor options and documented helper entry points. Aliases do not add capabilities. This is a discovery map, not a requirement to invoke every function.
+Problem-model exploration uses `structure request|propose|next|drive|advance|feedback|activate|rollback|list|recover`.
+It requires an initialized project and current TMS, uses existing execution authority and budget,
+and returns open Agent tasks or independently checked observations. See [problem structure](problem-structure.md).
+
+Use this map when the short Skill route table does not cover the task. It covers all public leaf command paths in `scripts/rds_cli.py`'s current `parser()`, plus relevant Advisor options and documented helper entry points. Aliases do not add capabilities. This is a discovery map, not a requirement to invoke every function.
+
+| Command | Behavior | Prerequisite | Guide |
+| --- | --- | --- | --- |
+| `structure request` | Return bounded open Agent tasks | Initialized project and saved dependencies | [Problem structure](problem-structure.md) |
+| `structure propose` | Retain an experimental topology branch | Current request, sourced testable proposal and allowed manifests | [Problem structure](problem-structure.md) |
+| `structure next` | Consume feedback and select a distinguishing test | Same ledger and remaining budget | [Problem structure](problem-structure.md) |
+| `structure drive` | Bounded proposal/execution/feedback handoff | Existing admission and `--steps` in 1..8 | [Problem structure](problem-structure.md) |
+| `structure advance` | Run or recover candidate/verifier once | Retained `--id` and existing project execution authority | [Problem structure](problem-structure.md) |
+| `structure feedback` | Bind independent observations to originals | Actual receipts/results and matching scope/hash | [Problem structure](problem-structure.md) |
+| `structure activate` | Publish experimental topology | Supporting independent observation, unchanged goal, idle runs | [Problem structure](problem-structure.md) |
+| `structure rollback` | Restore original decomposition | Matching activation ancestry, retaining fresh owned facts | [Problem structure](problem-structure.md) |
+| `structure list` | Inspect retained branches and costs | Existing project | [Problem structure](problem-structure.md) |
+| `structure recover` | Reconcile interrupted controller cost once | Controller known dead; never steal live work | [Problem structure](problem-structure.md) |
 
 ```text
 skill_dir := directory containing SKILL.md
@@ -33,11 +50,14 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | --- | --- | --- | --- |
 | `exec` | Freeze and run one authorized tool job | Explicit command after `--`, bounded `--timeout`, inputs and expected `--output`; prospective selection pairs `--context` with `--ledger` | [Command wrapper](agent-entry.md), [Execution policy](execution-policy.md) |
 | `project init` | Lock a project execution contract | `--contract` with real bindings, commands, outputs and authorized budget | [Contract](project-contract.md), [Project runner](development-loop.md) |
+| `project improve` | Prepare diagnostics, editable tool code and a revision proposal | Frozen `method_evolution`, authorized `--code-path` and bounded `--id`; no adoption or child launch | [Tool improvement](predictive-feasibility.md) |
+| `project revise` | Adopt or resume a bounded executable method change in the same ledger | `--proposal`, unchanged goals/evaluator/budget/commands, idle attempts and exact parent identity | [Tool improvement](predictive-feasibility.md) |
 | `project create` | Register an execution and reserve resources | Initialized project and `--manifest` matching its contract | [Project runner](development-loop.md) |
 | `project execute` | Execute a registered project run | Existing `--id`, valid bindings and resources; `--background` is the authorized Windows scheduler path | [Project runner](development-loop.md) |
 | `project recover` | Reconcile an existing interrupted attempt | Existing `--id`; inspect retained state and artifacts rather than duplicating the attempt | [Project runner](development-loop.md) |
 | `project next` | Derive the next campaign step | Initialized project ledger; resolve actual inputs in any emitted command | [Project next implementation](../scripts/rds_project.py), [Development loop](development-loop.md) |
 | `project advance` | Execute one program-selected route and receive its results | Frozen `advisor_policy`; optional `--brief` or authorized `--background`; collection failures require recovery, not rerunning completed work | [Owned Advisor](program-owned-advisor.md) |
+| `project drive` | Recover and drive a bounded research loop; request, verify and adopt a different method/tool on obstacles | Frozen `advisor_policy.autonomy`; pass limit plus original cumulative steps/budget/deadline | [Research drive](autonomy-loop.md), [domain confirmation](domain-confirmation.md) |
 | `project compare` | Compare recorded control/treatment arms | Eligible completed arms and precommitted primary metric/useful-delta declaration | [Project comparison](../tests/test_rds_project_next.py) |
 | `project status` | Inspect current runs, budget and receipts | Existing project; `--brief` gives bounded state plus a saved-record locator | [Output](agent-entry.md) |
 | `project costs` | Inspect measured costs and charged estimates | Existing project records; failed attempts and unknown resource values remain visible | [Cost accounting](development-loop.md) |
@@ -58,6 +78,8 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `rsi validate` | Execute finite local qualification cases | Extracted `--name`, `--cases`, bounded timeout; supply `--ledger` when charging an existing research budget | [Local tools](native-research.md) |
 | `rsi register` | Register an eligible validated local function | `--name`; `--validation` may be omitted only for one passing validation; rechecks bindings and receipt | [Local tools](native-research.md) |
 | `rsi use` | Verify and optionally export a retained function | Registered `--name`; optional project `--output`; changed/refuted evidence blocks reuse | [Local tools](native-research.md) |
+| `rsi prepare-application` | Prepare a qualified finite function for a current owned obligation | Before project init: exact tool, inputs/cases, goal/action, exported code, fixed driver/request, output and observation; returns bindings and argv without starting work | [Owned tool consumers](owned-tool-consumers.md) |
+| `rsi compare` | Compare a tool revision on identical fixed-precision oracle cases | Extracted `--baseline`/`--candidate`; `--cases`, `--precision-key`, `--precision`; prospective `--min-speedup`; optional `--ledger` charges both checks; single measured walls only | [Fixed-precision comparison](native-research.md#compare-a-tool-revision-at-fixed-precision) |
 
 ## Mathematical verification
 

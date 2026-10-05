@@ -1112,12 +1112,21 @@ def cmd_project(args):
     store = ProjectStore(args.root)
     if args.action == "init":
         return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
+    if args.action == "revise":
+        from rds_method_revision import apply
+        return apply(store, load_spec(args.proposal))
+    if args.action == "improve":
+        from rds_tool_workbench import prepare
+        return prepare(store, args.code_path, args.id)
     if args.action == "create":
         return store.register(load_spec(args.manifest))
     if args.action == "execute":
         return _project_result(store, store.execute(args.id, background=args.background))
     if args.action == "recover":
         return _project_result(store, store.recover(args.id))
+    if args.action == "drive":
+        from rds_autonomy import drive
+        return drive(store, args.max_steps, prepare_only=args.prepare_only)
     if args.action == "advance":
         require(_owned_project(args.root) is not None,
                 'project advance requires a frozen advisor_policy; legacy projects use project next')
@@ -1380,6 +1389,16 @@ def parser():
     guard = commands.add_parser('guard', help='Check a frozen comparable-metric/milestone policy without changing the incumbent')
     guard.add_argument('--policy', required=True)
     guard.add_argument('--json', action='store_true')
+    structure = commands.add_parser('structure', help='Bounded problem-model branches, experiments and TMS rollback')
+    structure_actions = structure.add_subparsers(dest='action', required=True)
+    structure_actions.add_parser('request', help='Return a few open exploration tasks').add_argument('--limit', type=int, default=3)
+    structure_actions.add_parser('propose', help='Retain an experimentally testable candidate topology').add_argument('--proposal', required=True)
+    for name in ('advance', 'feedback', 'activate', 'rollback'):
+        structure_actions.add_parser(name).add_argument('--id', required=True)
+    structure_actions.add_parser('next')
+    structure_actions.add_parser('list')
+    structure_actions.add_parser('recover')
+    structure_actions.add_parser('drive', help='Consume proposals and feedback until a bounded stop or open Agent task').add_argument('--steps', type=int, default=1)
     hypergraph = commands.add_parser('hypergraph', help='Bounded AND/OR proof dependency analysis, not proof certification')
     hypergraph.add_argument('--input', '-i', help='Import or restore a map; omitted inputs reuse this root\'s saved map')
     hypergraph.add_argument('--output', '-o')
@@ -1428,6 +1447,15 @@ def parser():
     rsi_validate.add_argument('--cases', required=True)
     rsi_validate.add_argument('--timeout', '-t', type=float, default=10)
     rsi_validate.add_argument('--ledger', help='Charge a supplied operational wall-budget ledger before validation')
+    rsi_compare = rsi_actions.add_parser('compare', help='Compare measured local tool cost on identical fixed-precision cases')
+    rsi_compare.add_argument('--baseline', required=True)
+    rsi_compare.add_argument('--candidate', required=True)
+    rsi_compare.add_argument('--cases', required=True)
+    rsi_compare.add_argument('--precision-key', required=True, help='Explicit precision keyword present in every case')
+    rsi_compare.add_argument('--precision', required=True, type=int)
+    rsi_compare.add_argument('--timeout', '-t', type=float, default=10)
+    rsi_compare.add_argument('--min-speedup', type=float, default=1.1, help='Prospective descriptive wall-time ratio threshold; greater than one')
+    rsi_compare.add_argument('--ledger', help='Charge both validations to the existing operational wall-budget ledger')
     rsi_register = rsi_actions.add_parser('register')
     rsi_register.add_argument('--name', required=True)
     rsi_register.add_argument('--validation', help='Optional only when one passing local validation exists')
@@ -1436,6 +1464,13 @@ def parser():
     rsi_use.add_argument('--output', '-o', help='Export a verified local module to a project-relative .py file without overwriting')
     rsi_list = rsi_actions.add_parser('list', help='Discover local tool entries; registration is not a fresh reuse check')
     rsi_list.add_argument('--name', help='Inspect one exact local tool name without dumping unrelated records')
+    rsi_prepare = rsi_actions.add_parser('prepare-application', help='Export a qualified finite task candidate before frozen project init; no execution')
+    for field in ('name', 'inputs', 'cases', 'code-path', 'driver', 'request', 'output',
+                  'decision', 'candidate', 'run-id', 'obligation'):
+        rsi_prepare.add_argument('--' + field, required=True)
+    rsi_prepare.add_argument('--action-file', required=True, help='Exact action JSON, including target and operation')
+    rsi_prepare.add_argument('--observation-fact', action='append', required=True,
+                             help='Owned JSON observations that can carry this result into a decision')
     for child in rsi_actions.choices.values():
         child.add_argument('--json', action='store_true')
     commands.add_parser("init").add_argument("--contract", required=True)
@@ -1463,6 +1498,10 @@ def parser():
     pr_init.add_argument("--contract", required=True)
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
                          help="Link this new root to a frozen project root by digest; the predecessor is never modified")
+    pr_actions.add_parser("revise", help="Adopt a bounded method revision in the same ledger without resetting budget or deadline").add_argument("--proposal", required=True)
+    pr_improve = pr_actions.add_parser("improve", help="Prepare receipt diagnostics, editable tool code and a same-ledger revision proposal")
+    pr_improve.add_argument("--code-path", required=True)
+    pr_improve.add_argument("--id", required=True)
     pr_actions.add_parser("create").add_argument("--manifest", required=True)
     pr_exec = pr_actions.add_parser("execute")
     pr_exec.add_argument("--id", required=True)
@@ -1470,6 +1509,9 @@ def parser():
     pr_advance = pr_actions.add_parser("advance", help="Execute one program-selected route and receive its result automatically")
     pr_advance.add_argument("--background", action="store_true", help="Use the existing authorized background runner")
     pr_advance.add_argument("--brief", "--digest", action="store_true", help="Retain the receipt and advice and return a bounded digest")
+    pr_drive = pr_actions.add_parser("drive", help="Drive a bounded owned research loop, including authorized model repair")
+    pr_drive.add_argument("--max-steps", type=int, default=8, help="Foreground executions this pass; cumulative frozen cap remains authoritative")
+    pr_drive.add_argument("--prepare-only", action="store_true", help="Retain a reviewable model request and pause before its repair worker; ordinary work and recovery continue")
     pr_actions.add_parser("recover").add_argument("--id", required=True)
     pr_actions.add_parser("next", help="Print the single next actionable project step and its command").add_argument("--brief", "--digest", action="store_true")
     pr_actions.add_parser("compare", help="Compare recorded arms against the precommitted min_useful_delta")
@@ -1692,8 +1734,12 @@ def _main():
             from rds_math import command
             result = command(args)
         elif args.command == 'rsi':
-            from rds_tools import command
-            result = command(args)
+            if args.action == 'prepare-application':
+                from rds_tool_application import prepare
+                result = prepare(args)
+            else:
+                from rds_tools import command
+                result = command(args)
         elif args.command == 'guard':
             from rds_guard import evaluate
             result = evaluate(args.policy, args.root)
@@ -1752,6 +1798,22 @@ def _main():
             result = reject_route(args)
         elif args.command == "advise":
             result = cmd_advise(args, rds)
+        elif args.command == 'structure':
+            import rds_structure
+            if args.action == 'request':
+                result = rds_structure.request(args.root, args.limit)
+            elif args.action == 'propose':
+                result = rds_structure.propose(args.root, load_spec(args.proposal))
+            elif args.action == 'next':
+                result = rds_structure.next_step(args.root)
+            elif args.action == 'list':
+                result = rds_structure.inspect(args.root)
+            elif args.action == 'recover':
+                result = rds_structure.recover_control(args.root)
+            elif args.action == 'drive':
+                result = rds_structure.drive(args.root, args.steps)
+            else:
+                result = getattr(rds_structure, args.action)(args.root, args.id)
         elif args.command == "project":
             result = cmd_project(args)
         elif args.command == "host-hook":
@@ -1790,7 +1852,14 @@ def _main():
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json
         if compact:
             from rds_quick import brief
-            print(json.dumps(brief(args.root, result, VERSION), ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            summary = brief(args.root, result, VERSION)
+            if args.command == 'rsi' and args.action == 'compare':
+                summary.update({k: result[k] for k in ('correctness', 'comparable_context', 'speedup_ratio',
+                                                      'precision', 'precision_key', 'case_count', 'samples_per_tool',
+                                                      'variability', 'plan_id', 'execution_started', 'total_budget')})
+                summary['wall_seconds'] = {k: result[k]['wall_seconds'] for k in ('baseline', 'candidate')}
+                summary['reasons'] = result['reasons']
+            print(json.dumps(summary, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
         if args.command == "exec" and (result.get("receipt") or {}).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
@@ -1804,6 +1873,8 @@ def _main():
             return 2
         if args.command == 'rsi' and args.action == 'validate':
             return {'LOCAL_CASES_PASSED': 0, 'FAILED': 1, 'UNKNOWN': 2}[result['status']]
+        if args.command == 'rsi' and args.action == 'compare':
+            return 1 if result['correctness'] == 'FAIL' else 2 if result['status'] == 'UNKNOWN' else 0
         if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and result.get('receipt', result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
         if result.get('status') == 'COLLECTION_FAILED' or (result.get('advisor') or {}).get('status') == 'COLLECTION_FAILED':
