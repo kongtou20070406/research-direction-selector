@@ -41,12 +41,21 @@ def controlled_estimator(premise, original):
     return estimate
 
 
+def validate_fixture_root(expected_root, premise_path, args):
+    # Windows may expose the same directory with different case or aliases.
+    # Keep the explicit CLI root and same-root premise requirements.
+    expected_root = Path(expected_root).resolve()
+    if (len(args) < 2 or args[0] != '--root'
+            or Path(args[1]).resolve() != expected_root
+            or Path(premise_path).resolve().parent != expected_root):
+        raise ValueError('Flow-test bootstrap requires its exact explicit fixture root')
+
+
 def main():
     # Parent supplies exact fixture identity, followed by the actual CLI args.
     expected_root, premise_path = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     args = sys.argv[3:]
-    if args[:2] != ['--root', str(expected_root)] or premise_path.parent != expected_root:
-        raise ValueError('Flow-test bootstrap requires its exact explicit fixture root')
+    validate_fixture_root(expected_root, premise_path, args)
     premise = json.loads(premise_path.read_text(encoding='utf-8'))
     if Path(premise['root']).resolve() != expected_root or set(premise['routes']) != {'fast', 'verify'}:
         raise ValueError('Flow-test premise has an unexpected root or route')

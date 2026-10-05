@@ -276,6 +276,45 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         self.evolve_and_verify(correct=False)
 
 
+class FixtureRootIdentityTests(unittest.TestCase):
+    def setUp(self):
+        from tool_evolution_cli_fixture import validate_fixture_root
+        self.validate = validate_fixture_root
+        self.tmp = tempfile.TemporaryDirectory(prefix='rds-root-identity-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.premise = self.root / 'test-forecast-premise.json'
+        self.premise.write_text('{}', encoding='utf-8')
+
+    def test_same_directory_alias_is_accepted(self):
+        child = self.root / 'child'
+        child.mkdir()
+        aliases = [str(self.root), str(child / '..')]
+        if os.name == 'nt':
+            aliases.append(str(self.root).swapcase())
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                self.assertEqual(Path(alias).resolve(), self.root)
+                self.validate(self.root, self.premise, ['--root', alias, 'project', 'next'])
+
+    def test_another_directory_is_rejected(self):
+        other = self.root / 'other'
+        other.mkdir()
+        with self.assertRaisesRegex(ValueError, 'exact explicit fixture root'):
+            self.validate(self.root, self.premise, ['--root', str(other), 'project', 'next'])
+
+    def test_premise_outside_fixture_root_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'exact explicit fixture root'):
+            self.validate(self.root, self.root.parent / self.premise.name,
+                          ['--root', str(self.root), 'project', 'next'])
+
+    def test_explicit_root_prefix_is_required(self):
+        for args in ([], ['--root'], ['project', 'next'], ['--other', str(self.root)],
+                     ['project', 'next', '--root', str(self.root)]):
+            with self.subTest(args=args), self.assertRaisesRegex(ValueError, 'exact explicit fixture root'):
+                self.validate(self.root, self.premise, args)
+
+
 class ControlledForecastPremiseTests(unittest.TestCase):
     def setUp(self):
         from tool_evolution_cli_fixture import controlled_estimator
