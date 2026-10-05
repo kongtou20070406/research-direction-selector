@@ -87,6 +87,18 @@ ON applicable research request:
         DO NOT use a later call to endorse an already executed route
     IF fixed user-requested task OR single proof obligation:
         KEEP the requested scope; DO NOT invent rival experiments
+    IF evidence suggests a blocked or wrong problem decomposition:
+        RUN structure request --limit 3 FROM current project and saved TMS
+        CONSUME original goal, sources, unknown premises, budget and snapshot IDs
+        SEARCH current primary sources WITH existing authorized tools
+        PROPOSE path repair, new knowledge OR materially different decomposition
+        ALLOW ideas outside original nodes; bounded exploration needs no complete path
+        RUN structure propose --proposal <reply.json>; THEN structure drive --steps 1
+        KEEP definition/admission/independent observation/goal verification separate
+        USE existing method revision FOR new code/routes; preserve goal/evaluator
+        READ feedback and structure next; retain negative evidence and original cost
+        ACTIVATE or ROLLBACK experimental topology within the existing scope
+        READ docs/problem-structure.md; fixture success is not LLM discovery/policy gain
     NOTE: program checks only supplied inputs; omitted dependencies remain unassessed
           review/recording grants no new resources or execution authority
 
@@ -112,6 +124,7 @@ All commands below use `CLI` above. Links load detail on demand.
 | Improve a blocked tool | `project improve --code-path <path> --id <revision>`, then `project revise --proposal <path>` | [Forecasts and tool improvement](docs/predictive-feasibility.md) |
 | Choose research direction | Policy-bound: `advise --brief`; legacy: `advise --context <context.json> --graph <graph.json> --brief`, then `--choose <candidate-id> --record <checkpoint-id>` | [Choice review](docs/agent-entry.md#review-the-research-choice), [research discipline](references/research-discipline.md) |
 | Audit evidence | `artifacts import --manifest <manifest.json>` | [Agent entry](docs/agent-entry.md) |
+| Explore a blocked problem model | `structure request --limit 3`, `structure propose --proposal <reply.json>`, `structure drive --steps 1` | [Problem structure](docs/problem-structure.md) |
 | Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md) |
 | Reuse/register local tool | `rsi extract --source <file> --entry <function> --name <id>`; `rsi validate --name <id> --cases <cases.json>`; `rsi register --name <id>` | [Native research](docs/native-research.md) |
 | Wrap frozen job | `exec --name <id> --timeout 30 -- <command...>` | [Command wrapper](docs/agent-entry.md#wrap-a-command) |

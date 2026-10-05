@@ -122,6 +122,12 @@ def review_proposals(frontier, spec, pack):
         if not _text(pid) or pid in seen:
             raise ValueError("Proposal IDs must be distinct nonempty strings")
         seen.add(pid)
+        action_kind = proposal.get("action_kind", "path_repair")
+        if action_kind in ("knowledge_expansion", "structural_reconstruction"):
+            results.append(review_exploration(frontier, spec, proposal))
+            continue
+        if action_kind != "path_repair":
+            raise ValueError("Unknown proposal action_kind")
         gap = gaps.get(proposal.get("gap_id")) if isinstance(proposal.get("gap_id"), str) else None
         formal_gap = gap is not None and gap.get("kind") == "FORMAL_OBLIGATION"
         theory_gap = gap is not None and gap.get("kind") == "THEORY_REFORMULATION"
@@ -265,3 +271,102 @@ def review_proposals(frontier, spec, pack):
                             "Native proof admission covers only the declared mathematical side condition.",
                             "Conditional statistical laws require separately closed application premises.",
                             "This definition check does not validate causal claims, cost, code or scientific gains."]}
+
+
+def review_exploration(frontier, spec, proposal):
+    """Admit a testable open exploration, without demanding an anchor-goal path.
+
+    This opt-in contract is deliberately separate from the legacy bridge
+    requirement. It never admits an executable experiment or a theorem.
+    """
+    from rds_frontier import _source, _metadata, _date
+    errors = []
+    gap = next((g for g in frontier['gaps'] if g['id'] == proposal.get('gap_id')), None)
+    if gap is None:
+        errors.append('gap_id is not an open gap in this frontier result')
+    exploration = proposal.get('exploration', {})
+    if not isinstance(exploration, dict):
+        exploration = {}
+    for key in ('limitation', 'change', 'rationale'):
+        if not _text(exploration.get(key)):
+            errors.append('Exploration requires ' + key)
+    sources = exploration.get('sources')
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 16:
+        errors.append('Exploration requires 1..16 separately classified sources')
+    else:
+        for source in sources:
+            if (not isinstance(source, dict) or source.get('kind') not in
+                    {'literature_claim', 'agent_interpretation', 'local_observation'}
+                    or not _source(source.get('source'))):
+                errors.append('Source requires provenance kind and locator')
+            else:
+                try:
+                    _metadata(source, 'exploration source')
+                except ValueError as exc:
+                    errors.append(str(exc))
+    for key in ('unknown_premises', 'search_directions'):
+        values = exploration.get(key)
+        if not isinstance(values, list) or not 1 <= len(values) <= 16 or not all(_text(v) for v in values):
+            errors.append('Exploration requires 1..16 ' + key)
+    cost = exploration.get('cost')
+    from rds_frontier import _finite
+    if (not isinstance(cost, dict) or not cost or len(cost) > 16
+            or not all(_text(k) and _finite(v) and v >= 0 for k, v in cost.items())
+            or cost.get('wall_seconds', 0) <= 0):
+        errors.append('Exploration requires finite resource caps including positive wall_seconds')
+    nodes = proposal.get('new_nodes', [])
+    relations = proposal.get('relations', [])
+    if not isinstance(nodes, list) or len(nodes) > 16 or not isinstance(relations, list) or len(relations) > 32:
+        nodes, relations = [], []
+        errors.append('Exploration nodes/relations exceed limits')
+    excluded = {r['id'] for r in frontier.get('excluded', []) if r.get('record_type') == 'nodes'}
+    limits = frontier.get('truncation', {}).get('limits', {})
+    defined = {n['id'] for n in [n for n in spec.get('nodes', []) if n['id'] not in excluded][:limits.get('max_nodes', 512)]}
+    for node in nodes:
+        if (not isinstance(node, dict) or not _text(node.get('id')) or node['id'] in defined
+                or node.get('kind') not in {'observable', 'model', 'concept', 'requirement', 'operation'}
+                or not _text(node.get('label')) or not _source(node.get('source'))):
+            errors.append('New concepts require fresh ID, kind, label and source')
+        else:
+            defined.add(node['id'])
+            try:
+                _metadata(node['source'], 'new concept source')
+                if frontier.get('as_of'):
+                    if node.get('available_on') is None:
+                        errors.append('New concept has UNKNOWN_AVAILABILITY at as_of')
+                    elif _date(node['available_on'], 'concept available_on') > _date(frontier['as_of'], 'as_of'):
+                        errors.append('New concept is a FUTURE_RECORD at as_of')
+            except ValueError as exc:
+                errors.append(str(exc))
+    if proposal.get('action_kind') == 'knowledge_expansion' and not nodes and not relations:
+        errors.append('Knowledge expansion must add a concept or relation')
+    for relation in relations:
+        if (not isinstance(relation, dict) or relation.get('from') not in defined
+                or relation.get('to') not in defined or not _text(relation.get('relation'))):
+            errors.append('Relations require defined endpoints and relation')
+    assumptions = proposal.get('assumptions')
+    if not isinstance(assumptions, list) or not 1 <= len(assumptions) <= 16 or not all(_text(v) for v in assumptions):
+        errors.append('Declare 1..16 assumptions')
+    prediction, test = proposal.get('prediction'), proposal.get('test')
+    if (not isinstance(prediction, dict) or prediction.get('observable') not in defined
+            or not all(_text(prediction.get(k)) for k in ('if_proposal', 'if_rival'))
+            or prediction['if_proposal'].strip() == prediction['if_rival'].strip()):
+        errors.append('Prediction requires a defined observable and distinct outcomes')
+    if not isinstance(test, dict) or not all(_text(test.get(k)) for k in ('protocol', 'measurement', 'stop_condition')):
+        errors.append('Test requires protocol, measurement and stop_condition')
+    positive, negative = proposal.get('next_if_positive'), proposal.get('next_if_negative')
+    if not _text(positive) or not _text(negative) or positive.strip() == negative.strip():
+        errors.append('Outcomes must change different next decisions')
+    report = {'id': proposal['id'], 'gap_id': proposal.get('gap_id'), 'action_kind': proposal['action_kind'],
+              'status': 'NEEDS_DEFINITION' if errors else 'NEEDS_EVIDENCE', 'definition_errors': errors,
+              'scientific_support': 'UNKNOWN', 'execution_authorized': False, 'candidate_eligible': False,
+              'formal_gate': {'status': 'UNKNOWN', 'assurance': 'NONE', 'admitted': False},
+              'complete_goal_path_required': False}
+    if not errors:
+        report.update(exploration=deepcopy(exploration), assumptions=deepcopy(assumptions),
+                      prediction=deepcopy(prediction), test=deepcopy(test),
+                      next_if_positive=positive, next_if_negative=negative,
+                      evidence_refs=deepcopy(gap['evidence_refs']), cost={'status': 'DECLARED_CAP', 'resources': deepcopy(cost)},
+                      subgraph={'nodes': [{k: n[k] for k in ('id', 'kind', 'label', 'source')} for n in nodes],
+                                'edges': [{**{k: r[k] for k in ('from', 'to', 'relation')}, 'status': 'PROPOSED'} for r in relations]})
+    return report

@@ -1389,6 +1389,16 @@ def parser():
     guard = commands.add_parser('guard', help='Check a frozen comparable-metric/milestone policy without changing the incumbent')
     guard.add_argument('--policy', required=True)
     guard.add_argument('--json', action='store_true')
+    structure = commands.add_parser('structure', help='Bounded problem-model branches, experiments and TMS rollback')
+    structure_actions = structure.add_subparsers(dest='action', required=True)
+    structure_actions.add_parser('request', help='Return a few open exploration tasks').add_argument('--limit', type=int, default=3)
+    structure_actions.add_parser('propose', help='Retain an experimentally testable candidate topology').add_argument('--proposal', required=True)
+    for name in ('advance', 'feedback', 'activate', 'rollback'):
+        structure_actions.add_parser(name).add_argument('--id', required=True)
+    structure_actions.add_parser('next')
+    structure_actions.add_parser('list')
+    structure_actions.add_parser('recover')
+    structure_actions.add_parser('drive', help='Consume proposals and feedback until a bounded stop or open Agent task').add_argument('--steps', type=int, default=1)
     hypergraph = commands.add_parser('hypergraph', help='Bounded AND/OR proof dependency analysis, not proof certification')
     hypergraph.add_argument('--input', '-i', help='Import or restore a map; omitted inputs reuse this root\'s saved map')
     hypergraph.add_argument('--output', '-o')
@@ -1788,6 +1798,22 @@ def _main():
             result = reject_route(args)
         elif args.command == "advise":
             result = cmd_advise(args, rds)
+        elif args.command == 'structure':
+            import rds_structure
+            if args.action == 'request':
+                result = rds_structure.request(args.root, args.limit)
+            elif args.action == 'propose':
+                result = rds_structure.propose(args.root, load_spec(args.proposal))
+            elif args.action == 'next':
+                result = rds_structure.next_step(args.root)
+            elif args.action == 'list':
+                result = rds_structure.inspect(args.root)
+            elif args.action == 'recover':
+                result = rds_structure.recover_control(args.root)
+            elif args.action == 'drive':
+                result = rds_structure.drive(args.root, args.steps)
+            else:
+                result = getattr(rds_structure, args.action)(args.root, args.id)
         elif args.command == "project":
             result = cmd_project(args)
         elif args.command == "host-hook":
