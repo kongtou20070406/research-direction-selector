@@ -99,7 +99,10 @@ refused. Timeouts/lost workers retain cost, return UNKNOWN and stop that candida
 Activation uses TMS compare-and-swap; rollback retains fresh owned evidence.
 Stale snapshots, source resolution changes and intervening non-owned edits fail.
 Direct `advance` checks affordability of all remaining experiment stages and
-the feedback allowance before starting a new attempt. Original runner
+the feedback allowance before starting a new attempt.
+Matching existing run reservations are already excluded from the remaining
+balance and are counted once; only new registrations need fresh budget.
+Retained manifests are checked before reusing their reservations. Original runner
 transactions retain admission and reservation authority; concurrent budget use
 can stop later stages without repeating settled work.
 Published activation is recoverable without a second adoption charge.

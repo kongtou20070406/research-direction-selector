@@ -397,9 +397,15 @@ def advance(root, ident):
         # Runner transactions still own reservations; concurrent budget use
         # may stop later work, but cannot cause settled attempts to repeat.
         recorded = {r['id']: r for r in state['runs']}
+        for expected in row['proposal']['experiment']['runs']:
+            retained = recorded.get(expected['id'])
+            require(retained is None or retained['manifest_sha256'] == digest(expected),
+                    'Experiment run ID is bound to another manifest')
+        # register() already reserves every retained run's estimates. The
+        # ledger's remaining balance excludes them, so only new registrations
+        # need fresh budget; execute/recover still enforce original admission.
         pending = [m for m in row['proposal']['experiment']['runs']
-                   if m['id'] not in recorded or
-                   (recorded[m['id']]['status'] not in TERMINAL and recorded[m['id']]['attempt_id'] is None)]
+                   if m['id'] not in recorded]
         for resource in state['budget']:
             required = sum(m['resource_estimates'][resource] for m in pending)
             if resource == 'wall_seconds':

@@ -120,6 +120,83 @@ class StructureTests(unittest.TestCase):
             self.assertEqual(ProjectStore(other).snapshot(), state)
             self.assertGreater(state['budget']['wall_seconds']['spent_measured'], 0)
 
+    def test_reserved_candidate_and_verifier_resume_count_original_budget_once(self):
+        modes = [(False, (0,)), (False, (1,)), (False, (0, 1)), (True, (0,))]
+        for index, (owned, reserved) in enumerate(modes):
+            with self.subTest(owned=owned, reserved=reserved):
+                root = fixture.prepare(Path(self.tmp.name) / ('reserved-' + str(index)), budget=8, owned=owned)
+                store = ProjectStore(root)
+                task = structure.request(root)['tasks'][0]
+                proposal = fixture.proposal(root, task)
+                structure.propose(root, proposal)
+                for position in reserved:
+                    store.register(proposal['experiment']['runs'][position])
+                before = store.snapshot()
+                self.assertEqual(before['budget']['wall_seconds']['reserved'], 2 * len(reserved))
+                self.assertTrue(all(r['status'] == 'RESERVED' and r['attempt_id'] is None for r in before['runs']))
+                result = structure.advance(root, 'candidate')
+                self.assertEqual(result['goal_status'], 'PASS')
+                after = store.snapshot()
+                self.assertEqual(after['contract_sha256'], before['contract_sha256'])
+                self.assertEqual(after['budget']['wall_seconds']['cap'], 8)
+                self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
+                self.assertEqual(after['budget']['wall_seconds']['charged_estimate'], 0)
+                self.assertEqual(len(after['runs']), 2)
+                self.assertEqual(len(after['receipts']), 2)
+                self.assertEqual(len({r['attempt_id'] for r in after['runs']}), 2)
+                if not owned:
+                    controls = sum(e['wall_seconds'] for e in structure._events(store)
+                                   if e['kind'] == 'STRUCTURE_CONTROL_FINISHED')
+                    workers = sum(r['resources']['wall_seconds']['measured'] for r in after['receipts'])
+                    self.assertAlmostEqual(after['budget']['wall_seconds']['spent_measured'], controls + workers)
+                self.assertEqual(structure.advance(root, 'candidate'), result)
+                self.assertEqual(store.snapshot(), after)
+
+    def test_completed_candidate_and_reserved_verifier_resume_preserve_original_receipt(self):
+        root = fixture.prepare(Path(self.tmp.name) / 'reserved-verifier', budget=6)
+        store = ProjectStore(root)
+        task = structure.request(root)['tasks'][0]
+        proposal = fixture.proposal(root, task)
+        structure.propose(root, proposal)
+        candidate, verifier = proposal['experiment']['runs']
+        store.register(candidate)
+        original = store.execute(candidate['id'])
+        store.register(verifier)
+        self.assertEqual(structure.advance(root, 'candidate')['goal_status'], 'PASS')
+        state = store.snapshot()
+        self.assertEqual(next(r for r in state['receipts'] if r['run_id'] == candidate['id']), original)
+        self.assertEqual(len(state['receipts']), 2)
+        self.assertEqual(state['budget']['wall_seconds']['cap'], 6)
+        self.assertEqual(state['budget']['wall_seconds']['reserved'], 0)
+
+    def test_reserved_resume_with_insufficient_new_budget_preserves_reservation_without_dispatch(self):
+        root = fixture.prepare(Path(self.tmp.name) / 'insufficient-resume', budget=5)
+        store = ProjectStore(root)
+        task = structure.request(root)['tasks'][0]
+        proposal = fixture.proposal(root, task)
+        structure.propose(root, proposal)
+        store.register(proposal['experiment']['runs'][0])
+        before = store.snapshot()
+        with self.assertRaisesRegex(ValueError, 'Insufficient wall_seconds'):
+            structure.advance(root, 'candidate')
+        self.assertEqual(store.snapshot(), before)
+        self.assertEqual(before['budget']['wall_seconds']['reserved'], 2)
+        self.assertEqual(before['receipts'], [])
+        self.assertIsNone(before['runs'][0]['attempt_id'])
+
+    def test_future_reservation_must_match_manifest_before_candidate_dispatch(self):
+        root = fixture.prepare(Path(self.tmp.name) / 'wrong-verifier', budget=8)
+        store = ProjectStore(root)
+        task = structure.request(root)['tasks'][0]
+        proposal = fixture.proposal(root, task)
+        structure.propose(root, proposal)
+        wrong = fixture.manifest(root, 'candidate', verifier=True, mode='unknown')
+        store.register(wrong)
+        before = store.snapshot()
+        with self.assertRaisesRegex(ValueError, 'another manifest'):
+            structure.advance(root, 'candidate')
+        self.assertEqual(store.snapshot(), before)
+
     def test_wrong_scope_and_tampered_output_do_not_create_feedback(self):
         p = self.proposal(mode='wrong_scope')
         structure.propose(self.root, p)
