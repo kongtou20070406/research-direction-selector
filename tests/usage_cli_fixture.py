@@ -1,6 +1,8 @@
 """Real CLI fixture waits; no changes to logging or runtime policy."""
 from contextlib import closing, contextmanager
 import json
+import hashlib
+import math
 import os
 from pathlib import Path
 import sqlite3
@@ -64,6 +66,174 @@ def count_diagnostics(ledger, results, report=None):
         ensure_ascii=True, sort_keys=True)
 
 
+# Appended to the original slow-schema hook. Buffer in memory while holding
+# SQLite locks; write once after native close so trace IO does not extend a
+# writer interval. This only instruments the synthetic database in the hook.
+PHASE_HOOK = r'''
+_slow_connection = Connection
+_slow_connect = sqlite3.connect
+_phase_number = 0
+class PhaseConnection(_slow_connection):
+    def record(self, sql, stage, began=None, error=None, transaction=None):
+        value = {"pid": os.getpid(), "connection": self.phase_number,
+            "operation": sql, "stage": stage, "monotonic": time.monotonic(),
+            "in_transaction": self.in_transaction if transaction is None else transaction}
+        if began is not None:
+            value["seconds"] = time.monotonic() - began
+        if error is not None:
+            value.update(error=type(error).__name__,
+                sqlite_errorname=getattr(error, "sqlite_errorname", None),
+                sqlite_errorcode=getattr(error, "sqlite_errorcode", None))
+        self.phase_events.append(value)
+    def perform(self, operation, function):
+        began = time.monotonic()
+        self.record(operation, "before")
+        try:
+            result = function()
+        except BaseException as error:
+            self.record(operation, "error", began, error)
+            raise
+        self.record(operation, "after", began)
+        return result
+    def execute(self, sql, *args, **kwargs):
+        return self.perform(sql, lambda: super(PhaseConnection, self).execute(sql, *args, **kwargs))
+    def commit(self):
+        return self.perform("COMMIT", lambda: super(PhaseConnection, self).commit())
+    def close(self):
+        self.record("CLOSE", "before")
+        result = super().close()
+        self.record("CLOSE", "after", transaction=False)
+        try:
+            with (_work / "phases" / (str(os.getpid()) + ".jsonl")).open("a", encoding="utf-8") as stream:
+                stream.write("".join(json.dumps(event) + "\n" for event in self.phase_events))
+        except OSError:
+            # Missing trace is UNKNOWN at the reader; never replace a native
+            # SQLite result/exception with an instrumentation write error.
+            pass
+        return result
+Connection = PhaseConnection
+def phase_connect(path, *args, **kwargs):
+    global _phase_number
+    connection = _slow_connect(path, *args, **kwargs)
+    if isinstance(connection, PhaseConnection):
+        _phase_number += 1
+        connection.phase_number = _phase_number
+        connection.phase_events = []
+        connection.record("CONNECT", "after")
+    return connection
+sqlite3.connect = phase_connect
+'''
+
+
+def phase_diagnostics(work, ledger, *, expected_pids=()):
+    """Best-effort projection; corrupt evidence must not mask a count failure."""
+    work, ledger = Path(work), Path(ledger)
+    events, read_errors = [], []
+
+    def issue(path, error, line=None):
+        read_errors.append({"path": str(path), "line": line,
+                            "error": type(error).__name__, "reason": str(error)})
+
+    def number(value):
+        return type(value) in (float, int) and math.isfinite(value)
+
+    directory = work / "phases"
+    try:
+        paths = sorted(path for path in directory.iterdir() if path.suffix == ".jsonl")
+    except OSError as exc:
+        issue(directory, exc)
+        paths = []
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            issue(path, exc)
+            continue
+        for line_number, line in enumerate(lines, 1):
+            try:
+                event = json.loads(line)
+                if (not isinstance(event, dict)
+                        or type(event.get("pid")) is not int or event["pid"] <= 0
+                        or type(event.get("connection")) is not int or event["connection"] <= 0
+                        or not isinstance(event.get("operation"), str)
+                        or event.get("stage") not in ("before", "after", "error")
+                        or not number(event.get("monotonic"))
+                        or type(event.get("in_transaction")) is not bool
+                        or (event["stage"] == "error" and
+                            (not number(event.get("seconds")) or event["seconds"] < 0))):
+                    raise ValueError("Incomplete or invalid phase record")
+            except (ValueError, TypeError, OverflowError) as exc:
+                issue(path, exc, line_number)
+                continue
+            events.append(event)
+    events.sort(key=lambda event: event["monotonic"])
+    connections = {}
+    for event in events:
+        connections.setdefault((event["pid"], event["connection"]), []).append(event)
+    incomplete = []
+    for identity, records in connections.items():
+        pending = []
+        complete = (records[0]["operation"] == "CONNECT" and records[0]["stage"] == "after"
+                    and records[-1]["operation"] == "CLOSE" and records[-1]["stage"] == "after")
+        for event in records:
+            if event["stage"] == "before":
+                pending.append(event["operation"])
+            elif event["operation"] != "CONNECT":
+                if not pending or pending.pop() != event["operation"]:
+                    complete = False
+        if pending or not complete:
+            incomplete.append({"pid": identity[0], "connection": identity[1],
+                               "reason": "missing connect/close or unmatched operation boundary"})
+    acquired, writers = {}, []
+    for event in events:
+        identity = (event["pid"], event["connection"])
+        if event["operation"] == "BEGIN IMMEDIATE" and event["stage"] == "after":
+            acquired[identity] = event["monotonic"]
+        if ((event["operation"] == "COMMIT" and event["stage"] == "after")
+                or (event["operation"] == "CLOSE" and event["stage"] == "after")) and identity in acquired:
+            writers.append({"pid": identity[0], "connection": identity[1],
+                "acquired": acquired.pop(identity), "released": event["monotonic"],
+                "release_operation": event["operation"]})
+    errors = [event for event in events if event["stage"] == "error"]
+    for error in errors:
+        error["overlapping_observed_writers"] = [writer for writer in writers
+            if writer["acquired"] < error["monotonic"]
+            and writer["released"] > error["monotonic"] - error["seconds"]]
+        error["observed_writers_at_error"] = [writer for writer in writers
+            if writer["acquired"] <= error["monotonic"] <= writer["released"]] or "UNKNOWN"
+    missing = sorted(set(expected_pids) - {event["pid"] for event in events})
+    physical = {"path": str(ledger)}
+    try:
+        physical["path"] = str(ledger.resolve())
+        content = ledger.read_bytes()
+        physical.update(bytes=len(content), sha256=hashlib.sha256(content).hexdigest())
+    except OSError as exc:
+        physical.update(status="UNKNOWN", error=str(exc))
+        issue(ledger, exc)
+    return {"status": "OBSERVED" if events and not missing and not acquired and not read_errors and not incomplete else "UNKNOWN",
+        "physical_database": physical, "missing_pids": missing,
+        "read_errors": read_errors, "incomplete_connections": incomplete,
+        "event_count": len(events), "errors": errors, "writer_intervals": writers,
+        "unclosed_writers": [{"pid": pid, "connection": number, "acquired": began}
+                             for (pid, number), began in acquired.items()],
+        "limit": "Buffered trace affects scheduling; native calls/errors preserved. Writer intervals are correlations, not proof of which lock blocked SQL; external/untraced holders and read locks UNKNOWN."}
+
+
+def attach_usage_diagnostics(error, ledger, children, work):
+    """Retain the original exception even if the observer itself fails."""
+    try:
+        evidence = (count_diagnostics(ledger, children) + " phases="
+                    + json.dumps(phase_diagnostics(work, ledger,
+                        expected_pids=[child.fixture_timing["pid"] for child in children])))
+    except Exception as exc:
+        evidence = json.dumps({"status": "UNKNOWN", "diagnostic_error": type(exc).__name__,
+                               "reason": str(exc)})
+    try:
+        error.add_note(evidence)
+    except Exception:
+        pass
+
+
 @contextmanager
 def slow_schema_commits(folder, ledger):
     """Synthetic slow schema storage, using real SQLite writer locks/commits.
@@ -76,6 +246,7 @@ def slow_schema_commits(folder, ledger):
     """
     work = Path(folder) / "usage-slow-schema"
     work.mkdir()
+    (work / "phases").mkdir()
     (work / "sitecustomize.py").write_text(r'''
 import json, os, pathlib, sqlite3, time
 _connect = sqlite3.connect
@@ -87,7 +258,9 @@ class Connection(sqlite3.Connection):
             return super().execute(sql, *args, **kwargs)
         owned = not self.in_transaction
         if owned:
-            super().execute("BEGIN IMMEDIATE")
+            # Dispatch through the tracing subclass too. BEGIN takes the
+            # non-CREATE branch, so this preserves the one native acquisition.
+            self.execute("BEGIN IMMEDIATE")
         before = super().execute("PRAGMA schema_version").fetchone()[0]
         result = super().execute(sql, *args, **kwargs)
         after = super().execute("PRAGMA schema_version").fetchone()[0]
@@ -110,6 +283,8 @@ def connect(path, *args, **kwargs):
     return _connect(path, *args, **kwargs)
 sqlite3.connect = connect
 ''', encoding="utf-8")
+    with (work / "sitecustomize.py").open("a", encoding="utf-8") as stream:
+        stream.write(PHASE_HOOK)
     yield {"work": work, "environment": {
         "RDS_USAGE_SLOW_SCHEMA": str(work),
         "PYTHONPATH": str(work) + os.pathsep + os.environ.get("PYTHONPATH", ""),
