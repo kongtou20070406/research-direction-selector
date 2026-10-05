@@ -83,7 +83,9 @@ earlier rejected methods. It also carries `evidence_excerpts`: the first 4 KiB
 of each config/data/evaluator binding whose bytes still match its frozen hash,
 and of each ordinary receipt's original project output. Both limits count
 retained UTF-8 text bytes; inputs and outputs share one 64 KiB total, so the
-last head may be shorter and is then marked `truncated`. A wrong
+last head may be shorter and is then marked `truncated`. Outputs, newest
+receipt first, keep up to half of that total when they need it, and either
+side's unused share goes to the other. A wrong
 value that exits 0 leaves no stderr tail, so without these the model sees no
 task content. They are sent to the configured provider; review them with the
 request. The request is included in the normal reserved run

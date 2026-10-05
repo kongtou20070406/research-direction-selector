@@ -3,6 +3,7 @@
 This controller does not create a second task registry or execute model source.
 Every worker, including repair inference, goes through ProjectStore admission.
 """
+import codecs
 from copy import deepcopy
 import hashlib
 import os
@@ -226,13 +227,21 @@ def evidence_excerpts(store, state, ids):
     with a wrong value leaves the model no task content to repair from.
     """
     from rds_owned_advisor import _read_original
+    receipts = sorted((r for r in state['receipts'] if r['run_id'] not in ids),
+                      key=lambda r: (r.get('ended_at', 0), r['run_id']), reverse=True)
+    produced = [(r, item) for r in receipts for item in r['artifacts']
+                if item['kind'] == 'project_output' and item.get('size', MAX_BYTES + 1) <= MAX_BYTES]
+    # Neither side can crowd out the other: outputs keep up to half of the total
+    # when they need it, and whatever one side leaves unused goes to the other.
+    reserved = min(EXCERPT_TOTAL // 2, sum(min(EXCERPT_BYTES, item['size']) for _, item in produced))
     used = 0
-    def head(raw):
-        # Inputs and outputs share one aggregate allowance, counted in retained UTF-8 text bytes:
-        # U+FFFD replacement can triple undecodable bytes, so the encoded text is cut again.
+    def head(raw, cap):
+        # Limits count retained UTF-8 text bytes: U+FFFD replacement can triple
+        # undecodable bytes, so the encoded text is cut again. A head cut inside
+        # a character keeps only whole characters.
         nonlocal used
-        limit = min(EXCERPT_BYTES, EXCERPT_TOTAL - used)
-        text = raw[:limit].decode('utf-8', 'replace')
+        limit = min(EXCERPT_BYTES, cap - used)
+        text = codecs.getincrementaldecoder('utf-8')('replace').decode(raw[:limit], final=len(raw) <= limit)
         encoded = text.encode('utf-8')
         if len(encoded) > limit:
             text = encoded[:limit].decode('utf-8', 'ignore')
@@ -240,7 +249,7 @@ def evidence_excerpts(store, state, ids):
         return {'size': len(raw), 'truncated': len(raw) > limit or len(encoded) > limit, 'text': text}
     inputs, outputs = [], []
     for binding in state['contract']['bindings']:
-        if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL:
+        if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL - reserved:
             continue
         path = store._path(binding['path'])
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_BYTES:
@@ -248,18 +257,16 @@ def evidence_excerpts(store, state, ids):
         raw = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != binding['sha256']:
             continue  # Binding failures are reported by ordinary admission, not repaired here.
-        inputs.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'], **head(raw)})
-    receipts = sorted((r for r in state['receipts'] if r['run_id'] not in ids),
-                      key=lambda r: (r.get('ended_at', 0), r['run_id']), reverse=True)
-    for receipt in receipts:
-        for item in receipt['artifacts']:
-            if item['kind'] != 'project_output' or used >= EXCERPT_TOTAL:
-                continue
-            raw = _read_original(store, item, keep=True) if item.get('size', MAX_BYTES + 1) <= MAX_BYTES else None
-            if raw is None:
-                continue
-            outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
-                            'path': item['path'], 'sha256': item['sha256'], **head(raw)})
+        inputs.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
+                       **head(raw, EXCERPT_TOTAL - reserved)})
+    for receipt, item in produced:
+        if used >= EXCERPT_TOTAL:
+            break
+        raw = _read_original(store, item, keep=True)
+        if raw is None:
+            continue
+        outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
+                        'path': item['path'], 'sha256': item['sha256'], **head(raw, EXCERPT_TOTAL)})
     return {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
             'frozen_inputs': inputs, 'original_outputs': outputs}
 

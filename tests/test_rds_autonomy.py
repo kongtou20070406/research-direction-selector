@@ -427,30 +427,30 @@ class AutonomyTests(unittest.TestCase):
             state = _state(self.store, db)
         sizes = {p: (self.root / p).stat().st_size for p in ('config.json', 'data.json', 'evaluator.json', 'outputs/baseline.json')}
         inputs = sizes['config.json'] + sizes['data.json'] + sizes['evaluator.json']
+        output = sizes['outputs/baseline.json']
+        self.assertGreaterEqual(inputs, output + 3)  # The fixture lets inputs alone exhaust each total below.
         per_file = max(sizes.values()) + 1  # Every file would fit whole under the per-file limit alone.
-        for total, kept_inputs, kept_output in ((inputs + 5, None, 5), (sizes['config.json'] + 2, 2, None)):
+        # (total, retained input bytes, retained output bytes)
+        cases = ((inputs + output + 5, inputs, output),  # Everything fits whole.
+                 (inputs + output - 3, inputs - 3, output),  # Outputs need less than half: inputs get the rest.
+                 (output + 1, output + 1 - (output + 1) // 2, (output + 1) // 2))  # Inputs cannot crowd outputs out.
+        for total, kept_inputs, kept_output in cases:
             with patch.object(autonomy, 'EXCERPT_BYTES', per_file), patch.object(autonomy, 'EXCERPT_TOTAL', total):
                 excerpts = autonomy.evidence_excerpts(self.store, state, set())
-            entries = excerpts['frozen_inputs'] + excerpts['original_outputs']
-            self.assertEqual(sum(len(e['text'].encode('utf-8')) for e in entries), total)
-            for entry in entries:
+            retained = lambda entries: sum(len(e['text'].encode('utf-8')) for e in entries)
+            self.assertEqual(retained(excerpts['frozen_inputs']), kept_inputs)
+            self.assertEqual(retained(excerpts['original_outputs']), kept_output)
+            self.assertEqual([o['path'] for o in excerpts['original_outputs']], ['outputs/baseline.json'])
+            for entry in excerpts['frozen_inputs'] + excerpts['original_outputs']:
                 raw = (self.root / entry['path']).read_bytes()
                 self.assertEqual(entry['text'].encode('utf-8'), raw[:len(entry['text'].encode('utf-8'))])
                 self.assertEqual(entry['truncated'], len(entry['text'].encode('utf-8')) < len(raw))
-            last = entries[-1]
-            if kept_output is None:
-                # The remainder ran out inside the inputs: a partial input head, no evaluator, no outputs.
-                self.assertEqual([e['path'] for e in entries], ['config.json', 'data.json'])
-                self.assertEqual(len(last['text'].encode('utf-8')), kept_inputs)
-            else:
-                self.assertEqual([e['path'] for e in excerpts['frozen_inputs']], ['config.json', 'data.json', 'evaluator.json'])
-                self.assertEqual(last['path'], 'outputs/baseline.json')
-                self.assertEqual(len(last['text'].encode('utf-8')), kept_output)
-            self.assertTrue(last['truncated'])
 
     def test_excerpt_text_bytes_stay_bounded_for_undecodable_and_split_characters(self):
         # U+FFFD replacement is 3 UTF-8 bytes per undecodable byte; the bound is on retained text.
-        payloads = {'binary.bin': b'\xff' * 64, 'accents.txt': 'é'.encode('utf-8') * 8, 'exact.txt': b'abcd'}
+        # A head cut inside a 4-byte character must not invent a U+FFFD that is not in the file.
+        payloads = {'binary.bin': b'\xff' * 64, 'accents.txt': 'é'.encode('utf-8') * 8, 'exact.txt': b'abcd',
+                    'emoji.txt': 'ab😀'.encode('utf-8')}
         bindings = []
         for name, raw in payloads.items():
             (self.root / name).write_bytes(raw)
@@ -459,9 +459,9 @@ class AutonomyTests(unittest.TestCase):
         with patch.object(autonomy, 'EXCERPT_BYTES', 5), patch.object(autonomy, 'EXCERPT_TOTAL', 64):
             excerpts = autonomy.evidence_excerpts(self.store, state, set())['frozen_inputs']
         texts = {e['path']: e['text'] for e in excerpts}
-        self.assertEqual(texts, {'binary.bin': '�', 'accents.txt': 'éé', 'exact.txt': 'abcd'})
+        self.assertEqual(texts, {'binary.bin': '�', 'accents.txt': 'éé', 'exact.txt': 'abcd', 'emoji.txt': 'ab'})
         self.assertEqual({e['path']: e['truncated'] for e in excerpts},
-                         {'binary.bin': True, 'accents.txt': True, 'exact.txt': False})
+                         {'binary.bin': True, 'accents.txt': True, 'exact.txt': False, 'emoji.txt': True})
         with patch.object(autonomy, 'EXCERPT_BYTES', 5), patch.object(autonomy, 'EXCERPT_TOTAL', 6):
             excerpts = autonomy.evidence_excerpts(self.store, state, set())['frozen_inputs']
         self.assertEqual([(e['path'], e['text'], e['truncated']) for e in excerpts],
