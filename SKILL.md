@@ -47,8 +47,21 @@ ON applicable research request:
     IF project has advisor_policy:
         RUN advise --brief FROM the current ledger and owned dependency graph
         READ selection, coverage gaps/errors and the saved report when needed
-        RUN project advance --brief FOR at most one program-selected authorized step
+        IF advisor_policy declares autonomy:
+            READ docs/autonomy-loop.md
+            RUN project drive --max-steps <bounded-pass> TO recover and continue the same ledger
+            TREAT obstacles as inputs for different permitted routes or method/tool proposals
+            CONSUME original repair/rejection receipts; do not repeat uncertain delivery
+            KEEP scoped exhaustion distinct from scientific impossibility
+            REQUIRE program-replayed domain confirmation before claiming goal completion
+        ELSE:
+            RUN project advance --brief FOR at most one program-selected authorized step
         KEEP original receipt + automatic Advisor update; unknown remains UNKNOWN
+        IF advisor_policy declares tool_bindings:
+            READ tool_utilization FOR obligation applicability, actual calls and decision consumers
+            USE only qualified current-input candidates within frozen routes and budget
+            KEEP UNKNOWN and unconsumed outputs visible; do not optimize for command counts
+            READ docs/owned-tool-consumers.md FOR the finite native application interface
         IF collection failed: recover collection; NEVER repeat completed training
         IF predictive plan is blocked or a method failed:
             READ docs/predictive-feasibility.md and the returned repair_request
@@ -74,6 +87,18 @@ ON applicable research request:
         DO NOT use a later call to endorse an already executed route
     IF fixed user-requested task OR single proof obligation:
         KEEP the requested scope; DO NOT invent rival experiments
+    IF evidence suggests a blocked or wrong problem decomposition:
+        RUN structure request --limit 3 FROM current project and saved TMS
+        CONSUME original goal, sources, unknown premises, budget and snapshot IDs
+        SEARCH current primary sources WITH existing authorized tools
+        PROPOSE path repair, new knowledge OR materially different decomposition
+        ALLOW ideas outside original nodes; bounded exploration needs no complete path
+        RUN structure propose --proposal <reply.json>; THEN structure drive --steps 1
+        KEEP definition/admission/independent observation/goal verification separate
+        USE existing method revision FOR new code/routes; preserve goal/evaluator
+        READ feedback and structure next; retain negative evidence and original cost
+        ACTIVATE or ROLLBACK experimental topology within the existing scope
+        READ docs/problem-structure.md; fixture success is not LLM discovery/policy gain
     NOTE: program checks only supplied inputs; omitted dependencies remain unassessed
           review/recording grants no new resources or execution authority
 
@@ -95,9 +120,11 @@ All commands below use `CLI` above. Links load detail on demand.
 | First plain-language request | Follow [quick start](docs/quickstart.md): copyable prompts, first project, `[RDS-REJECT]` recovery | [Project runner](examples/project-runner/README.md) |
 | Start locked campaign | `project init --contract <contract.json>`; freeze `advisor_policy` for program-owned selection | [Contract template](docs/project-contract.md), [owned Advisor](docs/program-owned-advisor.md) |
 | Advance campaign | `project next` to inspect; `project advance --brief` executes one selected step in a policy-bound project | [Owned Advisor](docs/program-owned-advisor.md), [development loop](docs/development-loop.md) |
+| Drive bounded research loop | `project drive --max-steps <n>`; frozen `autonomy`, ordinary repair routes, persistent costs and optional domain confirmation | [Research drive](docs/autonomy-loop.md), [domain confirmation](docs/domain-confirmation.md) |
 | Improve a blocked tool | `project improve --code-path <path> --id <revision>`, then `project revise --proposal <path>` | [Forecasts and tool improvement](docs/predictive-feasibility.md) |
 | Choose research direction | Policy-bound: `advise --brief`; legacy: `advise --context <context.json> --graph <graph.json> --brief`, then `--choose <candidate-id> --record <checkpoint-id>` | [Choice review](docs/agent-entry.md#review-the-research-choice), [research discipline](references/research-discipline.md) |
 | Audit evidence | `artifacts import --manifest <manifest.json>` | [Agent entry](docs/agent-entry.md) |
+| Explore a blocked problem model | `structure request --limit 3`, `structure propose --proposal <reply.json>`, `structure drive --steps 1` | [Problem structure](docs/problem-structure.md) |
 | Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md) |
 | Reuse/register local tool | `rsi extract --source <file> --entry <function> --name <id>`; `rsi validate --name <id> --cases <cases.json>`; `rsi register --name <id>` | [Native research](docs/native-research.md) |
 | Wrap frozen job | `exec --name <id> --timeout 30 -- <command...>` | [Command wrapper](docs/agent-entry.md#wrap-a-command) |

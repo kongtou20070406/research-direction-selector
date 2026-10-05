@@ -35,7 +35,7 @@ def validate_policy(store, contract):
         return None
     policy = contract['advisor_policy']
     require(isinstance(policy, dict) and {'schema', 'context', 'graph', 'routes', 'observations'} <= set(policy)
-            and set(policy) <= {'schema', 'context', 'graph', 'routes', 'observations', 'feasibility'},
+            and set(policy) <= {'schema', 'context', 'graph', 'routes', 'observations', 'feasibility', 'tool_bindings', 'confirmation', 'autonomy'},
             'advisor_policy needs schema, context, graph, routes and observations')
     require(type(policy['schema']) is int and policy['schema'] == 1, 'advisor_policy schema must be 1')
     require(len(canonical(policy).encode('utf-8')) <= MAX_JSON_BYTES, 'advisor_policy exceeds 2 MiB')
@@ -130,7 +130,7 @@ def validate_policy(store, contract):
         require(isinstance(observation, dict) and set(observation) <= {'fact', 'run_id', 'path', 'selector', 'format'}
                 and {'fact', 'run_id', 'path', 'selector'} <= set(observation), 'Invalid owned observation')
         fid, rid = observation['fact'], observation['run_id']
-        require(_text(fid) and not fid.startswith('run.') and fid not in fact_ids, 'Duplicate or reserved observation fact ID')
+        require(_text(fid) and not fid.startswith(('run.', 'owned-tool-gate.', 'autonomy.', 'confirmation.')) and fid not in fact_ids, 'Duplicate or reserved observation fact ID')
         require(rid in ids and observation['path'] in ids[rid]['outpaths'], 'Observation must name a frozen run output')
         selector = observation['selector']
         require(observation.get('format', 'json') == 'json' and isinstance(selector, dict)
@@ -148,6 +148,15 @@ def validate_policy(store, contract):
     search_directions(graph, {**deepcopy(context), 'facts': {}})
     from rds_feasibility import validate
     validate(store, contract, policy)
+    if 'tool_bindings' in policy:
+        from rds_tool_applicability import validate_bindings
+        validate_bindings(store, contract, policy['tool_bindings'])
+    if 'confirmation' in policy:
+        from rds_domain_confirmation import validate_policy as validate_confirmation
+        validate_confirmation(store, contract, policy)
+    if 'autonomy' in policy:
+        from rds_autonomy import validate_policy as validate_autonomy
+        validate_autonomy(store, contract, policy)
     return policy
 
 
@@ -171,11 +180,24 @@ def _state(store, db):
     if 'method_evolution' in contract:
         from rds_method_revision import contract_history
         history = contract_history(db)
-    return {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
+    from rds_owned_history import history_cut
+    try:
+        verified_history = history_cut(store, db)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        raise ValueError('Repair checkpoint integrity before executing a candidate: ' + str(exc)) from exc
+    state = {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
             'budget': budget, 'completion_events': completed,
+            'history_cut': verified_history,
             'contract_history': history,
             'exposures': [strict_json(row['body']) for row in db.execute('SELECT body FROM exposures ORDER BY id')],
             'campaign_started': strict_json(campaign['body']) if campaign else None}
+    if 'autonomy' in contract.get('advisor_policy', {}):
+        from rds_autonomy import records
+        state['autonomy_records'] = records(store, db, contract)
+    from rds_postcommit_confirmation import enabled, records as confirmation_records
+    if enabled(contract):
+        state['confirmation_challenges'] = confirmation_records(store, db, contract)
+    return state
 
 
 def _fingerprint(state):
@@ -261,6 +283,7 @@ def _collect(store, state):
     receipts = {r['run_id']: r for r in state['receipts']}
     require(set(receipts) <= set(runs), 'Receipt has no owned run')
     nodes, edges, files, originals, errors = [], [], [], {}, []
+    oversized_json = {}
     coverage = {'runs': len(runs), 'receipts': len(receipts), 'artifacts': 0,
                 'parsed_observations': 0, 'declared_outputs': [], 'unparsed_outputs': [], 'gaps': [], 'errors': errors}
     requested = {(o['run_id'], o['path']) for o in policy['observations']} if policy else set()
@@ -327,6 +350,8 @@ def _collect(store, state):
                 files.append({k: item[k] for k in ('path', 'sha256', 'size')})
                 if raw is not None:
                     originals[key] = raw
+                elif key in requested:
+                    oversized_json[key] = {k: item[k] for k in ('path', 'sha256', 'size')}
                 node_status = 'SUPPORTED'
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 errors.append({'run_id': rid, 'path': item['path'], 'reason': str(exc)})
@@ -369,6 +394,10 @@ def _collect(store, state):
                 'source': {'locator': 'pending owned output ' + rid + ':' + relative}, 'reason': 'Run output is pending'}
         if receipt is not None:
             try:
+                if (rid, relative) in oversized_json:
+                    fact['source'] = {**oversized_json[rid, relative], 'receipt_id': receipt['sha256'],
+                                      'locator': 'verified original over JSON parse byte limit'}
+                    raise ValueError('Verified original JSON exceeds the ' + str(MAX_JSON_BYTES) + '-byte parse limit')
                 require((rid, relative) in originals, 'Declared output missing, changed or over JSON byte limit')
                 value, locator, _ = _extract(strict_json(originals[rid, relative].decode('utf-8-sig')), obs['selector'], 'json')
                 require(value is None or isinstance(value, (str, bool, int, float)), 'Owned observation must be a JSON scalar')
@@ -390,9 +419,19 @@ def _collect(store, state):
                 # A failed attempt legitimately may have no measurement. It
                 # can still support a declared diagnostic route through its
                 # lifecycle facts. Corrupt successful evidence fails closed.
-                destination = errors if receipt['run_status'] == 'SUCCEEDED' else coverage['gaps']
+                destination = errors if receipt['run_status'] == 'SUCCEEDED' and (rid, relative) not in oversized_json else coverage['gaps']
                 destination.append({'run_id': rid, 'fact': fid, 'reason': str(exc)})
         nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'], owned_fact=fact))
+    if policy and 'autonomy' in policy:
+        from rds_autonomy import collect
+        collect(store, state, nodes, files)
+    if policy and 'confirmation' in policy:
+        from rds_domain_confirmation import inspect_confirmation
+        confirmation = inspect_confirmation(store, state['contract'], state)
+        fid = 'confirmation.task_status'
+        fact = {'id': fid, 'kind': 'DERIVED', 'value': confirmation['task_confirmation'], 'reliable': True,
+                'source': {'locator': 'program replay of frozen domain evidence ' + digest(confirmation)}}
+        nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], owned_fact=fact))
     return nodes, edges, coverage, files
 
 
@@ -458,7 +497,9 @@ def review(store, persist=True):
             'limits': {**previous.get('limits', {}), 'max_nodes': 4096, 'max_hyperedges': 4096}}
     if policy:
         facts = _facts(spec)
-        for index, condition in enumerate(policy['context']['decision']['goal_conditions']):
+        from rds_domain_confirmation import goal_conditions as confirmation_goals
+        effective_goals = confirmation_goals(policy)
+        for index, condition in enumerate(effective_goals):
             evaluated = evaluate_condition(condition, facts)
             ident = 'goal:' + str(index)
             spec['nodes'].append(_node(ident, {'TRUE': 'SUPPORTED', 'FALSE': 'CONTRADICTED', 'UNKNOWN': 'UNKNOWN'}[evaluated['truth']],
@@ -486,6 +527,8 @@ def review(store, persist=True):
               'recommendations': [], 'warnings': [], 'next_move': None, 'evidence_files': files}
     if policy:
         context = deepcopy(policy['context'])
+        if 'confirmation' in policy:
+            context['decision']['goal_conditions'] = effective_goals
         context['facts'] = _facts(spec)
         context['dependency_map'] = spec
         budget = {r['resource']: max(0, r['cap'] - r['spent'] - r['charged'] - r['reserved']) for r in state['budget']}
@@ -504,13 +547,23 @@ def review(store, persist=True):
                          if run_index.get(route['manifest']['id'], {}).get('status') in {'RESERVED', 'RUNNING'})
         state_for_advisor = {'contract': state['contract'], 'contract_sha256': digest(state['contract']),
                              'advisor_context': context, 'runs': state['runs'], 'receipts': state['receipts']}
+        from rds_owned_history import bind_graph
+        graph = bind_graph(store, state['contract'], _dispatch_graph(policy, state['runs']))
+        tool_reports = []
+        if policy.get('tool_bindings'):
+            from rds_owned_tools import applicable, gate_graph
+            tool_reports = applicable(store, state['contract'], context['facts'])
+            graph = gate_graph(graph, tool_reports, context['facts'])
         recommendations = RDSAdvisor(store.root).recommend_next_directions(
-            state_for_advisor, _dispatch_graph(policy, state['runs']), priority_action_ids=priority)
+            state_for_advisor, graph, priority_action_ids=priority)
         advice = {'advisor_type': 'STRATEGIC_RESEARCH_ADVICE', 'recommendations': recommendations,
                   'recommendations_count': len(recommendations)}
         result.update(advice=advice, recommendations=recommendations, context=context)
         searches = [r['search'] for r in recommendations if r.get('type') == 'EXECUTABLE_DIRECTION_SEARCH']
         selection = searches[0]['selection_review'] if searches else {}
+        if policy.get('tool_bindings'):
+            from rds_owned_tools import consumption
+            result['tool_utilization'] = consumption(store, state, context['facts'], tool_reports, selection, searches)
         result['warnings'] = deepcopy(selection.get('flags', []))
         result['next_move'] = deepcopy(selection.get('next_move'))
         ready = {c['action']['id']: c for search in searches for c in search['candidates'] if c['status'] == 'READY'}
@@ -569,8 +622,18 @@ def review(store, persist=True):
         if coverage['errors']:
             result['status'] = 'COLLECTION_FAILED'
             result['warnings'].append({'kind': 'OWNED_EVIDENCE_INCOMPLETE', 'errors': deepcopy(coverage['errors'])})
+        if 'confirmation' in policy:
+            from rds_domain_confirmation import inspect_confirmation
+            try:
+                result['confirmation'] = inspect_confirmation(store, state['contract'], state)
+            except (ValueError, KeyError, TypeError, OSError) as exc:
+                result.update(status='COLLECTION_FAILED', selected_run=None, selected_manifest=None)
+                result['warnings'].append({'kind': 'DOMAIN_CONFIRMATION_INTEGRITY', 'error': str(exc)})
     if persist:
         ref = cas_json(store.root, result)
+        if result.get('tool_utilization'):
+            from rds_owned_tools import record_consumption
+            record_consumption(store, result['tool_utilization'], ref)
         _event(store, {'kind': 'OWNED_ADVISOR_REVIEW', 'fingerprint': fingerprint, 'status': result['status'],
                        'report': ref, 'selected_run': result['selected_run'], 'snapshot_sha256': snapshot_sha})
     return result
@@ -580,8 +643,12 @@ def prepare_admission(store, spec):
     report = review(store)
     require(report['status'] == 'REVIEWED' and report['selected_run'] == spec.get('id')
             and report['selected_manifest'] == spec, 'Owned Advisor did not select this frozen manifest; inspect project next')
+    from rds_owned_history import prepare_decision
+    with store._db(True) as db:
+        contract = store._contract(db)
     return {'fingerprint': report['fingerprint'], 'selected_run': report['selected_run'],
             'manifest_sha256': digest(spec), 'evidence_files': report['evidence_files'],
+            'decision': prepare_decision(store, report, contract),
             'snapshot_sha256': report['snapshot_sha256'], 'telemetry': deepcopy(report['telemetry'])}
 
 
@@ -600,6 +667,14 @@ def check_admission(store, db, spec, token):
     blob(store.root, saved['map'])  # Hash-bound CAS read, no nested ledger connection.
     for item in token['evidence_files']:
         _read_original(store, item)
+    contract = store._contract(db)
+    if contract['advisor_policy'].get('tool_bindings'):
+        from rds_owned_tools import applicable
+        reports = applicable(store, contract, token['decision']['evidence'])
+        binding = next((b for b in contract['advisor_policy']['tool_bindings'] if b['run_id'] == spec['id']), None)
+        if binding is not None:
+            require(next(r for r in reports if r['candidate'] == binding['candidate'])['status'] == 'APPLICABLE',
+                    'Tool applicability changed after Advisor selection; inspect the original qualification')
     from rds_feasibility import check_start
     check_start(store, db, spec['id'])
     return True

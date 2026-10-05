@@ -719,6 +719,10 @@ def brief(root, value, version, formal=False):
                                                      for row in coverage.get('declared_outputs', []))
         summary['coverage_errors'] = coverage.get('errors', [])[:3]
         summary['coverage_gaps'] = coverage.get('gaps', [])[:3]
+        if 'tool_utilization' in owned:
+            use = owned['tool_utilization']
+            summary['tool_utilization'] = {key: use[key] for key in
+                ('scope', 'counts', 'applicable_use_rate', 'applicable_consumption_rate')}
         warnings = [row['kind'] for row in owned.get('warnings', []) if 'kind' in row]
         summary['flags'] = list(dict.fromkeys(warnings + summary.get('flags', [])))[:5]
         summary['omitted_flags'] = max(0, len(set(warnings)) - len(summary['flags']))

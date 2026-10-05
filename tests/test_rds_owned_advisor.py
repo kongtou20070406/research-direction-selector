@@ -721,7 +721,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
     def assert_owned_checkpoint_rejected(self, corruption, expected_reason):
         from contextlib import closing
         import sqlite3
-        from rds_advisor import RDSAdvisor
+        import rds_owned_history
         from rds_owned_advisor import review
         self.initialize()
         self.output('advise')
@@ -739,25 +739,27 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                 db.execute("UPDATE checkpoints SET body=?,sha=? WHERE id='bad-owned'",
                            (raw, hashlib.sha256(raw.encode('utf-8')).hexdigest()))
         observed = []
-        original = RDSAdvisor._review_loop_history
+        original = rds_owned_history.history_cut
 
-        def observe_history(advisor, state, context, search):
-            result = original(advisor, state, context, search)
-            observed.append(deepcopy(result))
-            return result
+        def observe_history(*args, **kwargs):
+            try:
+                return original(*args, **kwargs)
+            except ValueError as exc:
+                observed.append(str(exc))
+                raise
 
-        # Observe the original checker in the owned chain; do not replace its
-        # result or bypass the later candidate-admission rejection.
-        with patch.object(RDSAdvisor, '_review_loop_history', new=observe_history):
+        # The owned state check now rejects before Advisor loop review. Observe
+        # that original checker without replacing its result or exception.
+        with patch.object(rds_owned_history, 'history_cut', new=observe_history):
             with self.assertRaisesRegex(ValueError, 'Repair checkpoint integrity'):
                 review(ProjectStore(self.root))
-        flag = next(flag for result in observed for flag in result['flags']
-                    if flag['kind'] == 'LOOP_HISTORY_REVIEW_ERROR')
-        self.assertIn(expected_reason, flag['reason'])
+        self.assertEqual(len(observed), 1)
+        self.assertIn(expected_reason, observed[0])
         for args in (('advise',), ('project', 'advance')):
             rejected = self.call(*args, ok=False)
             self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
             self.assertIn('Repair checkpoint integrity', rejected.stderr)
+            self.assertIn(expected_reason, rejected.stderr)
         self.assert_uncharged(before)
         self.assertEqual(self.snapshot()['receipts'], [])
 

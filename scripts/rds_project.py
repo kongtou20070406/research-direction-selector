@@ -331,6 +331,12 @@ class ProjectStore:
             require(row["spent"] + row["charged"] + row["reserved"] <= row["cap"] + 1e-9,
                     f"Insufficient {resource} budget before start")
         contract = self._contract(db)
+        if 'confirmation' in contract.get('advisor_policy', {}):
+            from rds_postcommit_confirmation import check_run as check_confirmation_run
+            check_confirmation_run(self, db, contract, run)
+        if 'autonomy' in contract.get('advisor_policy', {}):
+            from rds_autonomy import check_run
+            check_run(self, db, contract, run)
         if contract.get('advisor_policy', {}).get('feasibility') is not None:
             from rds_feasibility import check_start
             check_start(self, db, run['id'])
@@ -766,8 +772,12 @@ class ProjectStore:
                             and recorded.get("contract_sha256") == predecessor["contract_sha256"],
                             "Predecessor is frozen with the contract; use a new project root")
             else:
+                from rds_owned_tools import preparation_costs
+                native_preparation = preparation_costs(self, contract, db=db)
                 db.execute("INSERT INTO contract VALUES (1,?,?)", (digest(contract), canonical(contract)))
                 db.executemany("INSERT INTO budget(resource,cap) VALUES (?,?)", list(budget.items()))
+                from rds_owned_tools import charge_preparation
+                charge_preparation(self, db, contract, native_preparation)
                 if predecessor is not None:
                     db.execute("CREATE TABLE predecessor(id INTEGER PRIMARY KEY CHECK (id = 1),sha256 TEXT NOT NULL,body TEXT NOT NULL)")
                     for action in ("UPDATE", "DELETE"):
@@ -912,6 +922,9 @@ class ProjectStore:
             require(digest(self._contract(db)) == run['effective_contract_sha256'],
                     'Method revision changed during run registration')
             self._advisor_check(db, spec, advisor_token)
+            if 'autonomy' in contract.get('advisor_policy', {}):
+                from rds_autonomy import bind_run
+                bind_run(self, db, contract, run)
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
             retained = self._runs(db)
             if 'execution_policy' in contract:
@@ -942,9 +955,17 @@ class ProjectStore:
                 require(key not in claims, "Output is already claimed by another run")
                 db.execute("INSERT INTO output_claims VALUES (?,?)", (key, run_id))
             self._campaign_deadline(db, contract, admit=True)
+            if 'confirmation' in contract.get('advisor_policy', {}):
+                from rds_postcommit_confirmation import bind_run as bind_confirmation_run
+                bind_confirmation_run(self, db, contract, run)
             for resource, amount in estimates.items():
                 db.execute("UPDATE budget SET reserved=reserved+? WHERE resource=?", (amount, resource))
+            if advisor_token is not None:
+                run['owned_history_recorded'] = True
             db.execute("INSERT INTO runs VALUES (?,?,?)", (run_id, "RESERVED", canonical(run)))
+            if advisor_token is not None:
+                from rds_owned_history import capture_choice
+                capture_choice(self, db, run, advisor_token['decision'])
         return run
 
     @classmethod
@@ -1066,7 +1087,10 @@ class ProjectStore:
         run["run_status"] = "SUCCEEDED" if run["status"] == "COMPLETED" else run["status"]
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
-    def execute(self, run_id, background=False):
+    def execute(self, run_id, background=False, *, admission_guard=None):
+        # An internal caller may restrict admission after all ordinary checks.
+        # This callback grants no authority and is never supplied by the CLI.
+        require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
@@ -1082,6 +1106,8 @@ class ProjectStore:
             require(run["status"] == "RESERVED" and run["attempt_id"] is None, "Run already dispatched or started; recover never reruns it")
             self._advisor_check(db, run["manifest"], advisor_token)
             self._check_start(db, run)
+            if admission_guard is not None:
+                require(admission_guard(db, run) is None, "Admission guard must allow or raise")
             run["attempt_id"] = uuid.uuid4().hex
             if background:
                 run["scheduler"] = {"task_id": "RDS-Project-" + run["attempt_id"], "status": "REGISTERING"}
@@ -1351,7 +1377,7 @@ class ProjectStore:
                                                      if run["scheduler"] else None)}
         if stop_reason is not None:
             receipt["stop_reason"] = stop_reason
-        for field in ('effective_contract_sha256', 'runtime_fingerprint'):
+        for field in ('effective_contract_sha256', 'runtime_fingerprint', 'autonomy_request', 'confirmation_challenge'):
             if field in run:
                 receipt[field] = run[field]
         if run["manifest"].get("maintenance") is not None:
@@ -1382,6 +1408,9 @@ class ProjectStore:
                 self._save(db, current)
                 db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, receipt["sha256"], canonical(receipt)))
                 db.execute("INSERT INTO events(body) VALUES (?)", (canonical({"kind": "ATTEMPT_FINISHED", "run_id": run_id, "sha256": receipt["sha256"]}),))
+            if self._run(db, run_id).get('owned_history_recorded') is True:
+                from rds_owned_history import capture_completion
+                capture_completion(self, db, self._run(db, run_id), receipt)
         self._advisor_finished(contract)
         return receipt
 

@@ -225,6 +225,8 @@ python -B scripts/rds_cli.py --root . formal check --spec examples/formal/theore
 
 [程序持有证据的工作流](docs/program-owned-advisor.md)先固定目标谓词、允许的路线和结果读取规则。`project advance` 至多执行一条由程序选定的路线，结算回执、收集已声明输出到当前证据图，并返回下一次 Advisor 报告。已完成路线保留证据，但不再占用可执行候选名额。采集恢复复用已有结果，不重复已完成的实验。没有 `advisor_policy` 的项目保留原有调用方引导方式。
 
+[有界科研推进](docs/autonomy-loop.md)通过 `project drive` 串联连续选路、受阻后的模型改法或工具改进、工作台修订验证和原任务恢复，保留原始预算与失败证据。[领域确认](docs/domain-confirmation.md)分别检查数学精确证书、有限整数算法案例和 CPU 张量指标。执行成功与领域确认分开报告；这些有限检查不证明通用科研自动驾驶或独立科研收益。
+
 Advisor 在已有候选空间内，将原始目标连接到当前事实与约束。结果可能使一条路线可执行、使声明目标成立、暴露阻塞，或促使提出转向方案。Agent 仍需提供新假说、检查应用前提并配合领域验证器；程序不会悄然扩大冻结策略。这限制的是已声明 RDS 入口内的信息挑选，不是 RDS 外部命令。
 
 `scripts/rds_advisor.py` 利用已记录的证据和方法论图谱提出下一步建议：
