@@ -348,6 +348,12 @@ def review_exploration(frontier, spec, proposal):
     if not isinstance(assumptions, list) or not 1 <= len(assumptions) <= 16 or not all(_text(v) for v in assumptions):
         errors.append('Declare 1..16 assumptions')
     prediction, test = proposal.get('prediction'), proposal.get('test')
+    if 'discriminator' in proposal:
+        from rds_discrimination import validate
+        try:
+            validate(proposal['discriminator'])
+        except ValueError as exc:
+            errors.append(str(exc))
     if (not isinstance(prediction, dict) or prediction.get('observable') not in defined
             or not all(_text(prediction.get(k)) for k in ('if_proposal', 'if_rival'))
             or prediction['if_proposal'].strip() == prediction['if_rival'].strip()):

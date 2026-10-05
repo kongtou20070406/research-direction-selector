@@ -34,6 +34,6 @@ if event:
 if mode == 'wrong_scope':
     verdict['scope_sha256'] = '0' * 64
 if mode == 'unknown':
-    verdict.update(observation='UNKNOWN', goal_status='UNKNOWN')
+    verdict.update(observation='UNKNOWN', goal_status='UNKNOWN', correct=None)
 Path(verdict_output).parent.mkdir(parents=True, exist_ok=True)
 Path(verdict_output).write_text(json.dumps(verdict), encoding='utf-8')

@@ -93,10 +93,15 @@ ON applicable research request:
         SEARCH current primary sources WITH existing authorized tools
         PROPOSE path repair, new knowledge OR materially different decomposition
         ALLOW ideas outside original nodes; bounded exploration needs no complete path
+        BIND discriminator: frozen conditions, original verifier field, disjoint typed rival predicates
+        AFTER feedback: bind exact trigger ID/hash/observation; UNKNOWN calls for evidence
+        USE measured failure to revise a premise, candidate or next experiment; do not rename a refuted claim
         RUN structure propose --proposal <reply.json>; THEN structure drive --steps 1
         KEEP definition/admission/independent observation/goal verification separate
         USE existing method revision FOR new code/routes; preserve goal/evaluator
         READ feedback and structure next; retain negative evidence and original cost
+        CONTINUE authorized post-failure generation/testing without a one-command user stop
+        STOP on original goal, resource/authority limit, unresolved dispatch or genuine takeover need
         ACTIVATE or ROLLBACK experimental topology within the existing scope
         READ docs/problem-structure.md; fixture success is not LLM discovery/policy gain
     NOTE: program checks only supplied inputs; omitted dependencies remain unassessed
