@@ -1,6 +1,7 @@
 """Real CLI fixture waits; no changes to logging or runtime policy."""
 from contextlib import closing, contextmanager
 import json
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -64,6 +65,103 @@ def count_diagnostics(ledger, results, report=None):
         ensure_ascii=True, sort_keys=True)
 
 
+# Appended to the original slow-schema hook. Buffer in memory while holding
+# SQLite locks; write once after native close so trace IO does not extend a
+# writer interval. This only instruments the synthetic database in the hook.
+PHASE_HOOK = r'''
+_slow_connection = Connection
+_slow_connect = sqlite3.connect
+_phase_number = 0
+class PhaseConnection(_slow_connection):
+    def record(self, sql, stage, began=None, error=None, transaction=None):
+        value = {"pid": os.getpid(), "connection": self.phase_number,
+            "operation": sql, "stage": stage, "monotonic": time.monotonic(),
+            "in_transaction": self.in_transaction if transaction is None else transaction}
+        if began is not None:
+            value["seconds"] = time.monotonic() - began
+        if error is not None:
+            value.update(error=type(error).__name__,
+                sqlite_errorname=getattr(error, "sqlite_errorname", None),
+                sqlite_errorcode=getattr(error, "sqlite_errorcode", None))
+        self.phase_events.append(value)
+    def perform(self, operation, function):
+        began = time.monotonic()
+        self.record(operation, "before")
+        try:
+            result = function()
+        except BaseException as error:
+            self.record(operation, "error", began, error)
+            raise
+        self.record(operation, "after", began)
+        return result
+    def execute(self, sql, *args, **kwargs):
+        return self.perform(sql, lambda: super(PhaseConnection, self).execute(sql, *args, **kwargs))
+    def commit(self):
+        return self.perform("COMMIT", lambda: super(PhaseConnection, self).commit())
+    def close(self):
+        self.record("CLOSE", "before")
+        result = super().close()
+        self.record("CLOSE", "after", transaction=False)
+        try:
+            with (_work / "phases" / (str(os.getpid()) + ".jsonl")).open("a", encoding="utf-8") as stream:
+                stream.write("".join(json.dumps(event) + "\n" for event in self.phase_events))
+        except OSError:
+            # Missing trace is UNKNOWN at the reader; never replace a native
+            # SQLite result/exception with an instrumentation write error.
+            pass
+        return result
+Connection = PhaseConnection
+def phase_connect(path, *args, **kwargs):
+    global _phase_number
+    connection = _slow_connect(path, *args, **kwargs)
+    if isinstance(connection, PhaseConnection):
+        _phase_number += 1
+        connection.phase_number = _phase_number
+        connection.phase_events = []
+        connection.record("CONNECT", "after")
+    return connection
+sqlite3.connect = phase_connect
+'''
+
+
+def phase_diagnostics(work, ledger, *, expected_pids=()):
+    """Observed writer intervals, not a claim about uninstrumented lock owners."""
+    work, ledger = Path(work), Path(ledger)
+    events = sorted((json.loads(line) for path in (work / "phases").glob("*.jsonl")
+                     for line in path.read_text(encoding="utf-8").splitlines()),
+                    key=lambda event: event["monotonic"])
+    acquired, writers = {}, []
+    for event in events:
+        identity = (event["pid"], event["connection"])
+        if event["operation"] == "BEGIN IMMEDIATE" and event["stage"] == "after":
+            acquired[identity] = event["monotonic"]
+        if ((event["operation"] == "COMMIT" and event["stage"] == "after")
+                or (event["operation"] == "CLOSE" and event["stage"] == "after")) and identity in acquired:
+            writers.append({"pid": identity[0], "connection": identity[1],
+                "acquired": acquired.pop(identity), "released": event["monotonic"],
+                "release_operation": event["operation"]})
+    errors = [event for event in events if event["stage"] == "error"]
+    for error in errors:
+        error["overlapping_observed_writers"] = [writer for writer in writers
+            if writer["acquired"] < error["monotonic"]
+            and writer["released"] > error["monotonic"] - error["seconds"]]
+        error["observed_writers_at_error"] = [writer for writer in writers
+            if writer["acquired"] <= error["monotonic"] <= writer["released"]] or "UNKNOWN"
+    missing = sorted(set(expected_pids) - {event["pid"] for event in events})
+    physical = {"path": str(ledger.resolve())}
+    try:
+        content = ledger.read_bytes()
+        physical.update(bytes=len(content), sha256=hashlib.sha256(content).hexdigest())
+    except OSError as exc:
+        physical.update(status="UNKNOWN", error=str(exc))
+    return {"status": "OBSERVED" if events and not missing and not acquired else "UNKNOWN",
+        "physical_database": physical, "missing_pids": missing,
+        "event_count": len(events), "errors": errors, "writer_intervals": writers,
+        "unclosed_writers": [{"pid": pid, "connection": number, "acquired": began}
+                             for (pid, number), began in acquired.items()],
+        "limit": "Buffered trace affects scheduling; native calls/errors preserved. Writer intervals are correlations, not proof of which lock blocked SQL; external/untraced holders and read locks UNKNOWN."}
+
+
 @contextmanager
 def slow_schema_commits(folder, ledger):
     """Synthetic slow schema storage, using real SQLite writer locks/commits.
@@ -76,6 +174,7 @@ def slow_schema_commits(folder, ledger):
     """
     work = Path(folder) / "usage-slow-schema"
     work.mkdir()
+    (work / "phases").mkdir()
     (work / "sitecustomize.py").write_text(r'''
 import json, os, pathlib, sqlite3, time
 _connect = sqlite3.connect
@@ -110,6 +209,8 @@ def connect(path, *args, **kwargs):
     return _connect(path, *args, **kwargs)
 sqlite3.connect = connect
 ''', encoding="utf-8")
+    with (work / "sitecustomize.py").open("a", encoding="utf-8") as stream:
+        stream.write(PHASE_HOOK)
     yield {"work": work, "environment": {
         "RDS_USAGE_SLOW_SCHEMA": str(work),
         "PYTHONPATH": str(work) + os.pathsep + os.environ.get("PYTHONPATH", ""),

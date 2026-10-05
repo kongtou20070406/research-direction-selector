@@ -16,7 +16,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from usage_cli_fixture import count_diagnostics, dual_sqlite_wait, ledger_snapshot, paused_schema, run_cli, slow_schema_commits, wait_marker
+from usage_cli_fixture import count_diagnostics, dual_sqlite_wait, ledger_snapshot, paused_schema, phase_diagnostics, run_cli, slow_schema_commits, wait_marker
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -550,13 +550,50 @@ class UsageTests(unittest.TestCase):
                 children = list(workers.map(lambda _: self.cli("--version"), range(12)))
             delays = [json.loads(line) for path in probe["work"].glob("*.jsonl")
                       for line in path.read_text(encoding="utf-8").splitlines()]
-        report = usage.summarize(days=1)
-        evidence = count_diagnostics(self.path, children, report) + " schema=" + json.dumps(delays)
+        phases = phase_diagnostics(probe["work"], self.path,
+                                   expected_pids=[child.fixture_timing["pid"] for child in children])
+        try:
+            report = usage.summarize(days=1)
+        except BaseException as exc:
+            exc.add_note(count_diagnostics(self.path, children) + " phases=" + json.dumps(phases))
+            raise
+        evidence = (count_diagnostics(self.path, children, report)
+                    + " schema=" + json.dumps(delays) + " phases=" + json.dumps(phases))
         self.assertTrue(all(child.returncode == 0 for child in children), evidence)
         self.assertEqual(report["total_calls"], 12, evidence)
         self.assertEqual(report["daily"][0]["successful"], 12, evidence)
         self.assertEqual(report["daily"][0]["unfinished"], 0, evidence)
         self.assertTrue(delays and all(row["writer_held"] for row in delays), evidence)
+        self.assertEqual(phases["status"], "OBSERVED", evidence)
+
+    def test_slow_schema_trace_preserves_real_busy_and_cli_result(self):
+        # An external real writer is deliberately untraced: retain the exact
+        # failing statement/PID, but never guess its holder from absent data.
+        warmup = self.cli("--version")
+        self.assertEqual(warmup.returncode, 0)
+        before = ledger_snapshot(self.path)
+        with slow_schema_commits(self.folder, self.path) as probe:
+            with closing(sqlite3.connect(self.path, isolation_level=None)) as writer:
+                writer.execute("BEGIN IMMEDIATE")
+                with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
+                    child = self.cli("--version")
+            phases = phase_diagnostics(probe["work"], self.path,
+                                       expected_pids=[child.fixture_timing["pid"]])
+        evidence = count_diagnostics(self.path, [child]) + " phases=" + json.dumps(phases)
+        self.assertEqual(child.returncode, 0, evidence)
+        self.assertEqual(child.stdout, warmup.stdout, evidence)
+        self.assertIn("start logging failed (OperationalError/SQLITE_BUSY)", child.stderr, evidence)
+        self.assertEqual(ledger_snapshot(self.path), before, evidence)
+        self.assertEqual(phases["status"], "OBSERVED", evidence)
+        self.assertEqual(len(phases["errors"]), 1, evidence)
+        error = phases["errors"][0]
+        self.assertEqual(error["pid"], child.fixture_timing["pid"], evidence)
+        self.assertEqual(error["operation"], "BEGIN IMMEDIATE", evidence)
+        self.assertEqual(error["sqlite_errorname"], "SQLITE_BUSY", evidence)
+        self.assertEqual(error["observed_writers_at_error"], "UNKNOWN", evidence)
+        self.assertEqual(error["overlapping_observed_writers"], [], evidence)
+        self.assertGreaterEqual(error["seconds"], 9, evidence)
+        self.assertEqual(phases["physical_database"]["bytes"], self.path.stat().st_size, evidence)
 
     def test_paused_schema_preparation_does_not_drop_concurrent_cli_starts(self):
         # One real warmup pauses at the schema/caller boundary. The other
