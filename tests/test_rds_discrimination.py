@@ -131,6 +131,49 @@ class DiscriminationTests(unittest.TestCase):
             s.advance(self.root, 'rival')
         self.assertEqual(self.store.snapshot(), before)
 
+    def test_prequeued_unknown_cannot_dispatch_without_exact_evidence_trigger(self):
+        candidate = fixture.proposal(self.root, self.task, strategy='linear', mode='unknown')
+        rival = fixture.proposal(self.root, self.task, ident='rival', strategy='periodic')
+        s.propose(self.root, candidate)
+        s.propose(self.root, rival)
+        observed = s.advance(self.root, 'candidate')
+        self.assertEqual(observed['observation'], 'UNKNOWN')
+        selection = s.next_step(self.root)
+        self.assertIsNone(selection['selected'])
+        self.assertEqual(selection['blocked'][0]['reason'], 'FEEDBACK_TRIGGER_REQUIRED')
+        before = self.store.snapshot()
+        with self.assertRaisesRegex(ValueError, 'FEEDBACK_TRIGGER_REQUIRED'):
+            s.advance(self.root, 'rival')
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(len(before['receipts']), 2)
+        # The existing result remains recoverable with no new attempt/cost.
+        self.assertEqual(s.advance(self.root, 'candidate'), observed)
+        self.assertEqual(self.store.snapshot(), before)
+        # A fresh immutable proposal can bind the real feedback; ALTERNATIVE
+        # alone is not a valid continuation of an unresolved observation.
+        bound = fixture.proposal(self.root, self.task, ident='baseline', strategy='periodic')
+        bound['trigger']['purpose'] = 'ALTERNATIVE'
+        with self.assertRaisesRegex(ValueError, 'UNKNOWN_REQUIRES_EVIDENCE'):
+            s.propose(self.root, bound)
+        bound['trigger']['purpose'] = 'EVIDENCE'
+        s.propose(self.root, bound)
+        self.assertEqual(s.next_step(self.root)['selected'], 'baseline')
+        self.assertEqual(s.advance(self.root, 'baseline')['goal_status'], 'PASS')
+
+    def test_prequeued_reservation_is_retained_but_unknown_cannot_start_it(self):
+        s.propose(self.root, fixture.proposal(self.root, self.task, strategy='linear', mode='unknown'))
+        queued = fixture.proposal(self.root, self.task, ident='rival', strategy='periodic')
+        s.propose(self.root, queued)
+        self.store.register(queued['experiment']['runs'][0])
+        s.advance(self.root, 'candidate')
+        before = self.store.snapshot()
+        with self.assertRaisesRegex(ValueError, 'FEEDBACK_TRIGGER_REQUIRED'):
+            s.advance(self.root, 'rival')
+        self.assertEqual(self.store.snapshot(), before)
+        run = next(r for r in before['runs'] if r['id'] == 'rival')
+        self.assertIsNone(run['attempt_id'])
+        self.assertEqual(run['status'], 'RESERVED')
+
     def test_missing_measurement_never_infers_refutation(self):
         value = fixture.proposal(self.root, self.task)['discriminator']
         self.assertEqual(d.observe(value, {}, 'a' * 64)['reason'], 'MEASUREMENT_MISSING')

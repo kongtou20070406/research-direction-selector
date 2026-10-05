@@ -313,7 +313,7 @@ def propose(root, proposal):
                  'proposal': deepcopy(proposal), 'review': reviewed, 'candidate_map': candidate,
                  'discriminator': discriminator,
                  'status': 'HYPOTHESIS_PENDING', 'execution_authorized': False, 'scientific_support': 'UNKNOWN'}
-        reason = _route_constraint(store, value, new=True)
+        reason = _route_constraint(store, value)
         require(reason is None, 'Evidence route constraint: ' + str(reason))
         return _put(store, 'PROPOSAL', value['id'], value, expected=saved['sha256'], check_snapshot=True)
 
@@ -358,7 +358,7 @@ def _feedback_view(row, observed):
     return observed
 
 
-def _route_constraint(store, row, *, new=False):
+def _route_constraint(store, row):
     """Scoped evidence gate shared by selection and direct execution.
 
     Stable hypothesis identity is declared, not inferred from arbitrary prose.
@@ -373,7 +373,7 @@ def _route_constraint(store, row, *, new=False):
             return {'kind': 'HYPOTHESIS_REFUTED', 'feedback_id': observed['id'], 'feedback_sha256': digest(observed)}
     trigger = row['proposal'].get('trigger')
     if trigger is None:
-        if new and prior:
+        if prior:
             return {'kind': 'FEEDBACK_TRIGGER_REQUIRED'}
         return None
     if not (isinstance(trigger, dict) and set(trigger) == {'proposal_id', 'feedback_sha256', 'observation', 'purpose'}
