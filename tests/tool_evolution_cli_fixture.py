@@ -17,7 +17,21 @@ import rds_feasibility
 from rds_project import digest
 
 
+def validate_premise(premise):
+    # Phase is explicit: genesis cannot borrow the adopted fast-route premise.
+    phases = {'initial-verifier': {'verify': (1.0, 3.0)},
+              'post-adoption': {'fast': (2.0, 6.0), 'verify': (1.0, 3.0)}}
+    bounds = phases.get(premise.get('phase'))
+    if bounds is None or set(premise['routes']) != set(bounds):
+        raise ValueError('Flow-test premise has an unexpected phase or route')
+    for run_id, expected in bounds.items():
+        route = premise['routes'][run_id]
+        if (route['lower_wall_seconds'], route['upper_wall_seconds']) != expected:
+            raise ValueError('Flow-test premise cannot adapt to available resources')
+
+
 def controlled_estimator(premise, original):
+    validate_premise(premise)
     expected_root = Path(premise['root']).resolve()
 
     def estimate(store, state, run_id, manifest, model):
@@ -25,14 +39,21 @@ def controlled_estimator(premise, original):
         if run_id not in premise['routes'] or real['status'] != 'CONDITIONAL_FORECAST':
             return real
         bound = premise['routes'][run_id]
+        policy = state['contract'].get('advisor_policy', {})
+        models = policy.get('feasibility', {}).get('models', {})
+        initial_phase = (set(models) == {'slow', 'verify'}
+                         and models['verify']['pilot_runs'] == ['pilot-verify'])
         if (Path(store.root).resolve() != expected_root
                 or digest(state['contract']) != premise['contract_sha256']
                 or digest(manifest) != bound['manifest_sha256']
-                or digest(model) != bound['model_sha256']):
+                or digest(model) != bound['model_sha256']
+                or (premise['phase'] == 'initial-verifier' and not initial_phase)
+                or (premise['phase'] == 'post-adoption' and initial_phase)):
             return {'status': 'UNKNOWN', 'run_id': run_id, 'lower_wall_seconds': 0,
                     'upper_wall_seconds': None, 'reason': 'Test forecast premise identity differs',
                     'real_forecast': real}
-        return {**real, 'lower_wall_seconds': bound['lower_wall_seconds'],
+        return {**real, 'test_premise_phase': premise['phase'],
+                'lower_wall_seconds': bound['lower_wall_seconds'],
                 'upper_wall_seconds': bound['upper_wall_seconds'],
                 'basis': 'TEST_SYNTHETIC_CONDITIONAL_FORECAST', 'sources': [],
                 'assumptions': ['Explicit flow-test premise; not a measured runtime forecast'],
@@ -57,14 +78,10 @@ def main():
     args = sys.argv[3:]
     validate_fixture_root(expected_root, premise_path, args)
     premise = json.loads(premise_path.read_text(encoding='utf-8'))
-    if Path(premise['root']).resolve() != expected_root or set(premise['routes']) != {'fast', 'verify'}:
-        raise ValueError('Flow-test premise has an unexpected root or route')
+    if Path(premise['root']).resolve() != expected_root:
+        raise ValueError('Flow-test premise has an unexpected root')
     # Bounds are fixed independently of live allowance/deadline or measured wall.
-    expected_bounds = {'fast': (2.0, 6.0), 'verify': (1.0, 3.0)}
-    for run_id, bounds in expected_bounds.items():
-        route = premise['routes'][run_id]
-        if (route['lower_wall_seconds'], route['upper_wall_seconds']) != bounds:
-            raise ValueError('Flow-test premise cannot adapt to available resources')
+    validate_premise(premise)
     import rds_cli
     sys.argv = [str(ROOT / 'scripts/rds_cli.py'), *args]
     with patch.object(rds_feasibility, '_estimate', controlled_estimator(premise, rds_feasibility._estimate)):
