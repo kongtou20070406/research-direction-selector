@@ -18,6 +18,7 @@ from rds_tms_store import current, save
 from rds_hypergraph import _validate, review_hypergraph
 from rds_frontier import discover_frontier
 from rds_frontier_proposals import review_proposals
+import rds_discrimination as discrimination
 
 PREFIX = 'STRUCTURE_'
 MAX_BYTES = 128 * 1024
@@ -172,7 +173,7 @@ def request(root, limit=3):
                 'Structure exploration map exceeds bounded task scope; retain a scoped dependency model first')
         analysis = review_hypergraph(spec)
         scope = _binding_scope(state, saved)
-        prior_feedback = [_read_ref(store, e['record']) for e in _events(store) if e['kind'] == PREFIX + 'FEEDBACK']
+        prior_feedback = _verified_feedback(store, digest(scope))
         settled = [{'run_id': r['run_id'], 'receipt_sha256': r['sha256'], 'run_status': r['run_status'],
                     'timeout': r.get('timeout'), 'exit_code': r.get('exit_code'),
                     'errors': [str(v)[:512] for v in r.get('errors', [])[:8]],
@@ -197,8 +198,7 @@ def request(root, limit=3):
             value = {'id': rid, **identity, 'scope_sha256': digest(scope), 'gap_id': gap['id'],
                      'goal_status': analysis['goals'][goal], 'frontier_spec': data, 'frontier': frontier, 'original_map': spec,
                      'sources': gap['evidence_refs'], 'unknown_premises': gap['anchors'],
-                     'settled_evidence': settled, 'prior_feedback': [{k: r[k] for k in
-                         ('id', 'scope_sha256', 'proposal_sha256', 'status', 'goal_status', 'receipts', 'next_decision', 'reason')} for r in prior_feedback],
+                     'settled_evidence': settled, 'prior_feedback': [_feedback_packet(store, r) for r in prior_feedback],
                      'external_search': ['Find current primary sources for missing concepts and applicability conditions',
                                          'Find competing formulations; the initial decomposition may be wrong'],
                      'experiment_suggestion': 'Compare different predictions or computational routes with a frozen independent evaluator',
@@ -288,6 +288,7 @@ def propose(root, proposal):
         require(candidate['goals'] == original['goals'], 'Original goals cannot be replaced or weakened')
         experiment = proposal.get('experiment')
         require(isinstance(experiment, dict) and set(experiment) == {'runs', 'candidate_output', 'verdict_output'}, 'Declare experiment and independent result files')
+        discriminator = discrimination.validate(proposal.get('discriminator'), state['contract'], experiment)
         runs = experiment['runs']
         require(isinstance(runs, list) and len(runs) == 2 and runs[0]['id'] != runs[1]['id'], 'Experiment needs distinct candidate/verifier manifests')
         contract = state['contract']
@@ -310,8 +311,81 @@ def propose(root, proposal):
         value = {'id': proposal['id'], 'request_id': req['id'], 'proposal_sha256': digest(proposal),
                  'scope_sha256': req['scope_sha256'], 'snapshot_sha256': req['snapshot_sha256'],
                  'proposal': deepcopy(proposal), 'review': reviewed, 'candidate_map': candidate,
+                 'discriminator': discriminator,
                  'status': 'HYPOTHESIS_PENDING', 'execution_authorized': False, 'scientific_support': 'UNKNOWN'}
+        reason = _route_constraint(store, value)
+        require(reason is None, 'Evidence route constraint: ' + str(reason))
         return _put(store, 'PROPOSAL', value['id'], value, expected=saved['sha256'], check_snapshot=True)
+
+
+def _verified_feedback(store, scope_sha256):
+    values = []
+    for event in _events(store):
+        if event['kind'] != PREFIX + 'FEEDBACK':
+            continue
+        observed = _read_ref(store, event['record'])
+        if observed['scope_sha256'] == scope_sha256:
+            _check_feedback(store, _find(store, 'PROPOSAL', observed['id']), observed)
+            values.append(observed)
+    return values
+
+
+def _feedback_packet(store, observed):
+    row = _find(store, 'PROPOSAL', observed['id'])
+    effective = _feedback_view(row, observed)
+    value = {k: effective[k] for k in ('id', 'scope_sha256', 'proposal_sha256', 'status',
+              'goal_status', 'receipts', 'next_decision', 'reason')}
+    value.update(feedback_sha256=digest(observed), observation=effective.get('observation'),
+                 original_observation=observed.get('observation'),
+                 discrimination=observed.get('discrimination'), originals=[])
+    experiment = row['proposal']['experiment']
+    receipts = {r['run_id']: r for r in store.snapshot()['receipts']}
+    for manifest, path in zip(experiment['runs'], (experiment['candidate_output'], experiment['verdict_output'])):
+        receipt = receipts.get(manifest['id'])
+        if receipt and receipt['run_status'] == 'SUCCEEDED':
+            doc, sha = _artifact(store, receipt, path)
+            raw = canonical(doc)
+            value['originals'].append({'path': path, 'sha256': sha, 'text': raw[:4096],
+                                      'truncated': len(raw) > 4096, 'trust': 'UNTRUSTED_EXPERIMENT_DATA'})
+    return value
+
+
+def _feedback_view(row, observed):
+    if not row.get('discriminator') and 'discrimination' not in observed:
+        return {**observed, 'status': 'UNKNOWN', 'observation': 'UNKNOWN',
+                'original_status': observed['status'], 'original_observation': observed.get('observation'),
+                'feedback_sha256': digest(observed), 'reason': 'LEGACY_UNBOUND_DISCRIMINATION'}
+    return observed
+
+
+def _route_constraint(store, row):
+    """Scoped evidence gate shared by selection and direct execution.
+
+    Stable hypothesis identity is declared, not inferred from arbitrary prose.
+    A trigger records an evidence-dependent choice; it does not prove its wisdom.
+    """
+    prior = _verified_feedback(store, row['scope_sha256'])
+    value = row.get('discriminator')
+    key = discrimination.hypothesis_key(value) if value else None
+    for observed in prior:
+        old = _find(store, 'PROPOSAL', observed['id']).get('discriminator')
+        if old and key == discrimination.hypothesis_key(old) and observed.get('observation') == 'REFUTE':
+            return {'kind': 'HYPOTHESIS_REFUTED', 'feedback_id': observed['id'], 'feedback_sha256': digest(observed)}
+    trigger = row['proposal'].get('trigger')
+    if trigger is None:
+        if prior:
+            return {'kind': 'FEEDBACK_TRIGGER_REQUIRED'}
+        return None
+    if not (isinstance(trigger, dict) and set(trigger) == {'proposal_id', 'feedback_sha256', 'observation', 'purpose'}
+            and trigger['purpose'] in ('ALTERNATIVE', 'EVIDENCE')):
+        return {'kind': 'INVALID_FEEDBACK_TRIGGER'}
+    source = next((r for r in prior if r['id'] == trigger['proposal_id']), None)
+    effective = (_feedback_view(_find(store, 'PROPOSAL', source['id']), source).get('observation') if source else None)
+    if source is None or trigger['feedback_sha256'] != digest(source) or trigger['observation'] != effective:
+        return {'kind': 'FEEDBACK_TRIGGER_MISMATCH'}
+    if effective in (None, 'UNKNOWN') and trigger['purpose'] != 'EVIDENCE':
+        return {'kind': 'UNKNOWN_REQUIRES_EVIDENCE'}
+    return None
 
 
 def next_step(root):
@@ -341,10 +415,13 @@ def next_step(root):
                 reason = 'STALE_SNAPSHOT'
             existing = {r['id'] for r in state['runs']}
             needed = {k: sum(r['resource_estimates'][k] for r in row['proposal']['experiment']['runs'] if r['id'] not in existing) for k in caps}
+            evidence = _route_constraint(store, row) if not reason else None
+            if evidence:
+                reason = evidence['kind']
             if not reason and any(v > state['budget'][k]['remaining'] for k, v in needed.items()):
                 reason = 'BUDGET_EXHAUSTED'
             if reason:
-                blocked.append({'id': row['id'], 'reason': reason})
+                blocked.append({'id': row['id'], 'reason': reason, 'evidence': evidence})
             else:
                 eligible.append(row)
         eligible.sort(key=lambda r: (r['review']['exploration']['cost']['wall_seconds'], r['id']))
@@ -353,7 +430,7 @@ def next_step(root):
             choice = None
         result = {'status': 'TEST_CANDIDATE' if choice else 'REQUEST_OPEN_EXPLORATION',
                   'selected': choice['id'] if choice else None, 'blocked': blocked,
-                  'basis': 'SMALLEST_DECLARED_DISTINGUISHING_TEST_CAP_THEN_STABLE_ID',
+                  'basis': 'VERIFIED_SCOPED_FEEDBACK_THEN_TEST_CAP_THEN_STABLE_ID',
                   'probability_model': None, 'scientific_support': 'UNKNOWN', 'authorization': 'UNCHANGED',
                   'feedback_consumed': sorted(feedback), 'next_move': 'structure advance --id ' + choice['id'] if choice else 'structure request'}
         if goal_checks:
@@ -371,7 +448,7 @@ def advance(root, ident):
     old = _find(store, 'FEEDBACK', ident)
     if old:
         _check_feedback(store, row, old)
-        return old
+        return _feedback_view(row, old)
     req = _find(store, 'REQUEST', row['request_id'])
     _live(store, req, allow_owned_updates=True)
     for manifest in row['proposal']['experiment']['runs']:
@@ -396,6 +473,8 @@ def advance(root, ident):
         # recover existing attempts first; those do not need fresh admission.
         # Runner transactions still own reservations; concurrent budget use
         # may stop later work, but cannot cause settled attempts to repeat.
+        constraint = _route_constraint(store, row)
+        require(constraint is None, 'Evidence route constraint: ' + str(constraint))
         recorded = {r['id']: r for r in state['runs']}
         for expected in row['proposal']['experiment']['runs']:
             retained = recorded.get(expected['id'])
@@ -440,7 +519,7 @@ def feedback(root, ident):
     existing = _find(store, 'FEEDBACK', ident)
     if existing:
         _check_feedback(store, row, existing)
-        return existing  # Original consumed receipt IDs, no extra billing.
+        return _feedback_view(row, existing)  # Original consumed receipt IDs, no extra billing.
     with _meter(store, 'feedback'):
         state = store.snapshot()
         _live(store, _find(store, 'REQUEST', row['request_id']), allow_owned_updates=True)
@@ -449,7 +528,7 @@ def feedback(root, ident):
         runs = experiment['runs']
         result = {'id': ident, 'proposal_sha256': row['proposal_sha256'], 'scope_sha256': row['scope_sha256'],
                   'status': 'UNKNOWN', 'goal_status': 'UNKNOWN', 'scientific_support': 'UNKNOWN',
-                  'receipts': [], 'observation': None, 'next_decision': 'Retain branch; repair missing evidence', 'reason': None}
+                  'receipts': [], 'observation': 'UNKNOWN', 'next_decision': 'Retain branch; repair missing evidence', 'reason': None}
         selected = [receipts.get(r['id']) for r in runs]
         recorded_runs = {r['id']: r for r in state['runs']}
         require(all(r is None or recorded_runs[m['id']]['manifest_sha256'] == digest(m)
@@ -470,11 +549,15 @@ def feedback(root, ident):
                     and verdict.get('output_sha256') == candidate_sha, 'Verifier scope/proposal/run/hash mismatch')
             require(verdict.get('observation') in {'SUPPORT', 'REFUTE', 'UNKNOWN'}
                     and verdict.get('goal_status') in {'PASS', 'FAIL', 'UNKNOWN'}, 'Invalid independent observation')
-            result.update(status={'SUPPORT': 'TEST_SUPPORTED', 'REFUTE': 'TEST_REFUTED', 'UNKNOWN': 'UNKNOWN'}[verdict['observation']],
-                          goal_status=verdict['goal_status'], observation=verdict['observation'],
+            measured = discrimination.observe(row.get('discriminator'), verdict, verdict_sha)
+            observed = measured['observation']
+            result.update(status={'SUPPORT': 'TEST_SUPPORTED', 'REFUTE': 'TEST_REFUTED', 'UNKNOWN': 'UNKNOWN'}[observed],
+                          goal_status=verdict['goal_status'], observation=observed, discrimination=measured,
+                          evaluator_observation=verdict['observation'],
                           output_sha256=candidate_sha, verdict_sha256=verdict_sha,
-                          next_decision=row['review']['next_if_positive'] if verdict['observation'] == 'SUPPORT'
-                          else row['review']['next_if_negative'] if verdict['observation'] == 'REFUTE'
+                          reason=measured['reason'],
+                          next_decision=row['review']['next_if_positive'] if observed == 'SUPPORT'
+                          else row['review']['next_if_negative'] if observed == 'REFUTE'
                           else 'Retain branch; obtain distinguishing evidence')
         return _put(store, 'FEEDBACK', ident, result)
 
@@ -488,8 +571,12 @@ def _check_feedback(store, row, result):
         candidate, verifier = row['proposal']['experiment']['runs']
         index = {r['run_id']: r for r in selected}
         _, csha = _artifact(store, index[candidate['id']], row['proposal']['experiment']['candidate_output'])
-        _, vsha = _artifact(store, index[verifier['id']], row['proposal']['experiment']['verdict_output'])
+        verdict, vsha = _artifact(store, index[verifier['id']], row['proposal']['experiment']['verdict_output'])
         require(csha == result['output_sha256'] and vsha == result['verdict_sha256'], 'Feedback original hashes changed')
+        if 'discrimination' in result:
+            measured = discrimination.observe(row.get('discriminator'), verdict, vsha)
+            require(measured == result['discrimination'] and measured['observation'] == result['observation']
+                    and verdict['goal_status'] == result['goal_status'], 'Feedback measurement/predicate changed')
 
 
 def activate(root, ident):
@@ -501,6 +588,8 @@ def activate(root, ident):
     with _meter(store, 'activate'):
         row, observed = _find(store, 'PROPOSAL', ident), _find(store, 'FEEDBACK', ident)
         require(row is not None and observed and observed['status'] == 'TEST_SUPPORTED', 'Candidate lacks supporting independent observation')
+        require(row.get('discriminator') and observed.get('discrimination', {}).get('observation') == 'SUPPORT',
+                'Legacy unbound hypothesis cannot activate')
         _check_feedback(store, row, observed)
         req = _find(store, 'REQUEST', row['request_id'])
         _, saved = _live(store, req, allow_owned_updates=True)

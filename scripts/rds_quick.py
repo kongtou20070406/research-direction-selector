@@ -689,6 +689,8 @@ def brief(root, value, version, formal=False):
         flags = relevant + [kind for kind in flags if kind not in advisory_moves]
         summary['flags'] = list(dict.fromkeys(flags))[:3]
     owned = value.get('advisor') or value
+    if 'working_set' in owned:
+        summary['working_set'] = owned['working_set']
     if 'advisor' in value and 'receipt' in value:
         summary.update(status=value['receipt'].get('run_status', 'UNKNOWN'),
                        run_id=value['receipt'].get('run_id'), receipt_sha256=value['receipt'].get('sha256'),

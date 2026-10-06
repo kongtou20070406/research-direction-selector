@@ -1,0 +1,261 @@
+{
+  "schema": "rds-public-explanation-connectivity-v1",
+  "date": "2026-10-05",
+  "accepted_parent": "b6227af27cdd8d0bcc1c19725c8b76a9375de3d0",
+  "scope": "One public finite engineering trajectory with real post-failure generation",
+  "publication": "Public fixture payloads and hashes retained; absolute local paths, full native trace and host configuration warnings omitted",
+  "initial_observations": [
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      1
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      3,
+      1
+    ]
+  ],
+  "diagnostic_input": 5,
+  "initial_failure": {
+    "hypothesis": "f(x)=x",
+    "training_residuals": [
+      0,
+      0,
+      2,
+      2
+    ],
+    "training_squared_error": 8,
+    "observation": "REFUTE",
+    "feedback_sha256": "cefd3a50fd1c9cbf26a960b10190a2c1ae1599b4daa3c1eaa183d017a9941371"
+  },
+  "generation": {
+    "requested_model": "gpt-6.1-sol",
+    "actual_model_identity": "NOT_EXPOSED_BY_TRACE",
+    "effort": "high",
+    "service_tier": "default",
+    "native_version": "codex-cli 0.160.0",
+    "native_executable_sha256": "fdda5fa3cf3fb3d000b876720742857676293e4315e4b045fae6f8bd7e866d1d",
+    "request_sha256": "28b6c8ff2f29620d9d6589a40620642730729a1acb9cb610b64a7acd2b6a6e83",
+    "prompt_sha256": "628e5e56a98cb5f6b7c10c92b9230e17e4c3afbc09dd543904a4d8d3b1f4bcd7",
+    "original_envelope_sha256": "dc83e1b53eed00a3b7707fac85de1ff7f172fe5f98796e61e5f46ea5edf28bc3",
+    "original_reply_sha256": "6d7321464ab7908130ba4f7c4b96a2fe219fb9a18125cbbc66eb2ed68eedf17d",
+    "original_trace_sha256": "3eb3af9158596815a3efca7a4727d66511a78d44d4c705a3c4756dddf69008c5",
+    "usage": {
+      "cache_write_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 25833,
+      "output_tokens": 1132,
+      "reasoning_output_tokens": 516
+    },
+    "model_calls": 1,
+    "actual_tool_items": [],
+    "reply": {
+      "candidate_probe": 1,
+      "evidence_id": "baseline",
+      "evidence_sha256": "cefd3a50fd1c9cbf26a960b10190a2c1ae1599b4daa3c1eaa183d017a9941371",
+      "explanation": "Candidate law: f(x)=x mod 2, a repeating two-step pattern. It fits all four supplied observations and commits f(5)=1 before the independent probe. The attached baseline original uses f(x)=x. Against the supplied observations, its prediction-minus-observation residuals are [0,0,2,2], whose squared sum is 8, matching the attached verdict's reported training_squared_error. The failure mechanism is that the linear law continues increasing where the observations reset to zero. These are conclusions conditional on the untrusted supplied data, not independently verified measurements. Any independently measured output unequal to x mod 2 refutes this candidate; in particular, an output other than 1 at x=5 refutes it.",
+      "expression_json": "{\"op\":\"mod\",\"args\":[{\"x\":true},2]}",
+      "hypothesis_id": "parity-versus-five-step-reset",
+      "next_if_refuted": "If the independent x=5 result is 0, the candidate is refuted and the rival survives this probe: next measure x=7, where the rival predicts 0 and the candidate predicts 1. If x=5 is neither 0 nor 1, both laws are refuted; repeat the x=5 measurement independently and check input/output alignment before revising the premise that these outputs follow a deterministic arithmetic law.",
+      "next_if_supported": "If the independent x=5 result is 1, the candidate survives this probe and the rival is refuted: next measure x=6, where the candidate predicts 0 and the rival predicts 1. A mismatch would require a new law; agreement would provide additional support without establishing the candidate globally.",
+      "rival_explanation": "Competing law: g(x)=(x mod 5) mod 2. It generates the same four observed values by applying parity within a five-step cycle, then resetting that cycle. The supplied observations do not distinguish this reset mechanism from ordinary parity. It commits g(5)=0 before the independent probe, differing from the candidate's prediction of 1. Any independently measured output unequal to (x mod 5) mod 2 refutes this rival; specifically, any output other than 0 at x=5 refutes it. Agreement at x=5 would support the reset explanation only provisionally, with x=7 providing a further discriminating experiment.",
+      "rival_expression_json": "{\"op\":\"mod\",\"args\":[{\"op\":\"mod\",\"args\":[{\"x\":true},5]},2]}",
+      "rival_probe": 0
+    }
+  },
+  "precommit": {
+    "proposal_sha256": "287515da53946009f5d0b847fb29cf5dadc1e85897df734910220c30d8f43a52",
+    "trigger": {
+      "feedback_sha256": "cefd3a50fd1c9cbf26a960b10190a2c1ae1599b4daa3c1eaa183d017a9941371",
+      "observation": "REFUTE",
+      "proposal_id": "baseline",
+      "purpose": "ALTERNATIVE"
+    },
+    "discriminator": {
+      "conditions": [
+        {
+          "path": "provider.json",
+          "sha256": "7fa29a4f43403679a495a7eafd8d701da64e16bc38b01735bbb83fcf4f6fdd2d"
+        },
+        {
+          "path": "data.json",
+          "sha256": "ccc87c96716ac5506ab8c22de278bd445faea49f0a4ff10de569d5aa81bbe53b"
+        }
+      ],
+      "hypothesis_id": "parity-versus-five-step-reset",
+      "measurement": {
+        "name": "independent-probe-target-at-x5",
+        "path": "out/candidate-verdict.json",
+        "pointer": "/probe_target"
+      },
+      "proposal": {
+        "op": "eq",
+        "value": 1
+      },
+      "rival": {
+        "op": "eq",
+        "value": 0
+      },
+      "schema": 1
+    }
+  },
+  "result": {
+    "hypothesis_observation": "SUPPORT",
+    "measured": {
+      "locator": "pointer:/probe_target",
+      "name": "independent-probe-target-at-x5",
+      "path": "out/candidate-verdict.json",
+      "sha256": "aad5e8c4e02f786272baa642ec95e5a08b721cbc0d86fcb06001a600a4ac9569",
+      "value": 1
+    },
+    "original_task_goal_status": "PASS",
+    "checked_rows": 8,
+    "feedback_sha256": "6c5bf2a15879a79050a91a1c25b8557a9dbe82b722d062f58f7ae0d1f120158f",
+    "candidate_output_sha256": "2920c3457db242d55e87442a70fbe29f049476a1532385c5c832483df8684053",
+    "verdict_output_sha256": "aad5e8c4e02f786272baa642ec95e5a08b721cbc0d86fcb06001a600a4ac9569",
+    "final_decision": "ORIGINAL_EVALUATOR_PASSED"
+  },
+  "attempts": [
+    {
+      "run_id": "agent",
+      "run_status": "FAILED",
+      "receipt_sha256": "f21a29ccf3c905efe408c4e6229b8b19a14febe3180c64b5a8ed207242479187",
+      "resources": {
+        "wall_seconds": {
+          "charged_estimate": 0.0,
+          "measured": 60.06094849994406,
+          "unit": "seconds",
+          "unknown": false
+        }
+      }
+    },
+    {
+      "run_id": "baseline",
+      "run_status": "SUCCEEDED",
+      "receipt_sha256": "d0920605e314829adc8ddaf4dad0d178e452d3506115a999e8355814b189fe5c",
+      "resources": {
+        "wall_seconds": {
+          "charged_estimate": 0.0,
+          "measured": 0.3199208000442013,
+          "unit": "seconds",
+          "unknown": false
+        }
+      }
+    },
+    {
+      "run_id": "baseline-verifier",
+      "run_status": "SUCCEEDED",
+      "receipt_sha256": "b3fbdc41db4b66bc638b5164f629b21299848699115ba2a248f3b2a8ed4ac119",
+      "resources": {
+        "wall_seconds": {
+          "charged_estimate": 0.0,
+          "measured": 0.29193770000711083,
+          "unit": "seconds",
+          "unknown": false
+        }
+      }
+    },
+    {
+      "run_id": "candidate",
+      "run_status": "SUCCEEDED",
+      "receipt_sha256": "4e5d951ec8e6f85d10c1205ac56dc231abaa458177ddf5694320aeaf5ff4f13e",
+      "resources": {
+        "wall_seconds": {
+          "charged_estimate": 0.0,
+          "measured": 0.32673329999670386,
+          "unit": "seconds",
+          "unknown": false
+        }
+      }
+    },
+    {
+      "run_id": "candidate-verifier",
+      "run_status": "SUCCEEDED",
+      "receipt_sha256": "fae9568ca223a0defc845dbade43a44d4d5cf2dafd6af1e907f3de4124d79019",
+      "resources": {
+        "wall_seconds": {
+          "charged_estimate": 0.0,
+          "measured": 0.3162565999664366,
+          "unit": "seconds",
+          "unknown": false
+        }
+      }
+    }
+  ],
+  "original_frozen_bindings": [
+    {
+      "path": "worker.py",
+      "role": "code",
+      "sha256": "7e861d394a882090cf286bb0d61fc126aa89609b0d1b7f795c577c3bd8b07a21"
+    },
+    {
+      "path": "candidate.py",
+      "role": "code",
+      "sha256": "75ed2deaa65880f3c927b45be1c3db3b3e73dd660059330f6f4fb370ac1aeb90"
+    },
+    {
+      "path": "adapter.py",
+      "role": "code",
+      "sha256": "62394505d5a758e1233be16d3c14cceab5085661e631e2b79ded9198f9d5d86b"
+    },
+    {
+      "path": "evaluator.py",
+      "role": "evaluator",
+      "sha256": "7ba0e4669de3d341813dcc17327ff28ad5b30c490443cb33d13fb0f4677817f1"
+    },
+    {
+      "path": "provider.json",
+      "role": "config",
+      "sha256": "7fa29a4f43403679a495a7eafd8d701da64e16bc38b01735bbb83fcf4f6fdd2d"
+    },
+    {
+      "path": "data.json",
+      "role": "data",
+      "sha256": "ccc87c96716ac5506ab8c22de278bd445faea49f0a4ff10de569d5aa81bbe53b"
+    },
+    {
+      "path": "protocol.json",
+      "role": "protocol",
+      "sha256": "7d46925c819a4a89129c93ebc755ab36a74702ea2e542776fdca7c01e6e4abc2"
+    }
+  ],
+  "budget": {
+    "wall_seconds": {
+      "cap": 600.0,
+      "spent_measured": 62.00312579993624,
+      "charged_estimate": 0.0,
+      "reserved": 0.0,
+      "remaining": 537.9968742000638,
+      "unit": "seconds"
+    }
+  },
+  "human_interventions": [
+    {
+      "kind": "author_adapter_repair",
+      "reason": "Configuration warning items were misclassified as tool execution",
+      "original_worker_status": "FAILED",
+      "action": "Consume the unchanged paid reply with corrected trace classification",
+      "model_retry": false
+    }
+  ],
+  "cpu_seconds": "UNKNOWN",
+  "gpu_seconds": "UNKNOWN",
+  "currency": "UNKNOWN",
+  "overall_outer_wall_seconds": "UNKNOWN",
+  "matched_comparison": "NOT_RUN",
+  "scientific_benefit": "UNMEASURED",
+  "limitations": [
+    "Scripted initial failure; small public integer task",
+    "One generation only; not an estimate of stable autonomy or causal discovery",
+    "Final classifier differs from original frozen worker, which remains FAILED",
+    "Prompt-only visibility validated against trace; not an independently sealed holdout",
+    "Hypothesis identity is declared; arbitrary semantic aliases are not detected"
+  ]
+}

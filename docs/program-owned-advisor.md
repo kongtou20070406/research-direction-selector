@@ -31,8 +31,9 @@ Choose a new empty directory outside the checkout:
 ```powershell
 python -B examples/owned-advisor/prepare.py --root ../owned-advisor-demo
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project init --contract ../owned-advisor-demo/contract.json
-python -B scripts/rds_cli.py --root ../owned-advisor-demo advise
+python -B scripts/rds_cli.py --root ../owned-advisor-demo advise --working-set --brief
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project advance
+python -B scripts/rds_cli.py --root ../owned-advisor-demo advise --working-set --brief
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project advance
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project next
 ```
@@ -40,6 +41,13 @@ python -B scripts/rds_cli.py --root ../owned-advisor-demo project next
 Each `advance` executes at most one selected run. No agent-written post-run manifest or replacement research context is needed. Execution returns the original hashed `receipt` and the automatic `advisor` update separately. A completed run is never repeated to repair a failed collection: use `advise` or `project recover --id <id>` to reconcile retained evidence.
 
 For routine agent use, add `--brief` to `advise`, `project next` or `project advance`. The digest retains receipt identity, collection status, selected run and coverage errors, with the full report in the existing CAS record.
+
+For Agent continuation, use `advise --working-set --brief`. The optional
+[current working set](advisor-working-set.md) adds the final owned selection,
+goal measurements, live budget, unresolved declarations, scoped verified
+feedback and original evidence locators. Read any `details_omitted` or omitted
+section's `original` before making a consequential choice. Display does not
+launch a run or call the metered structure APIs.
 
 The example is a six-row deterministic computation. Its comparison exercises collection and selection; it is not a scientific success-rate experiment or a training-performance benchmark.
 

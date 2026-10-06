@@ -86,9 +86,19 @@ def manifest(root, ident, strategy='interaction', verifier=False, mode='ok', tim
 def proposal(root, task, ident='candidate', strategy='interaction', action='knowledge_expansion', mode='ok', timeout=2):
     node = {'id': ident + '-concept', 'kind': 'concept', 'label': 'Alternative representation from external fixture source',
             'source': {'locator': 'public synthetic source; prescribed fixture concept'}}
-    return {'id': ident, 'request_id': task['id'], 'gap_id': task['gap_id'], 'action_kind': action,
+    from rds_structure import _verified_feedback
+    previous = _verified_feedback(ProjectStore(root), task['scope_sha256'])
+    trigger = ({'trigger': {'proposal_id': previous[-1]['id'], 'feedback_sha256': digest(previous[-1]),
+                           'observation': previous[-1].get('observation'),
+                           'purpose': 'EVIDENCE' if previous[-1].get('observation') in (None, 'UNKNOWN') else 'ALTERNATIVE'}}
+               if previous else {})
+    return {'id': ident, 'request_id': task['id'], 'gap_id': task['gap_id'], 'action_kind': action, **trigger,
             'new_nodes': [node], 'relations': [], 'assumptions': ['Finite original measurements and unchanged independent acceptance'],
             'prediction': {'observable': node['id'], 'if_proposal': 'All finite oracle outputs match', 'if_rival': 'At least one mismatch persists'},
+            'discriminator': {'schema': 1, 'hypothesis_id': strategy,
+                              'conditions': [{'path': p, 'sha256': file_sha(Path(root) / p)} for p in ('config.json', 'data.json')],
+                              'measurement': {'name': 'finite-output-equality', 'path': f'out/{ident}-verdict.json', 'pointer': '/correct'},
+                              'proposal': {'op': 'eq', 'value': True}, 'rival': {'op': 'eq', 'value': False}},
             'test': {'protocol': 'Frozen exact finite inputs', 'measurement': 'Independent output equality', 'stop_condition': 'One candidate and one verifier; stop on timeout'},
             'next_if_positive': 'Retain and test the alternative representation', 'next_if_negative': 'Reject this representation and test a distinct alternative',
             'exploration': {'limitation': 'The initial decomposition does not provide an independently checked solution',

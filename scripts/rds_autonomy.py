@@ -3,7 +3,9 @@
 This controller does not create a second task registry or execute model source.
 Every worker, including repair inference, goes through ProjectStore admission.
 """
+import codecs
 from copy import deepcopy
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -18,6 +20,8 @@ PREFIX = 'autonomy.'
 REQUESTED = 'AUTONOMY_MODEL_REQUESTED'
 PROCESSED = 'AUTONOMY_MODEL_PROCESSED'
 MAX_BYTES = 2 * 1024 * 1024
+EXCERPT_BYTES = 4096
+EXCERPT_TOTAL = 64 * 1024
 
 
 class ModelResultIntegrityError(ValueError):
@@ -216,6 +220,57 @@ def check_run(store, db, contract, run):
                 'Model provider executable changed before launch')
 
 
+def evidence_excerpts(store, state, ids):
+    """Bounded heads of frozen task inputs and original outputs, hash-checked.
+
+    Diagnostics carry costs and failure tails only; a candidate that exits 0
+    with a wrong value leaves the model no task content to repair from.
+    """
+    from rds_owned_advisor import _read_original
+    receipts = sorted((r for r in state['receipts'] if r['run_id'] not in ids),
+                      key=lambda r: (r.get('ended_at', 0), r['run_id']), reverse=True)
+    produced = [(r, item) for r in receipts for item in r['artifacts']
+                if item['kind'] == 'project_output' and item.get('size', MAX_BYTES + 1) <= MAX_BYTES]
+    # Neither side can crowd out the other: outputs keep up to half of the total
+    # when they need it, and whatever one side leaves unused goes to the other.
+    reserved = min(EXCERPT_TOTAL // 2, sum(min(EXCERPT_BYTES, item['size']) for _, item in produced))
+    used = 0
+    def head(raw, cap):
+        # Limits count retained UTF-8 text bytes: U+FFFD replacement can triple
+        # undecodable bytes, so the encoded text is cut again. A head cut inside
+        # a character keeps only whole characters.
+        nonlocal used
+        limit = min(EXCERPT_BYTES, cap - used)
+        text = codecs.getincrementaldecoder('utf-8')('replace').decode(raw[:limit], final=len(raw) <= limit)
+        encoded = text.encode('utf-8')
+        if len(encoded) > limit:
+            text = encoded[:limit].decode('utf-8', 'ignore')
+        used += len(text.encode('utf-8'))
+        return {'size': len(raw), 'truncated': len(raw) > limit or len(encoded) > limit, 'text': text}
+    inputs, outputs = [], []
+    for binding in state['contract']['bindings']:
+        if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL - reserved:
+            continue
+        path = store._path(binding['path'])
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_BYTES:
+            continue
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != binding['sha256']:
+            continue  # Binding failures are reported by ordinary admission, not repaired here.
+        inputs.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
+                       **head(raw, EXCERPT_TOTAL - reserved)})
+    for receipt, item in produced:
+        if used >= EXCERPT_TOTAL:
+            break
+        raw = _read_original(store, item, keep=True)
+        if raw is None:
+            continue
+        outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
+                        'path': item['path'], 'sha256': item['sha256'], **head(raw, EXCERPT_TOTAL)})
+    return {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
+            'frozen_inputs': inputs, 'original_outputs': outputs}
+
+
 def request_repair(store, report):
     """One request per original blocker; workbench evidence remains immutable."""
     from rds_owned_advisor import _state, _fingerprint
@@ -257,6 +312,7 @@ def request_repair(store, report):
                'base_source': store._path(slot['code_path']).read_text(encoding='utf-8-sig'),
                'policy': deepcopy(state['contract']['advisor_policy']), 'original_review': report,
                'rejected_methods': deepcopy(previous),
+               'evidence_excerpts': evidence_excerpts(store, state, ids),
                'authority': 'EXISTING_GOAL_BUDGET_COMMANDS_AND_CODE_PATH_ONLY'}
     require(len(canonical(request).encode('utf-8')) <= MAX_BYTES, 'Model request exceeds bound')
     ref = cas_bytes(store.root, canonical(request).encode('utf-8'))

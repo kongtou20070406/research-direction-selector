@@ -56,9 +56,16 @@ class FeasibilityTests(unittest.TestCase):
         return path.read_text(encoding='utf-8').splitlines() if path.exists() else []
 
     def pilots(self):
-        results = [self.cli('project', 'advance') for _ in range(3)]
-        self.assertEqual([r['receipt']['run_id'] for r in results], ['pilot-slow', 'pilot-fast', 'pilot-verify'])
-        self.assertTrue(all(r['receipt']['run_status'] == 'SUCCEEDED' for r in results))
+        results = []
+        for run_id in ('pilot-slow', 'pilot-fast', 'pilot-verify'):
+            result = self.cli('project', 'advance')
+            self.assertIn('receipt', result, json.dumps({
+                'expected_run': run_id, 'launches': self.launches(),
+                'budget': self.store.snapshot()['budget'],
+            }))
+            self.assertEqual(result['receipt']['run_id'], run_id)
+            self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
+            results.append(result)
         return results
 
     def test_complete_plan_denies_slow_before_launch_and_independently_verifies_fast(self):
@@ -201,10 +208,17 @@ class FeasibilityTests(unittest.TestCase):
 
     def test_deadline_is_original_campaign_start_and_failed_step_cannot_repeat(self):
         self.initialize()
-        self.pilots()
+        # This obligation needs the original campaign start, not three pilots
+        # that may legitimately exhaust their separate shared allowance.
+        started = self.cli('project', 'advance')
+        self.assertIn('receipt', started)
+        self.assertEqual(started['receipt']['run_id'], 'pilot-slow')
+        self.assertEqual(started['receipt']['run_status'], 'SUCCEEDED')
         state = self.state()
+        before = self.store.snapshot()
         deadline = state['campaign_started']['started_at'] + self.contract['stop_policy']['wall_seconds']
         report = feasibility.assess(self.store, state, now=deadline + 1)
+        self.assertEqual(report['deadline'], deadline)
         self.assertEqual(report['admitted_runs'], [])
         self.assertTrue(all(p['available_wall_seconds'] == 0 for p in report['plans']))
         failed = deepcopy(state)
@@ -212,6 +226,28 @@ class FeasibilityTests(unittest.TestCase):
         report = feasibility.assess(self.store, failed)
         self.assertEqual(next(p for p in report['plans'] if p['id']=='fast')['status'], 'REPAIR_REQUIRED')
         self.assertNotIn('fast', report['admitted_runs'])
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.launches(), ['pilot-slow'])
+        self.assertEqual(len(before['receipts']), 1)
+        self.assertEqual(before['receipts'][0]['attempt_id'], started['receipt']['attempt_id'])
+
+    def test_pilot_shared_allowance_accepts_boundary_and_rejects_excess(self):
+        self.initialize()
+        original = self.state()
+        before = self.store.snapshot()
+        # Explicit synthetic accounting inputs, not persisted or measured runs.
+        for spent, allowed in ((2.8, True), (2.801, False)):
+            state = deepcopy(original)
+            state['receipts'].append({'run_id': 'pilot-slow', 'run_status': 'SUCCEEDED',
+                'resources': {'wall_seconds': {'measured': spent, 'charged_estimate': 0}}})
+            report = feasibility.assess(self.store, state)
+            with self.subTest(spent=spent):
+                self.assertEqual(report['pilot_budget']['cap'], 10)
+                self.assertEqual(report['pilot_budget']['spent_or_charged'], spent)
+                self.assertEqual('pilot-fast' in report['bounded_pilots'], allowed)
+                self.assertEqual('pilot-fast' in report['admitted_runs'], allowed)
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.launches(), [])
 
     def test_final_obligation_unknown_prevents_solver_launch(self):
         self.initialize(lambda c: c['advisor_policy']['feasibility']['models'].pop('verify'))
@@ -270,6 +306,34 @@ class FeasibilityTests(unittest.TestCase):
             report = feasibility.assess(self.store, state, now=278)  # Original deadline280; two seconds remain.
         self.assertEqual(next(p for p in report['plans'] if p['id']=='fast')['status'], 'FEASIBLE')
         self.assertIn('fast', report['admitted_runs'])
+
+    def test_hosted_pilot_values_are_rejected_by_original_hard_timeout_gate(self):
+        self.initialize()
+        state = self.state()
+        manifests = {r['manifest']['id']: r['manifest'] for r in self.contract['advisor_policy']['routes']}
+        before = deepcopy(state)
+        # Synthetic estimator inputs reproduce the numeric admission branch.
+        # These declarations are not imported receipts or measured new attempts.
+        def pilot(run_id, seconds):
+            protocol = json.loads((self.root / manifests[run_id]['protocol']['path']).read_text(encoding='utf-8'))
+            return {'run_id': run_id, 'run_status': 'SUCCEEDED', 'timeout': False,
+                    'runtime_fingerprint': feasibility.runtime_fingerprint(),
+                    'bindings_before': state['contract']['bindings'], 'bindings_after': state['contract']['bindings'],
+                    'protocol': protocol, 'sha256': 'synthetic-unit-input',
+                    'resources': {'wall_seconds': {'measured': seconds}}}
+        for measured, upper in ((4.6477538, 27.8865228), (5.406, 32.436)):
+            with self.subTest(measured=measured):
+                state['receipts'] = [pilot('pilot-fast', measured), pilot('pilot-verify', .1)]
+                report = feasibility.assess(self.store, state)
+                fast = next(p for p in report['plans'] if p['id'] == 'fast')
+                self.assertAlmostEqual(fast['steps'][0]['upper_wall_seconds'], upper)
+                self.assertEqual(fast['status'], 'INFEASIBLE')
+                self.assertEqual(fast['reason'], 'Conditional completion forecast exceeds a required step hard timeout')
+                self.assertNotIn('fast', report['admitted_runs'])
+                self.assertEqual(state['runs'], before['runs'])
+                self.assertEqual(state['budget'], before['budget'])
+                self.assertEqual(self.store.snapshot()['receipts'], [])
+                self.assertEqual(self.launches(), [])
 
 
 if __name__ == '__main__':
