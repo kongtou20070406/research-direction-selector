@@ -1,6 +1,6 @@
 """Actual CLI: infeasible plan -> editable tool -> adoption -> fresh pilots -> frozen verifier.
 
-All inputs are the public integer-sum fixture. After adoption, applicable runtime
+All inputs are the public integer-sum fixture. Initial verifier and post-adoption runtime
 forecasts use labelled, fixed test premises; real estimates remain in reports.
 Real CLI execution, resource accounting, hard limits and the verifier remain live.
 A verified result establishes this workflow, not runtime scaling or research gain.
@@ -19,7 +19,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -50,7 +50,7 @@ class ToolEvolutionFlowTests(unittest.TestCase):
             if source.exists():
                 shutil.copytree(source, target / relative, dirs_exist_ok=True)
         for name in ('contract.json', 'proposal-final.json', 'snapshot-final.json', 'snapshot-before-revision.json',
-                     'test-forecast-premise.json'):
+                     'test-forecast-premise.json', 'test-initial-verifier-premise.json'):
             if (self.root / name).exists():
                 shutil.copyfile(self.root / name, target / name)
 
@@ -133,9 +133,27 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         self.evaluator = (self.root / 'verifier.py').read_bytes()
         self.cli('project', 'init', '--contract', self.write('contract.json', contract))
 
+    def install_initial_verifier_premise(self):
+        policy = self.genesis['advisor_policy']
+        manifest = next(r['manifest'] for r in policy['routes'] if r['manifest']['id'] == 'verify')
+        self.forecast_premise = self.write('test-initial-verifier-premise.json', {
+            'phase': 'initial-verifier', 'root': str(self.root),
+            'contract_sha256': digest(self.genesis), 'routes': {'verify': {
+                'manifest_sha256': digest(manifest),
+                'model_sha256': digest(policy['feasibility']['models']['verify']),
+                'lower_wall_seconds': 1.0, 'upper_wall_seconds': 3.0}}})
+
     def evolve_and_verify(self, correct):
         self.initialize_slow_only()
+        self.install_initial_verifier_premise()
         for expected in ('pilot-verify', 'pilot-slow'):
+            if expected == 'pilot-slow':
+                preview = self.cli('project', 'next')
+                estimate = next(e for e in preview['feasibility']['plans'][0]['steps'] if e['run_id'] == 'verify')
+                self.assertEqual(estimate['basis'], 'TEST_SYNTHETIC_CONDITIONAL_FORECAST')
+                self.assertEqual(estimate['test_premise_phase'], 'initial-verifier')
+                self.assertEqual(estimate['real_forecast']['status'], 'CONDITIONAL_FORECAST')
+                self.assertEqual(estimate['real_forecast']['sources'][0]['run_id'], 'pilot-verify')
             result = self.cli('project', 'advance')
             self.assertIn('receipt', result, result)
             self.assertEqual(result['receipt']['run_id'], expected)
@@ -218,7 +236,7 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         manifests = {r['manifest']['id']: r['manifest'] for r in active['advisor_policy']['routes']}
         models = active['advisor_policy']['feasibility']['models']
         self.forecast_premise = self.write('test-forecast-premise.json', {
-            'root': str(self.root), 'contract_sha256': digest(active),
+            'phase': 'post-adoption', 'root': str(self.root), 'contract_sha256': digest(active),
             'routes': {run_id: {'manifest_sha256': digest(manifests[run_id]),
                                 'model_sha256': digest(models[run_id]),
                                 'lower_wall_seconds': bounds[0], 'upper_wall_seconds': bounds[1]}
@@ -275,6 +293,48 @@ class ToolEvolutionFlowTests(unittest.TestCase):
     def test_wrong_new_tool_cannot_self_certify_the_goal(self):
         self.evolve_and_verify(correct=False)
 
+    def test_initial_unknown_and_hosted_numeric_hard_timeout_denial_do_not_launch(self):
+        from rds_project import ProjectStore
+        from rds_owned_advisor import _state
+        import rds_feasibility
+        self.initialize_slow_only()
+        self.install_initial_verifier_premise()
+        unknown = self.cli('project', 'next')
+        verify = next(e for e in unknown['feasibility']['plans'][0]['steps'] if e['run_id'] == 'verify')
+        self.assertEqual(verify['status'], 'UNKNOWN')
+        self.assertNotIn('real_forecast', verify)
+        self.assertEqual(self.launches(), [])
+        first = self.cli('project', 'advance')
+        self.assertEqual(first['receipt']['run_id'], 'pilot-verify')
+        self.assertEqual(first['receipt']['run_status'], 'SUCCEEDED')
+        store = ProjectStore(self.root)
+        before = store.snapshot()
+        with store._db(True) as db:
+            original = _state(store, db)
+        state = deepcopy(original)
+        # Unpersisted numeric control from the original hosted return. This is
+        # not a measured local receipt: the actual ledger/costs stay untouched.
+        state['receipts'][0]['resources']['wall_seconds']['measured'] = 8.25
+        report = rds_feasibility.assess(store, state)
+        plan = report['plans'][0]
+        estimate = next(e for e in plan['steps'] if e['run_id'] == 'verify')
+        self.assertEqual(estimate['lower_wall_seconds'], 8.25)
+        self.assertEqual(estimate['upper_wall_seconds'], 24.75)
+        self.assertEqual(plan['status'], 'INFEASIBLE')
+        self.assertIn('hard timeout', plan['reason'])
+        self.assertEqual(report['pilot_budget'], {'cap':20, 'spent_or_charged':8.25,
+                                                'reserved':0, 'remaining':11.75})
+        self.assertEqual(report['admitted_runs'], [])
+        self.assertEqual(report['bounded_pilots'], [])
+        self.assertGreater(plan['available_wall_seconds'], 24.75)
+        manifest = next(r['manifest'] for r in self.genesis['advisor_policy']['routes']
+                        if r['manifest']['id'] == 'pilot-slow')
+        with patch('rds_owned_advisor._state', return_value=state):
+            with store._db(True) as db, self.assertRaisesRegex(ValueError, 'before child launch'):
+                rds_feasibility.check_start(store, db, manifest['id'])
+        self.assertEqual(store.snapshot(), before)
+        self.assertEqual(self.launches(), ['pilot-verify'])
+
 
 class FixtureRootIdentityTests(unittest.TestCase):
     def setUp(self):
@@ -325,22 +385,25 @@ class ControlledForecastPremiseTests(unittest.TestCase):
                      'lower_wall_seconds': 9.2955076, 'upper_wall_seconds': 27.8865228,
                      'sources': [{'measured_wall_seconds': 4.6477538}]}
         self.original = Mock(return_value=self.real)
-        self.premise = {'root': str(ROOT), 'contract_sha256': digest(self.state['contract']), 'routes': {
+        self.route, self.upper = 'fast', 6
+        self.premise = {'phase': 'post-adoption', 'root': str(ROOT), 'contract_sha256': digest(self.state['contract']), 'routes': {
             'fast': {'manifest_sha256': digest(self.manifest), 'model_sha256': digest(self.model),
-                     'lower_wall_seconds': 2.0, 'upper_wall_seconds': 6.0}}}
+                     'lower_wall_seconds': 2.0, 'upper_wall_seconds': 6.0},
+            'verify': {'manifest_sha256': 'unused', 'model_sha256': 'unused',
+                       'lower_wall_seconds': 1.0, 'upper_wall_seconds': 3.0}}}
 
     def estimate(self):
-        return self.bind(self.premise, self.original)(self.store, self.state, 'fast', self.manifest, self.model)
+        return self.bind(self.premise, self.original)(self.store, self.state, self.route, self.manifest, self.model)
 
     def test_labelled_premise_retains_original_estimate_and_does_not_mutate_it(self):
         before = deepcopy(self.real)
         result = self.estimate()
         self.assertEqual(result['basis'], 'TEST_SYNTHETIC_CONDITIONAL_FORECAST')
-        self.assertEqual(result['upper_wall_seconds'], 6)
+        self.assertEqual(result['upper_wall_seconds'], self.upper)
         self.assertEqual(result['real_forecast'], before)
         self.assertEqual(result['sources'], [])
         self.assertEqual(self.real, before)
-        self.original.assert_called_once_with(self.store, self.state, 'fast', self.manifest, self.model)
+        self.original.assert_called_once_with(self.store, self.state, self.route, self.manifest, self.model)
 
     def test_missing_or_stale_pilot_remains_unknown(self):
         self.original.return_value = {'status': 'UNKNOWN', 'run_id': 'fast', 'reason': 'Pilot identity is stale'}
@@ -365,6 +428,40 @@ class ControlledForecastPremiseTests(unittest.TestCase):
     def test_other_route_keeps_original_estimator(self):
         result = self.bind(self.premise, self.original)(self.store, self.state, 'slow', {'id': 'slow'}, None)
         self.assertIs(result, self.real)
+
+
+class InitialVerifierPremiseTests(ControlledForecastPremiseTests):
+    def setUp(self):
+        super().setUp()
+        self.route, self.upper = 'verify', 3
+        self.model = {'pilot_runs':['pilot-verify'], 'exponent':1}
+        self.manifest = {'id':'verify'}
+        self.state['contract']['advisor_policy'] = {'feasibility': {
+            'models': {'slow': {}, 'verify':deepcopy(self.model)}}}
+        self.real.update(run_id='verify', lower_wall_seconds=8.25, upper_wall_seconds=24.75,
+                         sources=[{'run_id':'pilot-verify', 'measured_wall_seconds':8.25}])
+        self.premise = {'phase':'initial-verifier', 'root':str(ROOT),
+            'contract_sha256':digest(self.state['contract']), 'routes': {'verify': {
+                'manifest_sha256':digest(self.manifest), 'model_sha256':digest(self.model),
+                'lower_wall_seconds':1.0, 'upper_wall_seconds':3.0}}}
+
+    def test_phase_cannot_borrow_post_adoption_models(self):
+        self.state['contract']['advisor_policy']['feasibility']['models']['fast'] = {}
+        self.premise['contract_sha256'] = digest(self.state['contract'])
+        self.assertEqual(self.estimate()['status'], 'UNKNOWN')
+
+    def test_phase_routes_and_fixed_bounds_cannot_be_tampered(self):
+        from tool_evolution_cli_fixture import validate_premise
+        for change in ('phase', 'route', 'lower', 'upper'):
+            premise = deepcopy(self.premise)
+            if change == 'phase':
+                premise['phase'] = 'post-adoption'
+            elif change == 'route':
+                premise['routes']['fast'] = deepcopy(premise['routes']['verify'])
+            else:
+                premise['routes']['verify'][change + '_wall_seconds'] = 20
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                validate_premise(premise)
 
 
 if __name__ == '__main__':
