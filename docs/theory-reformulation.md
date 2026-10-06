@@ -169,3 +169,7 @@ GPU 实验启动前须使用项目实际配置的 runner 做 preflight，核对�
 `python -B scripts/rds_theory_tools.py --test-operator egraph_equivalence_saturation` 检查显式声明变量的有理多项式表达式。示例只实现二元加法/乘法的交换律、加零和乘一；未连通且没有精确反例时保持 UNKNOWN，达到节点、工作或迭代预算时也不判不等。PASS 的 assurance 是 `BOUNDED_REWRITE_CHECK`，没有独立证书，不能据此声明原研究目标完成。
 
 `--scaffold egraph_equivalence_saturation --out rewrite_example.py` 导出相同实现与正例、反例、未决例自测；拒绝覆盖已有文件。导出后必须绑定自己的表达式、变量和适用域。这个标准库示例没有安装 Rust egg/egglog。超图 Rust 后端的实际构建、兼容回退和测量范围见[原生加速](native-acceleration.md)。
+
+## Bounded exact-math capability routing
+
+The theory-tools CLI exposes a typed exact-math adapter registry for bounded rational linear systems and univariate real-root isolation. Unsupported claims stay `UNKNOWN` and return a machine-readable adapter task. See the [capability-router guide](math-capability-router.md) for request schemas, checker semantics, and scope limits.
