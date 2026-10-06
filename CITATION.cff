@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata in this file."
+type: software
+title: Research Direction Selector
+authors:
+  - name: Research Direction Selector contributors
+repository-code: "https://github.com/kongtou20070406/research-direction-selector"
+license: Apache-2.0
+keywords:
+  - autoresearch
+  - academic research
+  - research workflow
+  - reproducible research
+  - experiment design
+  - execution receipts
+  - formal verification
