@@ -14,7 +14,11 @@
 
 **Agent 出主意，程序来记账。**
 
-面向 Codex、Claude Code 等编程 Agent 的本地科研内核。它在实验开始前冻结"要证明什么"，每个昂贵任务只跑一次，留下 Agent 改不了的回执，并记住哪些路已经走不通。下一步依据记录在案的证据，而不是上下文窗口里的记忆。
+**面向学术研究、由证据驱动的 autoresearch。**
+
+面向学术研究及 Codex、Claude Code 等编程 Agent 实验工作流的本地科研内核。它在执行前冻结目标、输入与评估器，预留预算，保留执行回执，并跨会话延续已记录的证据。用它规划有界实验、恢复中断工作，并核验受支持的结果。
+
+[RDS 如何参与 autoresearch 工作流](docs/autoresearch.md) · [CPU 回执与恢复示例](examples/autoresearch-receipts/README.md) · [引用本软件](CITATION.cff)
 
 [English](README.md) · **简体中文** · [日本語](README.ja-JP.md)
 
