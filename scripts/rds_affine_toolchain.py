@@ -231,20 +231,33 @@ def _proof_plan(matrix, bias, candidate, source_models=None):
     return {"version": 1, "artifacts": artifacts, "steps": steps}
 
 
-def _verify_synthesis(spec):
+def _prepare_synthesis(spec):
+    matrix, bias, source_models = _read_affine_spec(spec)
+    candidate = _solve(matrix, bias)
+    require(candidate is not None,
+            "No rational fixed-point witness was found; nonexistence is not certified")
+    return _proof_plan(matrix, bias, candidate, source_models), candidate, source_models
+
+
+def build_proof_plan(spec):
+    """Build the trusted affine plan without running child proof generators."""
+    return _prepare_synthesis(spec)[0]
+
+
+def _verify_synthesis(spec, *, max_work_units=None):
     """Generate a witness, then require native Lean proofs of all coordinate goals."""
     try:
-        matrix, bias, source_models = _read_affine_spec(spec)
-        candidate = _solve(matrix, bias)
-        if candidate is None:
-            return {"status": "UNKNOWN", "assurance": "NONE", "backend": BACKEND,
-                    "reason": "No rational fixed-point witness was found; nonexistence is not certified"}
-        plan = _proof_plan(matrix, bias, candidate, source_models)
+        require(max_work_units is None or type(max_work_units) is int and max_work_units >= 0,
+                "max_work_units must be a nonnegative integer")
+        plan, candidate, source_models = _prepare_synthesis(spec)
         from rds_verify import execute_proof_plan
-        answer = execute_proof_plan(plan)
+        answer = execute_proof_plan(plan, max_work_units=max_work_units)
         if answer.get("status") != "PASS":
-            return {"status": "UNKNOWN", "assurance": "NONE", "backend": BACKEND,
-                    "reason": answer.get("reason", "Generated proof plan was not discharged")}
+            result = {"status": "UNKNOWN", "assurance": "NONE", "backend": BACKEND,
+                      "reason": answer.get("reason", "Generated proof plan was not discharged")}
+            if "optimization" in answer:
+                result["optimization"] = answer["optimization"]
+            return result
         certificate = {"version": 1, "spec_sha256": digest(spec), "kind": KIND,
                        "dimension": len(candidate), "candidate": [str(value) for value in candidate],
                        "plan": answer["certificate"], "assurance": ASSURANCE, "backend": BACKEND,
@@ -326,11 +339,14 @@ def _check_composition_certificate(statement, certificate):
         return False
 
 
-def verify(spec):
+def verify(spec, *, max_work_units=None):
     """Dispatch registered proof-plan leaves to affine composition or synthesis."""
+    if max_work_units is not None and (not isinstance(spec, dict) or spec.get("kind") != KIND):
+        return {"status": "UNKNOWN", "assurance": "NONE", "backend": BACKEND,
+                "reason": "Explicit max_work_units requires direct affine_fixed_point_synthesis"}
     if isinstance(spec, dict) and spec.get("kind") == COMPOSITION_KIND:
         return _verify_composition(spec)
-    return _verify_synthesis(spec)
+    return _verify_synthesis(spec, max_work_units=max_work_units)
 
 
 def check_certificate(spec, certificate):

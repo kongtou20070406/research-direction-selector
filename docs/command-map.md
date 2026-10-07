@@ -86,7 +86,8 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | Command | Purpose | Inputs and prerequisites | Guide |
 | --- | --- | --- | --- |
 | `formal rules` | List the installed trusted rule registry | No proof inputs; a methodology rule is not a trusted mathematical rule | [Formal framework](formal-verification.md) |
-| `formal verify` | Generate and check a supported declaration | `--spec`; choose supported `--tactics` when needed; optional `--output`, `--no-cache`; backend-specific dependencies apply | [Formal framework](formal-verification.md), [Native Lean](lean-native.md) |
+| `formal plan` | Inspect the trusted affine plan without generating a proof | `--spec` with direct `affine_fixed_point_synthesis`; optional `--output`, nonnegative `--max-work-units`; READY has assurance NONE and no certificate | [Formal framework](formal-verification.md) |
+| `formal verify` | Generate and check a supported declaration | `--spec`; optional `--output`, `--no-cache`; `--max-work-units` only for direct affine synthesis, bypassing cache and incompatible with `--tactics`; budget excludes search/replay/time/memory; backend-specific dependencies apply | [Formal framework](formal-verification.md), [Native Lean](lean-native.md) |
 | `formal check` | Replay an existing certificate | Matching `--spec` and `--certificate`; preserve PASS/FAIL/UNKNOWN and backend assurance separately | [Formal framework](formal-verification.md) |
 
 The verifier guide maps declaration kinds to the installed scalar, matrix, neural/tensor, dynamics, geometric and native Lean/statistical adapters and their exact limits. Select the adapter from that guide; do not infer support from a roadmap or install all optional backends for an unrelated task.

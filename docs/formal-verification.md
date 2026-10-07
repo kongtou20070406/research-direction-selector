@@ -73,6 +73,37 @@ it does not bound candidate search performed before plan construction. Neither p
 nor reuse upgrades assurance, makes an unsupported statement provable, or turns an
 application premise into a theorem.
 
+The public `formal plan --spec` entry constructs a plan using the registered
+`affine_fixed_point_synthesis` adapter, for a direct map or its supported ordered
+composition. It returns `READY` (exit 0) or `UNKNOWN` (exit 2), with a plan hash,
+dependency-safe schedule, reuse information and work estimate. It runs the bounded
+rational witness search needed to construct that plan, but no child proof generator,
+native Lean process, certificate replay or proof cache. `READY` has assurance `NONE`
+and contains no certificate; it does not certify the witness. Unsupported or invalid
+specifications, including `theorem_module` and user-supplied plan declarations,
+remain `UNKNOWN`.
+
+```powershell
+python -B scripts/rds_cli.py --root . formal plan --spec examples/formal/affine_fixed_point_synthesis.json --output affine-plan.json
+python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/affine_fixed_point_synthesis.json --max-work-units 6 --output affine-budget-proof.json
+python -B scripts/rds_cli.py --root . formal check --spec examples/formal/affine_fixed_point_synthesis.json --certificate affine-budget-proof.json
+```
+
+For this example the optimized generation estimate is 6 operation-proxy units.
+`formal plan` and `formal verify` accept an optional nonnegative integer
+`--max-work-units`. An estimate above that limit yields `UNKNOWN` before any child
+proof generator runs; the report retains the estimate and budget. Verification
+with an explicit budget bypasses the proof cache, so even a previously cached proof
+cannot bypass this admission check. Successful verification still requires the
+usual independent certificate replay. The budget excludes witness search, plan
+construction, certificate replay, elapsed time and memory; existing adapter limits
+still apply. Explicit budgets support only direct `affine_fixed_point_synthesis`
+specifications and are incompatible with `--tactics`; other kinds and theorem
+modules fail closed. Noninteger CLI values are parser errors (exit 2), and negative
+values return `UNKNOWN`. Without a budget, existing verification, tactic and cache
+behavior is unchanged. This interface does not accept an executable plan from the
+caller or alter plan/certificate versions.
+
 The bounded multiplication rule can be named in a theorem module, referenced through
 `$ref`, reused by multiple conjunctions, and checked through the existing formal CLI
 and proof cache. See [the composed example](../examples/formal/bounded_progression_module.json).

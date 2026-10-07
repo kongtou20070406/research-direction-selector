@@ -1552,11 +1552,18 @@ def parser():
     formal = commands.add_parser("formal", help="Declare, prove and replay bounded mathematical statements")
     f_actions = formal.add_subparsers(dest="action", required=True)
     f_actions.add_parser("rules")
+    f_plan = f_actions.add_parser("plan", help="Inspect a trusted affine plan without generating proofs")
+    f_plan.add_argument("--spec", required=True)
+    f_plan.add_argument("--output")
+    f_plan.add_argument("--max-work-units", type=int,
+                        help="Optional nonnegative generation operation-proxy budget after plan construction")
     f_verify = f_actions.add_parser("verify")
     f_verify.add_argument("--brief", "--digest", action="store_true")
     f_verify.add_argument("--spec", required=True)
     f_verify.add_argument("--output")
     f_verify.add_argument("--no-cache", action="store_true")
+    f_verify.add_argument("--max-work-units", type=int,
+                          help="Affine generation operation-proxy budget; bypasses proof cache, excludes search/replay")
     f_verify.add_argument("--tactics", nargs="+", choices=["rule", "gershgorin", "spectral_radius",
                                                          "scale_invariance", "lean4", "rational", "interval"],
                           help="Run a bounded explicit tactic chain without the default proof cache")
@@ -1701,7 +1708,7 @@ def _main():
             from rds_obelisk import history_command
             return history_command(args) or 0
         if args.command == "formal":
-            from rds_verify import checked_result, rules, verify
+            from rds_verify import checked_result, plan, rules, verify
             from rds_verify_types import MAX_CERTIFICATE_BYTES
             if args.action == "rules":
                 result = {"rules": rules()}
@@ -1711,6 +1718,14 @@ def _main():
                     artifact = strict_json(read_bounded(args.certificate, MAX_CERTIFICATE_BYTES).decode("utf-8-sig"))
                     certificate = artifact.get("certificate", artifact) if isinstance(artifact, dict) else artifact
                     result = checked_result(spec, certificate)
+                elif args.action == "plan":
+                    result = plan(spec, max_work_units=args.max_work_units)
+                elif args.max_work_units is not None:
+                    if args.tactics:
+                        result = {"status": "UNKNOWN", "assurance": "NONE", "backend": "rds_declarative",
+                                  "reason": "Explicit max_work_units is incompatible with --tactics"}
+                    else:
+                        result = verify(spec, max_work_units=args.max_work_units)
                 elif args.tactics:
                     from rds_verify import LeanFormalEngine
                     result = LeanFormalEngine().verify(spec, args.tactics)
@@ -1719,7 +1734,7 @@ def _main():
                 else:
                     from rds_proof_cache import ProofCache
                     result = ProofCache(rds.directory / "proofs.sqlite3").verify(spec)
-                if args.action == "verify" and args.output:
+                if args.action in {"plan", "verify"} and args.output:
                     raw = canonical(result).encode("utf-8")
                     require(len(raw) <= MAX_CERTIFICATE_BYTES, "Proof artifact exceeds byte limit")
                     Path(args.output).write_bytes(raw)
