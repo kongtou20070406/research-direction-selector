@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from rds_project import ProjectStore
+from rds_project import ProjectStore, digest
 import rds_feasibility as feasibility
 from rds_owned_advisor import _state
 
@@ -35,7 +35,11 @@ class FeasibilityTests(unittest.TestCase):
         self.store.initialize(self.contract)
 
     def cli(self, *args, ok=True):
-        proc = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(self.root), *args],
+        argv = [sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(self.root), *args]
+        if hasattr(self, 'cost_premise'):
+            argv = [sys.executable, '-B', str(ROOT / 'tests/feasibility_cli_fixture.py'),
+                    str(self.root), str(self.cost_premise), '--root', str(self.root), *args]
+        proc = subprocess.run(argv,
                               capture_output=True, text=True, encoding='utf-8', timeout=25)
         if os.environ.get('RDS_FEASIBILITY_TEST_LOG'):
             with Path(os.environ['RDS_FEASIBILITY_TEST_LOG']).open('a', encoding='utf-8') as log:
@@ -55,18 +59,27 @@ class FeasibilityTests(unittest.TestCase):
         path = self.root / 'outputs/launches.txt'
         return path.read_text(encoding='utf-8').splitlines() if path.exists() else []
 
-    def pilots(self):
-        results = [self.cli('project', 'advance') for _ in range(3)]
-        self.assertEqual([r['receipt']['run_id'] for r in results], ['pilot-slow', 'pilot-fast', 'pilot-verify'])
-        self.assertTrue(all(r['receipt']['run_status'] == 'SUCCEEDED' for r in results))
-        return results
+    def declare_cost_premise(self):
+        from feasibility_cli_fixture import BOUNDS, declared_estimator
+        policy = self.contract['advisor_policy']
+        manifests = {r['manifest']['id']:r['manifest'] for r in policy['routes']}
+        models = policy['feasibility']['models']
+        premise = {'purpose':'cost-feasible-plan-and-prerequisite-test', 'root':str(self.root),
+            'contract_sha256':digest(self.contract), 'routes': {
+                run_id: {'manifest_sha256':digest(manifests[run_id]), 'model_sha256':digest(models.get(run_id)),
+                         'lower_wall_seconds':bounds[0], 'upper_wall_seconds':bounds[1]}
+                for run_id,bounds in BOUNDS.items()}}
+        self.cost_premise = self.root / 'test-cost-premise.json'
+        self.cost_premise.write_text(json.dumps(premise), encoding='utf-8')
+        return declared_estimator(premise, feasibility._estimate)
 
     def test_complete_plan_denies_slow_before_launch_and_independently_verifies_fast(self):
         next(n for n in self.contract['advisor_policy']['graph']['nodes'] if n['id'] == 'verify')['executable']['preconditions'] = [
             {'fact': 'run.fast.succeeded', 'op': 'eq', 'value': True}]
         self.initialize()
-        self.pilots()
-        report = feasibility.assess(self.store, self.state())
+        estimator = self.declare_cost_premise()
+        with patch.object(feasibility, '_estimate', estimator):
+            report = feasibility.assess(self.store, self.state())
         plans = {p['id']: p for p in report['plans']}
         self.assertEqual(plans['slow']['status'], 'INFEASIBLE')
         self.assertEqual(plans['fast']['status'], 'FEASIBLE')
@@ -75,10 +88,10 @@ class FeasibilityTests(unittest.TestCase):
         self.assertGreater(plans['fast']['upper_wall_seconds'], sum(s['upper_wall_seconds'] for s in plans['fast']['steps']))
         slow = self.contract['advisor_policy']['routes'][3]['manifest']
         before = self.store.snapshot()
-        with self.assertRaisesRegex(ValueError, 'did not select|feasibility gate'):
+        with patch.object(feasibility, '_estimate', estimator), self.assertRaisesRegex(ValueError, 'did not select|feasibility gate'):
             self.store.register(slow)
         self.assertEqual(self.store.snapshot()['budget'], before['budget'])
-        self.assertEqual(self.launches(), ['pilot-slow', 'pilot-fast', 'pilot-verify'])
+        self.assertEqual(self.launches(), [])
         self.assertEqual(self.cli('project', 'advance')['receipt']['run_id'], 'fast')
         self.assertEqual(self.cli('project', 'advance')['receipt']['run_id'], 'verify')
         observed = json.loads((self.root / 'outputs/verify.json').read_text())
@@ -87,9 +100,9 @@ class FeasibilityTests(unittest.TestCase):
         self.assertIsNone(final['selected_run'])
         self.assertEqual(final['feasibility']['next_action'], 'GOAL_PREDICATES_CONFIRMED')
         self.assertIsNone(final['feasibility']['repair_request'])
-        self.assertEqual(self.launches(), ['pilot-slow', 'pilot-fast', 'pilot-verify', 'fast', 'verify'])
+        self.assertEqual(self.launches(), ['fast', 'verify'])
         snap = self.store.snapshot()
-        self.assertEqual(len(snap['receipts']), 5)
+        self.assertEqual(len(snap['receipts']), 2)  # Exactly the real solver and independent verifier.
         self.assertEqual(snap['budget']['wall_seconds']['reserved'], 0)
         self.assertGreater(snap['budget']['wall_seconds']['spent_measured'], 0)
 
@@ -125,7 +138,7 @@ class FeasibilityTests(unittest.TestCase):
         next(n for n in self.contract['advisor_policy']['graph']['nodes'] if n['id'] == 'fast')['executable']['preconditions'] = [
             {'fact': 'slow.result', 'op': 'eq', 'value': 4950}]
         self.initialize()
-        self.pilots()
+        self.declare_cost_premise()
         before = self.store.snapshot()
         for command in ('next', 'advance'):
             report = self.cli('project', command)
@@ -136,11 +149,16 @@ class FeasibilityTests(unittest.TestCase):
             self.assertIsNotNone(report['feasibility']['repair_request'])
             self.assertIn('EXECUTION_PREREQUISITE_BLOCK', [w['kind'] for w in report['warnings']])
             self.assertEqual(next(p for p in report['feasibility']['plans'] if p['id']=='fast')['status'], 'FEASIBLE')
+            steps = next(p for p in report['feasibility']['plans'] if p['id']=='fast')['steps']
+            self.assertTrue(all(s['basis'] == 'TEST_DECLARED_COST_PREMISE' for s in steps))
+            self.assertNotIn('receipt', report)
         after = self.store.snapshot()
         self.assertEqual(after['runs'], before['runs'])
         self.assertEqual(after['budget'], before['budget'])
         self.assertEqual(after['receipts'], before['receipts'])
-        self.assertEqual(self.launches(), ['pilot-slow', 'pilot-fast', 'pilot-verify'])
+        self.assertEqual(self.launches(), [])
+        self.assertEqual(after['receipts'], [])
+        self.assertEqual(after['budget']['wall_seconds']['spent_measured'], 0)
 
     def test_unknown_is_explicit_and_only_bounded_pilot_is_selected(self):
         self.initialize()
@@ -179,9 +197,18 @@ class FeasibilityTests(unittest.TestCase):
         self.assertEqual(self.launches(), [])
 
     def test_applicability_changes_invalidate_forecast_and_timeout_is_not_measurement(self):
+        # Only a real fast pilot is needed to test that estimate's identity.
+        self.contract['advisor_policy']['feasibility']['models'].pop('slow')
+        next(n for n in self.contract['advisor_policy']['graph']['nodes'] if n['id']=='pilot-fast')['executable']['preconditions'] = []
         self.initialize()
-        self.pilots()
+        result = self.cli('project', 'advance')
+        self.assertEqual(result['receipt']['run_id'], 'pilot-fast')
+        self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
         original = self.state()
+        manifests = {r['manifest']['id']:r['manifest'] for r in self.contract['advisor_policy']['routes']}
+        model = self.contract['advisor_policy']['feasibility']['models']['fast']
+        self.assertEqual(feasibility._estimate(self.store, original, 'fast', manifests['fast'], model)['status'], 'CONDITIONAL_FORECAST')
+        before = self.store.snapshot()
         def pilot(s):
             return next(r for r in s['receipts'] if r['run_id'] == 'pilot-fast')
         for label, mutate in [
@@ -193,18 +220,30 @@ class FeasibilityTests(unittest.TestCase):
                 ('timeout', lambda s: pilot(s).update(timeout=True, run_status='TIMED_OUT'))]:
             state = deepcopy(original)
             mutate(state)
+            estimate = feasibility._estimate(self.store, state, 'fast', manifests['fast'], model)
             report = feasibility.assess(self.store, state)
             fast = next(p for p in report['plans'] if p['id'] == 'fast')
             with self.subTest(label=label):
                 self.assertEqual(fast['status'], 'UNKNOWN')
+                self.assertEqual(estimate['status'], 'UNKNOWN')
+                self.assertIsNone(estimate['upper_wall_seconds'])
                 self.assertNotIn('fast', report['admitted_runs'])
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.launches(), ['pilot-fast'])
 
     def test_deadline_is_original_campaign_start_and_failed_step_cannot_repeat(self):
         self.initialize()
-        self.pilots()
+        # This obligation needs the original campaign start, not three pilots
+        # that may legitimately exhaust their separate shared allowance.
+        started = self.cli('project', 'advance')
+        self.assertIn('receipt', started)
+        self.assertEqual(started['receipt']['run_id'], 'pilot-slow')
+        self.assertEqual(started['receipt']['run_status'], 'SUCCEEDED')
         state = self.state()
+        before = self.store.snapshot()
         deadline = state['campaign_started']['started_at'] + self.contract['stop_policy']['wall_seconds']
         report = feasibility.assess(self.store, state, now=deadline + 1)
+        self.assertEqual(report['deadline'], deadline)
         self.assertEqual(report['admitted_runs'], [])
         self.assertTrue(all(p['available_wall_seconds'] == 0 for p in report['plans']))
         failed = deepcopy(state)
@@ -212,15 +251,113 @@ class FeasibilityTests(unittest.TestCase):
         report = feasibility.assess(self.store, failed)
         self.assertEqual(next(p for p in report['plans'] if p['id']=='fast')['status'], 'REPAIR_REQUIRED')
         self.assertNotIn('fast', report['admitted_runs'])
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.launches(), ['pilot-slow'])
+        self.assertEqual(len(before['receipts']), 1)
+        self.assertEqual(before['receipts'][0]['attempt_id'], started['receipt']['attempt_id'])
+
+    def test_pilot_shared_allowance_accepts_boundary_and_rejects_excess(self):
+        self.initialize()
+        original = self.state()
+        before = self.store.snapshot()
+        # Explicit synthetic accounting inputs, not persisted or measured runs.
+        for spent, allowed in ((2.8, True), (2.801, False), (5.2288159, False)):
+            state = deepcopy(original)
+            state['receipts'].append({'run_id': 'pilot-slow', 'run_status': 'SUCCEEDED',
+                'resources': {'wall_seconds': {'measured': spent, 'charged_estimate': 0}}})
+            report = feasibility.assess(self.store, state)
+            with self.subTest(spent=spent):
+                self.assertEqual(report['pilot_budget']['cap'], 10)
+                self.assertEqual(report['pilot_budget']['spent_or_charged'], spent)
+                self.assertEqual('pilot-fast' in report['bounded_pilots'], allowed)
+                self.assertEqual('pilot-fast' in report['admitted_runs'], allowed)
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.launches(), [])
+
+    def test_declared_cost_premise_is_labelled_bound_and_never_creates_receipts(self):
+        from feasibility_cli_fixture import declared_estimator, validate_premise
+        self.initialize()
+        estimate = self.declare_cost_premise()
+        premise = json.loads(self.cost_premise.read_text(encoding='utf-8'))
+        state = self.state()
+        manifests = {r['manifest']['id']:r['manifest'] for r in self.contract['advisor_policy']['routes']}
+        model = self.contract['advisor_policy']['feasibility']['models']['fast']
+        before = self.store.snapshot()
+        result = estimate(self.store, state, 'fast', manifests['fast'], model)
+        self.assertEqual(result['basis'], 'TEST_DECLARED_COST_PREMISE')
+        self.assertEqual(result['upper_wall_seconds'], 6)
+        self.assertEqual(result['native_estimate']['status'], 'UNKNOWN')
+        self.assertEqual(result['sources'], [])
+        for field in ('root', 'contract', 'manifest', 'model'):
+            changed, manifest, changed_model = deepcopy(state), deepcopy(manifests['fast']), deepcopy(model)
+            changed_premise = deepcopy(premise)
+            if field == 'root':
+                changed_premise['root'] = str(self.root / 'other')
+            elif field == 'contract':
+                changed['contract']['description'] = 'changed'
+            elif field == 'manifest':
+                manifest['id'] = 'changed'
+            else:
+                changed_model['safety_factor'] = 4
+            with self.subTest(field=field):
+                invalid = declared_estimator(changed_premise, feasibility._estimate)(
+                    self.store, changed, 'fast', manifest, changed_model)
+                self.assertEqual(invalid['status'], 'UNKNOWN')
+                self.assertIsNone(invalid['upper_wall_seconds'])
+        for value in (7.0, True):
+            changed_premise = deepcopy(premise)
+            changed_premise['routes']['fast']['upper_wall_seconds'] = value
+            with self.subTest(bound=value), self.assertRaises(ValueError):
+                validate_premise(changed_premise)
+        stale = deepcopy(state)
+        stale['receipts'].append({'run_id':'pilot-fast', 'run_status':'FAILED', 'timeout':True})
+        self.assertEqual(estimate(self.store, stale, 'fast', manifests['fast'], model)['status'], 'UNKNOWN')
+        path = self.root / manifests['fast']['protocol']['path']
+        original_bytes = path.read_bytes()
+        try:
+            path.write_text('{}', encoding='utf-8')
+            self.assertEqual(estimate(self.store, state, 'fast', manifests['fast'], model)['status'], 'UNKNOWN')
+        finally:
+            path.write_bytes(original_bytes)
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.launches(), [])
+
+    def test_declared_costs_do_not_override_native_budget_or_deadline_denial(self):
+        self.initialize()
+        estimate = self.declare_cost_premise()
+        original = self.state()
+        before = self.store.snapshot()
+        for boundary in ('budget', 'deadline'):
+            state = deepcopy(original)
+            if boundary == 'budget':
+                next(b for b in state['budget'] if b['resource']=='wall_seconds')['spent'] = 80
+            else:
+                state['campaign_started'] = {'started_at':100}
+            with self.subTest(boundary=boundary), patch.object(feasibility, '_estimate', estimate):
+                report = feasibility.assess(self.store, state, now=281 if boundary=='deadline' else None)
+                self.assertNotIn('fast', report['admitted_runs'])
+                self.assertEqual(next(p for p in report['plans'] if p['id']=='fast')['status'], 'INFEASIBLE')
+                with patch('rds_owned_advisor._state', return_value=state):
+                    with self.store._db(True) as db, self.assertRaisesRegex(ValueError, 'before child launch'):
+                        feasibility.check_start(self.store, db, 'fast')
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.launches(), [])
 
     def test_final_obligation_unknown_prevents_solver_launch(self):
         self.initialize(lambda c: c['advisor_policy']['feasibility']['models'].pop('verify'))
-        self.cli('project', 'advance')
-        self.cli('project', 'advance')
-        report = self.cli('project', 'next')
-        self.assertIsNone(report['selected_run'])
-        self.assertEqual(next(p for p in report['feasibility']['plans'] if p['id']=='fast')['status'], 'UNKNOWN')
-        self.assertEqual(self.launches(), ['pilot-slow', 'pilot-fast'])
+        self.declare_cost_premise()
+        before = self.store.snapshot()
+        for command in ('next', 'advance'):
+            report = self.cli('project', command)
+            self.assertIsNone(report['selected_run'])
+            fast = next(p for p in report['feasibility']['plans'] if p['id']=='fast')
+            self.assertEqual(fast['status'], 'UNKNOWN')
+            self.assertEqual(fast['steps'][0]['basis'], 'TEST_DECLARED_COST_PREMISE')
+            self.assertEqual(fast['steps'][1]['status'], 'UNKNOWN')
+            self.assertNotIn('receipt', report)
+        self.assertEqual(self.launches(), [])
+        self.assertEqual(self.store.snapshot()['receipts'], [])
+        self.assertEqual(self.store.snapshot()['budget'], before['budget'])
 
     def test_shared_pilot_cap_counts_prior_failures_and_reserved_attempts(self):
         self.initialize()
@@ -270,6 +407,34 @@ class FeasibilityTests(unittest.TestCase):
             report = feasibility.assess(self.store, state, now=278)  # Original deadline280; two seconds remain.
         self.assertEqual(next(p for p in report['plans'] if p['id']=='fast')['status'], 'FEASIBLE')
         self.assertIn('fast', report['admitted_runs'])
+
+    def test_hosted_pilot_values_are_rejected_by_original_hard_timeout_gate(self):
+        self.initialize()
+        state = self.state()
+        manifests = {r['manifest']['id']: r['manifest'] for r in self.contract['advisor_policy']['routes']}
+        before = deepcopy(state)
+        # Synthetic estimator inputs reproduce the numeric admission branch.
+        # These declarations are not imported receipts or measured new attempts.
+        def pilot(run_id, seconds):
+            protocol = json.loads((self.root / manifests[run_id]['protocol']['path']).read_text(encoding='utf-8'))
+            return {'run_id': run_id, 'run_status': 'SUCCEEDED', 'timeout': False,
+                    'runtime_fingerprint': feasibility.runtime_fingerprint(),
+                    'bindings_before': state['contract']['bindings'], 'bindings_after': state['contract']['bindings'],
+                    'protocol': protocol, 'sha256': 'synthetic-unit-input',
+                    'resources': {'wall_seconds': {'measured': seconds}}}
+        for measured, upper in ((4.6477538, 27.8865228), (5.406, 32.436)):
+            with self.subTest(measured=measured):
+                state['receipts'] = [pilot('pilot-fast', measured), pilot('pilot-verify', .1)]
+                report = feasibility.assess(self.store, state)
+                fast = next(p for p in report['plans'] if p['id'] == 'fast')
+                self.assertAlmostEqual(fast['steps'][0]['upper_wall_seconds'], upper)
+                self.assertEqual(fast['status'], 'INFEASIBLE')
+                self.assertEqual(fast['reason'], 'Conditional completion forecast exceeds a required step hard timeout')
+                self.assertNotIn('fast', report['admitted_runs'])
+                self.assertEqual(state['runs'], before['runs'])
+                self.assertEqual(state['budget'], before['budget'])
+                self.assertEqual(self.store.snapshot()['receipts'], [])
+                self.assertEqual(self.launches(), [])
 
 
 if __name__ == '__main__':

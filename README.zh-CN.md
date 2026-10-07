@@ -14,7 +14,11 @@
 
 **Agent 出主意，程序来记账。**
 
-面向 Codex、Claude Code 等编程 Agent 的本地科研内核。它在实验开始前冻结"要证明什么"，每个昂贵任务只跑一次，留下 Agent 改不了的回执，并记住哪些路已经走不通。下一步依据记录在案的证据，而不是上下文窗口里的记忆。
+**面向学术研究、由证据驱动的 autoresearch。**
+
+面向学术研究及 Codex、Claude Code 等编程 Agent 实验工作流的本地科研内核。它在执行前冻结目标、输入与评估器，预留预算，保留执行回执，并跨会话延续已记录的证据。用它规划有界实验、恢复中断工作，并核验受支持的结果。
+
+[RDS 如何参与 autoresearch 工作流](docs/autoresearch.md) · [CPU 回执与恢复示例](examples/autoresearch-receipts/README.md) · [引用本软件](CITATION.cff)
 
 [English](README.md) · **简体中文** · [日本語](README.ja-JP.md)
 
@@ -89,7 +93,7 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 闭环为 **目标与约束 → Advisor 决策 → 受约束执行 → 结果与回执 → 更新研究状态 → Advisor**。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
-当前版本为 5.8.0。[5.8 完整目标与协作计划](docs/5.8-vision.zh-CN.md)说明了它所依托的目标关联决策闭环；5.9 的规划在 [#166](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
+5.8.0 仍是最新稳定版。当前 5.9 预览版为 `5.9.0-rc.1`，见[预览说明](docs/releases/5.9.0-rc.1-preview.md)。它尚未证明科研能力提升；验证方案见 [5.9 评估计划 #166](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
 ---
 

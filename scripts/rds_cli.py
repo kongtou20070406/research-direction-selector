@@ -25,7 +25,7 @@ import uuid
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
 
-VERSION = "5.8.0"
+VERSION = "5.9.0-rc.1"
 RESOURCES = {"runtime_ms", "runs"}
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",
                "final_run_authorized", "matched_recipe", "matched_compute"}
@@ -924,7 +924,12 @@ def cmd_advise(args, rds):
                 'Program-owned Advisor reads the frozen policy and complete run ledger; '
                 'caller context, graph, facts and choice overrides are not accepted')
         from rds_owned_advisor import review
-        return review(owned)
+        result = review(owned)
+        if getattr(args, 'working_set', False):
+            from rds_advisor_workset import build
+            result['working_set'] = build(owned, result)
+        return result
+    require(not getattr(args, 'working_set', False), '--working-set requires a program-owned advisor_policy')
     require(not getattr(args, "research_note", None),
             "--research-note is retired; use checkpoint save --decision and a scoped --research-context")
     has_train = getattr(args, "train_loss", None) is not None
@@ -1632,6 +1637,7 @@ def parser():
     adv.add_argument("--choose", help="Exact candidate ID to record as the caller's planned route")
     adv.add_argument("--record", help="New checkpoint ID; use with --choose to complete the decision fields")
     adv.add_argument("--brief", "--digest", action="store_true", help="Save full advice and return a bounded digest")
+    adv.add_argument('--working-set', action='store_true', help='Project owned final advice and verified scoped feedback for Agent continuation')
     adv.add_argument("--frontier", help="Versioned research graph and evidence for bounded graph-outside exploration questions")
     adv.add_argument("--frontier-proposals", help="AI proposed nodes/relations and discriminating tests; definition checks only")
     adv.add_argument("--research-note", help="Retired: use checkpoint save --decision with a scoped --research-context")

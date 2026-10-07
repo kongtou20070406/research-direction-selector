@@ -14,7 +14,11 @@
 
 **Your agent proposes. The program keeps the books.**
 
-A local research kernel for Codex, Claude Code and other coding agents. It freezes what an experiment is supposed to show, runs each costly job once, keeps receipts the agent cannot rewrite, and remembers what already failed, so that the next step comes from recorded evidence rather than from a context window.
+**Evidence-driven autoresearch for academic research.**
+
+A local research kernel for academic research and agent-driven experiment workflows with Codex, Claude Code and other coding agents. It freezes goals, inputs and evaluators before execution, reserves budgets, preserves execution receipts and carries recorded evidence across sessions. Use it to plan bounded experiments, recover interrupted work and verify supported results.
+
+[RDS in autoresearch workflows](docs/autoresearch.md) · [CPU receipt and recovery example](examples/autoresearch-receipts/README.md) · [Cite this software](CITATION.cff)
 
 **English** · [Simplified Chinese](README.zh-CN.md) · [Japanese](README.ja-JP.md)
 
@@ -89,7 +93,7 @@ RDS is an Advisor-centered research decision system with two cooperating sides a
 
 The loop is **goal and constraints → Advisor decision → constrained execution → results and receipts → updated research state → Advisor**. Project records live in `.rds/`; `references/judgment-graph.yaml` supplies scoped methodology rules, not an automatically rewritten collection of proven causal laws.
 
-5.8.0 is the current release. The [5.8 vision](docs/5.8-vision.md) describes the goal-linked decision loop it builds on; 5.9 planning is in [#166](https://github.com/kongtou20070406/research-direction-selector/issues/166).
+5.8.0 remains the latest stable release. The current 5.9 preview is `5.9.0-rc.1`; see the [preview notes](docs/releases/5.9.0-rc.1-preview.md). Its research-capability claims remain unproven; see the [5.9 evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166).
 
 ---
 
