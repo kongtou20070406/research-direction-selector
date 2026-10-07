@@ -94,6 +94,13 @@ checked correspondence theorem and authorized contract change.
 
 ## Search, observations and recovery
 
+An optional frozen `structure-search.json` config binding adds
+[feedback-conditioned generation](adaptive-search.md). Original comparable
+measurements allocate exploration, evidence and refinement opportunities in the
+next request; proposal insertion consumes one slot atomically. The default
+workflow and worker selection below remain unchanged. This generation heuristic
+does not establish scientific benefit or grant additional execution resources.
+
 The baseline first replays verified, same-scope feedback constraints, then selects
 the smallest affordable **declared distinguishing-test cap**, then stable ID.
 A REFUTE blocks the same declared hypothesis/prediction in identical frozen

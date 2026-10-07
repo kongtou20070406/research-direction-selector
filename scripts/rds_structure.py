@@ -19,6 +19,7 @@ from rds_hypergraph import _validate, review_hypergraph
 from rds_frontier import discover_frontier
 from rds_frontier_proposals import review_proposals
 import rds_discrimination as discrimination
+import rds_search_allocation as search_allocation
 
 PREFIX = 'STRUCTURE_'
 MAX_BYTES = 128 * 1024
@@ -74,6 +75,15 @@ def _put(store, kind, ident, value, *, expected=None, check_snapshot=False):
         if check_snapshot:
             row = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
             require(row and row['sha256'] == expected, 'Stale structure snapshot; request current evidence')
+        if kind == 'PROPOSAL':
+            if value.get('search_allocation') is not None:
+                req = _find(store, 'REQUEST', value['request_id'])
+                receipts = [r['sha256'] for r in db.execute('SELECT sha256 FROM receipts ORDER BY run_id')]
+                feedback = [e['sha256'] for e in events if e['kind'] == PREFIX + 'FEEDBACK'
+                            and _read_ref(store, e['record'])['scope_sha256'] == req['scope_sha256']]
+                require(receipts == req['receipts'] and feedback == req['feedback_sha256'],
+                        'Search evidence changed before slot commit; request current feedback')
+            search_allocation.claim(events, value, lambda ref: _read_ref(store, ref))
         db.execute('INSERT INTO events(body) VALUES (?)',
                    (canonical({'kind': PREFIX + kind, 'id': ident, 'sha256': ref['sha256'], 'record': ref}),))
     return value
@@ -174,6 +184,10 @@ def request(root, limit=3):
         analysis = review_hypergraph(spec)
         scope = _binding_scope(state, saved)
         prior_feedback = _verified_feedback(store, digest(scope))
+        policy = search_allocation.load_policy(store, state)
+        search_rows = {r['id']: _find(store, 'PROPOSAL', r['id']) for r in prior_feedback} if policy else {}
+        search_goals = {ident: _find(store, 'REQUEST', row['request_id'])['goal']
+                        for ident, row in search_rows.items()}
         settled = [{'run_id': r['run_id'], 'receipt_sha256': r['sha256'], 'run_status': r['run_status'],
                     'timeout': r.get('timeout'), 'exit_code': r.get('exit_code'),
                     'errors': [str(v)[:512] for v in r.get('errors', [])[:8]],
@@ -184,6 +198,8 @@ def request(root, limit=3):
         for goal in spec['goals']:
             if analysis['goals'][goal]['status'] == 'DECLARED_SUPPORTED':
                 continue  # Healthy OR alternatives do not justify false dead-end claims.
+            allocation = (search_allocation.build(policy, search_rows,
+                [r for r in prior_feedback if search_goals[r['id']] == goal], state) if policy else None)
             data, frontier, gap = _frontier(spec, goal)
             identity = {'snapshot_sha256': saved['sha256'], 'scope': scope, 'goal': goal,
                         'receipts': [r['sha256'] for r in state['receipts']],
@@ -206,6 +222,8 @@ def request(root, limit=3):
                      'proposal_commands': ['structure propose --proposal FILE', 'structure next', 'structure advance --id ID'],
                      'instruction': 'Propose directions outside the listed nodes. No complete goal path is required for bounded exploration. '
                                     'Keep original acceptance, sources, unknown premises, cost, stopping and outcome decisions.'}
+            if allocation is not None:
+                value['search_allocation'] = allocation
             _put(store, 'REQUEST', rid, value, expected=saved['sha256'], check_snapshot=True)
             tasks.append(value)
             if len(tasks) >= limit:
@@ -257,6 +275,9 @@ def propose(root, proposal):
         req = _find(store, 'REQUEST', proposal.get('request_id'))
         require(req is not None, 'Unknown exploration request')
         state, saved = _live(store, req)
+        policy = search_allocation.load_policy(store, state)
+        allocated = search_allocation.validate_reply(store, req, proposal, state,
+            _verified_feedback(store, req['scope_sha256']) if policy else [], policy)
         reviewed = review_proposals(req['frontier'], req['frontier_spec'], {'schema_version': 1, 'proposals': [proposal]})['proposals'][0]
         require(not reviewed['definition_errors'], '; '.join(reviewed['definition_errors']))
         require(proposal.get('gap_id') == req['gap_id'], 'Structure proposal must bind the problem-model gap')
@@ -313,6 +334,12 @@ def propose(root, proposal):
                  'proposal': deepcopy(proposal), 'review': reviewed, 'candidate_map': candidate,
                  'discriminator': discriminator,
                  'status': 'HYPOTHESIS_PENDING', 'execution_authorized': False, 'scientific_support': 'UNKNOWN'}
+        if allocated is not None:
+            value['search_allocation'] = allocated
+            if allocated['kind'] == 'evidence':
+                parent = _find(store, 'PROPOSAL', allocated['parent_proposal_id'])
+                require(discrimination.hypothesis_key(discriminator) == discrimination.hypothesis_key(parent['discriminator']),
+                        'Evidence slot must check the same scoped hypothesis')
         reason = _route_constraint(store, value)
         require(reason is None, 'Evidence route constraint: ' + str(reason))
         return _put(store, 'PROPOSAL', value['id'], value, expected=saved['sha256'], check_snapshot=True)
@@ -433,6 +460,8 @@ def next_step(root):
                   'basis': 'VERIFIED_SCOPED_FEEDBACK_THEN_TEST_CAP_THEN_STABLE_ID',
                   'probability_model': None, 'scientific_support': 'UNKNOWN', 'authorization': 'UNCHANGED',
                   'feedback_consumed': sorted(feedback), 'next_move': 'structure advance --id ' + choice['id'] if choice else 'structure request'}
+        if choice and choice.get('search_allocation') is not None:
+            result['search_allocation'] = deepcopy(choice['search_allocation'])
         if goal_checks:
             result.update(status='ORIGINAL_EVALUATOR_PASSED', goal_checks=goal_checks,
                           next_move='Inspect original independently checked goal scope; activate supported structure if useful')

@@ -4,6 +4,19 @@ Real model-matched trials: **NOT_RUN**. Scientific benefit: **UNMEASURED**.
 The scripted harness validates the protocol; its prescribed baseline cannot
 estimate an unaided LLM's ability.
 
+`examples/adaptive-search/run.py` also exercises bounded feedback-conditioned
+generation through the public CLI. It demonstrates that one useful measurement
+requests a repeat, repeated comparable improvement allocates refinement, and the
+resulting proposal reaches the original evaluator. Its scripted candidate choices
+are software fixtures, not a real-model generation or speed comparison. See
+[configuration and limits](adaptive-search.md). A future paired evaluation should
+compare the default request with this opt-in allocation under the same model,
+initial information, tools, final quality gate and total budget, counting generation,
+discarded proposals, verification, failures and recovery. Report raw task success,
+time to a verified result, repeated uninformative work and human interventions.
+Do not infer token savings from fewer slots or serialize a prewritten second
+solution as model discovery. A later MDL arm needs a separately frozen encoding.
+
 ## Single real-Agent connectivity probe
 
 `examples/explanation-loop/run.py` provides a separate, explicitly invoked
