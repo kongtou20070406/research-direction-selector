@@ -102,10 +102,24 @@ def _measurement(policy, row, observed):
     return Fraction(value), comparable, None
 
 
-def build(policy, rows, feedback, state):
+def build(policy, rows, feedback, state, *, scope_feedback=None):
     """Pure bounded heuristic: conservative repeated gain versus frozen baseline."""
     if policy is None:
         return None
+    # Positive allocation is goal-local, but REFUTE has the same hypothesis
+    # scope as the existing admission gate, independent of candidate command.
+    hypotheses = {ident: hypothesis_key(row['discriminator']) for ident, row in rows.items()
+                  if row.get('discriminator')}
+    refutations = [{'hypothesis_sha256': hypotheses[r['id']], 'proposal_id': r['id'],
+                    'feedback_sha256': digest(r), 'scope_sha256': rows[r['id']]['scope_sha256'],
+                    'receipts': list(r['receipts'])}
+                   for r in (feedback if scope_feedback is None else scope_feedback)
+                   if r.get('observation') == 'REFUTE' and r['id'] in hypotheses]
+    refuted = {r['hypothesis_sha256'] for r in refutations}
+
+    def parent_eligible(ident):
+        return ident in hypotheses and hypotheses[ident] not in refuted
+
     evidence, usable, by_id = [], {}, {}
     for observed in feedback:
         row = rows[observed['id']]
@@ -150,21 +164,22 @@ def build(policy, rows, feedback, state):
         # Count original candidate runs, not renamed proposals sharing receipts.
         runs = {rows[ident]['proposal']['experiment']['runs'][0]['id'] for _, ident in measurements}
         parent = measurements[-1][1]
-        if worst >= Fraction(policy['metric']['min_improvement']) and key not in excluded:
+        if worst >= Fraction(policy['metric']['min_improvement']) and key not in excluded and parent_eligible(parent):
             target = qualified if len(runs) >= policy['min_repeats'] else promising
             target.append((worst, key, parent, len(runs)))
     qualified.sort(key=lambda x: (-x[0], x[1]))
     promising.sort(key=lambda x: (-x[0], x[1]))
     selected_parent = qualified[0][2] if qualified else None
     unknowns = [e['proposal_id'] for e in evidence if e['observation'] == 'UNKNOWN'
-                and rows[e['proposal_id']].get('discriminator')]
+                and parent_eligible(e['proposal_id'])]
     evidence_parent = (unknowns[-1] if unknowns else promising[0][2] if promising
-                       else selected_parent or (baseline_id if baseline and by_id[baseline_id]['observation'] == 'SUPPORT' else None))
+                       else selected_parent or (baseline_id if baseline and by_id[baseline_id]['observation'] == 'SUPPORT'
+                                                and parent_eligible(baseline_id) else None))
     slots, withheld = [], []
     for kind, parent in [('explore', None), ('evidence', evidence_parent), ('refine', selected_parent)]:
         for _ in range(policy['slots'][kind]):
             if kind != 'explore' and parent is None:
-                withheld.append({'kind': kind, 'reason': 'NO_EVIDENCE_TARGET' if kind == 'evidence' else 'NO_REPEATED_COMPARABLE_IMPROVEMENT'})
+                withheld.append({'kind': kind, 'reason': 'NO_EVIDENCE_TARGET' if kind == 'evidence' else 'NO_ELIGIBLE_REPEATED_COMPARABLE_IMPROVEMENT'})
                 continue
             source = by_id.get(parent)
             slots.append({'slot': len(slots), 'kind': kind, 'parent_proposal_id': parent,
@@ -174,7 +189,7 @@ def build(policy, rows, feedback, state):
     result = {'schema': 1, 'strategy': STRATEGY, 'assurance': 'HEURISTIC',
               'policy_sha256': digest(policy), 'baseline_proposal_id': baseline_id,
               'selected_parent': selected_parent, 'slots': slots, 'withheld': withheld,
-              'limits': deepcopy(policy['slots']), 'comparisons': evidence,
+              'limits': deepcopy(policy['slots']), 'comparisons': evidence, 'scoped_refutations': refutations,
               'qualified': [{'experiment_sha256': key, 'parent_proposal_id': parent,
                              'distinct_runs': count, 'worst_improvement': str(gain)}
                             for gain, key, parent, count in qualified],

@@ -78,8 +78,12 @@ available slots and explicitly withheld opportunities:
   Repeats share the declared hypothesis/prediction, candidate command (apart
   from declared output filenames) and protocol. The worst measured improvement
   determines ranking; ties use the stable experiment digest. An adverse repeat
-  or UNKNOWN for that intervention withholds refinement. REFUTE also removes
-  the intervention from promising repeat targets; UNKNOWN preserves diagnosis
+  or UNKNOWN for that intervention withholds refinement. REFUTE removes every
+  parent with the same scoped hypothesis from refinement, promising repeats,
+  diagnosis and baseline fallback, including when another computation or goal
+  produced it. This matches the existing admission gate. Positive comparisons
+  and parent choice remain goal-local; `scoped_refutations` retains the original
+  negative feedback and receipt references. UNKNOWN preserves diagnosis
   when an executable scoped hypothesis is available. Legacy UNKNOWN records
   without one remain visible but cannot create an unusable evidence slot.
 

@@ -199,7 +199,8 @@ def request(root, limit=3):
             if analysis['goals'][goal]['status'] == 'DECLARED_SUPPORTED':
                 continue  # Healthy OR alternatives do not justify false dead-end claims.
             allocation = (search_allocation.build(policy, search_rows,
-                [r for r in prior_feedback if search_goals[r['id']] == goal], state) if policy else None)
+                [r for r in prior_feedback if search_goals[r['id']] == goal], state,
+                scope_feedback=prior_feedback) if policy else None)
             data, frontier, gap = _frontier(spec, goal)
             identity = {'snapshot_sha256': saved['sha256'], 'scope': scope, 'goal': goal,
                         'receipts': [r['sha256'] for r in state['receipts']],

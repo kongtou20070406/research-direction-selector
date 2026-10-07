@@ -42,6 +42,16 @@ class SearchAllocationTests(unittest.TestCase):
         self.execute()
         self.execute('p1', 'linear')
 
+    def refute_linear_with_another_computation(self, ident, task=None, kind='evidence'):
+        task = task or self.request()
+        proposal = fixture.proposal(self.root, task, ident, 'zero', kind)
+        proposal['discriminator']['hypothesis_id'] = 'linear'
+        proposal['topology']['hyperedges'][0]['conclusion'] = task['goal']
+        structure.propose(self.root, proposal)
+        observed = structure.advance(self.root, ident)
+        self.assertEqual(observed['observation'], 'REFUTE')
+        return observed
+
     def test_real_feedback_changes_request_but_single_winner_cannot_buy_refinement(self):
         initial = self.request()['search_allocation']
         self.assertEqual([s['kind'] for s in initial['slots']], ['explore', 'explore'])
@@ -307,6 +317,51 @@ class SearchAllocationTests(unittest.TestCase):
         self.assertEqual(by_goal['goal']['selected_parent'], 'p2')
         self.assertIsNone(by_goal['other-goal']['selected_parent'])
         self.assertEqual(by_goal['other-goal']['comparisons'], [])
+
+    def test_scoped_refutation_revokes_a_winner_from_another_computation(self):
+        self.improved()
+        self.execute('p2', 'linear', 'evidence')
+        self.assertEqual(self.request()['search_allocation']['selected_parent'], 'p2')
+        observed = self.refute_linear_with_another_computation('p3')
+        plan = self.request()['search_allocation']
+        self.assertIsNone(plan['selected_parent'])
+        self.assertEqual({s['kind'] for s in plan['slots']}, {'explore'})
+        refuted = next(r for r in plan['scoped_refutations'] if r['proposal_id'] == 'p3')
+        self.assertEqual(refuted['feedback_sha256'], digest(observed))
+        self.assertEqual(refuted['receipts'], observed['receipts'])
+        self.assertEqual(len(self.store.snapshot()['receipts']), 8)
+
+    def test_scoped_refutation_removes_an_unknown_diagnosis_parent(self):
+        self.improved()
+        self.execute('p2', 'linear', 'evidence', verifier_mode='missing')
+        self.assertEqual(next(s for s in self.request()['search_allocation']['slots']
+                              if s['kind'] == 'evidence')['parent_proposal_id'], 'p2')
+        self.refute_linear_with_another_computation('p3')
+        plan = self.request()['search_allocation']
+        self.assertEqual({s['kind'] for s in plan['slots']}, {'explore'})
+
+    def test_scoped_refutation_removes_the_supported_baseline_fallback(self):
+        self.execute('baseline', 'linear')
+        self.assertEqual(next(s for s in self.request()['search_allocation']['slots']
+                              if s['kind'] == 'evidence')['parent_proposal_id'], 'baseline')
+        self.refute_linear_with_another_computation('p1')
+        plan = self.request()['search_allocation']
+        self.assertEqual({s['kind'] for s in plan['slots']}, {'explore'})
+
+    def test_scoped_refutation_from_another_goal_matches_the_original_gate(self):
+        model = current(self.root)['dependency_map']
+        model['nodes'].append({'id': 'other-goal', 'status': 'UNKNOWN', 'source': 'different obligation'})
+        model['goals'].append('other-goal')
+        maintain(self.root, initial=model)
+        self.improved()
+        self.execute('p2', 'linear', 'evidence')
+        other = next(t for t in structure.request(self.root)['tasks'] if t['goal'] == 'other-goal')
+        observed = self.refute_linear_with_another_computation('p3', other, 'explore')
+        plan = self.request()['search_allocation']
+        self.assertIsNone(plan['selected_parent'])
+        self.assertEqual({s['kind'] for s in plan['slots']}, {'explore'})
+        self.assertNotIn('p3', [r['proposal_id'] for r in plan['comparisons']])
+        self.assertIn(digest(observed), [r['feedback_sha256'] for r in plan['scoped_refutations']])
 
 
 if __name__ == '__main__':
