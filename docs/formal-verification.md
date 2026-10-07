@@ -27,8 +27,8 @@ The implementation uses `scripts/rds_verify.py` and the `formal` CLI, with finit
 | Specification kind | Framework rule / supported obligation |
 | --- | --- |
 | `scalar_threshold` | `scalar.threshold_separation`: defined closed-domain control bound and a rational treatment witness. |
-| `lean_obligation` / `lean_vector_obligation` | `lean.rational_relation`: native Lean checking of a fixed-template closed rational relation or a conjunction of up to 32 coordinate relations. |
-| `affine_fixed_point_synthesis` | `dynamics.affine_fixed_point_synthesis`: bounded exact rational witness search for a 1..32D map or an ordered chain of up to 8 maps, followed by registered composition and fixed-point checks plus native Lean coordinate proofs. |
+| `lean_obligation` / `lean_vector_obligation` | `lean.rational_relation`: native Lean checking of a fixed-template closed rational relation or a conjunction of up to 128 coordinate relations. |
+| `affine_fixed_point_synthesis` | `dynamics.affine_fixed_point_synthesis`: bounded exact rational witness search for a 1..128D map or an ordered chain of up to 8 maps, followed by registered composition and fixed-point checks plus native Lean coordinate proofs. |
 | `statistical_obligation` | `lean.statistical_obligation`: native audit of a pinned conditional Ville, Hoeffding or Markov mutual-information DPI theorem; empirical application remains `UNKNOWN`. |
 | `affine_contraction` / `affine_fixed_point` / `affine_dynamics` | `matrix.infinity_contraction` / `matrix.fixed_point` / `dynamics.affine`: induced infinity norm, a specified fixed point, or both. |
 | `matrix_spectral_bound` / `matrix_spectral_exact` | `matrix.gershgorin` / `matrix.spectral_radius`: triangular matrices are decided exactly; other matrices use a sufficient bound for the former and remain `UNKNOWN` for the latter. An inconclusive sufficient bound remains `UNKNOWN`. |
@@ -45,11 +45,33 @@ a child statement; the framework checks the artifact type, resolves the value, r
 the resulting `kind` through the registered rule, and requires the declared assurance.
 Replay resolves the same bindings again and calls each registered certificate checker.
 Schema 1 currently supports `exact_rational_vector` and
-`exact_rational_affine_model` artifacts up to dimension 32, plus ordered
+`exact_rational_affine_model` artifacts up to dimension 128, plus ordered
 `exact_rational_affine_chain` artifacts containing 2..8 maps. Unsupported artifact
 types and proof rules remain `UNKNOWN`. Identical child statements with the same rule
-and required assurance reuse the first checked child certificate. Plans are trusted
-adapter output, not another user-supplied executable language.
+and required assurance reuse the first checked child certificate, including when the
+same goal appears on different dependency paths. Registered adapters may provide an
+exact `canonical_statement` function for semantics-preserving normalization (the
+closed-rational Lean adapter reduces rational spellings); replay binds both the raw
+statement and its normalized form. A plan's optional `depends_on` edges constrain
+execution order but do not add assumptions to a theorem. Plans are trusted adapter
+output, not another user-supplied executable language.
+
+Plan declarations remain version 1. Emitted proof-plan certificates use version 2:
+they bind each resolved statement by its raw and canonical hashes instead of copying
+large resolved statements into every repeated child record.
+
+`optimize_proof_plan(plan)` explains the deterministic topological schedule before
+running tools. Ready certificate-checked obligations are considered before
+kernel-checked obligations; registered adapters may supply `estimate_cost(statement)`
+operation proxies to order work within that assurance tier. Exact common subgoals are
+counted once in the optimized work estimate and one checked certificate is reused.
+`execute_proof_plan(plan, max_work_units=N)` can enforce that estimate as a pre-run
+budget; an over-budget plan returns `UNKNOWN` without invoking its proof tools. These
+adapter work units explain scheduling and bound a plan by convention, but do not
+predict elapsed time or memory. The budget begins after the adapter has emitted a plan;
+it does not bound candidate search performed before plan construction. Neither planning
+nor reuse upgrades assurance, makes an unsupported statement provable, or turns an
+application premise into a theorem.
 
 The bounded multiplication rule can be named in a theorem module, referenced through
 `$ref`, reused by multiple conjunctions, and checked through the existing formal CLI
@@ -74,8 +96,8 @@ candidate coordinates into generated equality statements. A composed map adds a
 `matrix.affine_compose` step that recomputes exact matrix products and offsets from
 the ordered source maps. The framework routes each step by statement kind; no tool
 names, artifact indexes or coordinate goals have to be wired by the caller. All
-coordinate equalities form one bounded conjunction checked by the native Lean rule,
-so a 32D map uses one Lean process. See
+coordinate equalities are checked together in one native Lean process for maps up to
+the 128D limit. See
 [`affine_fixed_point_synthesis.json`](../examples/formal/affine_fixed_point_synthesis.json)
 and [`affine_fixed_point_synthesis_scalar.json`](../examples/formal/affine_fixed_point_synthesis_scalar.json),
 and [`affine_composed_fixed_point.json`](../examples/formal/affine_composed_fixed_point.json).
@@ -96,10 +118,10 @@ elimination; it recomputes the exact coordinate values from the source map and
 candidate, rebuilds the child statements, then replays their Lean certificates. An
 inconsistent singular system, malformed model, resource limit or unavailable native
 Lean is `UNKNOWN`; this rule does not certify that no fixed point exists. Dimensions
-are capped at 32, a composed chain at 8 maps, and an input at 256 KiB. Exact fractions
+are capped at 128, a composed chain at 8 maps, and an input at 1 MiB. Exact fractions
 are bounded to 4096-bit numerators and denominators; generated certificates are capped
 at 2 MiB, native Lean uses a 512 MiB process memory cap, and the vector theorem has a
-10-second time budget. The result establishes a fixed point for the declared rational
+30-second time budget. The result establishes a fixed point for the declared rational
 affine map or its exact ordered composition only. It does not prove uniqueness,
 contraction, convergence, or behavior of a corresponding training implementation;
 scientific and application assurance remain `UNKNOWN`.

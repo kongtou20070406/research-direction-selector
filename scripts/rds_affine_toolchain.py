@@ -15,9 +15,9 @@ COMPOSITION_RULE = "matrix.affine_compose"
 ASSURANCE = "COMPOSITION_CHECKED"
 BACKEND = "rds_affine_fixed_point_chain"
 SEMANTICS = "exact_rational_affine_fixed_point_witness"
-MAX_DIMENSION = 32
+MAX_DIMENSION = 128
 MAX_COMPOSITION_LENGTH = 8
-MAX_SPEC_BYTES = 262144
+MAX_SPEC_BYTES = 1048576
 CERTIFICATE_KEYS = {"version", "spec_sha256", "kind", "dimension", "candidate",
                     "plan", "assurance", "backend", "semantics", "verdict"}
 COMPOSITION_CERTIFICATE_KEYS = {"version", "statement_sha256", "composed_model",
@@ -29,7 +29,7 @@ def _read_model(model):
             "Affine model requires matrix and bias")
     raw_matrix, raw_bias = model["matrix"], model["bias"]
     require(isinstance(raw_matrix, list) and 1 <= len(raw_matrix) <= MAX_DIMENSION,
-            "Affine synthesis dimension must be 1..32")
+            "Affine synthesis dimension must be 1..128")
     dimension = len(raw_matrix)
     require(all(isinstance(row, list) and len(row) == dimension for row in raw_matrix),
             "Affine matrix must be square")
@@ -46,7 +46,7 @@ def _read_model(model):
 def _read_affine_spec(spec):
     require(isinstance(spec, dict), "Affine synthesis specification must be an object")
     require(len(canonical(spec).encode("utf-8")) <= MAX_SPEC_BYTES,
-            "Affine synthesis specification exceeds the 256-KiB limit")
+            "Affine synthesis specification exceeds the 1-MiB limit")
     require(type(spec.get("schema")) is int and spec["schema"] == 1,
             "Expected affine synthesis schema 1")
     require(spec.get("kind") == KIND, "Unknown affine synthesis kind")
@@ -132,6 +132,25 @@ def _read_composition_statement(statement):
     return actual
 
 
+def estimate_cost(statement):
+    """Dimension-scaled exact-arithmetic operation proxies for the plan optimizer."""
+    if isinstance(statement, dict) and statement.get("kind") == COMPOSITION_KIND:
+        result = statement.get("result", {})
+        matrix = result.get("matrix", []) if isinstance(result, dict) else []
+        dimension = len(matrix) if isinstance(matrix, list) else 0
+        transformations = statement.get("transformations", [])
+        count = len(transformations) if isinstance(transformations, list) else 1
+        return {"phase": "exact_affine_composition",
+                "work_units": max(1, dimension ** 3 * count)}
+    if isinstance(statement, dict) and statement.get("kind") in {"affine_fixed_point", "affine_dynamics"}:
+        model = statement.get("model", {})
+        matrix = model.get("matrix", []) if isinstance(model, dict) else []
+        dimension = len(matrix) if isinstance(matrix, list) else 0
+        return {"phase": "exact_affine_rule", "work_units": max(1, dimension ** 2)}
+    return {"phase": "exact_affine_rule",
+            "work_units": max(1, (len(canonical(statement).encode("utf-8")) + 63) // 64)}
+
+
 def _solve(matrix, bias):
     """Return an exact witness when consistent; None is inconclusive, not FAIL."""
     dimension = len(matrix)
@@ -191,10 +210,13 @@ def _proof_plan(matrix, bias, candidate, source_models=None):
                       "statement": {"schema": 1, "kind": COMPOSITION_KIND,
                                     "transformations": {"$artifact": "affine_chain"},
                                     "result": {"$artifact": "affine_model"}}})
-    steps.append({"name": "fixed_point_exact", "required_assurance": "CERTIFICATE_CHECKED",
-              "statement": {"schema": 1, "kind": "affine_fixed_point",
-                            "model": {"$artifact": "affine_model"},
-                            "point": {"$artifact": "fixed_point"}}})
+    fixed_point_step = {"name": "fixed_point_exact", "required_assurance": "CERTIFICATE_CHECKED",
+                        "statement": {"schema": 1, "kind": "affine_fixed_point",
+                                      "model": {"$artifact": "affine_model"},
+                                      "point": {"$artifact": "fixed_point"}}}
+    if source_models and len(source_models) > 1:
+        fixed_point_step["depends_on"] = ["compose_affine_chain"]
+    steps.append(fixed_point_step)
     relations = []
     for coordinate in range(len(candidate)):
         statement = _coordinate_spec(matrix, bias, candidate, coordinate)
@@ -203,6 +225,7 @@ def _proof_plan(matrix, bias, candidate, source_models=None):
                           "right": statement["right"]})
     steps.append({"name": "coordinate_obligations",
                   "required_assurance": "LEAN_KERNEL_CHECKED",
+                  "depends_on": ["fixed_point_exact"],
                   "statement": {"schema": 1, "kind": "lean_vector_obligation",
                                 "relations": relations}})
     return {"version": 1, "artifacts": artifacts, "steps": steps}
@@ -231,6 +254,7 @@ def _verify_synthesis(spec):
         return {"status": "PASS", "assurance": ASSURANCE, "backend": BACKEND,
                 "semantics": SEMANTICS, "candidate": certificate["candidate"],
                 "certificate": certificate,
+                "optimization": answer.get("optimization"),
                 "scope": ("A synthesized rational point is a fixed point of the exact composition "
                           "of the declared finite affine transformations" if len(source_models) > 1 else
                           "A synthesized rational point is a fixed point of the declared finite affine map")}

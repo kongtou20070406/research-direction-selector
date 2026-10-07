@@ -83,13 +83,20 @@ class AffineProofChainTests(unittest.TestCase):
                          ["fixed_point_exact", "coordinate_obligations"])
         self.assertEqual(subgoals[0]["rule"], "matrix.fixed_point")
         self.assertEqual(subgoals[0]["required_assurance"], "CERTIFICATE_CHECKED")
-        self.assertEqual(subgoals[0]["statement"]["model"], plan["artifacts"][0]["value"])
-        self.assertEqual(subgoals[0]["statement"]["point"], ["1/5", "2/5"])
+        matrix, bias = affine._read_spec(spec)
+        raw_plan = affine._proof_plan(matrix, bias, [affine.Fraction("1/5"), affine.Fraction("2/5")])
+        _artifacts, prepared = engine._prepare_proof_plan(raw_plan)
+        fixed_statement = prepared[0]["statement"]
+        self.assertEqual(fixed_statement["model"], plan["artifacts"][0]["value"])
+        self.assertEqual(fixed_statement["point"], ["1/5", "2/5"])
         vector_step = subgoals[1]
         self.assertEqual(vector_step["rule"], "lean.rational_relation")
-        self.assertEqual(vector_step["statement"]["kind"], "lean_vector_obligation")
-        self.assertEqual(len(vector_step["statement"]["relations"]), 2)
-        for coordinate, relation in enumerate(vector_step["statement"]["relations"]):
+        vector_statement = prepared[1]["statement"]
+        self.assertEqual(vector_statement["kind"], "lean_vector_obligation")
+        self.assertEqual(len(vector_statement["relations"]), 2)
+        self.assertEqual(vector_step["canonical_statement_sha256"],
+                         engine.digest(lean.canonical_statement(vector_statement)))
+        for coordinate, relation in enumerate(vector_statement["relations"]):
             self.assertEqual(relation["relation"], "eq")
             self.assertEqual(relation["left"], answer["candidate"][coordinate])
             self.assertEqual(relation["right"], relation["left"])
@@ -138,6 +145,7 @@ class AffineProofChainTests(unittest.TestCase):
         answer = engine.verify(spec)
         self.assertEqual(answer["status"], "PASS", answer)
         self.assertEqual(answer["candidate"], ["1", "1"])
+        self.assertEqual(answer["plan_optimization"]["schedule"][-1]["phase"], "native_lean")
         plan = answer["certificate"]["proof"]["certificate"]["plan"]
         self.assertEqual([step["name"] for step in plan["steps"]],
                          ["compose_affine_chain", "fixed_point_exact", "coordinate_obligations"])

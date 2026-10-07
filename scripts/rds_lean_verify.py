@@ -21,7 +21,7 @@ KINDS = {"lean_obligation", "lean_vector_obligation"}
 SEMANTICS = "closed_Lean_Rat_relation"
 VECTOR_SEMANTICS = "closed_Lean_Rat_vector_relations"
 TIMEOUT_SECONDS = 3
-VECTOR_TIMEOUT_SECONDS = 10
+VECTOR_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_BYTES = 65536
 THEOREM = "RDS.obligation"
 AXIOM_AUDIT = "'RDS.obligation' does not depend on any axioms"
@@ -55,13 +55,14 @@ def render_source(spec):
                 "Supported Lean rational relations are eq, lt and le")
         left, right = rational(spec["left"]), rational(spec["right"])
         proposition = f"{literal(left)} {RELATIONS[spec['relation']]} {literal(right)}"
+        helpers, proof = [], "by decide"
     else:
         require(spec["kind"] == "lean_vector_obligation" and
                 set(spec) == {"schema", "kind", "relations"},
                 "Vector Lean obligation requires a relations list")
         relations = spec["relations"]
-        require(isinstance(relations, list) and 1 <= len(relations) <= 32,
-                "Vector Lean obligations require 1..32 rational relations")
+        require(isinstance(relations, list) and 1 <= len(relations) <= 128,
+                "Vector Lean obligations require 1..128 rational relations")
         propositions = []
         for relation in relations:
             require(isinstance(relation, dict) and
@@ -70,14 +71,66 @@ def render_source(spec):
                     "Each vector relation requires a supported relation and two rationals")
             left, right = rational(relation["left"]), rational(relation["right"])
             propositions.append(f"({literal(left)} {RELATIONS[relation['relation']]} {literal(right)})")
-        proposition = " /\\ ".join(propositions)
+
+        def balanced_conjunction(items):
+            if len(items) == 1:
+                return items[0]
+            middle = len(items) // 2
+            return "(" + balanced_conjunction(items[:middle]) + " /\\ " + \
+                balanced_conjunction(items[middle:]) + ")"
+
+        def balanced_proof(names):
+            if len(names) == 1:
+                return names[0]
+            middle = len(names) // 2
+            return "(And.intro " + balanced_proof(names[:middle]) + " " + \
+                balanced_proof(names[middle:]) + ")"
+
+        proposition = balanced_conjunction(propositions)
+        helpers = [f"theorem vector_leaf_{index} : {item} := by decide"
+                   for index, item in enumerate(propositions)]
+        proof = "by exact " + balanced_proof(
+            [f"RDS.vector_leaf_{index}" for index in range(len(propositions))])
+    declarations = "\n".join(helpers)
+    separator = "\n" if declarations else ""
     return ("import Init.Data.Rat.Basic\n"
             "set_option maxHeartbeats 100000\n"
             "set_option maxRecDepth 512\n"
             "namespace RDS\n"
-            f"theorem obligation : {proposition} := by decide\n"
+            f"{declarations}{separator}theorem obligation : {proposition} := {proof}\n"
             "end RDS\n"
             "#print axioms RDS.obligation\n")
+
+
+def canonical_statement(spec):
+    """Normalize rational spellings exactly; no algebraic rewriting is performed."""
+    require(isinstance(spec, dict) and type(spec.get("schema")) is int and spec["schema"] == 1,
+            "Unsupported Lean statement for normalization")
+    if spec.get("kind") == "lean_obligation":
+        require(set(spec) == {"schema", "kind", "relation", "left", "right"} and
+                spec["relation"] in RELATIONS,
+                "Invalid scalar Lean statement for normalization")
+        return {"schema": 1, "kind": "lean_obligation", "relation": spec["relation"],
+                "left": str(rational(spec["left"])), "right": str(rational(spec["right"]))}
+    require(spec.get("kind") == "lean_vector_obligation" and
+            set(spec) == {"schema", "kind", "relations"} and
+            isinstance(spec["relations"], list) and 1 <= len(spec["relations"]) <= 128,
+            "Invalid vector Lean statement for normalization")
+    relations = []
+    for item in spec["relations"]:
+        require(isinstance(item, dict) and set(item) == {"relation", "left", "right"} and
+                isinstance(item["relation"], str) and item["relation"] in RELATIONS,
+                "Invalid vector relation for normalization")
+        relations.append({"relation": item["relation"], "left": str(rational(item["left"])),
+                          "right": str(rational(item["right"]))})
+    return {"schema": 1, "kind": "lean_vector_obligation", "relations": relations}
+
+
+def estimate_cost(spec):
+    """Estimate work in relation-count units; native wall time is measured separately."""
+    normalized = canonical_statement(spec)
+    units = len(normalized["relations"]) if normalized["kind"] == "lean_vector_obligation" else 1
+    return {"phase": "native_lean", "work_units": units}
 
 
 def _executable():
