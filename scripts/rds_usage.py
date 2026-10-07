@@ -74,7 +74,8 @@ def _database(*, write=True):
         objects = set(connection.execute(
             "SELECT type,name FROM sqlite_master WHERE name IN ('tracking','calls','calls_day')"
         ).fetchall())
-        if not {('table', 'tracking'), ('table', 'calls'), ('index', 'calls_day')} <= objects:
+        cold = not {('table', 'tracking'), ('table', 'calls'), ('index', 'calls_day')} <= objects
+        if cold:
             # A cold/partial schema is one short transaction, rather than
             # three serial autocommit flushes competing with incoming calls.
             # IF NOT EXISTS rechecks safely after another initializer wins.
@@ -87,14 +88,18 @@ def _database(*, write=True):
             ):
                 remaining_wait()
                 connection.execute(statement)
-            remaining_wait()
-            connection.commit()
-        # Release the schema writer before entering the caller's transaction;
-        # keep journal mode and the shared ten-second phase budget unchanged.
-        remaining_wait()
+            if not write:
+                remaining_wait()
+                connection.commit()
+        # Cold writes already own a transaction. Record the start before its
+        # first commit: releasing/reacquiring a writer here can spend the
+        # remaining phase budget after schema succeeded but before recording.
+        # Cold readers commit schema before opening their consistent snapshot.
         # Start's tracking+call remain atomic; readers get one consistent
         # snapshot without reserving a writer or upgrading a read transaction.
-        connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
+        if not (cold and write):
+            remaining_wait()
+            connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
         yield connection
         remaining_wait()
         connection.commit()
