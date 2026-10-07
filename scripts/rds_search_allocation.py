@@ -88,12 +88,17 @@ def _measurement(policy, row, observed):
     if not (type(value) is int and value.bit_length() <= 1024 or type(value) is float and math.isfinite(value)):
         return None, None, 'NONNUMERIC_MEASUREMENT'
     verifier = row['proposal']['experiment']['runs'][1]
+    candidate = row['proposal']['experiment']['runs'][0]
+    locators = {row['id']: '<proposal-id>', candidate['id']: '<candidate-run-id>',
+                row['proposal']['experiment']['candidate_output']: '<candidate-output>'}
+    locators.update({path: '<verifier-output:' + str(i) + '>' for i, path in enumerate(verifier['outpaths'])})
     # One frozen scope binds the evaluator/code/data; protocol also binds split,
-    # measurement schedule and numeric conditions. Output paths are locators.
+    # measurement schedule and numeric conditions. Only declared result locators
+    # and standalone experiment IDs are normalized; evaluator options stay bound.
     comparable = digest({'scope': row['scope_sha256'], 'metric': metric,
                          'conditions': sorted(discriminator['conditions'], key=lambda x: x['path']),
                          'protocol': verifier['protocol'],
-                         'evaluator_entry': next(a for a in verifier['argv'][1:] if not a.startswith('-'))})
+                         'evaluator_argv': [locators.get(a, a) for a in verifier['argv']]})
     return Fraction(value), comparable, None
 
 
@@ -137,21 +142,22 @@ def build(policy, rows, feedback, state):
             continue
         key = experiment_key(rows[ident])
         groups.setdefault(key, []).append((gain, ident))
-    uncertain = {experiment_key(rows[e['proposal_id']]) for e in evidence
-                 if e['observation'] == 'UNKNOWN' and rows[e['proposal_id']].get('discriminator')}
+    excluded = {experiment_key(rows[e['proposal_id']]) for e in evidence
+                if e['observation'] in ('UNKNOWN', 'REFUTE') and rows[e['proposal_id']].get('discriminator')}
     qualified, promising = [], []
     for key, measurements in groups.items():
         worst = min(gain for gain, _ in measurements)
         # Count original candidate runs, not renamed proposals sharing receipts.
         runs = {rows[ident]['proposal']['experiment']['runs'][0]['id'] for _, ident in measurements}
         parent = measurements[-1][1]
-        if worst >= Fraction(policy['metric']['min_improvement']) and key not in uncertain:
+        if worst >= Fraction(policy['metric']['min_improvement']) and key not in excluded:
             target = qualified if len(runs) >= policy['min_repeats'] else promising
             target.append((worst, key, parent, len(runs)))
     qualified.sort(key=lambda x: (-x[0], x[1]))
     promising.sort(key=lambda x: (-x[0], x[1]))
     selected_parent = qualified[0][2] if qualified else None
-    unknowns = [e['proposal_id'] for e in evidence if e['observation'] == 'UNKNOWN']
+    unknowns = [e['proposal_id'] for e in evidence if e['observation'] == 'UNKNOWN'
+                and rows[e['proposal_id']].get('discriminator')]
     evidence_parent = (unknowns[-1] if unknowns else promising[0][2] if promising
                        else selected_parent or (baseline_id if baseline and by_id[baseline_id]['observation'] == 'SUPPORT' else None))
     slots, withheld = [], []

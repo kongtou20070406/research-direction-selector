@@ -187,13 +187,15 @@ class SearchAllocationTests(unittest.TestCase):
         feedback = structure._verified_feedback(self.store, self.request()['scope_sha256'])
         rows = {r['id']: structure._find(self.store, 'PROPOSAL', r['id']) for r in feedback}
         policy = fixture.policy()
-        for change in ('noise', 'definition', 'shared-run', 'operational-unknown'):
+        for change in ('noise', 'definition', 'evaluator-argument', 'shared-run', 'operational-unknown'):
             obs, props = deepcopy(feedback), deepcopy(rows)
             last = next(f for f in obs if f['id'] == 'p2')
             if change == 'noise':
                 last['discrimination']['measured']['value'] = 24.5
             elif change == 'definition':
                 props['p2']['discriminator']['measurement']['name'] = 'different-metric'
+            elif change == 'evaluator-argument':
+                props['p2']['proposal']['experiment']['runs'][1]['argv'].append('--different-split')
             elif change == 'shared-run':
                 props['p2']['proposal']['experiment']['runs'][0]['id'] = 'p1'
             else:
@@ -201,6 +203,48 @@ class SearchAllocationTests(unittest.TestCase):
             with self.subTest(change=change):
                 plan = allocation.build(policy, props, obs, state)
                 self.assertIsNone(plan['selected_parent'])
+
+    def test_refutation_withholds_both_promising_and_repeated_interventions(self):
+        self.improved()
+        self.execute('p2', 'linear', 'evidence')
+        self.execute('p3', 'linear', 'evidence')
+        state = self.store.snapshot()
+        original = structure._verified_feedback(self.store, self.request()['scope_sha256'])
+        rows = {r['id']: structure._find(self.store, 'PROPOSAL', r['id']) for r in original}
+        by_id = {r['id']: r for r in original}
+        # Controlled scoring inputs; the ledger's original observations stay intact.
+        for supported in (['p1'], ['p1', 'p2']):
+            obs = deepcopy([by_id[ident] for ident in ['baseline', *supported, 'p3']])
+            obs[-1]['observation'] = 'REFUTE'
+            obs[-1]['discrimination']['measured']['value'] = 22
+            with self.subTest(supported=supported):
+                plan = allocation.build(fixture.policy(), rows, obs, state)
+                self.assertIsNone(plan['selected_parent'])
+                self.assertEqual({s['kind'] for s in plan['slots']}, {'explore'})
+                self.assertEqual(plan['comparisons'][-1]['reason'], 'SCOPED_HYPOTHESIS_REFUTED')
+                self.assertEqual(plan['comparisons'][-1]['improvement'], '5/2')
+        self.assertEqual(structure._verified_feedback(self.store, self.request()['scope_sha256']), original)
+
+    def test_search_requires_a_discriminator_before_consuming_a_slot(self):
+        task = self.request()
+        proposal = fixture.proposal(self.root, task)
+        del proposal['discriminator']
+        with self.assertRaisesRegex(ValueError, 'New structure experiments require an executable discriminator'):
+            structure.propose(self.root, proposal)
+        self.assertIsNone(structure._find(self.store, 'PROPOSAL', 'baseline'))
+        structure.propose(self.root, fixture.proposal(self.root, task))
+        self.assertEqual(self.store.snapshot()['receipts'], [])
+
+    def test_legacy_unknown_without_a_hypothesis_does_not_allocate_a_broken_parent(self):
+        self.execute()
+        original = structure._verified_feedback(self.store, self.request()['scope_sha256'])
+        rows = {'baseline': structure._find(self.store, 'PROPOSAL', 'baseline')}
+        rows['baseline']['discriminator'] = None
+        original[0]['observation'] = 'UNKNOWN'
+        original[0]['discrimination']['measured'] = None
+        plan = allocation.build(fixture.policy(), rows, original, self.store.snapshot())
+        self.assertEqual({s['kind'] for s in plan['slots']}, {'explore'})
+        self.assertEqual(plan['comparisons'][0]['observation'], 'UNKNOWN')
 
     def test_exhausted_budget_cannot_mint_work_or_reset_cap(self):
         root = fixture.prepare(Path(self.tmp.name) / 'exhausted', budget=1)

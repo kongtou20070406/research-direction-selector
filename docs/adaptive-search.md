@@ -41,8 +41,10 @@ The structure entry validates the bound contents before returning search tasks;
 The metric must be the discriminator's numeric original measurement. The
 baseline ID, direction, declared units and positive rational improvement
 threshold are fixed before results. Comparisons require the same goal/contract
-scope, frozen conditions, metric definition, verifier entry and protocol
-identity. Missing, Boolean or mismatched measurements cannot earn refinement.
+scope, frozen conditions, metric definition, verifier command and protocol
+identity. Verifier comparisons normalize only declared result paths and
+standalone proposal/candidate IDs; other arguments, including split or scoring
+options, must match. Missing, Boolean or mismatched measurements cannot earn refinement.
 Declared comparison identity is not a verification of the evaluator's scientific
 design or the physical units of its output.
 
@@ -76,7 +78,10 @@ available slots and explicitly withheld opportunities:
   Repeats share the declared hypothesis/prediction, candidate command (apart
   from declared output filenames) and protocol. The worst measured improvement
   determines ranking; ties use the stable experiment digest. An adverse repeat
-  or UNKNOWN for that intervention withholds refinement and preserves diagnosis.
+  or UNKNOWN for that intervention withholds refinement. REFUTE also removes
+  the intervention from promising repeat targets; UNKNOWN preserves diagnosis
+  when an executable scoped hypothesis is available. Legacy UNKNOWN records
+  without one remain visible but cannot create an unusable evidence slot.
 
 Copy the chosen integer into `"search": {"slot": 0}` in the normal structure
 proposal. For evidence/refine slots, copy the exact supplied `trigger`, including
