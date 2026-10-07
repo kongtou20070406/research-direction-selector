@@ -35,8 +35,11 @@ class ProofRule:
     version: str = "1"
     support_files: tuple = ()
 
-    def generate(self, statement):
-        return importlib.import_module(self.module).verify(statement)
+    def generate(self, statement, *, max_work_units=None):
+        module = importlib.import_module(self.module)
+        if max_work_units is None:
+            return module.verify(statement)
+        return module.verify(statement, max_work_units=max_work_units)
 
     def check(self, statement, certificate):
         return importlib.import_module(self.module).check_certificate(statement, certificate)
@@ -529,14 +532,45 @@ def _wrap(spec, verdict, proof):
             "verdict": verdict, "proof": proof}
 
 
-def _atomic(statement, requested=None):
+def _affine_plan_rule(spec, max_work_units):
+    """Only a registered direct affine adapter may construct a public plan."""
+    require(max_work_units is None or type(max_work_units) is int and max_work_units >= 0,
+            "max_work_units must be a nonnegative integer")
+    _bounded_json(spec)
+    require(isinstance(spec, dict), "Specification must be an object")
+    require(spec.get("kind") != "theorem_module",
+            "Proof-plan inspection and explicit budgets do not support theorem_module")
+    rule = REGISTRY.rule(spec)
+    require(rule.name == AFFINE_CHAIN_RULE,
+            "Proof-plan inspection and explicit budgets require direct affine_fixed_point_synthesis")
+    return rule
+
+
+def plan(spec, *, max_work_units=None):
+    """Inspect a trusted adapter plan; READY is not a proof or certificate."""
+    try:
+        rule = _affine_plan_rule(spec, max_work_units)
+        proof_plan = importlib.import_module(rule.module).build_proof_plan(spec)
+        result = optimize_proof_plan(proof_plan, max_work_units=max_work_units)
+        return dict(result, assurance="NONE", backend="rds_declarative", spec_sha256=digest(spec))
+    except (ValueError, TypeError, KeyError, AttributeError, ImportError, OSError,
+            ZeroDivisionError, OverflowError, RecursionError) as exc:
+        return _unknown(exc)
+
+
+def _atomic(statement, requested=None, *, max_work_units=None):
     rule = REGISTRY.rule(statement, requested)
-    result = rule.generate(statement)
+    if max_work_units is None:
+        result = rule.generate(statement)
+    else:
+        require(rule.name == AFFINE_CHAIN_RULE, "Explicit budget requires the trusted affine adapter")
+        result = rule.generate(statement, max_work_units=max_work_units)
     verdict, evidence = result.get("status"), result.get("certificate")
     if verdict not in {"PASS", "FAIL"} or not isinstance(evidence, dict):
         return dict(_unknown(result.get("reason", "Proof search was inconclusive")),
                     **{key: result[key] for key in ("conditional_statement", "application_status", "assumptions_required")
-                       if key in result})
+                       if key in result},
+                    **({"plan_optimization": result["optimization"]} if "optimization" in result else {}))
     require(evidence.get("verdict") == verdict, "Proof rule has inconsistent candidate evidence")
     # Final checked_result replays every leaf and composition exactly once.
     # Checking here as well would duplicate native Lean compilation.
@@ -546,13 +580,15 @@ def _atomic(statement, requested=None):
     return answer
 
 
-def verify(spec):
+def verify(spec, *, max_work_units=None):
     """Search for a proof, then independently check it; unknown is never admitted."""
     try:
         _bounded_json(spec)
         require(isinstance(spec, dict), "Specification must be an object")
+        if max_work_units is not None:
+            _affine_plan_rule(spec, max_work_units)
         if spec.get("kind") != "theorem_module":
-            answer = _atomic(spec)
+            answer = _atomic(spec, max_work_units=max_work_units)
             if answer["status"] == "UNKNOWN":
                 return answer
             certificate = _wrap(spec, answer["status"], answer["proof"])
