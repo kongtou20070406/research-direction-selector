@@ -56,6 +56,41 @@ Existing limits are unchanged (`DEFAULT_LIMITS`), and blocker-set
 incompleteness still means `UNRESOLVED`, never impossibility. Receipt
 audits are read-only and bounded by the ledger they name.
 
+## Exact blocker enumeration
+
+Missing-evidence families use a dependency worklist: only a changed premise
+family wakes its consumers, including a same-size replacement by smaller sets.
+Operation-local integer masks implement exact set union and subset subsumption.
+AND products join narrow factors first and reuse identical premise families;
+an existing conclusion family prunes a partial union only when that union and
+every possible extension are already supersets of a retained evidence set.
+Neither cost preferences nor top-K selection discard incomparable alternatives.
+Actual support, first-derivation witnesses, receipt grounding and original source
+records continue through their existing code paths.
+
+`combinations_examined` counts the union and conclusion candidates actually
+examined by this implementation, including rejected candidates. Skipped unchanged
+rules, duplicate factors and identity factors do not consume fictitious work.
+The count and the point of truncation can therefore differ from the previous
+scanner. Default/hard limits and the fail-closed output contract are unchanged:
+an unfinished unsupported goal never exposes partial blockers as complete.
+True exponential antichains can still exceed the limit on a small input graph.
+
+For a reproducible local comparison, save the **trusted** parent revision's
+`scripts/rds_hypergraph.py` outside the checkout and run:
+
+```text
+python -B benchmark/hypergraph_blockers.py --baseline-source <trusted-parent-file.py> --output <new-timings.json>
+```
+
+The benchmark executes that selected Python source. It records both source
+identities, alternating raw samples, work counts and separate Python allocation
+peaks. The same-cap timings retain complete/incomplete differences; a separate
+common larger-cap comparison checks complete semantic equality. A truncated
+baseline is never used to claim a complete-result speedup ratio. Tiny graphs can
+pay extra bookkeeping overhead; chain/high-branching gains are synthetic local
+observations, not a worst-case latency, LLM-token or scientific-gain guarantee.
+
 ## Verification
 
 `tests/test_hypergraph_evidence.py` drives the analyzer and the real CLI:
