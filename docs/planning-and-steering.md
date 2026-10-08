@@ -43,6 +43,12 @@ without overwriting an existing file. `--save-as first-plan` retains the draft i
 the initialized project's existing CAS and checkpoint ledger. There is no second
 research state for cold starts.
 
+Once explicit predicates, actions, actual files, evaluators and authorized
+resources are available, [project assembly](project-assembly.md) can compile one
+structured recipe into the existing owned contract. `project init --recipe`
+generates hashes and route associations; it does not interpret the prose draft
+or infer missing research semantics.
+
 ## Receive a direction
 
 First inspect `project steering` or `project plan`. The host builds a request

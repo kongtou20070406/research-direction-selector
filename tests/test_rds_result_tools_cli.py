@@ -10,12 +10,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ResultToolsCLITests(unittest.TestCase):
     def test_three_qualified_operations_are_consumed_and_recovery_does_not_repeat(self):
+        self.exercise_consumers(recipe=False)
+
+    def test_recipe_uses_the_same_three_qualified_consumers_and_original_costs(self):
+        self.exercise_consumers(recipe=True)
+
+    def exercise_consumers(self, *, recipe):
         spec = importlib.util.spec_from_file_location('result_tools_example', ROOT / 'examples/result-tools/run.py')
         example = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(example)
         with tempfile.TemporaryDirectory(prefix='rds-results-cli-') as folder:
             root = Path(folder)
-            summary = example.run(root)
+            summary = example.run(root, recipe=recipe)
             use = summary['tool_utilization']
             self.assertEqual(use['counts']['applicable'], 3)
             self.assertEqual(use['counts']['used'], 3)
@@ -33,6 +39,7 @@ class ResultToolsCLITests(unittest.TestCase):
             self.assertEqual(before['runs'], after['runs'])
             self.assertEqual(before['budget'], after['budget'])
             self.assertEqual(len(before['runs']), 3)
+            self.assertEqual(len(before['receipts']), 3)
             self.assertTrue(summary['recovery_preserved_runs_and_budget'])
             costs = json.loads((root / 'reports/preparation-costs.json').read_text(encoding='utf-8'))
             self.assertEqual(len(costs), 1)
@@ -44,4 +51,4 @@ class ResultToolsCLITests(unittest.TestCase):
             self.assertGreater(sizes['inventory']['bytes_difference'], 0)
             self.assertLess(sizes['compare']['bytes_difference'], 0)
             with self.assertRaisesRegex(ValueError, 'empty'):
-                example.run(root)
+                example.run(root, recipe=recipe)
