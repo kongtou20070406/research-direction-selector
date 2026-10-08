@@ -419,7 +419,7 @@ def process_result(store, event, receipt):
     return 'ADOPTED'
 
 
-def _claim(store):
+def _claim(store, controller_wall_seconds=None):
     owner = uuid.uuid4().hex
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -436,13 +436,20 @@ def _claim(store):
             db.execute("UPDATE budget SET reserved=reserved-?,charged=charged+? WHERE resource='wall_seconds'", (allowance, allowance))
             _append(db, {'kind': 'AUTONOMY_DRIVE_RELEASED', 'owner': active['owner'], 'reason': 'OWNER_DEAD_NO_WORKER_RELAUNCH'})
             db.commit()  # Dead-owner accounting must survive an exhausted new budget.
-            return _claim(store)  # Re-read ownership in a new transaction, including races.
+            return _claim(store, controller_wall_seconds)  # Re-read ownership, including races.
         from rds_steering import check_dispatch
         check_dispatch(db, None)
-        config = store._contract(db)['advisor_policy']['autonomy']
+        config = store._contract(db)['advisor_policy'].get('autonomy')
+        if config is not None:
+            require(controller_wall_seconds is None, 'Frozen autonomy controller allowance cannot be overridden')
+            requested = config.get('controller_wall_seconds', 30)
+        else:
+            requested = number(controller_wall_seconds, 'controller_wall_seconds', True)
+            require(requested <= 120, 'Controller pass wall allowance must be at most 120 seconds')
         row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
+        require(row is not None, 'Controller requires a declared wall_seconds budget')
         available = max(0., row['cap'] - row['spent'] - row['charged'] - row['reserved'])
-        allowance = min(config.get('controller_wall_seconds', 30), available)
+        allowance = min(requested, available)
         require(allowance > 0, 'Controller has no remaining wall budget')
         db.execute("UPDATE budget SET reserved=reserved+? WHERE resource='wall_seconds'", (allowance,))
         _append(db, {'kind': 'AUTONOMY_DRIVE_CLAIMED', 'owner': owner, 'pid': os.getpid(), 'started_at': time.time(),
@@ -463,27 +470,43 @@ def controller_reservation(store, db):
     return active['controller_reservation'] if active and active['pid'] == os.getpid() else 0.
 
 
-def drive(store, max_steps=8, prepare_only=False):
+def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, controller_wall_seconds=None):
     """Perform a bounded foreground pass; wait/unknown/deadline needs a later pass."""
     require(type(max_steps) is int and 1 <= max_steps <= 64, 'drive max_steps must be 1..64')
     require(type(prepare_only) is bool, 'drive prepare_only must be Boolean')
+    require(type(until_judgment) is bool, 'drive until_judgment must be Boolean')
     from rds_owned_advisor import review, _state
     with store._db(True) as db:
         contract = store._contract(db)
     policy = contract.get('advisor_policy')
-    require(policy and 'autonomy' in policy, 'project drive requires a frozen autonomy declaration')
+    require(policy and (until_judgment or 'autonomy' in policy),
+            'project drive requires a frozen autonomy declaration, or an owned policy with --until-judgment')
     config = validate_policy(store, contract, policy)
+    if config is not None:
+        require(controller_wall_seconds is None, 'Frozen autonomy controller allowance cannot be overridden')
+    else:
+        require(controller_wall_seconds is not None, 'Ordinary owned continuation requires --controller-wall-seconds')
+        require(number(controller_wall_seconds, 'controller_wall_seconds', True) <= 120,
+                'Controller pass wall allowance must be at most 120 seconds')
+    from rds_continuation import attach, resources
+    def before_claim(result):
+        if until_judgment:
+            attach(store, contract, result, project=False)
+            with store._db(True) as db:
+                result['handoff']['resources'] = resources(db)
+            result['handoff']['resource_cut'] = 'BEFORE_CONTROLLER_CLAIM'
+        return result
     from rds_steering import SteeringBlocked, status as steering_status
     instruction = steering_status(store)
     if instruction['steering']['paused']:
-        return {**instruction, 'status': 'HUMAN_STEERING_REQUIRED', 'executed': []}
+        return before_claim({**instruction, 'status': 'HUMAN_STEERING_REQUIRED', 'executed': []})
     try:
-        owner, allowance = _claim(store)
+        owner, allowance = _claim(store, controller_wall_seconds)
     except SteeringBlocked as exc:
-        return {**steering_status(store), 'status': 'HUMAN_STEERING_REQUIRED', 'reason': str(exc), 'executed': []}
+        return before_claim({**steering_status(store), 'status': 'HUMAN_STEERING_REQUIRED', 'reason': str(exc), 'executed': []})
     except (ValueError, OSError, sqlite3.Error) as exc:
-        return {'status': 'CONTROLLER_ADMISSION_BLOCKED', 'reason': str(exc), 'executed': [],
-                'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}
+        return before_claim({'status': 'CONTROLLER_ADMISSION_BLOCKED', 'reason': str(exc), 'executed': [],
+                             'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'})
     started, worker_wall, executed = time.monotonic(), 0., []
     result = {'status': 'STEP_LIMIT', 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN', 'executed': executed}
     try:
@@ -500,7 +523,8 @@ def drive(store, max_steps=8, prepare_only=False):
                     store.recover(r['id'])
                 with store._db(True) as db:
                     refreshed = store._runs(db)
-                if any(r['status'] == 'RUNNING' for r in refreshed):
+                if any(r['status'] == 'RUNNING' or (until_judgment and r['status'] == 'RESERVED'
+                                                  and r['attempt_id'] is not None) for r in refreshed):
                     result['status'] = 'WAITING_FOR_ORIGINAL_ATTEMPT'
                     break
                 continue
@@ -511,7 +535,7 @@ def drive(store, max_steps=8, prepare_only=False):
                 break
             # Finish/restore model adoption before any future research step.
             receipts = {r['run_id']: r for r in state['receipts']}
-            events = state['autonomy_records']
+            events = state.get('autonomy_records', [])
             unfinished = [e for e in events if e['kind'] == REQUESTED and e['run_id'] in receipts and
                           not any(p['kind'] == PROCESSED and p['run_id'] == e['run_id'] for p in events)]
             if unfinished:
@@ -532,7 +556,7 @@ def drive(store, max_steps=8, prepare_only=False):
                                              'receipt_sha256': receipts[original['run_id']]['sha256'],
                                              'outcome': 'PROPOSAL_REJECTED', 'reason': str(exc)})
                 continue
-            if len(executed) >= max_steps:
+            if len(executed) >= max_steps and not until_judgment:
                 break
             report = review(store)
             result['advisor'] = report
@@ -549,6 +573,8 @@ def drive(store, max_steps=8, prepare_only=False):
                 result['status'] = ('GOAL_CONFIRMED' if confirmed and confirmed['task_confirmation'] == 'PASS'
                                     else 'GOAL_PREDICATES_MET_CONFIRMATION_' + (confirmed or {}).get('task_confirmation', 'UNDECLARED'))
                 break
+            if len(executed) >= max_steps:
+                break
             with store._db() as db:
                 db.execute('BEGIN IMMEDIATE')
                 store._campaign_deadline(db, state['contract'], admit=True)
@@ -559,6 +585,15 @@ def drive(store, max_steps=8, prepare_only=False):
                     result.update(status='DOMAIN_CONFIRMATION_UNKNOWN', confirmation=confirmation,
                                   reason='Original execution evidence cannot establish the declared domain confirmation; additional independent evidence is required')
                     break
+                if until_judgment:
+                    processed = [e for e in events if e['kind'] == PROCESSED]
+                    uncertain = any(e['outcome'] in {'MODEL_OUTCOME_UNKNOWN', 'UNKNOWN'} for e in processed)
+                    result.update(status='RECONCILE_MODEL_DELIVERY_REQUIRED' if uncertain else 'JUDGMENT_REQUIRED',
+                                  unresolved_obstacle={'scope': 'EXISTING_GOAL_AND_AUTHORIZED_ROUTES',
+                                      'reason': 'No program-selected route; inspect original prerequisites, evidence and resources',
+                                      'tried_runs': [r['id'] for r in state['runs']],
+                                      'repair_results': processed, 'scientific_impossibility': 'UNKNOWN'})
+                    break
                 requested = request_repair(store, report)
                 if requested == 'REQUESTED':
                     continue
@@ -568,7 +603,7 @@ def drive(store, max_steps=8, prepare_only=False):
                     'repair_results': [e for e in events if e['kind'] == PROCESSED],
                     'scientific_impossibility': 'UNKNOWN'}
                 break
-            if prepare_only and manifest['id'] in {s['run_id'] for s in config['repair_slots']}:
+            if (prepare_only or until_judgment) and manifest['id'] in {s['run_id'] for s in (config or {}).get('repair_slots', [])}:
                 # Paid-result recovery above still runs. Pause only before the
                 # selected repair worker, retaining the verified original input.
                 if manifest['id'] not in {r['id'] for r in state['runs']}:
@@ -607,6 +642,10 @@ def drive(store, max_steps=8, prepare_only=False):
     except (ValueError, OSError, sqlite3.Error, KeyError, TypeError, UnicodeError) as exc:
         result.update(status='HANDOFF_REQUIRED', reason=str(exc))
     finally:
+        if until_judgment:
+            # Projection is control work. It neither recollects evidence nor runs
+            # after settlement; stale/absent reports remain explicitly unavailable.
+            attach(store, contract, result, project=time.monotonic() - started - worker_wall < allowance)
         overhead = max(0., time.monotonic() - started - worker_wall)
         with store._db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -614,5 +653,8 @@ def drive(store, max_steps=8, prepare_only=False):
                        (allowance, min(overhead, allowance), max(0., overhead - allowance)))
             _append(db, {'kind': 'AUTONOMY_DRIVE_RELEASED', 'owner': owner, 'reason': result['status'],
                          'controller_wall_seconds': overhead, 'executed': deepcopy(executed)})
+            if until_judgment:
+                result['handoff']['resources'] = resources(db)
+                result['handoff']['resource_cut'] = 'CONTROLLER_RELEASE_TRANSACTION'
         result['controller_wall_seconds'] = overhead
     return result
