@@ -698,6 +698,12 @@ def drive(root, steps=1):
     for _ in range(steps):
         decision = next_step(root)
         if decision['selected'] is None:
+            if decision['status'] == 'REQUEST_OPEN_EXPLORATION':
+                from rds_jump import generate
+                generated = generate(root)
+                if generated['status'] != 'JUMP_NOT_CONFIGURED':
+                    return {'status': generated['status'], 'decisions': history + [decision],
+                            'generation': generated, 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}
             return {'status': decision['status'], 'decisions': history + [decision],
                     'agent_tasks': request(root)['tasks'] if decision['status'] == 'REQUEST_OPEN_EXPLORATION' else [],
                     'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}
