@@ -218,6 +218,20 @@ class GraphRankerCLITests(unittest.TestCase):
         self.assertEqual(report['selected_run'], 'baseline')
         self.assertEqual(report['graph_ranker']['status'], 'ABSTAINED')
 
+    def test_retained_human_preference_has_priority_over_neural_order(self):
+        self.initialize(model())
+        from rds_owned_advisor import review, _state
+        def directed(store, db):
+            state = _state(store, db)
+            state['steering'] = {'preferred_runs': ['baseline'], 'paused': False}
+            return state
+        # An integration-boundary state, not an instruction written by a model.
+        with patch('rds_owned_advisor._state', side_effect=directed):
+            report = review(ProjectStore(self.root))
+        self.assertEqual(report['selected_run'], 'baseline')
+        self.assertEqual(report['graph_ranker']['precedence'], 'HUMAN_PREFERENCE')
+        self.assertFalse(report['graph_ranker']['selection_applied'])
+
 
 if __name__ == '__main__':
     unittest.main()

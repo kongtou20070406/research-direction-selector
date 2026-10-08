@@ -614,15 +614,20 @@ def review(store, persist=True):
                 result['warnings'].append({'kind': 'EXECUTION_PREREQUISITE_BLOCK' if allowed
                                           else 'PREDICTIVE_FEASIBILITY_BLOCK', 'plans': feasibility['plans']})
         frontier = [r for r in eligible if not ready[r['candidate']].get('dominated_by')]
+        chosen = (active or frontier or eligible)
         if 'graph_ranker' in policy:
             from rds_graph_ranker import rank
+            steering = state.get('steering') or {}
             precedence = ('EVIDENCE_COVERAGE_FAILED' if coverage['errors'] else
                           'GOAL_ALREADY_CONFIRMED' if selection.get('goal', {}).get('status') == 'TRUE' else
                           'ACTIVE_RESERVATION' if active else
-                          'FEASIBILITY_PILOT_ORDER' if feasibility and feasibility['bounded_pilots'] else None)
-            frontier, result['graph_ranker'] = rank(policy['graph_ranker'], graph, context['facts'],
-                                                   frontier, precedence=precedence)
-        chosen = (active or frontier or eligible)
+                          'FEASIBILITY_PILOT_ORDER' if feasibility and feasibility['bounded_pilots'] else
+                          'HUMAN_PREFERENCE' if steering.get('preferred_runs') else
+                          'HUMAN_PAUSE' if steering.get('paused') else None)
+            ranked, result['graph_ranker'] = rank(policy['graph_ranker'], graph, context['facts'],
+                                                frontier, precedence=precedence)
+            if result['graph_ranker']['selection_applied']:
+                chosen = ranked
         if not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
             route = chosen[0]
             # Every dispatch, including a reservation, must still satisfy the
