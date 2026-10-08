@@ -83,7 +83,12 @@ For a reproducible local comparison, save the **trusted** parent revision's
 python -B benchmark/hypergraph_blockers.py --baseline-source <trusted-parent-file.py> --output <new-timings.json>
 ```
 
-The benchmark executes that selected Python source. It records both source
+For revisions with `rds_hypergraph_blockers.py`, save that same revision's helper
+beside the selected file under its original name. Both files must come from the
+trusted baseline; a required missing helper is an error, never a fallback to the
+current checkout. Revisions before the helper existed remain supported.
+
+The benchmark executes those selected Python sources. It records both source
 identities, alternating raw samples, work counts and separate Python allocation
 peaks. The same-cap timings retain complete/incomplete differences; a separate
 common larger-cap comparison checks complete semantic equality. A truncated
