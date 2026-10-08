@@ -378,7 +378,7 @@ def record_topology(spec, *, source_base=None):
     required = {'run': ('run_id',), 'receipt': ('run_id', 'receipt_id'),
                 'artifact': ('run_id', 'path', 'sha256'), 'declared_output': ('run_id', 'path'),
                 'lifecycle_fact': ('run_id',), 'observation': ('run_id',)}
-    rows, issues, invalid = {}, [], set()
+    rows, issues = {}, []
     if invalid_base:
         issues.append({'node_id': None, 'scope': 'dependency_map', 'reason': 'INVALID_BINDING',
                        'field': 'record_source_base_dir', 'candidates': [], 'omitted_candidates': 0})
@@ -392,9 +392,8 @@ def record_topology(spec, *, source_base=None):
         if not isinstance(kind, str) or kind not in kinds:
             if kind is not None:
                 issue(node, 'INVALID_RECORD_KIND', 'record_kind')
-                invalid.add(ident)
             continue
-        row = {'node': node, 'kind': kind}
+        row = {'node': node, 'kind': kind, 'invalid_fields': set()}
         source = node['source'] if isinstance(node['source'], dict) else {}
         for field, values in (
                 ('run_id', [node.get('run_id')]),
@@ -408,7 +407,7 @@ def record_topology(spec, *, source_base=None):
                    or digest_field and (len(value) != 64 or any(c not in '0123456789abcdefABCDEF' for c in value))
                    for value in present):
                 issue(node, 'INVALID_BINDING', field)
-                invalid.add(ident)
+                row['invalid_fields'].add(field)
                 continue
             present = [value.lower() if digest_field else value for value in present]
             if field == 'path' and source_base is not None:
@@ -416,24 +415,21 @@ def record_topology(spec, *, source_base=None):
                     present = [str((source_base / value).resolve()) for value in present]
                 except (OSError, ValueError, RuntimeError):
                     issue(node, 'INVALID_BINDING', field)
-                    invalid.add(ident)
+                    row['invalid_fields'].add(field)
                     continue
             if len(set(present)) > 1:
                 issue(node, 'CONFLICTING_BINDINGS', field)
-                invalid.add(ident)
+                row['invalid_fields'].add(field)
             elif present:
                 row[field] = present[0]
-        if ident not in invalid:
-            for field in required.get(kind, ()):
-                if field not in row:
-                    issue(node, 'RUN_NOT_REGISTERED' if field == 'run_id' and node.get('route_id')
-                          and kind in {'lifecycle_fact', 'observation'} else 'MISSING_BINDING', field)
+        for field in required.get(kind, ()):
+            if field not in row and field not in row['invalid_fields']:
+                issue(node, 'RUN_NOT_REGISTERED' if field == 'run_id' and node.get('route_id')
+                      and kind in {'lifecycle_fact', 'observation'} else 'MISSING_BINDING', field)
         rows[ident] = row
 
     indexes = {'run': {}, 'receipt': {}, 'artifact': {}}
     for ident, row in rows.items():
-        if ident in invalid:
-            continue
         kind = row['kind']
         key = (row.get('run_id') if kind == 'run' else row.get('receipt_id') if kind == 'receipt'
                else (row.get('run_id'), row.get('path'), row.get('sha256')) if kind == 'artifact' else None)
@@ -459,8 +455,6 @@ def record_topology(spec, *, source_base=None):
                               'scientific_support': 'UNKNOWN'})
 
     for ident, row in rows.items():
-        if ident in invalid:
-            continue
         kind = row['kind']
         if kind in {'contract', 'run'}:
             continue
@@ -468,20 +462,25 @@ def record_topology(spec, *, source_base=None):
         receipt, receipt_conflict = None, False
         if kind in {'artifact', 'observation', 'lifecycle_fact', 'declared_output'}:
             receipt = match(row, 'receipt', row.get('receipt_id'), 'receipt_id')
-            if receipt is not None and rows[receipt].get('run_id') != row.get('run_id'):
-                issue(row['node'], 'CONFLICTING_BINDINGS', 'receipt.run_id', [receipt])
-                receipt_conflict = True
+            if receipt is not None:
+                receipt_run = rows[receipt].get('run_id')
+                if receipt_run is None:
+                    # Missing/invalid ownership was diagnosed on the origin.
+                    # It cannot establish compatible receipt ownership.
+                    receipt_conflict = True
+                elif row.get('run_id') is not None and receipt_run != row['run_id']:
+                    issue(row['node'], 'CONFLICTING_BINDINGS', 'receipt.run_id', [receipt])
+                    receipt_conflict = True
         if kind == 'receipt':
-            # A duplicated receipt identity cannot become an unambiguous origin.
-            own = match(row, 'receipt', row.get('receipt_id'), 'receipt_id')
-            if own is not None:
-                link('run_receipt', run, row)
+            # Origin identity and membership are separate field-level claims.
+            # Keep duplicate diagnostics without withholding exact run membership.
+            match(row, 'receipt', row.get('receipt_id'), 'receipt_id')
+            link('run_receipt', run, row)
         elif kind == 'artifact':
-            own = match(row, 'artifact', (row.get('run_id'), row.get('path'), row.get('sha256')), 'artifact_identity')
-            if own is not None:
-                link('run_artifact', run, row)
-                if not receipt_conflict:
-                    link('receipt_artifact', receipt, row)
+            match(row, 'artifact', (row.get('run_id'), row.get('path'), row.get('sha256')), 'artifact_identity')
+            link('run_artifact', run, row)
+            if row.get('run_id') is not None and not receipt_conflict:
+                link('receipt_artifact', receipt, row)
         elif kind == 'declared_output':
             # The path is a declaration, with no claim that output bytes exist.
             if row.get('path'):
@@ -490,9 +489,11 @@ def record_topology(spec, *, source_base=None):
             link('run_lifecycle_fact', run, row)
         elif kind == 'observation':
             link('run_observation', run, row)
-            if receipt_conflict:
+            if receipt_conflict or 'receipt_id' in row['invalid_fields']:
                 continue  # Only the receipt-dependent artifact match is withheld.
             artifact = match(row, 'artifact', (row.get('run_id'), row.get('path'), row.get('sha256')), 'artifact_identity')
+            if artifact is not None and 'receipt_id' in rows[artifact]['invalid_fields']:
+                continue  # Invalid receipt metadata is never compatible absence.
             if artifact is not None and rows[artifact].get('receipt_id') != row.get('receipt_id'):
                 issue(row['node'], 'CONFLICTING_BINDINGS', 'artifact.receipt_id', [artifact])
             else:

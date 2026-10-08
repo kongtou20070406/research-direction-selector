@@ -164,6 +164,171 @@ class HypergraphTests(unittest.TestCase):
                 self.assertEqual(result['goals']['opaque-record']['status'], 'UNKNOWN')
                 self.assertEqual(spec, before)
 
+    def test_review_four_counterexamples_keep_independent_run_membership(self):
+        for position, bad_field, expected in ((3, 'output_path', 'run_observation'),
+                                              (3, 'receipt_id', 'run_observation'),
+                                              (5, 'receipt_id', 'run_lifecycle_fact'),
+                                              (4, 'receipt_id', 'declared_output')):
+            with self.subTest(position=position, bad_field=bad_field):
+                spec = self.record_fixture()
+                target = spec['nodes'][position]
+                target[bad_field] = 'other/path.json' if bad_field == 'output_path' else []
+                before = deepcopy(spec)
+                actual = analyze_hypergraph(spec)
+                self.assertIn(expected, [r['kind'] for r in actual['record_relations'] if r['to'] == target['id']])
+                self.assertTrue(any(i['node_id'] == target['id'] and i['field'] ==
+                                    ('path' if bad_field == 'output_path' else bad_field)
+                                    for i in actual['record_topology']['issues']))
+                self.assertEqual(spec, before)
+
+    def test_record_field_matrix_withholds_only_dependent_relations(self):
+        # Whole-record validity cannot express these distinct binding requirements.
+        cases = ((1, 'receipt_id', [], {'run_receipt'}),
+                 (1, 'output_path', [], {'run_receipt'}),
+                 (2, 'artifact_path', [], {'run_artifact', 'receipt_artifact'}),
+                 (2, 'receipt_id', [], {'run_artifact'}),
+                 (3, 'output_path', [], {'run_observation'}),
+                 (3, 'receipt_id', [], {'run_observation'}),
+                 (4, 'receipt_id', [], {'declared_output'}),
+                 (4, 'output_path', [], set()),
+                 (5, 'receipt_id', [], {'run_lifecycle_fact'}),
+                 (5, 'output_path', [], {'run_lifecycle_fact'}),
+                 (2, 'artifact_path', 'bad\0path', {'run_artifact', 'receipt_artifact'}),
+                 *((position, 'run_id', [], set()) for position in range(1, 6)))
+        baseline = analyze_hypergraph(self.record_fixture())
+        for position, field, value, expected in cases:
+            with self.subTest(position=position, field=field):
+                spec = self.record_fixture()
+                target = spec['nodes'][position]
+                target[field] = value
+                before = deepcopy(spec)
+                actual = analyze_hypergraph(spec)
+                self.assertEqual({r['kind'] for r in actual['record_relations'] if r['to'] == target['id']}, expected)
+                for key in baseline.keys() - {'record_relations', 'record_topology', 'reported_nodes'}:
+                    self.assertEqual(actual[key], baseline[key], key)
+                self.assertTrue(all(r['scientific_support'] == 'UNKNOWN' for r in actual['record_relations']))
+                self.assertEqual(spec, before)
+
+    def test_missing_required_fields_survive_unrelated_bad_metadata(self):
+        for kind, missing in (('run', {'run_id'}), ('receipt', {'run_id', 'receipt_id'}),
+                              ('artifact', {'run_id', 'path', 'sha256'}),
+                              ('declared_output', {'run_id', 'path'}),
+                              ('lifecycle_fact', {'run_id'}), ('observation', {'run_id'})):
+            with self.subTest(kind=kind):
+                spec = graph({'record': 'UNKNOWN'}, [], ['record'])
+                # Choose an unrelated bad extra so every required field remains absent.
+                bad_field = 'path' if kind == 'receipt' else 'receipt_id'
+                spec['nodes'][0].update(record_kind=kind)
+                if bad_field == 'path':
+                    spec['nodes'][0]['output_path'] = []
+                else:
+                    spec['nodes'][0]['receipt_id'] = []
+                actual = analyze_hypergraph(spec)
+                issues = actual['record_topology']['issues']
+                self.assertEqual({i['field'] for i in issues if i['reason'] == 'MISSING_BINDING'}, missing)
+                self.assertTrue(any(i['field'] == bad_field and i['reason'] == 'INVALID_BINDING' for i in issues))
+                self.assertEqual(actual['record_relations'], [])
+                self.assertEqual(actual['goals']['record']['status'], 'UNKNOWN')
+
+    def test_conflicting_receipt_aliases_keep_membership_without_source_match(self):
+        for position, membership in ((0, None), (1, 'run_receipt'), (2, 'run_artifact'),
+                                     (3, 'run_observation'), (4, 'declared_output'),
+                                     (5, 'run_lifecycle_fact')):
+            with self.subTest(position=position):
+                spec = self.record_fixture()
+                target = spec['nodes'][position]
+                target.update(receipt_id='a' * 64, receipt_sha256='c' * 64)
+                actual = analyze_hypergraph(spec)
+                if membership is None:
+                    self.assertTrue(any(r['kind'] == 'run_observation' for r in actual['record_relations']))
+                else:
+                    self.assertEqual({r['kind'] for r in actual['record_relations'] if r['to'] == target['id']},
+                                     {membership})
+                self.assertTrue(any(i['node_id'] == target['id'] and i['field'] == 'receipt_id'
+                                    and i['reason'] == 'CONFLICTING_BINDINGS'
+                                    for i in actual['record_topology']['issues']))
+
+    def test_membership_does_not_require_artifact_origin_identity(self):
+        spec = self.record_fixture()
+        artifact = spec['nodes'][2]
+        artifact.pop('artifact_path')
+        artifact['source'] = {'locator': 'synthetic artifact without byte identity'}
+        actual = analyze_hypergraph(spec)
+        self.assertEqual({r['kind'] for r in actual['record_relations'] if r['to'] == 'opaque-c'},
+                         {'run_artifact', 'receipt_artifact'})
+        self.assertFalse(any(r['kind'] == 'artifact_observation' for r in actual['record_relations']))
+        self.assertEqual({i['field'] for i in actual['record_topology']['issues']
+                          if i['node_id'] == 'opaque-c' and i['reason'] == 'MISSING_BINDING'}, {'path', 'sha256'})
+
+    def test_invalid_receipt_identity_cannot_match_absent_receipt(self):
+        for bad_origin in (False, True):
+            with self.subTest(bad_origin=bad_origin):
+                spec = self.record_fixture()
+                artifact, observation = spec['nodes'][2:4]
+                artifact.pop('receipt_id')
+                observation.pop('receipt_id')
+                observation['source'].pop('receipt_id')
+                bad = artifact if bad_origin else observation
+                bad['receipt_id'] = []
+                actual = analyze_hypergraph(spec)
+                self.assertFalse(any(r['kind'] == 'artifact_observation' for r in actual['record_relations']))
+                self.assertTrue(any(r['kind'] == 'run_artifact' for r in actual['record_relations']))
+                self.assertTrue(any(r['kind'] == 'run_observation' for r in actual['record_relations']))
+        # Absence on both ends is still compatible; no invalid value is involved.
+        spec = self.record_fixture()
+        spec['nodes'][2].pop('receipt_id')
+        spec['nodes'][3].pop('receipt_id')
+        spec['nodes'][3]['source'].pop('receipt_id')
+        self.assertTrue(any(r['kind'] == 'artifact_observation' for r in analyze_hypergraph(spec)['record_relations']))
+
+    def test_origins_keep_valid_indexes_despite_unrelated_bad_fields_and_duplicates(self):
+        for position, field, expected in ((0, 'receipt_id', 'run_observation'),
+                                          (1, 'output_path', 'receipt_artifact'),
+                                          (2, 'receipt_id', 'artifact_observation')):
+            with self.subTest(position=position, duplicate=False):
+                spec = self.record_fixture()
+                spec['nodes'][position][field] = []
+                actual = analyze_hypergraph(spec)
+                if position == 2:
+                    self.assertFalse(any(r['kind'] == expected for r in actual['record_relations']))
+                else:
+                    self.assertTrue(any(r['kind'] == expected for r in actual['record_relations']))
+            with self.subTest(position=position, duplicate=True):
+                spec = self.record_fixture()
+                duplicate = deepcopy(spec['nodes'][position])
+                duplicate['id'] = 'duplicate-origin'
+                duplicate[field] = []
+                spec['nodes'].append(duplicate)
+                actual = analyze_hypergraph(spec)
+                self.assertFalse(any(r['kind'] == expected for r in actual['record_relations']))
+                self.assertTrue(any(i['reason'] == 'AMBIGUOUS_BINDING' and 'duplicate-origin' in i['candidates']
+                                    for i in actual['record_topology']['issues']))
+                if position in (1, 2):
+                    membership = 'run_receipt' if position == 1 else 'run_artifact'
+                    self.assertEqual({r['to'] for r in actual['record_relations'] if r['kind'] == membership},
+                                     {spec['nodes'][position]['id'], 'duplicate-origin'})
+                if position == 1:
+                    # Receipt entity ambiguity does not erase the independently
+                    # unique artifact tuple with matching valid receipt strings.
+                    self.assertTrue(any(r['kind'] == 'artifact_observation' for r in actual['record_relations']))
+
+    def test_invalid_receipt_origin_run_is_not_compatible_missing_ownership(self):
+        for run_value in (None, []):
+            with self.subTest(run_value=run_value):
+                spec = self.record_fixture()
+                receipt = spec['nodes'][1]
+                if run_value is None:
+                    receipt.pop('run_id')
+                else:
+                    receipt['run_id'] = run_value
+                actual = analyze_hypergraph(spec)
+                self.assertFalse(any(r['kind'] in {'receipt_artifact', 'artifact_observation'}
+                                     for r in actual['record_relations']))
+                self.assertTrue(any(r['kind'] == 'run_artifact' for r in actual['record_relations']))
+                self.assertTrue(any(r['kind'] == 'run_observation' for r in actual['record_relations']))
+                self.assertFalse(any(i['field'] == 'receipt.run_id' and i['reason'] == 'CONFLICTING_BINDINGS'
+                                     for i in actual['record_topology']['issues']))
+
     def test_receipt_ownership_conflict_preserves_independent_run_relations(self):
         for position, expected in ((2, 'run_artifact'), (3, 'run_observation'),
                                    (4, 'declared_output'), (5, 'run_lifecycle_fact')):
