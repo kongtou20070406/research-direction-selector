@@ -68,6 +68,9 @@ Global `--version` reports the installed version; `--help` lists the installed c
 
 ## Native mathematical assets and local tools
 
+For repeated JSON/metric/failure reading, [result tools](result-tools.md) provide
+three data-only functions using the existing extraction and owned-consumer commands below.
+
 | Command | Purpose | Inputs and prerequisites | Guide |
 | --- | --- | --- | --- |
 | `math bind` | Freeze the original mathematical objective | `--objective` with original statement, quantifiers, assumptions and completion standard | [Native research](native-research.md) |
