@@ -354,15 +354,34 @@ def _goal_relevance(edges, goals):
     return relevant_nodes, relevant_edges
 
 
-def record_topology(spec):
+def record_topology(spec, *, source_base=None):
     """Inspect explicit record identities; these relations never participate in inference.
 
     Generic input metadata is reported data, not an independently audited ledger.
     No identifier is recovered from an opaque node ID, locator, or fact name.
+    An explicit host-provided source base resolves physical path aliases on this
+    report's private rows; neither the input graph nor saved bindings are edited.
     """
     nodes, edges, goals, _ = _validate(spec)
+    reported_base, invalid_base = source_base is None, False
+    source_base = source_base if source_base is not None else spec.get('record_source_base_dir')
+    if source_base is not None:
+        try:
+            _require(isinstance(source_base, (str, Path)) and str(source_base) and '\0' not in str(source_base)
+                     and Path(source_base).is_absolute(), 'record source base must be an explicit absolute path')
+            source_base = Path(source_base).resolve()
+        except (OSError, ValueError, RuntimeError) as exc:
+            if not reported_base:
+                raise ValueError('record source base must be a usable explicit absolute path') from exc
+            source_base, invalid_base = None, True
     kinds = {'contract', 'run', 'receipt', 'artifact', 'declared_output', 'lifecycle_fact', 'observation'}
+    required = {'run': ('run_id',), 'receipt': ('run_id', 'receipt_id'),
+                'artifact': ('run_id', 'path', 'sha256'), 'declared_output': ('run_id', 'path'),
+                'lifecycle_fact': ('run_id',), 'observation': ('run_id',)}
     rows, issues, invalid = {}, [], set()
+    if invalid_base:
+        issues.append({'node_id': None, 'scope': 'dependency_map', 'reason': 'INVALID_BINDING',
+                       'field': 'record_source_base_dir', 'candidates': [], 'omitted_candidates': 0})
 
     def issue(node, reason, field, candidates=()):
         issues.append({'node_id': node['id'], 'reason': reason, 'field': field,
@@ -385,17 +404,30 @@ def record_topology(spec):
             present = [value for value in values if value is not None]
             digest_field = field in {'receipt_id', 'sha256'}
             if any(not isinstance(value, str) or not value or len(value) > (64 if digest_field else 2048)
+                   or field == 'path' and '\0' in value
                    or digest_field and (len(value) != 64 or any(c not in '0123456789abcdefABCDEF' for c in value))
                    for value in present):
                 issue(node, 'INVALID_BINDING', field)
                 invalid.add(ident)
                 continue
             present = [value.lower() if digest_field else value for value in present]
+            if field == 'path' and source_base is not None:
+                try:
+                    present = [str((source_base / value).resolve()) for value in present]
+                except (OSError, ValueError, RuntimeError):
+                    issue(node, 'INVALID_BINDING', field)
+                    invalid.add(ident)
+                    continue
             if len(set(present)) > 1:
                 issue(node, 'CONFLICTING_BINDINGS', field)
                 invalid.add(ident)
             elif present:
                 row[field] = present[0]
+        if ident not in invalid:
+            for field in required.get(kind, ()):
+                if field not in row:
+                    issue(node, 'RUN_NOT_REGISTERED' if field == 'run_id' and node.get('route_id')
+                          and kind in {'lifecycle_fact', 'observation'} else 'MISSING_BINDING', field)
         rows[ident] = row
 
     indexes = {'run': {}, 'receipt': {}, 'artifact': {}}
@@ -433,12 +465,12 @@ def record_topology(spec):
         if kind in {'contract', 'run'}:
             continue
         run = match(row, 'run', row.get('run_id'), 'run_id')
-        receipt = None
+        receipt, receipt_conflict = None, False
         if kind in {'artifact', 'observation', 'lifecycle_fact', 'declared_output'}:
             receipt = match(row, 'receipt', row.get('receipt_id'), 'receipt_id')
             if receipt is not None and rows[receipt].get('run_id') != row.get('run_id'):
                 issue(row['node'], 'CONFLICTING_BINDINGS', 'receipt.run_id', [receipt])
-                continue
+                receipt_conflict = True
         if kind == 'receipt':
             # A duplicated receipt identity cannot become an unambiguous origin.
             own = match(row, 'receipt', row.get('receipt_id'), 'receipt_id')
@@ -448,7 +480,8 @@ def record_topology(spec):
             own = match(row, 'artifact', (row.get('run_id'), row.get('path'), row.get('sha256')), 'artifact_identity')
             if own is not None:
                 link('run_artifact', run, row)
-                link('receipt_artifact', receipt, row)
+                if not receipt_conflict:
+                    link('receipt_artifact', receipt, row)
         elif kind == 'declared_output':
             # The path is a declaration, with no claim that output bytes exist.
             if row.get('path'):
@@ -457,13 +490,13 @@ def record_topology(spec):
             link('run_lifecycle_fact', run, row)
         elif kind == 'observation':
             link('run_observation', run, row)
+            if receipt_conflict:
+                continue  # Only the receipt-dependent artifact match is withheld.
             artifact = match(row, 'artifact', (row.get('run_id'), row.get('path'), row.get('sha256')), 'artifact_identity')
             if artifact is not None and rows[artifact].get('receipt_id') != row.get('receipt_id'):
                 issue(row['node'], 'CONFLICTING_BINDINGS', 'artifact.receipt_id', [artifact])
             else:
                 link('artifact_observation', artifact, row)
-        if 'run_id' not in row and kind in {'lifecycle_fact', 'observation'}:
-            issue(row['node'], 'RUN_NOT_REGISTERED' if row['node'].get('route_id') else 'MISSING_BINDING', 'run_id')
 
     relations.sort(key=lambda relation: (relation['kind'], relation['from'], relation['to']))
     linked = {ident for relation in relations for ident in (relation['from'], relation['to'])}
@@ -514,7 +547,7 @@ def record_topology(spec):
                                 'dependency_no_goal_path_node_ids': sorted(set(nodes) - goal_path_nodes),
                                 'record_and_dependency_no_goal_connection_node_ids': sorted(set(nodes) - combined_goal_nodes),
                                 'graph_semantics': 'Components are undirected structural groups. Dependency goal paths follow non-CONTRADICTED reported rules without checking AND satisfaction. Combined record connectivity is not a proof path or scientific support.',
-                                'issues': sorted(issues, key=lambda row: (row['node_id'], row['field'], row['reason']))}}
+                                'issues': sorted(issues, key=lambda row: (row['node_id'] or '', row['field'], row['reason']))}}
 
 
 def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):

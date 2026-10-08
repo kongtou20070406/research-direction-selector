@@ -129,7 +129,7 @@ class HypergraphTests(unittest.TestCase):
         spec['nodes'].append(other)
         spec['nodes'][3]['run_id'] = 'another'
         result = analyze_hypergraph(spec)
-        self.assertFalse(any(r['to'] == 'opaque-d' for r in result['record_relations']))
+        self.assertEqual([r['kind'] for r in result['record_relations'] if r['to'] == 'opaque-d'], ['run_observation'])
         self.assertTrue(any(i['field'] == 'receipt.run_id' for i in result['record_topology']['issues']))
         spec['nodes'][3].pop('receipt_id')
         spec['nodes'][3]['source'].pop('receipt_id')
@@ -147,6 +147,99 @@ class HypergraphTests(unittest.TestCase):
         self.assertFalse(any(r['kind'] == 'artifact_observation' for r in result['record_relations']))
         self.assertTrue(any(i['node_id'] == 'opaque-d' and i['field'] == 'artifact.receipt_id'
                             for i in result['record_topology']['issues']))
+
+    def test_classified_records_report_missing_required_identities(self):
+        required = {'run': ('run_id',), 'receipt': ('run_id', 'receipt_id'),
+                    'artifact': ('run_id', 'path', 'sha256'), 'declared_output': ('run_id', 'path'),
+                    'lifecycle_fact': ('run_id',), 'observation': ('run_id',)}
+        for kind, fields in required.items():
+            with self.subTest(kind=kind):
+                spec = graph({'opaque-record': 'UNKNOWN'}, [], ['opaque-record'])
+                spec['nodes'][0]['record_kind'] = kind
+                before = deepcopy(spec)
+                result = analyze_hypergraph(spec)
+                issues = result['record_topology']['issues']
+                self.assertEqual({i['field'] for i in issues if i['reason'] == 'MISSING_BINDING'}, set(fields))
+                self.assertEqual(result['record_relations'], [])
+                self.assertEqual(result['goals']['opaque-record']['status'], 'UNKNOWN')
+                self.assertEqual(spec, before)
+
+    def test_receipt_ownership_conflict_preserves_independent_run_relations(self):
+        for position, expected in ((2, 'run_artifact'), (3, 'run_observation'),
+                                   (4, 'declared_output'), (5, 'run_lifecycle_fact')):
+            with self.subTest(kind=expected):
+                spec = self.record_fixture()
+                other_run = deepcopy(spec['nodes'][0]); other_run.update(id='run-b', run_id='run-b')
+                other_receipt = deepcopy(spec['nodes'][1]); other_receipt.update(id='receipt-b', run_id='run-b', receipt_id='c' * 64)
+                spec['nodes'].extend([other_run, other_receipt])
+                target = spec['nodes'][position]
+                target['receipt_id'] = 'c' * 64
+                if isinstance(target['source'], dict):
+                    target['source']['receipt_id'] = 'c' * 64
+                result = analyze_hypergraph(spec)
+                relations = [r for r in result['record_relations'] if r['to'] == target['id']]
+                self.assertEqual([r['kind'] for r in relations], [expected])
+                self.assertEqual(relations[0]['from'], 'opaque-a')
+                self.assertTrue(any(i['node_id'] == target['id'] and i['field'] == 'receipt.run_id'
+                                    for i in result['record_topology']['issues']))
+
+    def test_explicit_source_base_normalizes_aliases_without_changing_identity_metadata(self):
+        spec = self.record_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            before = deepcopy(spec)
+            expected = hypergraph.record_topology(spec)
+            adapted = deepcopy(spec)
+            adapted['record_source_base_dir'] = str(base)
+            for row in adapted['nodes']:
+                if isinstance(row['source'], dict) and 'file' in row['source']:
+                    row['source']['path'] = row['source']['file']
+                    row['source']['file'] = str(base / row['source']['file'])
+            original = deepcopy(adapted)
+            actual = hypergraph.record_topology(adapted)
+            self.assertEqual(actual['record_relations'], expected['record_relations'])
+            self.assertEqual(actual['record_topology']['issues'], [])
+            self.assertEqual(adapted, original)
+            self.assertEqual(spec, before)
+            adapted['nodes'][3]['source']['path'] = 'out/different.json'
+            result = hypergraph.record_topology(adapted)
+            self.assertTrue(any(i['node_id'] == 'opaque-d' and i['field'] == 'path'
+                                and i['reason'] == 'CONFLICTING_BINDINGS' for i in result['record_topology']['issues']))
+
+    def test_unresolvable_path_alias_is_diagnostic_without_changing_supported_closure(self):
+        spec = self.record_fixture()
+        expected = analyze_hypergraph(spec)
+        with tempfile.TemporaryDirectory() as directory:
+            spec['record_source_base_dir'] = str(Path(directory).resolve())
+            spec['nodes'][2]['artifact_path'] = 'out/invalid\0.json'
+            spec['nodes'][2]['source']['file'] = 'out/invalid\0.json'
+            result = analyze_hypergraph(spec)
+            self.assertTrue(any(i['node_id'] == 'opaque-c' and i['field'] == 'path'
+                                and i['reason'] == 'INVALID_BINDING' for i in result['record_topology']['issues']))
+            for field in ('declared_supported_closure', 'goals', 'node_gaps', 'goal_relevance'):
+                if field in expected:
+                    self.assertEqual(result[field], expected[field])
+
+    def test_invalid_reported_source_base_does_not_interrupt_actual_inference(self):
+        spec = self.record_fixture()
+        spec['hyperedges'] = [{'id': 'supported-route', 'premises': ['opaque-a'],
+                              'conclusion': 'opaque-d', 'status': 'SUPPORTED', 'source': 'synthetic'}]
+        expected = analyze_hypergraph(spec)
+        self.assertEqual(expected['goals']['opaque-d']['status'], 'DECLARED_SUPPORTED')
+        for base in ('relative/source', [], 'Z:\\invalid\0base'):
+            with self.subTest(base=base):
+                value = {**deepcopy(spec), 'record_source_base_dir': base}
+                before = deepcopy(value)
+                actual = analyze_hypergraph(value)
+                for field in expected.keys() - {'record_topology'}:
+                    self.assertEqual(actual[field], expected[field], field)
+                self.assertTrue(any(i['scope'] == 'dependency_map' and i['node_id'] is None
+                                    and i['field'] == 'record_source_base_dir' and i['reason'] == 'INVALID_BINDING'
+                                    for i in actual['record_topology']['issues']))
+                self.assertEqual(value, before)
+        # API arguments are explicit configuration rather than reported metadata.
+        with self.assertRaises(ValueError):
+            hypergraph.record_topology(spec, source_base='relative/source')
 
     def test_structural_goal_paths_and_record_components_never_discharge_and_obligations(self):
         spec = self.record_fixture()

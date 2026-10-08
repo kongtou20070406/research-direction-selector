@@ -58,6 +58,56 @@ class TMSLoopTests(unittest.TestCase):
             self.assertEqual(current(root)['dependency_map']['nodes'][0]['run_id'], 'example')
             self.assertNotEqual(current(root)['sha256'], saved['sha256'])
 
+    def test_saved_advisor_cli_preserves_relative_record_identities_and_original_cas(self):
+        from test_hypergraph import HypergraphTests
+        from test_rds_goal_dependencies import fixture
+        from rds_hypergraph import record_topology
+        from rds_advisor_search import _dependency_review
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source_root = root / 'original-source'
+            (source_root / 'out').mkdir(parents=True)
+            artifact = source_root / 'out/result.json'
+            artifact.write_bytes(b'{"synthetic_score": 1}')
+            spec = HypergraphTests().record_fixture()
+            for row in spec['nodes']:
+                if isinstance(row['source'], dict):
+                    row['source']['path'] = row['source']['file']
+                    row['source']['sha256'] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            # A map cannot choose a different host source base for saved advice.
+            spec['record_source_base_dir'] = str(root / 'untrusted-base')
+            expected = record_topology(spec, source_base=source_root)
+            save(root, spec, expected=None, source_base=source_root)
+            saved = current(root)
+            cas = root / saved['map']['path']
+            original = cas.read_bytes()
+            graph, context = fixture()
+            context.pop('dependency_map')
+            supplied = with_saved_dependencies(root, context)
+            self.assertEqual(supplied['dependency_map']['record_source_base_dir'], str(source_root))
+            audit = _dependency_review(supplied, audit_files=True)
+            self.assertTrue(audit['source_file_audit']['all_requested_files_match'])
+            self.assertEqual(audit['record_relations'], expected['record_relations'])
+            self.assertEqual(audit['record_topology']['issues'], [])
+            context_path, graph_path = root / 'context.json', root / 'graph.json'
+            context_path.write_text(canonical(context), encoding='utf-8')
+            graph_path.write_text(canonical(graph), encoding='utf-8')
+            run = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(root),
+                'advise', '-c', str(context_path), '--graph', str(graph_path), '--saved-dependencies'],
+                cwd=str(root), capture_output=True, text=True, encoding='utf-8', timeout=15,
+                env={**os.environ, 'RDS_USAGE_DB': str(root / 'usage.sqlite3')})
+            self.assertEqual(run.returncode, 0, run.stderr)
+            advice = json.loads(run.stdout)
+            search = next(r['search'] for r in advice['recommendations'] if r['type'] == 'EXECUTABLE_DIRECTION_SEARCH')
+            actual = search['selection_review']['dependency_review']
+            self.assertEqual(actual['record_relations'], expected['record_relations'])
+            self.assertEqual(actual['record_topology']['issues'], [])
+            self.assertEqual(actual['goals']['opaque-d']['status'], 'UNKNOWN')
+            self.assertTrue(all(r['scientific_support'] == 'UNKNOWN' for r in actual['record_relations']))
+            self.assertEqual(cas.read_bytes(), original)
+            self.assertEqual(current(root)['dependency_map'], spec)
+            self.assertEqual(current(root)['sha256'], saved['sha256'])
+
     def test_scripted_agent_loop_carries_only_changes_and_small_observations(self):
         with tempfile.TemporaryDirectory() as root:
             # This is an application transport simulation, not a live LLM eval.
@@ -300,6 +350,7 @@ class TMSLoopTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(rds_cli._main(), 0)
             supplied = execute.call_args.kwargs['review'][1]['dependency_map']
+            self.assertEqual(supplied.pop('record_source_base_dir'), current(root)['source_base_dir'])
             self.assertEqual(supplied, current(root)['dependency_map'])
             self.assertEqual(context_path.read_bytes(), raw)
 
