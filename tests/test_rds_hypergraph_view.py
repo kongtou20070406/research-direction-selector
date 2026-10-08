@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rds_hypergraph_view import (JS, D3_BUNDLE, graph_view, read_graph, render_html, large_demo,
     replica_view, dependency_levels, render_replica_html, patch_replica_worker, _legacy_record_report,
-    patch_replica_renderer, REPLICA_APP, REPLICA_FILES)
+    patch_replica_renderer, REPLICA_APP, REPLICA_FILES, display_record, display_records)
 from rds_tms_store import current, save
 
 
@@ -25,6 +25,90 @@ def example():
 
 
 class HypergraphViewTests(unittest.TestCase):
+    def test_short_names_are_presentation_only_and_preserve_human_labels(self):
+        rows = [
+            {"id": "run.root_upper.succeeded", "owned_fact": {"value": True, "reliable": True}},
+            {"id": "owned:run:root_upper", "label": {"zh": "根边界_核查", "en": "Root check"}},
+            {"id": "observation.loss_value", "label": {"zh": [], "en": "Loss_value <>&"}},
+            {"id": "owned:artifact:a", "source": {"file": "C:\\results\\模型_out.json"}},
+            {"id": "owned:artifact:b", "source": {"path": "/results/模型_out.json"}},
+            {"id": "natural_name_with_underscores"},
+            {"id": "owned:fact:run.root_upper.failed", "label": "Human.failed_name"},
+        ]
+        for row in rows:
+            row.setdefault("source", "synthetic:labels")
+            if isinstance(row["source"], dict):
+                row["source"]["locator"] = "synthetic fixture"
+                if "file" in row["source"]:
+                    row["source"]["sha256"] = "a" * 64
+            row["status"] = "UNKNOWN"
+        spec = {"schema": 1, "nodes": rows, "hyperedges": [], "goals": [rows[0]["id"]]}
+        before = deepcopy(spec)
+        result = graph_view(spec, "synthetic:labels")
+        payload = self.payload(render_html(result))
+        view = replica_view(result)
+        expected = ["root upper", "根边界_核查", "Loss_value <>&", "模型_out.json",
+                    "模型_out.json", "natural_name_with_underscores", "Human.failed_name"]
+        self.assertEqual([payload["display"]["nodes"][row["id"]]["label"] for row in rows], expected)
+        self.assertEqual([view["nodes"][f"c{i}"]["label"] for i in range(len(rows))], expected)
+        self.assertNotEqual(view["nodes"]["c3"]["rds"]["record"], view["nodes"]["c4"]["rds"]["record"])
+        self.assertEqual(spec, before)
+        self.assertEqual(result["graph"], before)
+        self.assertEqual(payload["graph"], before)
+        self.assertIn("\\u003c", render_html(result))
+
+    def test_status_outlines_distinguish_execution_predicates_from_declarations(self):
+        cases = [
+            ({"id": "run.r.succeeded", "owned_fact": {"value": True, "reliable": True}}, "success"),
+            ({"id": "run.r.succeeded", "owned_fact": {"value": False, "reliable": True}}, "neutral"),
+            ({"id": "run.r.failed", "owned_fact": {"value": False, "reliable": True}}, "neutral"),
+            ({"id": "run.r.failed", "owned_fact": {"value": True, "reliable": True}}, "failure"),
+            ({"id": "run.r.timed_out", "owned_fact": {"value": True, "reliable": True}}, "failure"),
+            ({"id": "run.r.succeeded", "owned_fact": {"value": 1, "reliable": True}}, "neutral"),
+            ({"id": "run.r.failed", "owned_fact": {"value": 0, "reliable": True}}, "neutral"),
+            ({"id": "run.r.succeeded", "owned_fact": {"value": True, "reliable": False}}, "neutral"),
+            ({"id": "run.r.succeeded", "owned_fact": {"id": "run.other.succeeded", "value": True, "reliable": True}}, "neutral"),
+            ({"id": "run.r.completed", "owned_fact": {"value": True, "reliable": True}}, "neutral"),
+            ({"id": "owned:run:r", "lifecycle_status": "COMPLETED"}, "neutral"),
+            ({"id": "owned:run:r", "lifecycle_status": "RUNNING"}, "neutral"),
+            ({"id": "owned:run:r", "lifecycle_status": "NOT_REGISTERED"}, "neutral"),
+            ({"id": "owned:receipt:r", "outcome": "SUCCEEDED", "scientific_support": "UNKNOWN"}, "success"),
+            ({"id": "receipt.r", "outcome": "FAILED"}, "failure"),
+            ({"id": "owned:receipt:r", "outcome": "SUCCEEDED", "run_status": "FAILED"}, "neutral"),
+            ({"id": "owned:receipt:r", "outcome": "SUCCEEDED", "run_status": []}, "neutral"),
+            ({"id": "owned:receipt:r", "outcome": "SUCCEEDED", "status": "UNKNOWN"}, "neutral"),
+            ({"id": "owned:receipt:r", "outcome": "SUCCEEDED", "status": "CONTRADICTED"}, "neutral"),
+            ({"id": "run.r.succeeded", "owned_fact": {"value": True, "reliable": True}, "status": "CONTRADICTED"}, "neutral"),
+            ({"id": "run.r.succeeded", "owned_fact": {"value": True, "reliable": True}, "status": "UNKNOWN"}, "neutral"),
+            ({"id": "owned:fact:loss", "owned_fact": {"value": False, "reliable": True}}, "neutral"),
+            ({"id": "claim"}, "success"),
+            ({"id": "claim", "status": "CONTRADICTED"}, "failure"),
+            ({"id": "claim", "status": "UNKNOWN"}, "neutral"),
+        ]
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                row = {"status": "SUPPORTED", "source": "synthetic:status", **fields}
+                before = deepcopy(row)
+                shown = display_record(row)
+                self.assertEqual(shown["outline"]["state"], expected)
+                self.assertIn("不表示科研证明", shown["outline"]["basis"])
+                self.assertEqual(row, before)
+                graph = {"schema": 1, "nodes": [row], "hyperedges": [], "goals": [row["id"]]}
+                result = graph_view(graph, "synthetic:status")
+                canvas = self.payload(render_html(result))["display"]["nodes"][row["id"]]
+                replica = replica_view(result)["nodes"]["c0"]["rds"]
+                self.assertEqual(canvas["outline"], shown["outline"])
+                self.assertEqual(replica["outline"], shown["outline"])
+                self.assertEqual(result["graph"], graph)
+        self.assertIn("false", display_record({"id": "run.r.failed", "status": "SUPPORTED",
+                                               "owned_fact": {"value": False, "reliable": True}})["outline"]["basis"])
+        for ident in ("receipt.geometry", "observation.geometry", "run.geometry.succeeded"):
+            row = {"id": ident, "status": "SUPPORTED", "claim": "Human readable statement"}
+            shown = display_record(row)
+            self.assertEqual(shown["kind"], "声明")
+            self.assertEqual(shown["label"], row["claim"])
+            self.assertEqual(display_record({"id": ident, "status": "SUPPORTED"})["label"], ident)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="rds-hypergraph-view-")
         self.addCleanup(self.tmp.cleanup)
@@ -274,6 +358,54 @@ console.log(JSON.stringify(result));
 
 
 class ReplicaViewTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node required for renderer transport contract")
+    def test_status_outline_transport_contract_without_local_assets(self):
+        changes = []
+        def capture(source, old, new):
+            changes.append((old, new))
+            return source
+        with patch("rds_hypergraph_view._replace_once", side_effect=capture):
+            patch_replica_renderer("independent contract fixture")
+        methods = next(new for old, new in changes if old.startswith("getSize()"))
+        self.assertTrue(any("statusOutline" in new for old, new in changes if old == "['circle', 'highlight', 'text']"))
+        self.assertTrue(any("statusOutline.visible=false" in new for old, new in changes if old.startswith("const r = this.r, { x, y }")))
+        # Production methods executed against an independently authored Graphics
+        # transport. Full pinned GNode lifecycle is separately bound locally.
+        section = "class ContractNode { constructor(r){this.r=r;this.weight=0;} " + methods + " };globalThis.ContractNode=ContractNode;"
+        driver = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+class Graphic {
+ constructor(){this.visible=true;this.clears=0;this.scale={set:v=>this.scale.value=v};this.anchor={set(){}};}
+ clear(){this.clears++;return this}beginFill(){return this}endFill(){return this}
+ lineStyle(){return this}drawCircle(){return this}drawPolygon(){return this}drawRect(){return this}on(){return this}
+ destroy(){this.destroyed=true}
+}
+const children=new Set(),hanger={addChild:c=>{children.add(c);c.parent=hanger},removeChild:c=>{children.delete(c);c.parent=null}};
+const scope={PIXI:{Graphics:Graphic}};
+vm.createContext(scope);
+''' + "\nvm.runInContext(" + json.dumps(section) + ",scope);\n" + r'''
+const r={opts:{nodeSize:1},hanger};
+const n=new scope.ContractNode(r);n.type='';n.rds={shape:'square',size:1,radius:12,outline:{color:'#39b872'}};
+const render=(x=20,y=30,ns=1,alpha=1,visible=true)=>n.renderStatusOutline(x,y,n.getSize(),ns,alpha,visible);
+render();const outline=n.statusOutline;assert.ok(outline);assert.equal(outline.tint,0x39b872);assert.equal(outline.eventMode,'none');
+assert.ok(outline.zIndex>1&&outline.zIndex<2,'status is above body/hover ring and below labels');
+assert.equal(outline.scale.value,.12);assert.equal(children.size,1);
+const clears=outline.clears;
+for(let i=0;i<20;i++){render(20+i,30-i);assert.equal(outline.x,20+i);assert.equal(outline.y,30-i);}
+assert.equal(outline.clears,clears,'static shape and dragging do not redraw outline geometry');
+r.opts.nodeSize=1.8;n.rds.radius=26;render(0,0,2,.2,false);
+assert.ok(Math.abs(outline.scale.value-.936)<1e-9);assert.equal(outline.alpha,.2);assert.equal(outline.visible,false);assert.equal(outline.clears,clears);
+for(const shape of ['circle','ring','triangle','hexagon','square']){n.rds.shape=shape;render();assert.equal(n.statusOutlineShape,shape);assert.equal(outline.visible,true);}
+n.rds.outline.color='#e65b63';render();assert.equal(outline.tint,0xe65b63);
+n.rds.outline=null;render();assert.equal(outline.visible,false);
+const hub=new scope.ContractNode(r);hub.type='hyperedge';hub.rds={outline:{color:'#e65b63'}};hub.renderStatusOutline(0,0,8,1,1,true);assert.equal(hub.statusOutlineShape,'diamond');
+console.log('Production outline methods: independent Graphics transport, cached geometry, transform/visibility/tint contract PASS');
+'''
+        run = subprocess.run([shutil.which("node"), "-"], input=driver, capture_output=True,
+                             text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        print(run.stdout.strip())
+
     def test_and_or_routes_remain_separate_with_original_status(self):
         spec=example()
         before=deepcopy(spec)
@@ -925,6 +1057,35 @@ function browser(payload,blocked=false){
 
 @unittest.skipUnless(shutil.which("node"), "Node required for actual Canvas interaction boundaries")
 class CanvasBoundaryTests(_JSBoundaryTests):
+    def test_short_labels_status_strokes_hover_and_raw_id_search(self):
+        spec = {"schema": 1, "nodes": [
+            {"id": "run.good.succeeded", "status": "SUPPORTED", "source": "synthetic",
+             "owned_fact": {"value": True, "reliable": True}},
+            {"id": "run.bad.failed", "status": "SUPPORTED", "source": "synthetic",
+             "owned_fact": {"value": True, "reliable": True}},
+            {"id": "run.wait.failed", "status": "SUPPORTED", "source": "synthetic",
+             "owned_fact": {"value": False, "reliable": True}}], "hyperedges": [], "goals": ["run.good.succeeded"]}
+        result = graph_view(spec, "synthetic:canvas-status")
+        payload = {**result, "display": display_records(result)}
+        self.run_js(JS, "const payload=" + json.dumps(payload) + ";\n" + r'''
+const b=browser(payload);vm.runInContext(production,b.scope,{timeout:10000});
+const canvas=b.created.find(e=>e.tagName==='CANVAS'&&e.id!=='hg-minimap'),ctx=canvas.ctx,strokes=[],labels=[];
+const stroke=ctx.stroke;ctx.stroke=function(){strokes.push(this.strokeStyle);stroke.call(this)};
+ctx.fillText=(...args)=>labels.push(args);b.flush();
+for(const color of ['#39b872','#e65b63','#9299a6'])assert.ok(strokes.includes(color),'independent status stroke '+color);
+assert.ok(labels.some(([text])=>text==='good'));assert.ok(!labels.some(([text])=>text.startsWith('run.')));
+const good=labels.find(([text])=>text==='good'),radius=Math.max(1.2,3*Math.sqrt(Number(canvas.dataset.scale)));
+canvas.events.pointermove({clientX:good[1],clientY:good[2]-radius-5});b.flush();
+const tip=b.created.find(e=>e.className==='hg-tip');assert.equal(tip.hidden,false);assert.ok(tip.textContent.startsWith('good\n'));
+assert.ok(!tip.textContent.includes('run.good.succeeded'),'hover first line remains readable');
+const search=b.ids['hg-search'];search.value='run.wait.failed';search.events.input();b.flush();
+assert.ok(b.text(b.ids['hg-search-results']).includes('run.wait.failed'),'raw ID remains searchable');
+const button=b.ids['hg-search-results'].children.find(e=>e.tagName==='BUTTON');button.events.click();b.flush();
+assert.ok(b.text(b.ids.app).includes('failed=false'));assert.ok(b.text(b.ids.app).includes('run.wait.failed'));
+assert.equal(JSON.stringify(payload.graph),JSON.stringify(JSON.parse(b.ids.snapshot.textContent).graph));
+console.log('Actual Canvas: short labels, independent green/red/neutral strokes, short hover, raw ID search/detail PASS');
+''')
+
     def test_layout_junction_failure_and_visibility_interactions(self):
         self.run_js(JS, r'''
 const payload={status:'AVAILABLE',source:'synthetic',graph:{nodes:[{id:'g',label:'Conclusion',status:'UNKNOWN',source:'fixture'}],hyperedges:[{id:'e',premises:[],conclusion:'g',relation:'R',status:'UNKNOWN',source:'fixture'}],goals:['g']}};

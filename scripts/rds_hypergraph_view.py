@@ -102,7 +102,7 @@ def read_graph(root, graph_path=None, *, demo=False, large=False):
 
 
 def render_html(result):
-    payload = json.dumps(result, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
+    payload = json.dumps({**result, "display": display_records(result)}, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
     payload = payload.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     # Substitute code before data so user fields cannot become template tokens.
     return (HTML.replace("__GRAPH_CSS__", CSS).replace("__GRAPH_JS__", JS)
@@ -198,6 +198,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <script>__GRAPH_JS__</script></body></html>'''
 
 CSS = r'''
+.hg-tip{white-space:pre-line}
 *{box-sizing:border-box}html,body,#app{margin:0;width:100%;height:100%;overflow:hidden}body{font:13px/1.5 'Segoe UI','Microsoft YaHei',sans-serif;background:#1e1e1e;color:#d6d6da}button,input,select{font:inherit}button,select{cursor:pointer}button{color:inherit}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid #bbabed;outline-offset:3px}[hidden]{display:none!important}
 .hg-shell{position:relative;width:100%;height:100%;--panel:rgba(25,28,36,.95);--border:#333945;--muted:#9099ad;--text:#dce3ef;background:radial-gradient(ellipse at 46% 49%,#161d2e55 0%,#151a2640 30%,transparent 65%),#111319;color:var(--text)}.hg-shell.light{--panel:rgba(250,250,252,.97);--border:#d7d7de;--muted:#72727b;--text:#33333a;background:#f4f4f6}
 #hg-canvas{display:block;width:100%;height:100%;touch-action:none;user-select:none;cursor:grab;outline:none}#hg-canvas:active{cursor:grabbing}
@@ -215,7 +216,8 @@ const data=JSON.parse(document.getElementById('snapshot').textContent);
 const $=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);if(cls)el.className=cls;return el};
 const shell=$('section',undefined,'hg-shell');document.getElementById('app').append(shell);
 const statusNames={SUPPORTED:'声明支持',UNKNOWN:'未知',CONTRADICTED:'已反驳声明',PROPOSED:'候选关系'};
-const label=r=>typeof r.label==='object'?['zh','en'].map(k=>r.label?.[k]).find(v=>typeof v==='string'&&v)||String(r.id):typeof r.label==='string'&&r.label?r.label:String(r.id);
+const presentation=new WeakMap();if(data.graph){for(const key of ['nodes','hyperedges'])for(const r of data.graph[key])presentation.set(r,data.display?.[key]?.[r.id]);}
+const display=r=>presentation.get(r),label=r=>display(r)?.label||(typeof r.label==='object'?['zh','en'].map(k=>r.label?.[k]).find(v=>typeof v==='string'&&v)||String(r.id):typeof r.label==='string'&&r.label?r.label:String(r.id));
 const relation=r=>String(r.relation||r.kind||r.type||'依赖关系');
 function button(text,title,action,cls='hg-button'){const b=$('button',text,cls);b.type='button';b.title=title;b.setAttribute('aria-label',title);b.addEventListener('click',action);return b}
 function raw(parent,value){const d=$('details');d.append($('summary','原始记录'),$('pre',JSON.stringify(value,null,2)));parent.append(d)}
@@ -244,7 +246,7 @@ function startGraph(){
  let edgeMode='relation',framePending=false,worker=null,workerURL=null,layoutRunning=false,userMoved=false,drag=null,query='',matches=new Set(),visibleSet=null,dynamic=true,pausedByVisibility=false;
  let drawCount=0,drawTotal=0,layoutTime=0,layoutTicks=0,bounds={x:-1,y:-1,w:2,h:2},lastMini=0,hoverFrame=false,pointer=null,nearSet=new Set();
  const drawTimes=[],hitGrid=new Map(),targets=positions.slice(),options={center:.08,repulsion:700,spring:.08,length:65,labels:1.2,nodeSize:1,nodeBorder:.3,edgeWidth:1};let interpolating=false,lastDrawTime=0;
- const starPalette=['#c3d8ff','#e1eaff','#f8f1df','#f3d5ab','#f8bd85','#a9c8f4'];let nodeColorMode='stars',customNodeColor='#d7e4ff';
+ const starPalette=['#c3d8ff','#e1eaff','#f8f1df','#f3d5ab','#f8bd85','#a9c8f4'];let nodeColorMode='types',customNodeColor='#d7e4ff';
  const pastels=['#a9c8ec','#d4c0e8','#b3d8cd','#e5c4b0','#cad4a4','#d3bfce'];
  const relations=new Map([...new Set(graph.hyperedges.map(relation))].map((type,i)=>[type,{style:['solid','dashed','dotted','dashdot'][i%4],color:pastels[i%pastels.length],width:.65,mode:/竞争|冲突|反驳|contradict|conflict|excludes/i.test(type)?'repel':'attract',strength:type==='主题关联'?.55:1,distance:/竞争|冲突|反驳|contradict|conflict|excludes/i.test(type)?180:65}]));
  const canvas=$('canvas');canvas.id='hg-canvas';canvas.tabIndex=0;canvas.setAttribute('role','img');canvas.setAttribute('aria-label','可交互研究超图。方向键平移，加减号缩放，0 适应全图。可通过搜索选择节点。');shell.append(canvas);const ctx=canvas.getContext('2d');
@@ -258,6 +260,7 @@ function startGraph(){
  const typeControls=$('div');
  selectControl('连线样式',[['uniform','统一细线'],['status','按声明状态'],['relation','按关系类型']],'relation',value=>{edgeMode=value;requestDraw()},'hg-edge-mode');
  const legend=$('p','实线：声明支持 · 虚线：候选 · 点线：已反驳','hg-hint');settings.append(legend);
+ settings.append($('p','节点颜色 / 形状：声明 ○、执行 □、回执 ◎、产物 ⬡、观测 ○。外描边：绿 = 已记录执行成功 / 声明支持；红 = 已记录执行失败 / 反驳声明；灰 = 未知或待验证。执行成功不等于科研证明。','hg-hint'));
  const relationNames=[...relations.keys()],relationPager=$('div',undefined,'hg-row'),relationPageText=$('span');let relationPage=0;
  const previousRelations=button('上一页','上一页关系设置',()=>{relationPage--;renderRelationControls()}),nextRelations=button('下一页','下一页关系设置',()=>{relationPage++;renderRelationControls()});relationPager.append(previousRelations,relationPageText,nextRelations);settings.append(relationPager);
  function renderRelationControls(){const start=relationPage*32;typeControls.replaceChildren();previousRelations.disabled=start===0;nextRelations.disabled=start+32>=relationNames.length;relationPageText.textContent=`${start+1}–${Math.min(start+32,relationNames.length)} / ${relationNames.length}`;
@@ -273,7 +276,7 @@ function startGraph(){
  function checkbox(caption,action,id){const row=$('div',undefined,'hg-row'),lab=$('label',caption),input=$('input');input.type='checkbox';input.id=id;lab.htmlFor=id;input.addEventListener('change',()=>action(input.checked));row.append(lab,input);settings.append(row)}
  checkbox('按声明状态着色',value=>{colors=value;requestDraw()},'hg-color-status');
  checkbox('浅色背景',value=>{light=value;shell.classList.toggle('light',light);requestDraw()},'hg-light');
- selectControl('节点配色',[['stars','星系：蓝白 / 暖白 / 金橙'],['single','统一自选颜色']],'stars',value=>{nodeColorMode=value;requestDraw()},'hg-node-colors');
+ selectControl('节点配色',[['types','按记录类型'],['stars','星系：蓝白 / 暖白 / 金橙'],['single','统一自选颜色']],'types',value=>{nodeColorMode=value;requestDraw()},'hg-node-colors');
  const nodeColor=$('input');nodeColor.type='color';nodeColor.value=customNodeColor;nodeColor.setAttribute('aria-label','自选节点颜色');nodeColor.addEventListener('input',()=>{customNodeColor=nodeColor.value;nodeColorMode='single';document.getElementById('hg-node-colors').value='single';requestDraw()});settings.append(nodeColor);
  const forceBox=$('details'),forceTitle=$('summary','力度与外观');forceBox.append(forceTitle);settings.append(forceBox);
  function slider(caption,key,min,max,step,layout){const lab=$('label'),text=$('span',caption),out=$('output',options[key]);lab.append(text,' · ',out);const input=$('input');input.type='range';input.id='hg-'+key;input.min=min;input.max=max;input.step=step;input.value=options[key];lab.htmlFor=input.id;input.addEventListener('input',()=>{options[key]=Number(input.value);out.textContent=input.value;if(!layout)requestDraw()});input.addEventListener('change',()=>{if(layout)runLayout()});forceBox.append(lab,input)}
@@ -294,7 +297,8 @@ function startGraph(){
  function world(x,y){return {x:(x-width/2)/view.k+view.x,y:(y-height/2)/view.k+view.y}}
  function zoom(factor,x=width/2,y=height/2){const anchor=world(x,y);view.k=Math.max(.02,Math.min(8,view.k*factor));view.x=anchor.x-(x-width/2)/view.k;view.y=anchor.y-(y-height/2)/view.k;userMoved=true;requestDraw()}
  function updateFocus(){visibleSet=null;if(!focus||selected===null)return;visibleSet=new Set([selected]);const queue=[selected];for(let k=0;k<queue.length;k++)for(const i of incoming.get(queue[k]))if(!visibleSet.has(i)){visibleSet.add(i);queue.push(i)}}
- function color(item){if(!colors)return item.kind==='edge'?(light?'#97979f':'#77859e'):(light?'#64738a':nodeColorMode==='single'?customNodeColor:starPalette[(item.index*7+item.record.id.length)%starPalette.length]);return {SUPPORTED:'#a6d4be',UNKNOWN:'#d6c5a1',CONTRADICTED:'#dfabb8',PROPOSED:'#beb2de'}[item.record.status]||'#aaa'}
+ function color(item){if(!colors)return nodeColorMode==='single'?customNodeColor:nodeColorMode==='types'&&display(item.record)?display(item.record).color:(item.kind==='edge'?(light?'#97979f':'#77859e'):(light?'#64738a':starPalette[(item.index*7+item.record.id.length)%starPalette.length]));return {SUPPORTED:'#a6d4be',UNKNOWN:'#d6c5a1',CONTRADICTED:'#dfabb8',PROPOSED:'#beb2de'}[item.record.status]||'#aaa'}
+ function nodePath(shape,x,y,r){if(shape==='diamond'){ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath()}else if(shape==='square'){ctx.rect(x-r*.82,y-r*.82,r*1.64,r*1.64)}else if(shape==='triangle'||shape==='hexagon'){const points=shape==='triangle'?[[0,-1],[.95,.75],[-.95,.75]]:[[1,0],[.5,.87],[-.5,.87],[-1,0],[-.5,-.87],[.5,-.87]];points.forEach(([a,b],i)=>i?ctx.lineTo(x+a*r,y+b*r):ctx.moveTo(x+a*r,y+b*r));ctx.closePath()}else{ctx.moveTo(x+r,y);ctx.arc(x,y,r,0,Math.PI*2)}}
  const dashes={solid:[],dashed:[6,5],dotted:[1,4],dashdot:[7,3,1,3]};
  function style(edge){return edgeMode==='uniform'?'solid':edgeMode==='relation'?relations.get(relation(edge)).style:{SUPPORTED:'solid',PROPOSED:'dashed',CONTRADICTED:'dotted'}[edge.status]||'dashdot'}
  function faded(i){return (visibleSet&&!visibleSet.has(i))||(query&&!matches.has(i)&&i!==selected)}
@@ -308,12 +312,12 @@ function startGraph(){
   const groups=new Map();for(const l of links){const near=nearSet.has(l.a)&&nearSet.has(l.b),dim=faded(l.a)||faded(l.b),config=relations.get(relation(l.rule)),tone=dim?'dim':near?'near':'normal';const key=style(l.rule)+':'+tone+':'+config.color+':'+config.width;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(l)}
   for(const [key,group]of groups){const [line,tone,edgeColor,edgeWidth]=key.split(':');ctx.strokeStyle=edgeMode==='uniform'?(light?'#969cac':'#9dabc1'):edgeColor;ctx.globalAlpha=tone==='dim'?.045:tone==='near'?.9:light?.4:.22;ctx.lineWidth=Number(edgeWidth)*options.edgeWidth*(tone==='near'?1.6:1);ctx.setLineDash(dashes[line]);ctx.beginPath();for(const l of group){const ax=sx(positions[l.a*2]),ay=sy(positions[l.a*2+1]),bx=sx(positions[l.b*2]),by=sy(positions[l.b*2+1]);if(Math.max(ax,bx)<-5||Math.min(ax,bx)>width+5||Math.max(ay,by)<-5||Math.min(ay,by)>height+5)continue;ctx.moveTo(ax,ay);ctx.lineTo(bx,by)}ctx.stroke()}
   ctx.setLineDash([]);ctx.font='11px "Segoe UI","Microsoft YaHei",sans-serif';ctx.textAlign='center';ctx.textBaseline='top';let drawn=0;const labelCells=new Set(),nodeBatches=new Map(),labels=[];hitGrid.clear();
-  for(const item of items){const i=item.index,x=sx(positions[i*2]),y=sy(positions[i*2+1]),r=Math.max(item.kind==='edge'?.7:1.2,radius(item)*Math.sqrt(view.k));if(x<-40||y<-30||x>width+40||y>height+30)continue;drawn++;const active=i===selected||i===hovered,dim=faded(i),c=active?(light?'#8a75af':'#f1e5ff'):color(item),key=c+':'+item.kind+':'+(dim?'dim':'normal');if(!nodeBatches.has(key))nodeBatches.set(key,[]);nodeBatches.get(key).push({x,y,r,active});
+  for(const item of items){const i=item.index,x=sx(positions[i*2]),y=sy(positions[i*2+1]),r=Math.max(item.kind==='edge'?.7:1.2,radius(item)*Math.sqrt(view.k));if(x<-40||y<-30||x>width+40||y>height+30)continue;drawn++;const active=i===selected||i===hovered,dim=faded(i),c=active?(light?'#8a75af':'#f1e5ff'):color(item),shape=display(item.record)?.shape||(item.kind==='edge'?'diamond':'circle'),outline=display(item.record)?.outline.color||'',key=[c,item.kind,dim?'dim':'normal',shape,outline].join(':');if(!nodeBatches.has(key))nodeBatches.set(key,[]);nodeBatches.get(key).push({x,y,r,active});
    const cell=Math.floor(x/40)+','+Math.floor(y/40);if(!hitGrid.has(cell))hitGrid.set(cell,[]);hitGrid.get(cell).push({x,y,r:Math.max(6,r+3),i});
    if(!dim&&item.kind==='node'&&item.degree>15&&!light){const glow=ctx.createRadialGradient(x,y,0,x,y,r*3.4);glow.addColorStop(0,c+'70');glow.addColorStop(1,c+'00');ctx.globalAlpha=.7;ctx.fillStyle=glow;ctx.fillRect(x-r*3.4,y-r*3.4,r*6.8,r*6.8)}
    if(!dim&&(active||matches.has(i)&&query||item.kind==='node'&&(view.k>=options.labels||item.degree>15&&view.k>.55)))labels.push({item,x,y,r,active});
   }
-  for(const [key,batch]of nodeBatches){const [c,kind,tone]=key.split(':');ctx.globalAlpha=tone==='dim'?.10:1;ctx.fillStyle=ctx.strokeStyle=c;ctx.lineWidth=kind==='edge'?.6:options.nodeBorder;ctx.beginPath();for(const {x,y,r}of batch){if(kind==='edge'){ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath()}else{ctx.moveTo(x+r,y);ctx.arc(x,y,r,0,Math.PI*2)}}if(kind==='node')ctx.fill();if(kind==='edge'||options.nodeBorder>0)ctx.stroke();ctx.beginPath();for(const {x,y,r,active}of batch)if(active){ctx.moveTo(x+r+4,y);ctx.arc(x,y,r+4,0,Math.PI*2)}ctx.lineWidth=1;ctx.stroke()}
+  for(const [key,batch]of nodeBatches){const [c,kind,tone,shape,outline]=key.split(':');ctx.globalAlpha=tone==='dim'?.10:1;ctx.fillStyle=ctx.strokeStyle=c;ctx.lineWidth=shape==='ring'?Math.max(1,options.nodeBorder):kind==='edge'?.6:options.nodeBorder;ctx.beginPath();for(const {x,y,r}of batch)nodePath(shape,x,y,r);if(kind==='node'&&shape!=='ring')ctx.fill();if(shape==='ring'||kind==='edge'||options.nodeBorder>0)ctx.stroke();if(outline){ctx.strokeStyle=outline;ctx.lineWidth=1.6;ctx.beginPath();for(const {x,y,r}of batch)nodePath(shape,x,y,r+2);ctx.stroke()}ctx.strokeStyle=c;ctx.beginPath();for(const {x,y,r,active}of batch)if(active){ctx.moveTo(x+r+5,y);ctx.arc(x,y,r+5,0,Math.PI*2)}ctx.lineWidth=1;ctx.stroke()}
   let labelCount=0;for(const {item,x,y,r,active}of labels){if(labelCount>250&&!active)continue;const text=label(item.record),shown=text.length>36?text.slice(0,35)+'…':text,tw=ctx.measureText(shown).width,keys=[];for(let gx=Math.floor((x-tw/2)/45);gx<=Math.floor((x+tw/2)/45);gx++)for(let gy=Math.floor((y+r+5)/15);gy<=Math.floor((y+r+18)/15);gy++)keys.push(gx+','+gy);if(active||!keys.some(key=>labelCells.has(key))){keys.forEach(key=>labelCells.add(key));ctx.fillStyle=light?'#494951':'#d1dae8';ctx.globalAlpha=.95;ctx.fillText(shown,x,y+r+5);labelCount++}}
   ctx.globalAlpha=1;zoomText.value=Math.round(view.k*100)+'%';zoomText.textContent=zoomText.value;
   const now=performance.now();if(now-lastMini>350){drawMini();lastMini=now}const cost=performance.now()-started;drawCount++;drawTotal+=cost;drawTimes.push(cost);if(drawTimes.length>120)drawTimes.shift();canvas.dataset.drawMs=(drawTotal/drawCount).toFixed(2);canvas.dataset.visibleElements=drawn;canvas.dataset.totalElements=n;canvas.dataset.scale=view.k.toFixed(4);canvas.dataset.center=view.x.toFixed(2)+','+view.y.toFixed(2);
@@ -325,6 +329,7 @@ function startGraph(){
   function field(title,text){detail.append($('h4',title),$('p',text))}
   function linked(title,indices){detail.append($('h4',title));const ul=$('ul');for(const target of indices.slice(0,150)){const li=$('li'),b=button(label(items[target].record),'查看 '+items[target].record.id,()=>inspect(target,true),'hg-close');b.style.fontSize='12px';b.style.lineHeight='1.6';li.append(b);ul.append(li)}detail.append(ul);if(indices.length>150)detail.append($('p',`显示前 150 项，共 ${indices.length} 项；完整关系见原始记录。`,'hg-hint'))}
   if(r.description)field('说明',r.description);
+  if(display(r))field('外描边依据',display(r).outline.basis);
   if(item.kind==='node'){
    if(data.analysis)field('依赖闭包',data.analysis.declared_supported_closure.includes(r.id)?'已进入声明支持闭包；原始声明状态保持不变。':'尚未进入声明支持闭包。');else field('依赖分析','此大图仅展示原始关系，未运行组合阻断分析。');
    linked('进入该节点的路线 · OR',incoming.get(i));
@@ -338,7 +343,7 @@ function startGraph(){
  function hit(x,y){let best=null,distance=Infinity;const gx=Math.floor(x/40),gy=Math.floor(y/40);for(let dx=-2;dx<=2;dx++)for(let dy=-2;dy<=2;dy++)for(const p of hitGrid.get((gx+dx)+','+(gy+dy))||[]){const d=(p.x-x)**2+(p.y-y)**2;if(d<p.r*p.r&&d<distance){best=p.i;distance=d}}return best}
  canvas.addEventListener('wheel',e=>{e.preventDefault();const b=canvas.getBoundingClientRect();zoom(Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.0025),e.clientX-b.left,e.clientY-b.top)},{passive:false});
  canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;drag={id:hit(x,y),x:e.clientX,y:e.clientY,vx:view.x,vy:view.y,moved:false};canvas.setPointerCapture(e.pointerId);results.hidden=true});
- canvas.addEventListener('pointermove',e=>{const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4){drag.moved=true;userMoved=true;view.x=drag.vx-dx/view.k;view.y=drag.vy-dy/view.k;requestDraw()}tip.hidden=true;return}pointer={x,y};if(hoverFrame)return;hoverFrame=true;requestAnimationFrame(()=>{hoverFrame=false;const {x,y}=pointer,next=hit(x,y);if(next!==hovered){hovered=next;requestDraw()}tip.hidden=next===null;if(next!==null){tip.textContent=label(items[next].record)+' · '+(statusNames[items[next].record.status]||'');tip.style.left=Math.max(10,Math.min(width-285,x+14))+'px';tip.style.top=Math.min(height-50,y+14)+'px'}})});
+ canvas.addEventListener('pointermove',e=>{const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4){drag.moved=true;userMoved=true;view.x=drag.vx-dx/view.k;view.y=drag.vy-dy/view.k;requestDraw()}tip.hidden=true;return}pointer={x,y};if(hoverFrame)return;hoverFrame=true;requestAnimationFrame(()=>{hoverFrame=false;const {x,y}=pointer,next=hit(x,y);if(next!==hovered){hovered=next;requestDraw()}tip.hidden=next===null;if(next!==null){const r=items[next].record;tip.textContent=label(r)+'\n'+(display(r)?.outline.basis||statusNames[r.status]||'');tip.style.left=Math.max(10,Math.min(width-285,x+14))+'px';tip.style.top=Math.min(height-50,y+14)+'px'}})});
  canvas.addEventListener('pointerup',()=>{if(drag&&!drag.moved&&drag.id!==null)inspect(drag.id);drag=null});canvas.addEventListener('pointercancel',()=>drag=null);canvas.addEventListener('lostpointercapture',()=>drag=null);canvas.addEventListener('pointerleave',()=>{tip.hidden=true;hovered=null;requestDraw()});
  canvas.addEventListener('keydown',e=>{const delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(delta){e.preventDefault();view.x+=delta[0]*60/view.k;view.y+=delta[1]*60/view.k;userMoved=true;requestDraw()}else if(['+','=','-','0'].includes(e.key)){e.preventDefault();if(e.key==='0'){userMoved=false;fit()}else zoom(e.key==='-'?.8:1.25)}else if(e.key==='Escape'){detail.hidden=settings.hidden=results.hidden=true;selected=null;focus=false;focusButton.setAttribute('aria-pressed','false');updateFocus();requestDraw()}});
  function stopLayout(){if(worker){worker.terminate();worker=null}if(workerURL){URL.revokeObjectURL(workerURL);workerURL=null}layoutRunning=false}
@@ -649,6 +654,96 @@ def _locale_label(row, default):
     return label if isinstance(label, str) and label else default
 
 
+DISPLAY_STYLES = {"声明": ("#c2c8d2", "circle"), "执行": ("#b39ddb", "square"),
+                  "回执": ("#82c4af", "ring"), "产物": ("#82b6d4", "hexagon"),
+                  "观测": ("#d5c17e", "circle"), "超边": ("#9c95af", "diamond")}
+LIFECYCLE_ID = re.compile(r"^(?:owned:fact:)?run\.(.+)\.(succeeded|failed|timed_out|status|completed|running|registered|not_registered)$")
+
+
+def display_record(row, *, edge=False):
+    """Private presentation only: a short name and the recorded status basis.
+
+    An execution predicate being false does not establish its opposite. Neither
+    a receipt outcome nor a declaration status is an independently audited proof.
+    """
+    ident = row["id"]
+    typed = row.get("record_kind")
+    fact = row.get("owned_fact")
+    src = row.get("source")
+    lifecycle = LIFECYCLE_ID.fullmatch(ident) if isinstance(fact, dict) or typed == "lifecycle_fact" or ident.startswith("owned:fact:") else None
+    kind = {"run": "执行", "receipt": "回执", "artifact": "产物", "declared_output": "产物",
+            "fact": "观测", "observation": "观测", "lifecycle_fact": "观测"}.get(typed if isinstance(typed, str) else "")
+    prefixes = (("owned:run:", "执行"), ("owned:receipt:", "回执"), ("owned:artifact:", "产物"),
+                ("owned:fact:", "观测"), ("observation.", "观测"), ("run.", "观测"),
+                ("receipt.", "回执"))
+    observation_identity = typed == "observation" or isinstance(fact, dict) or (isinstance(src, dict) and
+                            isinstance(src.get("sha256"), str) and isinstance(src.get("receipt_id"), str))
+    receipt_identity = typed == "receipt" or any(isinstance(row.get(k), str) and row[k]
+                                                for k in ("receipt_id", "receipt_sha256", "outcome", "run_status"))
+    prefix = next(((p, k) for p, k in prefixes if ident.startswith(p) and
+                   (p != "run." or lifecycle) and (p != "observation." or observation_identity) and
+                   (p != "receipt." or receipt_identity)), None)
+    kind = "超边" if edge else kind or (prefix[1] if prefix else "声明")
+    short = ident
+    if lifecycle:
+        short = lifecycle[1]
+    elif prefix:
+        short = ident[len(prefix[0]):]
+    if prefix or lifecycle or kind in {"执行", "回执"}:
+        short = re.sub(r"[._:/\\-]+", " ", short).strip() or ident
+    if kind == "产物":
+        src = row.get("source")
+        path = (src.get("file") or src.get("path")) if isinstance(src, dict) else None
+        if isinstance(path, str) and path:
+            short = path.replace("\\", "/").rsplit("/", 1)[-1] or ident
+    claim = row.get("claim")
+    label = _locale_label(row, claim if isinstance(claim, str) and claim else short)
+    outline = {"color": "#9299a6", "state": "neutral", "basis": "中性：UNKNOWN / 待验证；不表示科研证明"}
+    execution = kind in {"执行", "回执"} or lifecycle is not None
+    if execution:
+        states, notes = [], []
+        outcomes = {"SUCCEEDED": "success", "FAILED": "failure", "TIMED_OUT": "failure",
+                    "TIMEOUT": "failure", "CANCELLED": "failure", "CANCELED": "failure"}
+        for key in ("outcome", "run_status", "lifecycle_status"):
+            if key in row:
+                value = row[key]
+                notes.append(key + "=" + json.dumps(value, ensure_ascii=False))
+                states.append(outcomes.get(value) if isinstance(value, str) else None)
+        if lifecycle:
+            fact = row.get("owned_fact")
+            fact = fact if isinstance(fact, dict) else {}
+            value = fact.get("value")
+            notes.append(lifecycle[2] + "=" + json.dumps(value, ensure_ascii=False))
+            fact_id = fact.get("id")
+            valid_id = fact_id is None or fact_id == ident.removeprefix("owned:fact:")
+            states.append(("success" if lifecycle[2] == "succeeded" else "failure")
+                          if value is True and fact.get("reliable") is True and valid_id and
+                          lifecycle[2] in {"succeeded", "failed", "timed_out"} else None)
+        state = states[0] if states and all(s == states[0] for s in states) else None
+        outline["basis"] = "执行记录：" + ("；".join(notes) or "未记录明确结果")
+        if row.get("status") != "SUPPORTED":
+            state = None
+            outline["basis"] += "；原始记录状态=" + str(row.get("status", "UNKNOWN")) + "（待验证或冲突）"
+        if state:
+            outline.update(state=state, color="#39b872" if state == "success" else "#e65b63")
+        else:
+            outline["basis"] += "；中性（否定 / 待定 / 无效或冲突，不能推断相反结果）"
+        outline["basis"] += "；未审计，不表示科研证明"
+    elif kind in {"声明", "超边"}:
+        state = {"SUPPORTED": "success", "CONTRADICTED": "failure"}.get(row.get("status"))
+        outline["basis"] = "声明状态：" + str(row.get("status", "UNKNOWN")) + "；未独立验收，不表示科研证明"
+        if state:
+            outline.update(state=state, color="#39b872" if state == "success" else "#e65b63")
+    color, shape = DISPLAY_STYLES[kind]
+    return {"label": label, "kind": kind, "color": color, "shape": shape, "outline": outline}
+
+
+def display_records(result):
+    spec = result.get("graph") or {}
+    return {key: {row["id"]: display_record(row, edge=key == "hyperedges") for row in spec.get(key, [])}
+            for key in ("nodes", "hyperedges")}
+
+
 def replica_view(result):
     """Incidence geometry plus explicitly bound provenance; never alter the map.
 
@@ -662,41 +757,25 @@ def replica_view(result):
     ids = {n["id"]: f"c{i}" for i, n in enumerate(spec["nodes"])}
     goals = set(spec["goals"])
     palette = {"声明": "#c2c8d2", "执行": "#b39ddb", "回执": "#82c4af", "产物": "#82b6d4", "观测": "#d5c17e"}
-    names = {"radius_minimal_polynomial": "半径最小多项式", "radius_irreducible": "不可约性",
-             "radius_isolated_unique": "根隔离与唯一性", "ordered_exact_centers": "精确圆心",
-             "continuous_cover": "连续覆盖", "global_optimality": "全局最优性",
-             "complete_reproducibility": "完整可复现性", "official_complete_acceptance": "正式完整验收"}
     report = _record_view_report(spec)
     run_ids = {n["id"]: n.get("run_id", n["id"].removeprefix("owned:run:")) for n in spec["nodes"]
                if n.get("record_kind") == "run" and isinstance(n.get("run_id"), str) and n["run_id"]
                or n["id"].startswith("owned:run:") and isinstance(n.get("manifest_sha256"), str)}
     for i, row in enumerate(spec["nodes"]):
         ident = row["id"]
-        reported_kind = row.get("record_kind", ident.split(":")[1] if ident.startswith("owned:") else "")
-        kind = {"run": "执行", "receipt": "回执", "artifact": "产物", "fact": "观测", "observation": "观测", "lifecycle_fact": "观测"}.get(reported_kind if isinstance(reported_kind, str) else "", "声明")
-        label = names.get(ident, row.get("label") or row.get("claim") or ident)
-        if not isinstance(label, str):
-            label = ident
-        if ident.startswith("owned:run:"):
-            label = ident.removeprefix("owned:run:")
-        elif ident.startswith("owned:receipt:"):
-            label = ident.removeprefix("owned:receipt:") + " · 回执"
-        elif kind == "产物":
-            src = row.get("source", {})
-            label = (src.get("file", ident).replace("\\", "/").split("/")[-1] if isinstance(src, dict) else ident)
-        elif kind == "观测":
-            label = ident.removeprefix("owned:fact:").removeprefix("observation.")
-        label = _locale_label(row, label)
+        display = display_record(row)
+        kind, label = display["kind"], display["label"]
         nodes[f"c{i}"] = {"type": "", "label": label, "color": {"rgb": int(palette[kind][1:], 16), "a": 1},
                             "rds": {"record": ident, "kind": kind, "size": 1.5 if ident in goals else 1,
-                                    "group": None, "color": palette[kind]}}
+                                    "group": None, "color": palette[kind], "outline": display["outline"]}}
     for i, edge in enumerate(spec["hyperedges"]):
         hub = f"h{i}"
         relation = edge.get("relation") if isinstance(edge.get("relation"), str) and edge["relation"].strip() else "依赖"
         members = [ids[p] for p in edge["premises"]] + [ids[edge["conclusion"]]]
         nodes[hub] = {"type": "hyperedge", "label": ("AND" if len(edge["premises"]) > 1 else "") + " ◇",
                       "color": {"rgb": 0x9c95af, "a": 1},
-                      "rds": {"edge": i, "kind": "超边", "members": members, "size": .65, "group": None}}
+                      "rds": {"edge": i, "kind": "超边", "members": members, "size": .65, "group": None,
+                              "outline": display_record(edge, edge=True)["outline"]}}
         style = {"relation": relation, "family": "dependency", "hyperedge": hub, "color": "#bdc2d2",
                  "width": 1.25, "opacity": .55, "dash": edge["status"] != "SUPPORTED", "arrow": False}
         links.extend([[ids[p], hub, dict(style)] for p in edge["premises"]])
@@ -792,9 +871,29 @@ def patch_replica_renderer(source):
       else if(shape==='hexagon')c.drawPolygon([100,0,50,87,-50,87,-100,0,-50,-87,50,-87]);
       else c.drawCircle(0,0,100);
       c.endFill();
+    }
+    renderStatusOutline(x,y,size,ns,alpha,visible) {
+      const state=this.rds?.outline;
+      if(!state){if(this.statusOutline)this.statusOutline.visible=false;return;}
+      let c=this.statusOutline;
+      if(!c){c=this.statusOutline=new PIXI.Graphics();this.statusOutlineShape=null;c.eventMode='none';c.zIndex=1.5;this.r.hanger.addChild(c);}
+      const shape=this.type==='hyperedge'?'diamond':this.rds?.shape || 'circle';
+      // Unit geometry follows the body transform; only shape changes redraw it.
+      if(this.statusOutlineShape!==shape){
+        this.statusOutlineShape=shape;c.clear().lineStyle(14,0xffffff,1);
+        if(shape==='diamond')c.drawPolygon([0,-116,116,0,0,116,-116,0]);
+        else if(shape==='square')c.drawRect(-98,-98,196,196);
+        else if(shape==='triangle')c.drawPolygon([0,-116,110,87,-110,87]);
+        else if(shape==='hexagon')c.drawPolygon([116,0,58,101,-58,101,-116,0,-58,-101,58,-101]);
+        else c.drawCircle(0,0,116);
+      }
+      c.visible=visible;c.tint=parseInt(state.color.slice(1),16);
+      c.x=x;c.y=y;c.scale.set(size/100*ns);c.alpha=alpha;
     }""")
     source = _replace_once(source, "if (this.rendered) return false;", "if (this.rendered || this.rdsHidden) return false;")
-    source = _replace_once(source, "const r = this.r, { x, y } = this", "if(this.rdsHidden){this.circle.visible=this.text.visible=false;if(this.highlight)this.highlight.visible=false;return;}\n      const r = this.r, { x, y } = this")
+    source = _replace_once(source, "const r = this.r, { x, y } = this", "if(this.rdsHidden){this.circle.visible=this.text.visible=false;if(this.highlight)this.highlight.visible=false;if(this.statusOutline)this.statusOutline.visible=false;return;}\n      const r = this.r, { x, y } = this")
+    source = _replace_once(source, "['circle', 'highlight', 'text']", "['circle', 'highlight', 'text', 'statusOutline']")
+    source = _replace_once(source, "text.visible = textVis;", "this.renderStatusOutline(x,y,size,ns,nodeAlpha,circleVis);\n      text.visible = textVis;")
     source = _replace_once(source, "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();", "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();\n      if(s.rdsHidden || t.rdsHidden){this.px.visible=this.arrow.visible=false;return;}")
     source = _replace_once(source, "if (n.rendered) continue;", "if (n.rendered || n.rdsHidden) continue;")
     source = _replace_once(source, "c.beginFill(0xffffff).drawCircle(0, 0, 100).endFill();", "this.drawBody(c);")
@@ -919,7 +1018,7 @@ def render_replica_html(result, replica_root, pixi_js):
     pixi = Path(pixi_js).read_bytes()
     if hashlib.sha256(pixi).hexdigest() != PIXI_SHA256:
         raise ValueError("PixiJS must be the official 7.4.3 dist/pixi.min.js")
-    payload = {**result, "replica_view": replica_view(result),
+    payload = {**result, "display": display_records(result), "replica_view": replica_view(result),
                "renderer": {"repository": "https://github.com/runningZ1/obsidian-graph-replica", "commit": REPLICA_COMMIT,
                             "pixi": "7.4.3", "runtime_network": False}}
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
@@ -1033,7 +1132,7 @@ function goalCredits(spec,goal) {
  for(const r of view.relations) {const sample=relationSamples.get(r)||{};opts.relations[r]={mode:'attract',strength:r==='项目归属'?.12:r==='声明输出'?.2:r==='来源绑定'?.45:1,color:sample.color||'#bdc2d2',width:sample.width||1.25,dash:!!sample.dash,...opts.relations[r]};}
  function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
  function button(text,action,cls='btn'){const b=el('button',text,cls);b.type='button';b.addEventListener('click',action);return b;}
- function paintLegend(){const row=el('div',undefined,'legend-row');for(const [kind,style] of Object.entries(opts.nodeStyles)){if(kind==='项目'&&!opts.scope)continue;const chip=el('span'),dot=el('span',({circle:'●',square:'■',triangle:'▲',hexagon:'⬡',ring:'○',diamond:'◇'})[style.shape],'symbol');dot.style.color=opts.colors?style.color:'var(--text-muted)';chip.append(dot,el('span',kind==='超边'?'超边汇合点':kind==='项目'?'项目快照':kind));row.append(chip);}$('legend').replaceChildren(row,el('div','多个前提 → ◇ → 结论；不同菱形 = 不同路线','legend-note'),el('div',opts.scope?'弱虚线：归属 / 来源 / 输出声明；不表示科研支持':'虚线：来源 / 输出声明 / 提议','legend-note'),el('div',opts.sizeMode==='goal'?'大小：目标相关权重（完整最短路线的结构估计）':'大小：连接度','legend-note'));}
+ function paintLegend(){const row=el('div',undefined,'legend-row');for(const [kind,style] of Object.entries(opts.nodeStyles)){if(kind==='项目'&&!opts.scope)continue;const chip=el('span'),dot=el('span',({circle:'●',square:'■',triangle:'▲',hexagon:'⬡',ring:'○',diamond:'◇'})[style.shape],'symbol');dot.style.color=opts.colors?style.color:'var(--text-muted)';chip.append(dot,el('span',kind==='超边'?'超边汇合点':kind==='项目'?'项目快照':kind));row.append(chip);}$('legend').replaceChildren(row,el('div','多个前提 → ◇ → 结论；不同菱形 = 不同路线','legend-note'),el('div','外描边：绿 = 已记录执行成功 / 声明支持；红 = 执行失败 / 反驳声明；灰 = 未知或待验证','legend-note'),el('div','执行成功不等于科研证明；具体依据见悬停 / 详查','legend-note'),el('div',opts.scope?'弱虚线：归属 / 来源 / 输出声明；不表示科研支持':'虚线：来源 / 输出声明 / 提议','legend-note'),el('div',opts.sizeMode==='goal'?'大小：目标相关权重（完整最短路线的结构估计）':'大小：连接度','legend-note'));}
  function section(name,open=false){const box=el('div',undefined,'gc-section'+(open?'':' is-collapsed')), head=button('',()=>{box.classList.toggle('is-collapsed');},'gc-head');head.setAttribute('aria-expanded',String(open));head.addEventListener('click',()=>head.setAttribute('aria-expanded',String(!box.classList.contains('is-collapsed'))));head.append(el('span','⌄','chev'),el('span',name,'name'));const body=el('div',undefined,'gc-body');box.append(head,body);panel.append(box);return body;}
  function checkbox(body,label,key,change){const row=el('label',undefined,'gc-item');row.append(el('span',label));const i=el('input');i.type='checkbox';i.checked=opts[key];i.addEventListener('change',()=>{opts[key]=i.checked;persist();change();});row.append(i);body.append(row);}
  function slider(body,label,key,min,max,step,change){const wrap=el('label',undefined,'gc-item col'), row=el('span',undefined,'row'), value=el('span',undefined,'val'),i=el('input');row.append(el('span',label),value);i.type='range';i.min=min;i.max=max;i.step=step;i.value=opts[key];i.setAttribute('aria-label',label);const paint=()=>{value.textContent=Number(i.value).toFixed(step<1?2:0);i.style.setProperty('--p',((i.value-min)/(max-min)*100)+'%');};paint();i.addEventListener('input',()=>{opts[key]=+i.value;paint();persist();change();});wrap.append(row,i);body.append(wrap);}
@@ -1077,6 +1176,7 @@ function goalCredits(spec,goal) {
   const n=g.nodeLookup.get(id);if(!n)return;finishGrowth();g.rdsPinned=n;g.rdsLastHL=undefined;g.changed();card.replaceChildren();card.classList.add('show');
   const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.rds.edge!==undefined?'◇ 超边汇合点':n.label||n.id));
   const record=recordFor(n);card.append(el('div',record.id,'path'),el('span',record.status+(n.rds.edge!==undefined?' · 规则状态':''),'tag'),el('span',n.rds.kind,'tag'));
+  if(n.rds.outline)card.append(el('p','外描边依据：'+n.rds.outline.basis,'hint'));
   if(n.rds.virtual)card.append(el('p','显示用项目快照节点。弱虚线只表达分组属于同一快照，不是原始科研超边，不表示任何研究条件已被支持。','hint'));
   else {const credit=n.rds.edge!==undefined?credits.edges.get(record.id):credits.nodes.get(record.id);card.append(el('p','目标相关权重（结构估计）：'+(credit===undefined?'未记录符合完整最短层条件的可分配路径':credit.toFixed(4)),'hint'),el('p','节点排斥倍率：×'+n.rds.chargeWeight.toFixed(2)+'（上限 ×3）','hint'),el('p','按完整最短依赖路线分配；实际研究贡献未由本页测量。','hint'));}
   if(record.scientific_support)card.append(el('p','scientific_support: '+record.scientific_support,'hint'));
@@ -1087,7 +1187,7 @@ function goalCredits(spec,goal) {
   card.append(el('h4',n.rds.virtual?'显示层依据':'原始记录'),el('pre',JSON.stringify(record,null,2)));const bindings=related.filter(l=>l.rds.binding).map(l=>l.rds.binding);if(bindings.length)card.append(el('h4','绑定依据'),el('pre',JSON.stringify(bindings,null,2)));
  }
  g.onNodeClick=n=>inspect(n.id);
- g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent=`◇ 超边汇合点 · ${e.premises.length>1?'AND':'依赖'}\n${e.premises.length} 个前提 → ${target.label} · ${recordById.get(target.rds.record).status}\n角度无含义；点击查看整条规则及来源`;}else tip.textContent=n.label+' · '+n.rds.kind+(n.rds.virtual?'\n显示用归属节点，不是科研声明':n.rds.kind==='观测'?'\n记录类型，不代表已证明':'');};
+ g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent=`◇ 超边汇合点 · ${e.premises.length>1?'AND':'依赖'}\n${e.premises.length} 个前提 → ${target.label} · ${recordById.get(target.rds.record).status}\n角度无含义；点击查看整条规则及来源`;}else tip.textContent=n.label+' · '+n.rds.kind+(n.rds.virtual?'\n显示用归属节点，不是科研声明':n.rds.kind==='观测'?'\n记录类型，不代表已证明':'');if(n.rds.outline)tip.textContent+='\n'+n.rds.outline.basis;};
  let growing=false,growthTimer=null,growthOrder=[],growthStart=0;
  function finishGrowth(){clearInterval(growthTimer);growthTimer=null;growing=false;for(const n of g.nodes)n.rdsHidden=false;$('growth-info').textContent='';$('skip-growth').hidden=true;g.changed();}
  function playGrowth(){finishGrowth();g.highlightNode=g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');$('hover-info').hidden=true;growthOrder=[...g.nodes].sort((a,b)=>(a.rds.flowX??1e8)-(b.rds.flowX??1e8));if(!growthOrder.length)return;growing=true;growthStart=performance.now();for(const n of growthOrder)n.rdsHidden=true;$('state').textContent='';$('skip-growth').hidden=false;let shown=0;const advance=()=>{const desired=Math.min(growthOrder.length,Math.max(1,Math.ceil((performance.now()-growthStart)/(opts.growthSeconds*1000)*growthOrder.length)));while(shown<desired){const n=growthOrder[shown++];n.rdsHidden=false;n.fadeAlpha=0;}g.changed();$('growth-info').textContent=`依赖结构生长 · ${shown} / ${growthOrder.length} · 非时间线`;if(shown===growthOrder.length)finishGrowth();};advance();growthTimer=setInterval(advance,60);}
