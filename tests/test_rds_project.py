@@ -573,8 +573,41 @@ class ProjectTests(unittest.TestCase):
         store.register(self.spec("r1"))
         store.register(self.spec("r2"))
         self.assertAlmostEqual(store.snapshot()["budget"]["wall_seconds"]["remaining"], 0)
-        self.assertEqual(store.execute("r1")["run_status"], "SUCCEEDED")
-        self.assertEqual(store.execute("r2")["run_status"], "SUCCEEDED")
+
+        def settle_synthetic_accounting(run_id, attempt_id):
+            # This tests reservation arithmetic, not subprocess performance.
+            # Successful real execution can settle above its estimate after
+            # preflight/launch/cleanup, which must block the second reservation.
+            # Keep admission and settlement real, but control this worker's
+            # finite cost; no subprocess is launched or claimed by this fixture.
+            with store._db(True) as db:
+                run = store._run(db, run_id)
+                self.assertEqual(run["attempt_id"], attempt_id)
+                self.assertEqual(run["status"], "RESERVED")
+                contract = store._contract(db)
+            before, errors = store._bindings(contract)
+            self.assertEqual(errors, [])
+            return store._finish(run_id, attempt_id, "COMPLETED", 0, 2.2, False, [], before)
+
+        with patch.object(store, "_execute_claim", side_effect=settle_synthetic_accounting) as worker:
+            first = store.execute("r1")
+            self.assertEqual(first["run_status"], "SUCCEEDED")
+            self.assertFalse(first["process_started"])
+            midway = store.snapshot()["budget"]["wall_seconds"]
+            self.assertAlmostEqual(midway["spent_measured"], 2.2)
+            self.assertAlmostEqual(midway["reserved"], 2.2)
+            self.assertAlmostEqual(midway["charged_estimate"], 0)
+            self.assertAlmostEqual(midway["remaining"], 0)
+            second = store.execute("r2")
+            self.assertEqual(second["run_status"], "SUCCEEDED")
+            self.assertFalse(second["process_started"])
+            self.assertNotEqual(first["attempt_id"], second["attempt_id"])
+            self.assertEqual(worker.call_count, 2)
+        final = store.snapshot()["budget"]["wall_seconds"]
+        self.assertAlmostEqual(final["spent_measured"], 4.4)
+        self.assertAlmostEqual(final["reserved"], 0)
+        self.assertAlmostEqual(final["charged_estimate"], 0)
+        self.assertAlmostEqual(final["remaining"], 0)
 
     def test_real_overrun_blocks_reserved_dispatch_and_preserves_charges(self):
         store = self.reserve_overrun_pair()
