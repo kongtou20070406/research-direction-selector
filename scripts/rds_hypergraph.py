@@ -362,6 +362,7 @@ def record_topology(spec, *, source_base=None):
     An explicit host-provided source base resolves physical path aliases on this
     report's private rows; neither the input graph nor saved bindings are edited.
     """
+    spec = deepcopy(spec)  # Validation may normalize evidence on its private copy.
     nodes, edges, goals, _ = _validate(spec)
     reported_base, invalid_base = source_base is None, False
     source_base = source_base if source_base is not None else spec.get('record_source_base_dir')
@@ -456,7 +457,10 @@ def record_topology(spec, *, source_base=None):
 
     for ident, row in rows.items():
         kind = row['kind']
-        if kind in {'contract', 'run'}:
+        if kind == 'run':
+            match(row, 'run', row.get('run_id'), 'run_id')
+            continue  # Diagnose the origin even without consumers; no self link.
+        if kind == 'contract':
             continue
         run = match(row, 'run', row.get('run_id'), 'run_id')
         receipt, receipt_conflict = None, False

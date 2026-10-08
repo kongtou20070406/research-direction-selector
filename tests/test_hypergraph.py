@@ -164,6 +164,71 @@ class HypergraphTests(unittest.TestCase):
                 self.assertEqual(result['goals']['opaque-record']['status'], 'UNKNOWN')
                 self.assertEqual(spec, before)
 
+    def test_unreferenced_duplicate_run_origins_report_ambiguity_without_self_relations(self):
+        spec = graph({'run-a': 'UNKNOWN', 'run-b': 'UNKNOWN'}, [], ['run-a'])
+        for node in spec['nodes']:
+            node.update(record_kind='run', run_id='same-run')
+        before = deepcopy(spec)
+        actual = hypergraph.record_topology(spec)
+        self.assertEqual(actual['record_relations'], [])
+        self.assertEqual([(i['node_id'], i['field'], i['reason'], i['candidates'])
+                          for i in actual['record_topology']['issues']],
+                         [(ident, 'run_id', 'AMBIGUOUS_BINDING', ['run-a', 'run-b'])
+                          for ident in ('run-a', 'run-b')])
+        self.assertEqual(spec, before)
+
+    def test_duplicate_run_origins_with_consumer_and_bad_extras_keep_bounded_diagnostics(self):
+        spec = graph({**{f'run-{i}': 'UNKNOWN' for i in range(5)}, 'observation': 'UNKNOWN'}, [], ['observation'])
+        for node in spec['nodes'][:-1]:
+            node.update(record_kind='run', run_id='same-run')
+        # Unrelated invalid metadata must not hide an otherwise valid run index.
+        spec['nodes'][4]['receipt_id'] = []
+        spec['nodes'][-1].update(record_kind='observation', run_id='same-run')
+        before = deepcopy(spec)
+        actual = analyze_hypergraph(spec)
+        ambiguous = [i for i in actual['record_topology']['issues'] if i['reason'] == 'AMBIGUOUS_BINDING']
+        self.assertEqual({i['node_id'] for i in ambiguous}, {n['id'] for n in spec['nodes']})
+        self.assertTrue(all(i['field'] == 'run_id' and i['candidates'] == ['run-0', 'run-1', 'run-2']
+                            and i['omitted_candidates'] == 2 for i in ambiguous))
+        self.assertEqual(actual['record_relations'], [])
+        self.assertEqual(actual['goals']['observation']['status'], 'UNKNOWN')
+        self.assertEqual(spec, before)
+
+    def test_direct_record_topology_preserves_uppercase_node_and_edge_receipt_evidence(self):
+        for location in ('node', 'hyperedge'):
+            with self.subTest(location=location):
+                spec = self.record_fixture()
+                spec['hyperedges'] = [{'id': 'rule', 'premises': ['opaque-a'], 'conclusion': 'opaque-d',
+                                      'status': 'SUPPORTED', 'source': 'synthetic'}]
+                target = spec['nodes'][0] if location == 'node' else spec['hyperedges'][0]
+                target['evidence'] = {'receipt': {'project_root': 'synthetic-project', 'sha256': 'AB' * 32}}
+                before = deepcopy(spec)
+                expected = analyze_hypergraph(deepcopy(spec))
+                report = hypergraph.record_topology(spec)
+                self.assertEqual(spec, before)
+                self.assertEqual(report, hypergraph.record_topology(deepcopy(spec)))
+                self.assertEqual(analyze_hypergraph(deepcopy(spec)), expected)
+                self.assertTrue(all(r['scientific_support'] == 'UNKNOWN' for r in report['record_relations']))
+                self.assertNotIn('opaque-d', expected['declared_supported_closure'])
+
+    def test_direct_record_topology_validation_failure_never_partially_normalizes_input(self):
+        for invalid_location in ('later-edge', 'goal'):
+            with self.subTest(invalid_location=invalid_location):
+                spec = self.record_fixture()
+                evidence = {'receipt': {'project_root': 'synthetic-project', 'sha256': 'AB' * 32}}
+                spec['nodes'][0]['evidence'] = deepcopy(evidence)
+                spec['hyperedges'] = [{'id': 'first', 'premises': ['opaque-a'], 'conclusion': 'opaque-d',
+                                      'status': 'SUPPORTED', 'source': 'synthetic', 'evidence': deepcopy(evidence)}]
+                if invalid_location == 'later-edge':
+                    spec['hyperedges'].append({'id': 'bad', 'premises': ['missing'], 'conclusion': 'opaque-d',
+                                               'status': 'SUPPORTED', 'source': 'synthetic'})
+                else:
+                    spec['goals'] = ['missing']
+                before = deepcopy(spec)
+                with self.assertRaisesRegex(ValueError, 'invalid or duplicate premises|unknown or duplicate goal'):
+                    hypergraph.record_topology(spec)
+                self.assertEqual(spec, before)
+
     def test_review_four_counterexamples_keep_independent_run_membership(self):
         for position, bad_field, expected in ((3, 'output_path', 'run_observation'),
                                               (3, 'receipt_id', 'run_observation'),
