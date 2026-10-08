@@ -207,13 +207,61 @@ class ContinuationTests(unittest.TestCase):
         self.assertIn(receipt, self.f.snapshot()['receipts'])
 
     def test_projection_failure_never_masks_execution_or_holds_budget(self):
+        self.assert_projection_fault_settlement(observer_wall=2.)
+
+    def test_projection_overrun_failure_is_charged_without_masking_stop(self):
+        self.assert_projection_fault_settlement(observer_wall=9.)
+
+    def assert_projection_fault_settlement(self, *, observer_wall):
         self.f.initialize()
-        with patch('rds_advisor_workset.build', side_effect=RuntimeError('projection observer failed')):
+        ticks, at_fault = [0.], {}
+        # The real routes and worker clocks are unchanged. This fault-injection
+        # case controls only the controller clock so it reaches the observer;
+        # separate deadline cases cover stopping before that phase.
+        clock = SimpleNamespace(monotonic=lambda: ticks[0], time=autonomy.time.time)
+
+        def fail_projection(store, report):
+            at_fault['state'] = store.snapshot()
+            at_fault['report_status'] = report['status']
+            ticks[0] = observer_wall
+            raise RuntimeError('projection observer failed')
+
+        with patch.object(autonomy, 'time', clock), \
+                patch('rds_advisor_workset.build', side_effect=fail_projection) as build:
             out = autonomy.drive(ProjectStore(self.f.root), until_judgment=True, controller_wall_seconds=8)
+        build.assert_called_once()
+        self.assertEqual(at_fault['report_status'], 'REVIEWED')
+        original = at_fault['state']
+        self.assertEqual(len(original['receipts']), 2)
+        self.assertTrue(all(r['run_status'] == 'SUCCEEDED' for r in original['receipts']))
         self.assertEqual(out['status'], 'JUDGMENT_REQUIRED')
         self.assertEqual(out['handoff']['evidence_status'], 'UNAVAILABLE')
         self.assertEqual(self.f.starts(), ['baseline', 'repair'])
         self.assertAlmostEqual(self.f.snapshot()['budget']['wall_seconds']['reserved'], 0)
+        self.assertEqual(out['handoff']['diagnostic'], 'RuntimeError: projection observer failed')
+        self.assertEqual(out['handoff']['goal_status'], 'UNKNOWN')
+        self.assertEqual(out['handoff']['scientific_support'], 'UNKNOWN')
+        self.assertNotIn('evidence', out['handoff'])
+        self.assertFalse(out['handoff']['admission_token'])
+        self.assertEqual(out['handoff']['resource_cut'], 'CONTROLLER_RELEASE_TRANSACTION')
+        self.assertEqual(out['controller_wall_seconds'], observer_wall)
+        after = self.f.snapshot()
+        self.assertEqual(after['receipts'], original['receipts'])
+        self.assertEqual(after['runs'], original['runs'])
+        self.assertEqual(out['handoff']['resources'], after['budget'])
+        self.assertAlmostEqual(original['budget']['wall_seconds']['reserved'], 8.)
+        for resource, budget in original['budget'].items():
+            expected = dict(budget)
+            if resource == 'wall_seconds':
+                expected['spent_measured'] += min(observer_wall, 8.)
+                expected['charged_estimate'] += max(observer_wall - 8., 0.)
+                expected['reserved'] -= 8.
+                expected['remaining'] += 8. - observer_wall
+            for field, value in expected.items():
+                if isinstance(value, (float, int)):
+                    self.assertAlmostEqual(after['budget'][resource][field], value, msg=resource + '.' + field)
+                else:
+                    self.assertEqual(after['budget'][resource][field], value)
 
     def test_exhausted_budget_cannot_launch_or_reset_charge(self):
         self.f.initialize()
