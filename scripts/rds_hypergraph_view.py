@@ -596,7 +596,10 @@ def _legacy_record_report(spec):
 
     for row in rows.values():
         kind = row["kind"]
-        if kind in {"contract", "run"}:
+        if kind == "run":
+            match(row, "run", row.get("run_id"), "run_id")
+            continue  # Check origins without consumers; never add a self link.
+        if kind == "contract":
             continue
         run = match(row, "run", row.get("run_id"), "run_id")
         receipt = match(row, "receipt", row.get("receipt_id"), "receipt_id") if kind != "receipt" else None

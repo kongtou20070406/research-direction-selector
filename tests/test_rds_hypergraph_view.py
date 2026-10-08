@@ -382,6 +382,51 @@ class ReplicaViewTests(unittest.TestCase):
                               "record_kind": "lifecycle_fact", "run_id": "a"})
         return spec
 
+    def test_fallback_unreferenced_run_origins_report_ambiguity_without_self_links(self):
+        spec = {"nodes": [{"id": ident, "status": "UNKNOWN", "source": "fixture",
+                            "record_kind": "run", "run_id": "same-run"}
+                           for ident in ("run-a", "run-b")], "hyperedges": [], "goals": ["run-a"]}
+        original = deepcopy(spec)
+        with patch("rds_hypergraph.record_topology", None, create=True):
+            result = graph_view(spec, "synthetic unreferenced origins")
+            before = deepcopy(result)
+            view = replica_view(result)
+            self.assertEqual([(i["node_id"], i["field"], i["reason"], i["candidates"])
+                              for i in view["record_topology"]["issues"]],
+                             [(ident, "run_id", "AMBIGUOUS_BINDING", ["run-a", "run-b"])
+                              for ident in ("run-a", "run-b")])
+            self.assertEqual(view["record_relations"], [])
+            self.assertFalse(any(link[0] == link[1] for link in view["links"]))
+            self.assertEqual(HypergraphViewTests.payload(render_html(result))["graph"], original)
+            self.assertEqual(result, before)
+            self.assertEqual(spec, original)
+            self.assertEqual(result["analysis"]["goals"]["run-a"]["status"], "UNKNOWN")
+
+    def test_fallback_run_origin_candidates_are_bounded_with_bad_extras_and_consumer(self):
+        for consumer in (False, True):
+            with self.subTest(consumer=consumer), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = {"nodes": [{"id": f"run-{i}", "status": "UNKNOWN", "source": "fixture",
+                                    "record_kind": "run", "run_id": "same-run"} for i in range(5)],
+                        "hyperedges": [], "goals": ["run-0"]}
+                spec["nodes"][4]["receipt_id"] = []
+                if consumer:
+                    spec["nodes"].append({"id": "observation", "status": "UNKNOWN", "source": "fixture",
+                                          "record_kind": "observation", "run_id": "same-run"})
+                    spec["goals"] = ["observation"]
+                original = deepcopy(spec)
+                result = graph_view(spec, "synthetic bounded origins")
+                before = deepcopy(result)
+                view = replica_view(result)
+                ambiguous = [i for i in view["record_topology"]["issues"] if i["reason"] == "AMBIGUOUS_BINDING"]
+                self.assertEqual({i["node_id"] for i in ambiguous}, {n["id"] for n in spec["nodes"]})
+                self.assertTrue(all(i["field"] == "run_id" and i["candidates"] == ["run-0", "run-1", "run-2"]
+                                    and i["omitted_candidates"] == 2 for i in ambiguous))
+                self.assertEqual(view["record_relations"], [])
+                self.assertEqual(HypergraphViewTests.payload(render_html(result))["graph"], original)
+                self.assertEqual(result, before)
+                self.assertEqual(spec, original)
+                self.assertEqual(result["analysis"]["goals"][spec["goals"][0]]["status"], "UNKNOWN")
+
     def test_fallback_review_four_production_counterexamples_keep_membership(self):
         for position, field, relation in ((6, "output_path", "run_observation"),
                                          (6, "receipt_id", "run_observation"),
