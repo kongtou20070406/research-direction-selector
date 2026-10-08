@@ -1,7 +1,9 @@
 """Actual replay, independent adoption checks, and lossless isolated rollback."""
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rds_meta import apply_rule, load_judgment_graph, rollback_rule, reflect_from_state, validate_rule
-from rds_rsi import commit_casepack, evaluate_candidate
+from rds_rsi import commit_casepack, evaluate_candidate, program_version
 
 
 def fixture():
@@ -42,6 +44,40 @@ def collision_fixture():
 
 
 class RSITests(unittest.TestCase):
+    def test_parser_source_change_invalidates_replay_identity_and_adoption(self):
+        graph, rule, cases = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = root / "scripts"
+            sources.mkdir()
+            for source in (ROOT / "scripts").glob("*.py"):
+                shutil.copyfile(source, sources / source.name)
+            parser = sources / "rds_source_documents.py"
+            original = parser.read_bytes()
+            graph_path = root / "graph.json"
+            graph_path.write_text(json.dumps(graph), encoding="utf-8")
+            original_graph = graph_path.read_bytes()
+            with patch("rds_rsi.__file__", str(sources / "rds_rsi.py")):
+                before = program_version()
+                report = evaluate_candidate(rule, graph, cases)
+                self.assertTrue(report["adoption_eligible"])
+                # The unchanged evaluator still accepts the original report.
+                apply_rule(rule, graph_path, evaluation=report, cases=cases, dry_run=True)
+                parser.write_bytes(original + b"\n# source changed after evaluation\n")
+                after = program_version()
+                self.assertEqual(before["version"], after["version"])
+                self.assertEqual(
+                    {k: v for k, v in before["files"].items() if k != parser.name},
+                    {k: v for k, v in after["files"].items() if k != parser.name})
+                self.assertNotEqual(before["sha256"], after["sha256"])
+                self.assertEqual(before["files"][parser.name], hashlib.sha256(original).hexdigest())
+                self.assertEqual(after["files"][parser.name], hashlib.sha256(parser.read_bytes()).hexdigest())
+                with self.assertRaisesRegex(ValueError, "differs from independently executed replay"):
+                    apply_rule(rule, graph_path, evaluation=report, cases=cases)
+                self.assertEqual(graph_path.read_bytes(), original_graph)
+                parser.write_bytes(original)
+                self.assertEqual(program_version(), before)
+
     def test_replay_cannot_hide_ready_action_behind_another_rules_blocked_status(self):
         graph, rule, cases = collision_fixture()
         report = evaluate_candidate(rule, graph, cases)

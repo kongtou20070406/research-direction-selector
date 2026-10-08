@@ -17,6 +17,9 @@ their existing operation lifetime; there is no global or cross-command cache.
 The next import or owned review rereads its original inputs. Receipt checks,
 hashing, admission, execution, costs and recovery keep their existing boundaries.
 A parsed document establishes neither source integrity nor scientific support.
+RSI replay program identity includes this shared parser's source bytes. Changing
+them invalidates an older evaluation report for adoption, even when the version
+label and other program files are unchanged.
 
 ## Reproduce the bounded performance comparison
 
