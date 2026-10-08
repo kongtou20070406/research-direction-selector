@@ -53,6 +53,10 @@ The example is a six-row deterministic computation. Its comparison exercises col
 
 ## Frozen policy
 
+An optional [graph neural ranker](graph-neural-ranker.md) can report preferences
+or break ties inside the already eligible frozen Pareto frontier. It is
+disabled when absent and cannot change evidence or execution admission.
+
 Add `advisor_policy` to a normal project contract before `project init`:
 
 ```json
