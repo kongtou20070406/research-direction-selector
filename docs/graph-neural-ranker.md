@@ -58,7 +58,9 @@ encoded as a negative finding. The observed channel distinguishes imported or
 program-derived evidence from caller-reported input. Predicate-to-rule edges
 and the direction search's `prerequisite_for` edges carry messages. Other
 descriptive relations are ignored by this schema and confer no proof support.
-Identical predicates and edges are deduplicated. Graphs are limited to 128
+Identical predicates and edges are deduplicated. Actual/expected values are
+identified by hashes and original source locators, rather than repeated in
+the feature trace. The normalized trace is capped at 1 MiB. Graphs are limited to 128
 input rules/512 edges and 512 expanded nodes/2048 edges; no truncated graph is
 silently scored. A missing endpoint or unrepresented frontier action abstains.
 

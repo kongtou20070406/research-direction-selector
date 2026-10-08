@@ -91,6 +91,16 @@ class GraphRankerTests(unittest.TestCase):
         self.assertEqual(first['scores'], second['scores'])
         self.assertEqual(before, self.graph())
 
+    def test_trace_binds_large_values_without_copying_them(self):
+        facts = {'signal': {'value': 'x' * 100000, 'source': {'locator': 'synthetic original'}}}
+        _, report = rank(model(), self.graph(), facts, [{'candidate': 'a'}, {'candidate': 'b'}])
+        self.assertEqual(report['status'], 'SCORED')
+        predicate = next(n for n in report['trace']['nodes'] if n['kind'] == 'predicate')
+        self.assertIn('actual_sha256', predicate['evidence'])
+        self.assertNotIn('actual', predicate['evidence'])
+        self.assertNotIn('expected', predicate['evidence'])
+        self.assertLess(len(json.dumps(report['trace'])), 4000)
+
 
 class GraphRankerCLITests(unittest.TestCase):
     # Reuse original public workload/CLI harness without inheriting its full test suite.

@@ -7,11 +7,12 @@ from copy import deepcopy
 import math
 import time
 
-from rds_project import digest, require
+from rds_project import canonical, digest, require
 from rds_advisor_search import evaluate_condition
 
 FEATURES = ['action', 'true', 'false', 'unknown', 'observed']
 MAX_NODES, MAX_EDGES, MAX_WIDTH, MAX_LAYERS = 512, 2048, 16, 2
+MAX_TRACE_BYTES = 1024 * 1024
 ASSURANCE = 'NEURAL_PREFERENCE_NOT_TRUTH_OR_SCIENTIFIC_VALUE'
 
 
@@ -64,7 +65,7 @@ def validate(config):
 
 def _trace(graph, facts):
     """Predicates retain three-valued truth and provenance from the existing reader."""
-    nodes, edges, actions = {}, set(), {}
+    nodes, edges, actions, actual_hashes = {}, set(), {}, {}
     raw_nodes, raw_edges = graph.get('nodes'), graph.get('edges')
     require(isinstance(raw_nodes, list) and len(raw_nodes) <= 128 and
             isinstance(raw_edges, list) and len(raw_edges) <= 512, 'Graph ranker input graph limit exceeded')
@@ -94,15 +95,25 @@ def _trace(graph, facts):
                 require(isinstance(condition, dict), 'Graph ranker condition must be an object')
                 # Shared identical predicates become one node; on_false code is not a feature.
                 predicate = {k: deepcopy(v) for k, v in condition.items() if k in ('fact', 'op', 'value')}
-                report = evaluate_condition(predicate, facts)
                 ident = 'predicate:' + digest(predicate)
                 require(ident not in nodes or nodes[ident].get('kind') == 'predicate',
                         'Graph ranker predicate identity collides with a rule')
-                truth = report['truth']
-                nodes[ident] = {'id': ident, 'kind': 'predicate', 'predicate': predicate, 'evidence': report,
-                               'features': [0, int(truth == 'TRUE'), int(truth == 'FALSE'),
-                                            int(truth == 'UNKNOWN'), int(report['evidence_status'] in
-                                            ('ARTIFACT_OBSERVED', 'PROGRAM_DERIVED'))]}
+                if ident not in nodes:
+                    report = evaluate_condition(predicate, facts)
+                    truth = report['truth']
+                    # Large original values stay at their existing source/snapshot.
+                    # A trace identifies them without multiplying them per node.
+                    evidence = {k: deepcopy(v) for k, v in report.items() if k not in ('actual', 'expected')}
+                    evidence['expected_sha256'] = digest(report.get('expected'))
+                    if 'actual' in report:
+                        fact = report['fact']
+                        if fact not in actual_hashes:
+                            actual_hashes[fact] = digest(report['actual'])
+                        evidence['actual_sha256'] = actual_hashes[fact]
+                    nodes[ident] = {'id': ident, 'kind': 'predicate', 'evidence': evidence,
+                                   'features': [0, int(truth == 'TRUE'), int(truth == 'FALSE'),
+                                                int(truth == 'UNKNOWN'), int(report['evidence_status'] in
+                                                ('ARTIFACT_OBSERVED', 'PROGRAM_DERIVED'))]}
                 edges.add((ident, node['id'], kind))
                 require(len(nodes) <= MAX_NODES and len(edges) <= MAX_EDGES,
                         'Graph ranker feature graph limit exceeded')
@@ -129,6 +140,8 @@ def rank(config, graph, facts, candidates, *, precedence=None):
         validate(config)
         report['model_sha256'] = digest(config)
         trace = _trace(graph, facts)
+        require(len(canonical(trace).encode('utf-8')) <= MAX_TRACE_BYTES,
+                'Graph ranker trace exceeds 1 MiB')
         report.update(trace=trace, input_sha256=digest({'trace': trace, 'scope': report['scope'],
                                                       'precedence': precedence}))
         model = config['model']
