@@ -884,7 +884,7 @@ function goalCredits(spec,goal) {
   const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.rds.edge!==undefined?'◇ 超边汇合点':n.label||n.id));
   const record=recordFor(n);card.append(el('div',record.id,'path'),el('span',record.status+(n.rds.edge!==undefined?' · 规则状态':''),'tag'),el('span',n.rds.kind,'tag'));
   if(n.rds.virtual)card.append(el('p','显示用项目快照节点。弱虚线只表达分组属于同一快照，不是原始科研超边，不表示任何研究条件已被支持。','hint'));
-  else {const credit=n.rds.edge!==undefined?credits.edges.get(record.id):credits.nodes.get(record.id);card.append(el('p','目标相关权重（结构估计）：'+(credit===undefined?'未记录到所选目标的可分配路径':credit.toFixed(4)),'hint'),el('p','按最短依赖路径分配；实际研究贡献未由本页测量。','hint'));}
+  else {const credit=n.rds.edge!==undefined?credits.edges.get(record.id):credits.nodes.get(record.id);card.append(el('p','目标相关权重（结构估计）：'+(credit===undefined?'未记录到所选目标的可分配路径':credit.toFixed(4)),'hint'),el('p','节点排斥倍率：×'+n.rds.chargeWeight.toFixed(2)+'（上限 ×3）','hint'),el('p','按最短依赖路径分配；实际研究贡献未由本页测量。','hint'));}
   if(record.scientific_support)card.append(el('p','scientific_support: '+record.scientific_support,'hint'));
   if(n.rds.edge!==undefined){card.append(el('p','一个菱形代表一条规则；连线角度只是布局，没有数值或逻辑含义。','hint'),el('h4',`${record.premises.length>1?'AND · 所有前提须共同满足':'前提'} → 结论`));for(const m of n.rds.members){const v=view.nodes[m];card.append(button(v.label+' · '+recordById.get(v.rds.record).status,()=>inspect(m),'record-link'));}card.append(el('p','同一结论的不同菱形表示不同路线（OR）。规则已记录不表示前提或结论已经获得支持。','hint'));}
   else if(n.rds.kind==='观测')card.append(el('p','观测/事实记录使用独立样式，颜色不表示科学支持。','hint'));
