@@ -358,6 +358,87 @@ class ReplicaViewTests(unittest.TestCase):
                 self.assertEqual(result, before)
                 self.assertNotIn("observation:a", result["analysis"]["declared_supported_closure"])
 
+    def test_fallback_diagnoses_missing_required_record_identities(self):
+        required = {"run": {"run_id"}, "receipt": {"run_id", "receipt_id"},
+                    "artifact": {"run_id", "path", "sha256"}, "declared_output": {"run_id", "path"},
+                    "lifecycle_fact": {"run_id"}, "observation": {"run_id"}}
+        for kind, fields in required.items():
+            with self.subTest(kind=kind), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = {"nodes": [{"id": "opaque", "status": "UNKNOWN", "source": "fixture", "record_kind": kind}],
+                        "hyperedges": [], "goals": ["opaque"]}
+                result = graph_view(spec, "fixture")
+                before = deepcopy(result)
+                view = replica_view(result)
+                self.assertEqual({i["field"] for i in view["record_topology"]["issues"]
+                                  if i["reason"] == "MISSING_BINDING"}, fields)
+                self.assertEqual(view["record_relations"], [])
+                self.assertEqual(result, before)
+                self.assertEqual(result["analysis"]["goals"]["opaque"]["status"], "UNKNOWN")
+
+    def test_fallback_cross_run_receipt_keeps_independent_run_links(self):
+        for position, kind in ((2, "run_artifact"), (6, "run_observation"), (7, "declared_output"),
+                               (9, "run_lifecycle_fact")):
+            with self.subTest(kind=kind), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.record_fixture()
+                spec["nodes"].append({"id": "lifecycle:a", "status": "UNKNOWN", "source": "fixture",
+                                      "record_kind": "lifecycle_fact", "run_id": "a"})
+                target = spec["nodes"][position]
+                target["receipt_id"] = "c" * 64
+                if isinstance(target["source"], dict):
+                    target["source"]["receipt_id"] = "c" * 64
+                result = graph_view(spec, "fixture")
+                before = deepcopy(result)
+                view = replica_view(result)
+                target_relations = [r for r in view["record_relations"] if r["to"] == target["id"]]
+                self.assertEqual([r["kind"] for r in target_relations], [kind])
+                self.assertEqual(target_relations[0]["from"], "owned:run:a")
+                self.assertTrue(any(i["node_id"] == target["id"] and i["field"] == "receipt.run_id"
+                                    for i in view["record_topology"]["issues"]))
+                self.assertEqual(result, before)
+
+    def test_fallback_explicit_saved_source_base_reconciles_path_aliases(self):
+        with tempfile.TemporaryDirectory() as directory, patch("rds_hypergraph.record_topology", None, create=True):
+            spec = self.record_fixture()
+            expected = _legacy_record_report(spec)["record_relations"]
+            base = Path(directory).resolve()
+            spec["record_source_base_dir"] = str(base)
+            for row in spec["nodes"]:
+                if isinstance(row["source"], dict) and "file" in row["source"]:
+                    row["artifact_path"] = row["source"]["file"]
+                    row["source"]["path"] = row["source"]["file"]
+                    row["source"]["file"] = str(base / row["source"]["file"])
+            result = graph_view(spec, "fixture")
+            before = deepcopy(result)
+            view = replica_view(result)
+            self.assertEqual(view["record_relations"], expected)
+            self.assertEqual(view["record_topology"]["issues"], [])
+            self.assertEqual(result, before)
+            spec["nodes"][6]["source"]["path"] = "out/different.json"
+            conflict = _legacy_record_report(spec)
+            self.assertTrue(any(i["node_id"] == "observation:a" and i["field"] == "path"
+                                and i["reason"] == "CONFLICTING_BINDINGS" for i in conflict["record_topology"]["issues"]))
+            spec["nodes"][2]["artifact_path"] = "out/invalid\0.json"
+            invalid = _legacy_record_report(spec)
+            self.assertTrue(any(i["node_id"] == "artifact:a" and i["field"] == "path"
+                                and i["reason"] == "INVALID_BINDING" for i in invalid["record_topology"]["issues"]))
+
+    def test_fallback_invalid_reported_base_is_diagnostic_without_inference_changes(self):
+        spec = self.record_fixture()
+        expected = _legacy_record_report(spec)["record_relations"]
+        baseline = graph_view(spec, "fixture")
+        for base in ("relative/source", [], "Z:\\invalid\0base"):
+            with self.subTest(base=base), patch("rds_hypergraph.record_topology", None, create=True):
+                value = {**deepcopy(spec), "record_source_base_dir": base}
+                result = graph_view(value, "fixture")
+                before = deepcopy(result)
+                view = replica_view(result)
+                self.assertEqual(view["record_relations"], expected)
+                self.assertTrue(any(i.get("scope") == "dependency_map" and i["node_id"] is None
+                                    and i["field"] == "record_source_base_dir" and i["reason"] == "INVALID_BINDING"
+                                    for i in view["record_topology"]["issues"]))
+                self.assertEqual(result["analysis"], baseline["analysis"])
+                self.assertEqual(result, before)
+
     def test_ambiguous_and_conflicting_artifact_bindings_block_only_that_relation(self):
         for mutation, reason in (("duplicate_artifact", "AMBIGUOUS_BINDING"),
                                  ("artifact_receipt", "CONFLICTING_BINDINGS"),

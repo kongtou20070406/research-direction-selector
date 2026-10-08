@@ -517,10 +517,24 @@ def _legacy_record_report(spec):
     """Conservative typed resolver for installations without record_topology."""
     rows, issues, indexes, relations = {}, [], {k: {} for k in ("run", "receipt", "artifact")}, []
     kinds = {"contract", "run", "receipt", "artifact", "declared_output", "lifecycle_fact", "observation"}
+    required = {"run": ("run_id",), "receipt": ("run_id", "receipt_id"),
+                "artifact": ("run_id", "path", "sha256"), "declared_output": ("run_id", "path"),
+                "lifecycle_fact": ("run_id",), "observation": ("run_id",)}
+    source_base = spec.get("record_source_base_dir")
+    if source_base is not None:
+        try:
+            if not (isinstance(source_base, (str, Path)) and str(source_base) and "\0" not in str(source_base)
+                    and Path(source_base).is_absolute()):
+                raise ValueError("Invalid reported source base")
+            source_base = Path(source_base).resolve()
+        except (OSError, ValueError, RuntimeError):
+            source_base = None  # Match original strings, without inferring cwd.
+            issues.append({"node_id": None, "scope": "dependency_map", "field": "record_source_base_dir",
+                           "reason": "INVALID_BINDING", "candidates": [], "omitted_candidates": 0})
 
     def issue(row, field, reason, candidates=()):
         issues.append({"node_id": row["id"], "field": field, "reason": reason,
-                       "candidates": sorted(candidates)[:3]})
+                       "candidates": sorted(candidates)[:3], "omitted_candidates": max(0, len(candidates) - 3)})
 
     for node in spec["nodes"]:
         if not isinstance(node.get("record_kind"), str) or node["record_kind"] not in kinds:
@@ -536,17 +550,29 @@ def _legacy_record_report(spec):
             values = [v for v in aliases if v is not None]
             digest = field in {"receipt_id", "sha256"}
             if any(not isinstance(v, str) or not v or len(v) > (64 if digest else 2048)
+                   or field == "path" and "\0" in v
                    or digest and re.fullmatch(r"[0-9a-fA-F]{64}", v) is None for v in values):
                 issue(node, field, "INVALID_BINDING")
                 valid = False
                 continue
             values = [v.lower() if digest else v for v in values]
+            if field == "path" and source_base is not None:
+                try:
+                    values = [str((source_base / v).resolve()) for v in values]
+                except (OSError, ValueError, RuntimeError):
+                    issue(node, field, "INVALID_BINDING")
+                    valid = False
+                    continue
             if len(set(values)) > 1:
                 issue(node, field, "CONFLICTING_BINDINGS")
                 valid = False
             elif values:
                 row[field] = values[0]
         if valid:
+            for field in required.get(row["kind"], ()):
+                if field not in row:
+                    issue(node, field, "RUN_NOT_REGISTERED" if field == "run_id" and node.get("route_id")
+                          and row["kind"] in {"lifecycle_fact", "observation"} else "MISSING_BINDING")
             rows[node["id"]] = row
             kind = row["kind"]
             key = row.get("run_id") if kind == "run" else row.get("receipt_id") if kind == "receipt" else (
@@ -575,16 +601,18 @@ def _legacy_record_report(spec):
             continue
         run = match(row, "run", row.get("run_id"), "run_id")
         receipt = match(row, "receipt", row.get("receipt_id"), "receipt_id") if kind != "receipt" else None
+        receipt_conflict = False
         if receipt is not None and rows[receipt].get("run_id") != row.get("run_id"):
             issue(row["node"], "receipt.run_id", "CONFLICTING_BINDINGS", [receipt])
-            continue
+            receipt_conflict = True
         if kind == "receipt":
             if match(row, "receipt", row.get("receipt_id"), "receipt_id") is not None:
                 link("run_receipt", run, row)
         elif kind == "artifact":
             if match(row, "artifact", (row.get("run_id"), row.get("path"), row.get("sha256")), "artifact_identity") is not None:
                 link("run_artifact", run, row)
-                link("receipt_artifact", receipt, row)
+                if not receipt_conflict:
+                    link("receipt_artifact", receipt, row)
         elif kind == "declared_output":
             if row.get("path"):
                 link("declared_output", run, row)
@@ -592,15 +620,16 @@ def _legacy_record_report(spec):
             link("run_lifecycle_fact", run, row)
         elif kind == "observation":
             link("run_observation", run, row)
+            if receipt_conflict:
+                continue  # The independently exact run link remains available.
             artifact = match(row, "artifact", (row.get("run_id"), row.get("path"), row.get("sha256")), "artifact_identity")
             if artifact is not None and rows[artifact].get("receipt_id") != row.get("receipt_id"):
                 issue(row["node"], "artifact.receipt_id", "CONFLICTING_BINDINGS", [artifact])
             else:
                 link("artifact_observation", artifact, row)
-        if "run_id" not in row and kind in {"lifecycle_fact", "observation"}:
-            issue(row["node"], "run_id", "RUN_NOT_REGISTERED" if row["node"].get("route_id") else "MISSING_BINDING")
     return {"record_relations": sorted(relations, key=lambda r: (r["kind"], r["from"], r["to"])),
-            "record_topology": {"assurance": "REPORTED_RECORD_IDENTITIES_NOT_SCIENTIFIC_SUPPORT", "issues": issues,
+            "record_topology": {"assurance": "REPORTED_RECORD_IDENTITIES_NOT_SCIENTIFIC_SUPPORT",
+                                "issues": sorted(issues, key=lambda i: (i["node_id"] or "", i["field"], i["reason"])),
                                 "resolver": "CONSERVATIVE_LEGACY_FALLBACK"}}
 
 
