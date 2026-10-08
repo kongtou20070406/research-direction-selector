@@ -154,6 +154,7 @@ All commands below use `CLI` above. Links load detail on demand.
 | Explore a blocked problem model | `structure request --limit 3`, `structure propose --proposal <reply.json>`, `structure drive --steps 1` | [Problem structure](docs/problem-structure.md) |
 | Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md) |
 | Reuse/register local tool | `rsi extract --source <file> --entry <function> --name <id>`; `rsi validate --name <id> --cases <cases.json>`; `rsi register --name <id>` | [Native research](docs/native-research.md) |
+| Read repeated JSON/metric/failure results | Extract a selected `scripts/rds_result_tools.py` function, qualify exact inputs and use the original owned result consumer | [Finite result tools](docs/result-tools.md) |
 | Wrap frozen job | `exec --name <id> --timeout 30 -- <command...>` | [Command wrapper](docs/agent-entry.md#wrap-a-command) |
 | Record decision/rejection | `checkpoint save --id <id> --decision <decision.json>` (kind from root); or `reject --reason '<text>' --evidence <file>` (current choice) | [Local decision workflow](docs/lightweight-workflow.md) |
 

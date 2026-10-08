@@ -6,6 +6,10 @@ freeze → next/advance → original result → decision consumer**. It connects
 RSI assets to a declared current obligation; discovery or registration alone
 does not establish applicability, execution or scientific benefit.
 
+For JSON result reading, metric differences and failure inspection, use the
+[finite result tools](result-tools.md) and their [three-consumer example](../examples/result-tools/README.md).
+They feed returned values into original goal predicates through this interface.
+
 ## Run the public finite example
 
 From the source checkout, choose a fresh empty sibling directory:
