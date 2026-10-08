@@ -83,6 +83,7 @@ and frozen route prerequisites; see [discovery and composition](tool-composition
 | `math refute` | Retain a declared refutation and affected lineage | Existing `--id`, original `--reason` and `--evidence`; preserve previous records | [Native research](native-research.md) |
 | `math status` | Inspect native objective/assets | Native project records; storage does not establish proof | [Native research](native-research.md) |
 | `rsi list` | Discover retained local functions | Native tool records; optional exact `--name`; listing is not a fresh reuse check | [Local tools](native-research.md) |
+| `rsi discover` | Disclose bounded local signatures and frozen tool routes | Optional exact `--name` or `--obligation`, bounded `--limit`; discovery starts no execution and applicability is checked at admission | [Tool composition](tool-composition.md) |
 | `rsi extract` | Extract a bounded local function candidate | `--source`, `--entry`, `--name`; supported AST and dependency closure | [Local tools](native-research.md) |
 | `rsi validate` | Execute finite local qualification cases | Extracted `--name`, `--cases`, bounded timeout; supply `--ledger` when charging an existing research budget | [Local tools](native-research.md) |
 | `rsi register` | Register an eligible validated local function | `--name`; `--validation` may be omitted only for one passing validation; rechecks bindings and receipt | [Local tools](native-research.md) |
