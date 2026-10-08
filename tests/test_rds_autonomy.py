@@ -216,21 +216,56 @@ class AutonomyTests(unittest.TestCase):
 
     def test_registration_and_execute_review_cannot_bypass_admission_allowance(self):
         import time
+        from types import SimpleNamespace
+        real_monotonic = time.monotonic
+        original_clock = autonomy.time
         for slow_boundary in ('register', '_advisor_prepare_run'):
             with self.subTest(boundary=slow_boundary):
-                # The real review/registration remains intact; only its elapsed
-                # work is delayed, so no verdict or worker result is mocked.
                 root = self.root / slow_boundary
                 root.mkdir()
                 self.root, self.store = root, ProjectStore(root)
                 self.build(baseline=True, control_wall=1.)
+                before = self.store.snapshot()['budget']['wall_seconds']
                 original = getattr(self.store, slow_boundary)
+                ticks = [0.]
+                phase = {'entries': 0, 'returned': False}
+                clock = SimpleNamespace(monotonic=lambda: ticks[0], time=time.time)
                 def delayed(*args, **kwargs):
-                    result = original(*args, **kwargs)
-                    time.sleep(1.05)
-                    return result
-                with patch.object(self.store, slow_boundary, side_effect=delayed):
-                    result = autonomy.drive(self.store, max_steps=1)
+                    phase['entries'] += 1
+                    phase['entry_tick'] = ticks[0]
+                    self.assertEqual(phase['entries'], 1)
+                    self.assertEqual(ticks[0], 0.)
+                    started = real_monotonic()
+                    try:
+                        value = original(*args, **kwargs)
+                        time.sleep(1.05)
+                        phase['returned'] = True
+                        return value
+                    finally:
+                        phase['real_wall_seconds'] = real_monotonic() - started
+                        ticks[0] += phase['real_wall_seconds']
+                # Reach this specific admission boundary before charging its real
+                # work. Earlier deadline stops have separate regression coverage.
+                # Replace only the controller module reference, never worker or
+                # shared time functions, and preserve real review/registration.
+                started = real_monotonic()
+                try:
+                    with patch.object(autonomy, 'time', clock), patch.object(
+                            self.store, slow_boundary, side_effect=delayed):
+                        result = autonomy.drive(self.store, max_steps=1)
+                finally:
+                    phase['drive_real_wall_seconds'] = real_monotonic() - started
+                    self.trace.append({'stage': 'admission_phase', 'boundary': slow_boundary,
+                                       'phase': dict(phase), 'controller_tick': ticks[0]})
+                self.assertIs(autonomy.time, original_clock)
+                self.assertIs(time.monotonic, real_monotonic)
+                self.assertEqual(phase['entries'], 1)
+                self.assertEqual(phase['entry_tick'], 0.)
+                self.assertTrue(phase['returned'])
+                self.assertGreaterEqual(phase['real_wall_seconds'], 1.05)
+                self.assertEqual(result['controller_wall_seconds'], phase['real_wall_seconds'])
+                self.assertEqual(result['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
+                self.assertEqual(result['executed'], [])
                 state = self.store.snapshot()
                 self.assertEqual(result['status'], 'HANDOFF_REQUIRED', result)
                 self.assertIn('CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', result['reason'])
@@ -240,6 +275,21 @@ class AutonomyTests(unittest.TestCase):
                 self.assertEqual(state['receipts'], [])
                 self.assertGreaterEqual(result['controller_wall_seconds'], 1.05)
                 self.assertEqual(self.calls(), [])
+                self.assertEqual(state['runs'][0]['id'], 'baseline')
+                events = self.events()
+                claims = [e for e in events if e['kind'] == 'AUTONOMY_DRIVE_CLAIMED']
+                releases = [e for e in events if e['kind'] == 'AUTONOMY_DRIVE_RELEASED']
+                self.assertEqual(len(claims), 1)
+                self.assertEqual(len(releases), 1)
+                self.assertEqual(claims[0]['owner'], releases[0]['owner'])
+                self.assertEqual(claims[0]['controller_reservation'], 1.)
+                self.assertEqual(releases[0]['controller_wall_seconds'], phase['real_wall_seconds'])
+                self.assertEqual(releases[0]['executed'], [])
+                after = state['budget']['wall_seconds']
+                self.assertEqual(after['reserved'], 2.)  # Only the unstarted baseline holds budget.
+                self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], 1.)
+                self.assertAlmostEqual(after['charged_estimate'] - before['charged_estimate'],
+                                       phase['real_wall_seconds'] - 1.)
 
     def test_oversize_provider_originals_stay_unknown_without_a_second_paid_slot(self):
         for mode, reason in (('envelope_bound', 'MODEL_RESPONSE_ENVELOPE_BYTE_LIMIT'),
