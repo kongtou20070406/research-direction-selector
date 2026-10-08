@@ -109,6 +109,7 @@ def main():
         assert not (fresh / '.rds/project.sqlite3').exists()
         draft = run('project', 'plan', label='existing-project-plan')
         assert draft['goal'] == original['contract']['advisor_policy']['context']['decision']
+        assert draft['scope'] == original['contract']['advisor_policy']['context']['decision']['scope']
         assert draft['budget'] == original['budget']
         assert draft['evaluation'] == [b for b in original['contract']['bindings'] if b['role'] in {'evaluator', 'protocol'}]
     write(work / 'missing.json', {'goal': intent['goal'], 'fixed_task': True})

@@ -152,16 +152,16 @@ This corrects the harness's quality endpoint; it does not relax the research goa
 
 | Fresh process entry | Samples | Median ms | Maximum ms |
 | --- | ---: | ---: | ---: |
-| Baseline startup/version | 3 | 327.11 | 357.58 |
-| Candidate startup/version | 3 | 318.77 | 335.05 |
-| Baseline existing root status | 3 | 408.83 | 413.28 |
-| Candidate existing root status | 3 | 414.17 | 452.21 |
-| New project plan | 3 | 380.26 | 407.86 |
-| Existing project plan | 3 | 411.00 | 430.99 |
-| Plan after pause and recovery | 3 | 422.22 | 449.48 |
-| Pause reception | 3 | 271.95 | 272.18 |
+| Baseline startup/version | 3 | 324.18 | 339.27 |
+| Candidate startup/version | 3 | 328.94 | 343.52 |
+| Baseline existing root status | 3 | 376.09 | 411.22 |
+| Candidate existing root status | 3 | 375.34 | 379.32 |
+| New project plan | 3 | 404.23 | 411.19 |
+| Existing project plan | 3 | 369.76 | 426.92 |
+| Plan after pause and recovery | 3 | 438.52 | 439.89 |
+| Pause reception | 3 | 456.31 | 469.35 |
 
-The single redirected valid action took 2254.43 ms after its separate 448.74 ms
+The single redirected valid action took 2024.40 ms after its separate 410.64 ms
 direction receipt. These are small controlled process observations during other
 local validation work, with warm OS caches. They do not establish a statistically
 reliable speedup, production tail bound, model-token savings or faster research.

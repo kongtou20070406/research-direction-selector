@@ -88,14 +88,17 @@ class SteeringCLITests(unittest.TestCase):
         before = self.snapshot()
         result = self.output('project', 'plan', '--save-as', 'inspect-original')
         self.assertEqual(result['goal'], self.policy['context']['decision'])
+        self.assertEqual(result['scope'], self.policy['context']['decision']['scope'])
         self.assertEqual(result['evidence'][0]['receipt_sha256'], before['receipts'][0]['sha256'])
         self.assertEqual(result['checkpoint']['status'], 'SAVED')
         self.assertEqual(result['scientific_support'], 'UNKNOWN')
         self.assertEqual(self.snapshot()['budget'], before['budget'])
         self.assertEqual(self.starts(), ['baseline'])
         self.assertTrue(Path(result['artifact']['path']).is_file())
-        changed = self.output('project', 'plan', '--intent', self.write_json('intent.json', {'goal': 'a different goal'}))
+        changed = self.output('project', 'plan', '--intent', self.write_json('intent.json', {'goal': 'a different goal', 'scope': 'a different scope'}))
         self.assertEqual(changed['goal'], result['goal'])
+        self.assertEqual(changed['scope'], result['scope'])
+        self.assertEqual(changed['proposed_changes']['scope'], 'a different scope')
         self.assertEqual(changed['proposed_changes']['goal'], 'a different goal')
 
     def test_pause_blocks_registration_without_charging_or_launching(self):

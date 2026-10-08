@@ -113,7 +113,7 @@ def submit(store, request, *, user_directed=False, source=None):
             'Steering needs id, contract_sha256, expected_revision, kind and message')
     require(isinstance(request['id'], str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', request['id']),
             'Invalid steering instruction ID')
-    require(request['kind'] in KINDS, 'Unknown steering kind')
+    require(isinstance(request['kind'], str) and request['kind'] in KINDS, 'Unknown steering kind')
     _text(request['message'], 'Steering message')
     require(len(canonical(request).encode('utf-8')) <= MAX_BYTES, 'Steering request exceeds limit')
     for key in ('withdraw', 'prefer'):
@@ -201,7 +201,7 @@ def plan(store, intent=None, *, output=None, save_as=None):
         except ValueError as exc:
             if str(exc) != UNINITIALIZED:
                 raise
-    original_goal = evaluation = budget = None
+    original_goal = original_scope = evaluation = budget = None
     evidence = []
     steering = view(None)
     active = []
@@ -209,6 +209,7 @@ def plan(store, intent=None, *, output=None, save_as=None):
         contract = snap['contract']
         decision = contract.get('advisor_policy', {}).get('context', {}).get('decision')
         original_goal = decision or contract.get('description') or contract.get('objective_sha256')
+        original_scope = decision.get('scope') if decision else None
         evaluation = [b for b in contract['bindings'] if b['role'] in {'evaluator', 'protocol'}]
         budget = snap['budget']
         steering = snap.get('steering', view(None))
@@ -220,7 +221,7 @@ def plan(store, intent=None, *, output=None, save_as=None):
     evaluation = evaluation or intent.get('evaluation')
     budget = budget if budget is not None else intent.get('budget')
     missing = [k for k, v in (('goal', goal), ('evaluation', evaluation), ('budget', budget)) if not v]
-    proposed_change = snap is not None and any(k in intent for k in ('goal', 'budget', 'evaluation'))
+    proposed_change = snap is not None and any(k in intent for k in ('goal', 'scope', 'budget', 'evaluation'))
     if steering['paused']:
         next_action = 'Handle the retained user instruction; inspect original active work before resuming dispatch'
     elif active:
@@ -235,7 +236,7 @@ def plan(store, intent=None, *, output=None, save_as=None):
         next_action = intent.get('next_action', 'Prepare the first bounded check through exec or project init using the declared goal, evaluator and resources')
     result = {'schema': 'rds-plan-draft-v1', 'status': 'DRAFT',
               'mode': 'EXISTING_PROJECT' if snap is not None else 'NEW_PROJECT',
-              'goal': goal, 'scope': intent.get('scope'), 'evaluation': evaluation, 'budget': budget,
+              'goal': goal, 'scope': original_scope or intent.get('scope'), 'evaluation': evaluation, 'budget': budget,
               'input_status': 'DECLARED_NOT_VERIFIED', 'missing': missing,
               'proposed_changes': deepcopy(intent) if proposed_change else None,
               'next_action': next_action, 'fixed_task': intent.get('fixed_task'),

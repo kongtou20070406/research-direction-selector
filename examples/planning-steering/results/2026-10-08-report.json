@@ -1,15 +1,16 @@
 {
   "quality": "PASS",
-  "protocol_sha256": "450db44b6736ad7b44a05883db736523c2237f12a850789c1e43e017fab77b8c",
+  "protocol_sha256": "524a03c0e07363fd141fd45daccf63425f2fc9474d7b77cefa4109d43c8472d7",
+  "protocol_digest_format": "UTF8_JSON_SORTED_KEYS_COMPACT_UNESCAPED_UNICODE",
   "groups": {
     "setup": {
       "count": 2,
       "seconds": [
-        0.1893533000111347,
-        0.5723642999946605
+        0.25678540000808425,
+        0.5931267999985721
       ],
-      "median_seconds": 0.3808588000028976,
-      "max_seconds": 0.5723642999946605,
+      "median_seconds": 0.4249561000033282,
+      "max_seconds": 0.5931267999985721,
       "stdout_bytes": [
         497,
         7402
@@ -18,39 +19,39 @@
     "quality-inspection": {
       "count": 9,
       "seconds": [
-        0.3890194999985397,
-        0.37975409999489784,
-        0.24474130000453442,
-        0.2577684000134468,
-        0.24927119999483693,
-        0.376505599997472,
-        0.3744025999912992,
-        0.3968953000003239,
-        0.4439809999894351
+        0.37535469999420457,
+        0.41592109999328386,
+        0.3227349999942817,
+        0.3860891999938758,
+        0.47979460000351537,
+        0.5365469000098528,
+        0.3596194999990985,
+        0.3501671999983955,
+        0.3841155000118306
       ],
-      "median_seconds": 0.376505599997472,
-      "max_seconds": 0.4439809999894351,
+      "median_seconds": 0.3841155000118306,
+      "max_seconds": 0.5365469000098528,
       "stdout_bytes": [
         7402,
         7402,
-        740,
-        1122,
-        1122,
-        16919,
-        16919,
-        1122,
-        26005
+        741,
+        1123,
+        1123,
+        16924,
+        16924,
+        1123,
+        26010
       ]
     },
     "baseline-startup": {
       "count": 3,
       "seconds": [
-        0.3575812000053702,
-        0.2941760000103386,
-        0.327110400001402
+        0.3392683999991277,
+        0.32418300000426825,
+        0.2745735000062268
       ],
-      "median_seconds": 0.327110400001402,
-      "max_seconds": 0.3575812000053702,
+      "median_seconds": 0.32418300000426825,
+      "max_seconds": 0.3392683999991277,
       "stdout_bytes": [
         12,
         12,
@@ -60,12 +61,12 @@
     "baseline-root-status": {
       "count": 3,
       "seconds": [
-        0.38602560000435915,
-        0.40882840000267606,
-        0.413281699991785
+        0.3760877999884542,
+        0.35220599999593105,
+        0.41122409999661613
       ],
-      "median_seconds": 0.40882840000267606,
-      "max_seconds": 0.413281699991785,
+      "median_seconds": 0.3760877999884542,
+      "max_seconds": 0.41122409999661613,
       "stdout_bytes": [
         7402,
         7402,
@@ -75,12 +76,12 @@
     "candidate-startup": {
       "count": 3,
       "seconds": [
-        0.30025069999101106,
-        0.3350481999950716,
-        0.3187659999966854
+        0.32893540000077337,
+        0.2880548999964958,
+        0.3435210999887204
       ],
-      "median_seconds": 0.3187659999966854,
-      "max_seconds": 0.3350481999950716,
+      "median_seconds": 0.32893540000077337,
+      "max_seconds": 0.3435210999887204,
       "stdout_bytes": [
         12,
         12,
@@ -90,12 +91,12 @@
     "candidate-root-status": {
       "count": 3,
       "seconds": [
-        0.4141725000081351,
-        0.4049416000052588,
-        0.45221119999769144
+        0.37533879998954944,
+        0.36404729999776464,
+        0.37932110000110697
       ],
-      "median_seconds": 0.4141725000081351,
-      "max_seconds": 0.45221119999769144,
+      "median_seconds": 0.37533879998954944,
+      "max_seconds": 0.37932110000110697,
       "stdout_bytes": [
         7402,
         7402,
@@ -105,12 +106,12 @@
     "new-project-plan": {
       "count": 3,
       "seconds": [
-        0.4078633000026457,
-        0.38025679999554995,
-        0.3464490000042133
+        0.38644360000034794,
+        0.4111867000028724,
+        0.40422700000635814
       ],
-      "median_seconds": 0.38025679999554995,
-      "max_seconds": 0.4078633000026457,
+      "median_seconds": 0.40422700000635814,
+      "max_seconds": 0.4111867000028724,
       "stdout_bytes": [
         984,
         984,
@@ -120,25 +121,25 @@
     "existing-project-plan": {
       "count": 3,
       "seconds": [
-        0.4309912000026088,
-        0.35379619999730494,
-        0.411004800000228
+        0.36976159999903757,
+        0.42691979999653995,
+        0.34576250000100117
       ],
-      "median_seconds": 0.411004800000228,
-      "max_seconds": 0.4309912000026088,
+      "median_seconds": 0.36976159999903757,
+      "max_seconds": 0.42691979999653995,
       "stdout_bytes": [
-        1986,
-        1986,
-        1986
+        2025,
+        2025,
+        2025
       ]
     },
     "missing-information-plan": {
       "count": 1,
       "seconds": [
-        0.3540588000032585
+        0.3917246999917552
       ],
-      "median_seconds": 0.3540588000032585,
-      "max_seconds": 0.3540588000032585,
+      "median_seconds": 0.3917246999917552,
+      "max_seconds": 0.3917246999917552,
       "stdout_bytes": [
         961
       ]
@@ -146,62 +147,62 @@
     "original-control-action": {
       "count": 1,
       "seconds": [
-        1.2228302000003168
+        2.0160043999931077
       ],
-      "median_seconds": 1.2228302000003168,
-      "max_seconds": 1.2228302000003168,
+      "median_seconds": 2.0160043999931077,
+      "max_seconds": 2.0160043999931077,
       "stdout_bytes": [
-        96156
+        96158
       ]
     },
     "pause-receipt": {
       "count": 3,
       "seconds": [
-        0.27217519999248907,
-        0.27195389999542385,
-        0.26905750000150874
+        0.46934650000184774,
+        0.4563112000032561,
+        0.354047000000719
       ],
-      "median_seconds": 0.27195389999542385,
-      "max_seconds": 0.27217519999248907,
+      "median_seconds": 0.4563112000032561,
+      "max_seconds": 0.46934650000184774,
       "stdout_bytes": [
-        1581,
-        1581,
-        1581
+        1582,
+        1582,
+        1582
       ]
     },
     "recover-original": {
       "count": 1,
       "seconds": [
-        0.7057735999987926
+        0.7007053999986965
       ],
-      "median_seconds": 0.7057735999987926,
-      "max_seconds": 0.7057735999987926,
+      "median_seconds": 0.7007053999986965,
+      "max_seconds": 0.7007053999986965,
       "stdout_bytes": [
-        95293
+        95294
       ]
     },
     "post-steering-plan": {
       "count": 3,
       "seconds": [
-        0.42222290000063367,
-        0.4494774999911897,
-        0.38797860000340734
+        0.4398922999971546,
+        0.42936410001129843,
+        0.4385194000060437
       ],
-      "median_seconds": 0.42222290000063367,
-      "max_seconds": 0.4494774999911897,
+      "median_seconds": 0.4385194000060437,
+      "max_seconds": 0.4398922999971546,
       "stdout_bytes": [
-        2634,
-        2634,
-        2634
+        2674,
+        2674,
+        2674
       ]
     },
     "paused-registration": {
       "count": 1,
       "seconds": [
-        0.8294352999946568
+        0.8042073999968125
       ],
-      "median_seconds": 0.8294352999946568,
-      "max_seconds": 0.8294352999946568,
+      "median_seconds": 0.8042073999968125,
+      "max_seconds": 0.8042073999968125,
       "stdout_bytes": [
         0
       ]
@@ -209,28 +210,28 @@
     "redirect-receipt": {
       "count": 1,
       "seconds": [
-        0.4487375000026077
+        0.41064399998867884
       ],
-      "median_seconds": 0.4487375000026077,
-      "max_seconds": 0.4487375000026077,
+      "median_seconds": 0.41064399998867884,
+      "max_seconds": 0.41064399998867884,
       "stdout_bytes": [
-        1640
+        1641
       ]
     },
     "redirected-first-valid-action": {
       "count": 1,
       "seconds": [
-        2.2544328999938443
+        2.024399899994023
       ],
-      "median_seconds": 2.2544328999938443,
-      "max_seconds": 2.2544328999938443,
+      "median_seconds": 2.024399899994023,
+      "max_seconds": 2.024399899994023,
       "stdout_bytes": [
         87049
       ]
     }
   },
   "cli_and_setup_processes": 41,
-  "total_subprocess_wall_seconds": 18.504945299981046,
+  "total_subprocess_wall_seconds": 19.89648479995958,
   "research_budget": {
     "cpu_seconds": {
       "cap": 12.0,
@@ -242,20 +243,18 @@
     },
     "wall_seconds": {
       "cap": 12.0,
-      "spent_measured": 1.0106011999887414,
+      "spent_measured": 1.1842839000019012,
       "charged_estimate": 0.0,
       "reserved": 0.0,
-      "remaining": 10.989398800011259,
+      "remaining": 10.815716099998099,
       "unit": "seconds"
     }
   },
-  "original_receipt_sha256": "1f39784fbd6201430fdb03c258e1d8d610e6f72104a3dd422f7745665dd77731",
-  "new_receipt_sha256": "4549faa16ba026c3dd87699b9a27c047b683d958f30c96974d3fa16efc591fe9",
+  "original_receipt_sha256": "7310056c118daef2a64ee742ce9cf84a15a8f83d1e22b4bb10cb3a9f6f651311",
+  "new_receipt_sha256": "99515ee8d8c6c0760f1c3963f52132eda3cee6fafb85e605ac8c38f2fbbc86eb",
   "oracle_mse": "172/7875",
   "original_goal": "NOT_MET",
   "model_latency": "NOT_RUN",
   "agent_latency": "NOT_RUN",
-  "scientific_gain": "UNMEASURED",
-  "original_protocol_file_sha256": "56f549481d172726b58fbb0a9dea4f109a1c489e859be38cb7793adf7151fa4b",
-  "protocol_digest_format": "UTF8_JSON_SORTED_KEYS_COMPACT_UNESCAPED_UNICODE"
+  "scientific_gain": "UNMEASURED"
 }
