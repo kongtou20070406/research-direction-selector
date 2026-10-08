@@ -18,8 +18,8 @@ from rds_math import blob, get, put, read_bytes, records
 from rds_project import ProjectStore, canonical, digest, file_sha, number, require
 from rds_quick import cas_bytes, execute, _charge_ledger
 
-BUILTINS = set('abs all any bool dict enumerate filter float frozenset int isinstance len list map max min next range reversed round set sorted str sum tuple zip ArithmeticError AssertionError IndexError KeyError TypeError ValueError ZeroDivisionError'.split())
-METHODS = set('append extend insert pop remove clear copy count index reverse sort get items keys values update union intersection difference is_integer as_integer_ratio bit_length conjugate limit_denominator'.split())
+BUILTINS = set('abs all any bool dict enumerate filter float frozenset int isinstance len list map max min next range reversed round set sorted str sum tuple zip ArithmeticError AssertionError IndexError KeyError TypeError ValueError ZeroDivisionError RecursionError UnicodeError'.split())
+METHODS = set('append extend insert pop remove clear copy count index reverse sort get items keys values update union intersection difference is_integer as_integer_ratio bit_length conjugate limit_denominator encode split replace isascii isdigit startswith endswith strip upper add'.split())
 
 
 def _name(value):
@@ -56,9 +56,11 @@ def extract_function(raw, entry):
         require(len(selected) <= 64, 'Tool dependency closure exceeds 64 bindings')
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module]
-            require(all(m in {'math', 'fractions'} for m in modules)
+            json_loads = (isinstance(node, ast.ImportFrom) and node.module == 'json'
+                          and all(a.name == 'loads' for a in node.names))
+            require((all(m in {'math', 'fractions'} for m in modules) or json_loads)
                     and not getattr(node, 'level', 0) and all(a.name != '*' for a in node.names),
-                    'Only explicit math/fractions imports are supported')
+                    'Only explicit math/fractions imports and from json import loads are supported')
             if isinstance(node, ast.ImportFrom):
                 require(all(not a.name.startswith('_') for a in node.names), 'Private imports are unsupported')
             continue
