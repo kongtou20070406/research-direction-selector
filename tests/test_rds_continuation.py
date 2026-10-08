@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import test_rds_owned_advisor as owned_fixture
 import test_rds_autonomy as model_fixture
+import test_rds_project_assembly as assembly_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -213,6 +214,66 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(budget['wall_seconds']['charged_estimate'], 30)
         self.assertEqual(self.f.starts(), [])
 
+
+class RecipeContinuationTests(unittest.TestCase):
+    def setUp(self):
+        self.f = assembly_fixture.ProjectAssemblyTests()
+        self.f._testMethodName = self._testMethodName
+        self.f.setUp()
+        self.addCleanup(self.f.doCleanups)
+
+    def test_recipe_routes_continue_without_resetting_identity_receipts_or_budget(self):
+        initialized = self.f.init()
+        before = self.f.store.snapshot()
+        original_contract = before['contract']
+        original_goal = original_contract['advisor_policy']['context']['decision']
+        rejected = self.f.call('project', 'drive', ok=False)
+        self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
+        unchanged = self.f.store.snapshot()
+        for key in ('contract', 'contract_sha256', 'budget', 'runs', 'receipts'):
+            self.assertEqual(unchanged[key], before[key], key)
+        self.assertEqual(initialized['assembly']['contract_sha256'], before['contract_sha256'])
+        self.assertEqual(self.f.starts(), [])
+        original_receipt = None
+        controller_spent, controller_charged = 0., 0.
+        for expected_starts, expected_status in [(['baseline'], 'STEP_LIMIT'),
+                                                  (['baseline', 'repair'], 'JUDGMENT_REQUIRED')]:
+            step_args = ('--max-steps', '1') if len(expected_starts) == 1 else ()
+            out = self.f.call('project', 'drive', '--until-judgment',
+                              '--controller-wall-seconds', '8', *step_args)
+            diagnostic = {key: out.get(key) for key in ('status', 'reason', 'controller_wall_seconds')}
+            diagnostic['handoff'] = {key: out.get('handoff', {}).get(key)
+                                    for key in ('evidence_status', 'diagnostic', 'resource_cut')}
+            self.assertEqual(out['status'], expected_status, diagnostic)
+            self.assertEqual(self.f.starts(), expected_starts, diagnostic)
+            state = self.f.store.snapshot()
+            self.assertEqual(state['contract'], original_contract)
+            self.assertEqual(state['contract_sha256'], before['contract_sha256'])
+            self.assertEqual(state['contract']['advisor_policy']['context']['decision'], original_goal)
+            self.assertEqual(out['handoff']['goal_status'], 'FALSE', diagnostic)
+            self.assertEqual(out['handoff']['scientific_support'], 'UNKNOWN')
+            self.assertEqual(out['handoff']['resources'], state['budget'])
+            self.assertEqual(out['handoff']['resource_cut'], 'CONTROLLER_RELEASE_TRANSACTION')
+            self.assertEqual(len(state['receipts']), len(expected_starts))
+            baseline = next(receipt for receipt in state['receipts'] if receipt['run_id'] == 'baseline')
+            if original_receipt is None:
+                original_receipt = baseline
+            self.assertEqual(baseline, original_receipt)
+            for resource, budget in state['budget'].items():
+                worker_reserved = sum(run['resource_estimates'].get(resource, 0)
+                                      for run in state['runs'] if run['status'] in {'RESERVED', 'RUNNING'})
+                self.assertAlmostEqual(budget['reserved'], worker_reserved, msg=resource)
+            controller_spent += min(out['controller_wall_seconds'], 8)
+            controller_charged += max(0., out['controller_wall_seconds'] - 8)
+            worker_spent = sum(receipt['resources']['wall_seconds']['measured']
+                               for receipt in state['receipts'])
+            self.assertAlmostEqual(state['budget']['wall_seconds']['spent_measured'],
+                                   before['budget']['wall_seconds']['spent_measured']
+                                   + worker_spent + controller_spent)
+            self.assertAlmostEqual(state['budget']['wall_seconds']['charged_estimate'],
+                                   before['budget']['wall_seconds']['charged_estimate'] + controller_charged)
+        self.assertTrue(all(receipt['run_status'] == 'SUCCEEDED' for receipt in state['receipts']))
+        self.assertAlmostEqual(state['budget']['wall_seconds']['reserved'], 0)
 
 class ModelContinuationTests(unittest.TestCase):
     def setUp(self):
