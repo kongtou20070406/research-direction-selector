@@ -66,7 +66,78 @@ def relevance_reference(edges, goals):
     return relevant_nodes, relevant_edges
 
 
+def component_reference(universe, pairs, goals):
+    """Small-fixture independent adjacency/DFS oracle, not used by production."""
+    adjacency = {ident: set() for ident in universe}
+    for left, right in pairs:
+        if left in adjacency and right in adjacency:
+            adjacency[left].add(right)
+            adjacency[right].add(left)
+    seen, result = set(), []
+    for ident in sorted(adjacency):
+        if ident in seen:
+            continue
+        pending, members = [ident], set()
+        while pending:
+            node = pending.pop()
+            if node in members:
+                continue
+            members.add(node)
+            pending.extend(adjacency[node] - members)
+        seen.update(members)
+        result.append({'node_ids': sorted(members), 'goal_ids': sorted(members & set(goals))})
+    return result
+
+
 class HypergraphTests(unittest.TestCase):
+    def test_record_components_match_small_independent_dfs_with_all_rule_statuses(self):
+        rng = random.Random(20261008)
+        for case in range(60):
+            spec = self.record_fixture()
+            spec['nodes'].extend({'id': ident, 'status': 'UNKNOWN', 'source': 'synthetic'}
+                                 for ident in ('formal-a', 'formal-b', 'isolated'))
+            names = [n['id'] for n in spec['nodes']]
+            spec['hyperedges'] = [
+                {'id': 'empty', 'premises': [], 'conclusion': 'formal-b', 'status': 'CONTRADICTED', 'source': 'synthetic'},
+                {'id': 'self', 'premises': ['formal-a'], 'conclusion': 'formal-a', 'status': 'SUPPORTED', 'source': 'synthetic'},
+                {'id': 'cycle-a', 'premises': ['formal-a'], 'conclusion': 'formal-b', 'status': 'PROPOSED', 'source': 'synthetic'},
+                {'id': 'cycle-b', 'premises': ['formal-b'], 'conclusion': 'formal-a', 'status': 'CONTRADICTED', 'source': 'synthetic'}]
+            for i in range(rng.randrange(12)):
+                spec['hyperedges'].append({'id': f'random-{i}', 'premises': rng.sample(names[:-1], rng.randrange(5)),
+                                           'conclusion': rng.choice(names[:-1]),
+                                           'status': rng.choice(('SUPPORTED', 'PROPOSED', 'CONTRADICTED')),
+                                           'source': 'synthetic'})
+            spec['goals'] = rng.sample(names, rng.randrange(4))
+            before = deepcopy(spec)
+            result = hypergraph.record_topology(spec)
+            dependency = [(tail, e['conclusion']) for e in spec['hyperedges'] for tail in e['premises']]
+            records = [(r['from'], r['to']) for r in result['record_relations']]
+            classified = [n['id'] for n in spec['nodes'] if 'record_kind' in n]
+            with self.subTest(case=case):
+                topology = result['record_topology']
+                self.assertEqual(topology['dependency_components'], component_reference(names, dependency, spec['goals']))
+                self.assertEqual(topology['record_components'], component_reference(classified, records, spec['goals']))
+                combined = component_reference(names, dependency + records, spec['goals'])
+                self.assertEqual(topology['record_and_dependency_components'], combined)
+                connected = {n for group in combined if group['goal_ids'] for n in group['node_ids']}
+                self.assertEqual(topology['record_and_dependency_no_goal_connection_node_ids'], sorted(set(names) - connected))
+                self.assertEqual(spec, before)
+                self.assertTrue(all(r['scientific_support'] == 'UNKNOWN' for r in result['record_relations']))
+
+    def test_record_components_handle_moderately_dense_incidence_without_changing_limits(self):
+        names = [f'node-{i:03}' for i in range(128)]
+        spec = graph({**dict.fromkeys(names, 'UNKNOWN'), 'isolated': 'UNKNOWN'},
+                     [(f'rule-{i}', names, names[i % len(names)],
+                       ('SUPPORTED', 'PROPOSED', 'CONTRADICTED')[i % 3]) for i in range(256)], ['node-001'])
+        before = deepcopy(spec)
+        result = hypergraph.record_topology(spec)
+        expected = [{'node_ids': ['isolated'], 'goal_ids': []}, {'node_ids': names, 'goal_ids': ['node-001']}]
+        self.assertEqual(result['record_topology']['dependency_components'], expected)
+        self.assertEqual(result['record_topology']['record_and_dependency_components'], expected)
+        self.assertEqual(result['record_topology']['record_components'], [])
+        self.assertEqual(result['record_relations'], [])
+        self.assertEqual(spec, before)
+
     def record_fixture(self):
         spec = graph({'opaque-a': 'SUPPORTED', 'opaque-b': 'SUPPORTED', 'opaque-c': 'SUPPORTED',
                       'opaque-d': 'UNKNOWN', 'opaque-e': 'UNKNOWN', 'opaque-f': 'SUPPORTED',

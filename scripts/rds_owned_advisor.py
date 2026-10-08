@@ -419,11 +419,16 @@ def _collect(store, state):
                                       'locator': 'verified original over JSON parse byte limit'}
                     raise ValueError('Verified original JSON exceeds the ' + str(MAX_JSON_BYTES) + '-byte parse limit')
                 require((rid, relative) in originals, 'Declared output missing, changed or over JSON byte limit')
+                # originals contains only bytes whose declared size/hash passed
+                # _read_original. Preserve that identity even if parsing fails.
+                artifact = next(a for a in receipt['artifacts'] if a['path'] == relative)
+                fact['source'] = {'path': relative, 'sha256': artifact['sha256'],
+                                  'receipt_id': receipt['sha256'],
+                                  'locator': 'verified original owned output ' + rid + ':' + relative}
                 value, locator, _ = originals[rid, relative].extract(obs['selector'], 'metric', 'json')
                 require(value is None or isinstance(value, (str, bool, int, float)), 'Owned observation must be a JSON scalar')
                 require(not isinstance(value, (int, float)) or math.isfinite(value), 'Owned observation must be finite')
                 reliable = receipt['run_status'] == 'SUCCEEDED'
-                artifact = next(a for a in receipt['artifacts'] if a['path'] == relative)
                 fact.update(value=value, kind='OBSERVED' if reliable else 'UNKNOWN', reliable=reliable,
                             source={'path': relative, 'sha256': artifact['sha256'], 'locator': locator,
                                     'receipt_id': receipt['sha256']},

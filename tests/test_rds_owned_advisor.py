@@ -40,15 +40,25 @@ if mode == "nonzero":
 if mode == "missing":
     raise SystemExit(0)
 path = pathlib.Path(output)
-if mode == "badjson":
+if mode in ("badjson", "partialbadjson"):
     path.write_text("{broken", encoding="utf-8")
 elif mode == "nan":
     path.write_text('{"score": NaN}', encoding="utf-8")
+elif mode == "nonscalar":
+    path.write_text('{"score": [1, 2]}', encoding="utf-8")
+elif mode == "badutf8":
+    path.write_bytes(b"\\xff")
+elif mode == "overflow":
+    path.write_text('{"score": 1e999}', encoding="utf-8")
+elif mode == "oversize":
+    path.write_text('{"score": -1, "padding": "' + 'x' * 2097152 + '"}', encoding="utf-8")
 else:
     score = -1 if mode in ("negative", "slownegative", "large", "missing-extra") else 1
     path.write_text(json.dumps({"score": score, "run_id": run_id}), encoding="utf-8")
 if mode == "large":
     pathlib.Path("outputs/weights.bin").write_bytes(b"synthetic unparsed weights\\n" * 130000)
+if mode == "partialbadjson":
+    raise SystemExit(7)
 '''
 
 
@@ -531,6 +541,12 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                 self.assertEqual(self.starts(), ['baseline'])
                 self.assertEqual(self.snapshot()['budget'], before['budget'])
                 self.assertEqual(len(self.snapshot()['receipts']), 1)
+                broken = self.output('advise', status_codes=(2,))
+                self.assertNotIn('sha256', broken['context']['facts']['baseline.score']['source'])
+                observed = next(n for n in current(self.root)['dependency_map']['nodes']
+                                if n.get('owned_fact', {}).get('id') == 'baseline.score')
+                self.assertFalse(any(r['kind'] == 'artifact_observation' and r['to'] == observed['id']
+                                     for r in broken['record_relations']))
                 path.write_bytes(original)
                 self.assertEqual(self.output('advise')['selected_run'], 'repair')
         self.output('project', 'advance')
@@ -562,13 +578,74 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                     self.assertEqual(review['context']['facts']['baseline.score']['kind'], 'UNKNOWN')
                     if mode in ('badjson', 'nan'):
                         self.assertTrue(review['coverage']['errors'])
+                        self.assert_verified_observation_source(review, receipt)
                     else:
                         self.assertTrue(review['coverage']['gaps'])
+                        self.assertNotIn('sha256', review['context']['facts']['baseline.score']['source'])
+                    self.assertEqual(review['coverage']['parsed_observations'], 0)
                     self.call('project', 'advance', ok=False)
                     self.assertEqual(self.starts(), ['baseline'])
                     self.assertEqual(self.snapshot()['budget'], state['budget'])
                 finally:
                     self.root, self.env = original_root, original_env
+
+    def assert_verified_observation_source(self, report, receipt):
+        artifact = next(a for a in receipt['artifacts'] if a['path'] == 'outputs/baseline.json')
+        fact = report['context']['facts']['baseline.score']
+        self.assertEqual(fact['source']['path'], artifact['path'])
+        self.assertEqual(fact['source']['sha256'], artifact['sha256'])
+        self.assertEqual(fact['source']['receipt_id'], receipt['sha256'])
+        self.assertTrue(fact['source']['locator'])
+        node = next(n for n in current(self.root)['dependency_map']['nodes'] if n.get('owned_fact', {}).get('id') == 'baseline.score')
+        self.assertEqual(node['status'], 'UNKNOWN')
+        self.assertEqual(node['source']['file'], artifact['path'])
+        self.assertTrue(any(r['kind'] == 'artifact_observation' and r['to'] == node['id']
+                            and r['scientific_support'] == 'UNKNOWN' for r in report['record_relations']))
+
+    def test_parse_failure_kinds_keep_verified_bytes_without_measurement_or_dispatch(self):
+        for mode in ('badjson', 'nan', 'nonscalar', 'badutf8', 'overflow', 'missing-selector', 'partialbadjson'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix='owned-parse-source-') as directory:
+                original_root, original_env = self.root, self.env
+                self.root = Path(directory)
+                self.env = {**os.environ, 'RDS_USAGE_DB': str(self.root / 'usage.sqlite3')}
+                try:
+                    mutate = (lambda policy: policy['observations'][0]['selector'].update(pointer='/absent')) if mode == 'missing-selector' else None
+                    self.initialize('negative' if mode == 'missing-selector' else mode, mutate_policy=mutate)
+                    self.create(); self.execute(ok=False)
+                    state = self.snapshot()
+                    receipt = state['receipts'][0]
+                    failed = mode == 'partialbadjson'
+                    self.assertEqual(receipt['run_status'], 'FAILED' if failed else 'SUCCEEDED')
+                    report = self.output('advise', status_codes=(0,) if failed else (2,))
+                    self.assert_verified_observation_source(report, receipt)
+                    fact = report['context']['facts']['baseline.score']
+                    self.assertEqual((fact['kind'], fact['value'], fact['reliable']), ('UNKNOWN', None, False))
+                    self.assertIsNone(report['selected_run'])
+                    self.assertEqual(report['coverage']['parsed_observations'], 0)
+                    self.assertTrue(report['coverage']['gaps'] if failed else report['coverage']['errors'])
+                    self.call('project', 'advance', ok=False)
+                    self.assertEqual(self.starts(), ['baseline'])
+                    self.assertEqual(self.snapshot()['budget'], state['budget'])
+                finally:
+                    self.root, self.env = original_root, original_env
+
+    def test_oversized_requested_json_keeps_existing_source_and_unknown_semantics(self):
+        self.initialize('oversize')
+        self.create(); self.execute()
+        state = self.snapshot()
+        report = self.output('advise')
+        self.assert_verified_observation_source(report, state['receipts'][0])
+        fact = report['context']['facts']['baseline.score']
+        self.assertEqual((fact['kind'], fact['value'], fact['reliable']), ('UNKNOWN', None, False))
+        self.assertEqual(fact['source']['locator'], 'verified original over JSON parse byte limit')
+        self.assertGreater(fact['source']['size'], 2 * 1024 * 1024)
+        self.assertEqual(report['coverage']['parsed_observations'], 0)
+        self.assertEqual(report['coverage']['errors'], [])
+        self.assertTrue(report['coverage']['gaps'])
+        self.assertIsNone(report['selected_run'])
+        self.call('project', 'advance', ok=False)
+        self.assertEqual(self.starts(), ['baseline'])
+        self.assertEqual(self.snapshot()['budget'], state['budget'])
 
     def test_unparsed_large_output_is_in_inventory_and_tampering_blocks_dispatch(self):
         self.initialize('large')
@@ -620,6 +697,8 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                             for row in declared))
         # Partial original bytes can retain provenance without supplying a reliable measurement.
         self.assertEqual(review['context']['facts']['baseline.score']['kind'], 'UNKNOWN')
+        self.assert_verified_observation_source(review, self.snapshot()['receipts'][0])
+        self.assertEqual(review['coverage']['parsed_observations'], 1)
         saved_outputs = [node for node in current(self.root)['dependency_map']['nodes']
                          if node.get('record_kind') == 'declared_output']
         self.assertTrue(all(node['status'] == 'UNKNOWN' and node['interpretation'] == 'MISSING'

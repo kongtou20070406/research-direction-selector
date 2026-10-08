@@ -505,38 +505,58 @@ def record_topology(spec, *, source_base=None):
 
     relations.sort(key=lambda relation: (relation['kind'], relation['from'], relation['to']))
     linked = {ident for relation in relations for ident in (relation['from'], relation['to'])}
-    dependency_linked = {ident for edge in edges for ident in [*edge['premises'], edge['conclusion']]}
     counts = {}
     for relation in relations:
         counts[relation['kind']] = counts.get(relation['kind'], 0) + 1
     context = {ident for ident, row in rows.items() if row['kind'] == 'contract'}
-    dependency_pairs = [(tail, edge['conclusion']) for edge in edges for tail in edge['premises']]
-    record_pairs = [(relation['from'], relation['to']) for relation in relations]
+    goal_ids = set(goals)
 
-    def components(universe, pairs):
-        adjacency = {ident: set() for ident in universe}
-        for left, right in pairs:
-            if left in adjacency and right in adjacency:
-                adjacency[left].add(right)
-                adjacency[right].add(left)
-        result, seen = [], set()
-        for ident in sorted(adjacency):
-            if ident in seen:
-                continue
-            pending, members = [ident], []
-            seen.add(ident)
-            while pending:
-                item = pending.pop()
-                members.append(item)
-                for neighbor in adjacency[item] - seen:
-                    seen.add(neighbor)
-                    pending.append(neighbor)
-            result.append({'node_ids': sorted(members), 'goal_ids': sorted(set(members) & set(goals))})
-        return result
+    class Components:
+        """Streaming weak components with O(nodes) additional state."""
+        def __init__(self, universe):
+            self.parent = {ident: ident for ident in universe}
+            self.size = dict.fromkeys(universe, 1)
 
-    dependency_components = components(nodes, dependency_pairs)
-    record_components = components(rows, record_pairs)
-    combined_components = components(nodes, dependency_pairs + record_pairs)
+        def find(self, ident):
+            while ident != self.parent[ident]:
+                self.parent[ident] = self.parent[self.parent[ident]]
+                ident = self.parent[ident]
+            return ident
+
+        def merge(self, left, right):
+            if left not in self.parent or right not in self.parent:
+                return
+            left, right = self.find(left), self.find(right)
+            if left == right:
+                return
+            if self.size[left] < self.size[right]:
+                left, right = right, left
+            self.parent[right] = left
+            self.size[left] += self.size[right]
+
+        def report(self):
+            groups = {}
+            for ident in sorted(self.parent):
+                groups.setdefault(self.find(ident), []).append(ident)
+            # Sorted insertion orders groups by their smallest member, matching
+            # the existing report independently of union root choice.
+            return [{'node_ids': members, 'goal_ids': [i for i in members if i in goal_ids]}
+                    for members in groups.values()]
+
+    dependency_groups, record_groups = Components(nodes), Components(rows)
+    dependency_linked = set()
+    for edge in edges:
+        dependency_linked.add(edge['conclusion'])
+        for tail in edge['premises']:
+            dependency_linked.add(tail)
+            dependency_groups.merge(tail, edge['conclusion'])
+    dependency_components = dependency_groups.report()  # Freeze before record merging.
+    for relation in relations:
+        left, right = relation['from'], relation['to']
+        record_groups.merge(left, right)
+        dependency_groups.merge(left, right)
+    record_components = record_groups.report()
+    combined_components = dependency_groups.report()
     goal_path_nodes, _ = _goal_relevance(edges, goals)
     combined_goal_nodes = {ident for group in combined_components if group['goal_ids'] for ident in group['node_ids']}
     return {'record_relations': relations,
