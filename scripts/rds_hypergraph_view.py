@@ -22,7 +22,11 @@ def graph_view(value, source, *, snapshot_sha256=None, demo=False):
     spec, review = prepare_input(value, str(source))
     if review["errors"]:
         raise ValueError("Hypergraph input: " + json.dumps(review["errors"], ensure_ascii=False))
-    _validate(spec)
+    validation = deepcopy(spec)
+    validation_limits = validation.setdefault("limits", {})
+    validation_limits.setdefault("max_nodes", VIEW_LIMITS["nodes"])
+    validation_limits.setdefault("max_hyperedges", 16384)
+    _validate(validation)
     counts = {"nodes": len(spec["nodes"]), "hyperedges": len(spec["hyperedges"]),
               "incidences": sum(len(e["premises"]) + 1 for e in spec["hyperedges"])}
     result = {"status": "AVAILABLE", "source": str(source), "snapshot_sha256": snapshot_sha256,
@@ -211,7 +215,7 @@ const data=JSON.parse(document.getElementById('snapshot').textContent);
 const $=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);if(cls)el.className=cls;return el};
 const shell=$('section',undefined,'hg-shell');document.getElementById('app').append(shell);
 const statusNames={SUPPORTED:'声明支持',UNKNOWN:'未知',CONTRADICTED:'已反驳声明',PROPOSED:'候选关系'};
-const label=r=>typeof r.label==='object'?(r.label?.zh||r.label?.en||r.id):String(r.label||r.id);
+const label=r=>typeof r.label==='object'?['zh','en'].map(k=>r.label?.[k]).find(v=>typeof v==='string'&&v)||String(r.id):typeof r.label==='string'&&r.label?r.label:String(r.id);
 const relation=r=>String(r.relation||r.kind||r.type||'依赖关系');
 function button(text,title,action,cls='hg-button'){const b=$('button',text,cls);b.type='button';b.title=title;b.setAttribute('aria-label',title);b.addEventListener('click',action);return b}
 function raw(parent,value){const d=$('details');d.append($('summary','原始记录'),$('pre',JSON.stringify(value,null,2)));parent.append(d)}
@@ -234,7 +238,8 @@ function startGraph(){
  const hubs=ranked.filter(i=>items[i].kind==='node'&&items[i].degree>=12).slice(0,48),hubSet=new Set(hubs),groupCounts=new Map(hubs.map(i=>[i,0]));
  hubs.forEach((i,rank)=>{const angle=rank*2.39996323,r=130*Math.sqrt(rank);positions[i*2]=Math.cos(angle)*r;positions[i*2+1]=Math.sin(angle)*r});
  for(const item of items){if(item.kind!=='node'||hubSet.has(item.index))continue;const candidates=new Set();for(const e of neighbors[item.index])for(const i of neighbors[e])if(hubSet.has(i))candidates.add(i);if(!candidates.size)continue;const hub=[...candidates].sort((a,b)=>items[b].degree-items[a].degree||a-b)[0],rank=groupCounts.get(hub)+1;groupCounts.set(hub,rank);const angle=rank*2.39996323,r=22*Math.sqrt(rank);positions[item.index*2]=positions[hub*2]+Math.cos(angle)*r;positions[item.index*2+1]=positions[hub*2+1]+Math.sin(angle)*r}
- for(const item of items){if(item.kind!=='edge'||!neighbors[item.index].length)continue;for(let axis=0;axis<2;axis++)positions[item.index*2+axis]=neighbors[item.index].reduce((sum,i)=>sum+positions[i*2+axis],0)/neighbors[item.index].length+(item.index%7-3)*.4}
+ function placeJunctions(){for(const item of items){if(item.kind!=='edge'||!neighbors[item.index].length)continue;if(!item.record.premises.length){const target=byKey.get('n:'+item.record.conclusion).index,angle=(item.index+1)*2.39996323;positions[item.index*2]=positions[target*2]+45*Math.cos(angle);positions[item.index*2+1]=positions[target*2+1]+45*Math.sin(angle);}else for(let axis=0;axis<2;axis++)positions[item.index*2+axis]=neighbors[item.index].reduce((sum,i)=>sum+positions[i*2+axis],0)/neighbors[item.index].length;}}
+ placeJunctions();
  let selected=null,hovered=null,focus=false,colors=false,light=false,view={x:0,y:0,k:.8},width=1,height=1,ratio=1;
  let edgeMode='relation',framePending=false,worker=null,workerURL=null,layoutRunning=false,userMoved=false,drag=null,query='',matches=new Set(),visibleSet=null,dynamic=true,pausedByVisibility=false;
  let drawCount=0,drawTotal=0,layoutTime=0,layoutTicks=0,bounds={x:-1,y:-1,w:2,h:2},lastMini=0,hoverFrame=false,pointer=null,nearSet=new Set();
@@ -253,7 +258,10 @@ function startGraph(){
  const typeControls=$('div');
  selectControl('连线样式',[['uniform','统一细线'],['status','按声明状态'],['relation','按关系类型']],'relation',value=>{edgeMode=value;requestDraw()},'hg-edge-mode');
  const legend=$('p','实线：声明支持 · 虚线：候选 · 点线：已反驳','hg-hint');settings.append(legend);
- for(const [type,config]of relations){const box=$('details',undefined,'hg-type'),summary=$('summary'),swatch=$('i',undefined,'hg-swatch');swatch.style.background=config.color;summary.append(swatch,type);box.append(summary);
+ const relationNames=[...relations.keys()],relationPager=$('div',undefined,'hg-row'),relationPageText=$('span');let relationPage=0;
+ const previousRelations=button('上一页','上一页关系设置',()=>{relationPage--;renderRelationControls()}),nextRelations=button('下一页','下一页关系设置',()=>{relationPage++;renderRelationControls()});relationPager.append(previousRelations,relationPageText,nextRelations);settings.append(relationPager);
+ function renderRelationControls(){const start=relationPage*32;typeControls.replaceChildren();previousRelations.disabled=start===0;nextRelations.disabled=start+32>=relationNames.length;relationPageText.textContent=`${start+1}–${Math.min(start+32,relationNames.length)} / ${relationNames.length}`;
+ for(const type of relationNames.slice(start,start+32)){const config=relations.get(type),box=$('details',undefined,'hg-type'),summary=$('summary'),swatch=$('i',undefined,'hg-swatch');swatch.style.background=config.color;summary.append(swatch,type);box.append(summary);
   function row(caption,input){const r=$('div',undefined,'hg-row'),lab=$('label',caption);input.setAttribute('aria-label',type+' · '+caption);r.append(lab,input);box.append(r)}
   function choice(caption,key,values,physics){const select=$('select');for(const [value,name]of values){const opt=$('option',name);opt.value=value;select.append(opt)}select.value=config[key];select.addEventListener('change',()=>{config[key]=select.value;if(physics)runLayout(false);else requestDraw()});row(caption,select)}
   choice('线型','style',[['solid','实线'],['dashed','虚线'],['dotted','点线'],['dashdot','点划线']],false);
@@ -261,7 +269,7 @@ function startGraph(){
   const color=$('input');color.type='color';color.value=config.color;color.addEventListener('input',()=>{config.color=color.value;swatch.style.background=color.value;requestDraw()});row('颜色',color);
   for(const [caption,key,min,max,step,physics]of [['线宽','width',.2,3,.1,false],['力度','strength',0,3,.1,true],['作用距离','distance',20,350,5,true]]){const lab=$('label',caption+' · '+config[key]),input=$('input');input.type='range';input.min=min;input.max=max;input.step=step;input.value=config[key];input.setAttribute('aria-label',type+' · '+caption);input.addEventListener('input',()=>{config[key]=Number(input.value);lab.textContent=caption+' · '+input.value;if(!physics)requestDraw()});input.addEventListener('change',()=>{if(physics)runLayout(false)});box.append(lab,input)}
   typeControls.append(box)
- }settings.append(typeControls);
+ }}renderRelationControls();settings.append(typeControls);
  function checkbox(caption,action,id){const row=$('div',undefined,'hg-row'),lab=$('label',caption),input=$('input');input.type='checkbox';input.id=id;lab.htmlFor=id;input.addEventListener('change',()=>action(input.checked));row.append(lab,input);settings.append(row)}
  checkbox('按声明状态着色',value=>{colors=value;requestDraw()},'hg-color-status');
  checkbox('浅色背景',value=>{light=value;shell.classList.toggle('light',light);requestDraw()},'hg-light');
@@ -294,7 +302,7 @@ function startGraph(){
  function requestDraw(){if(framePending)return;framePending=true;requestAnimationFrame(draw)}
  function draw(){
   framePending=false;const started=performance.now();ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,width,height);
-  if(interpolating){const fraction=1-Math.exp(-Math.min(50,started-lastDrawTime||16)/45);let movement=0;for(let i=0;i<graph.nodes.length*2;i++){const delta=targets[i]-positions[i];movement=Math.max(movement,Math.abs(delta));positions[i]+=delta*fraction}interpolating=movement>.02;for(const item of items){if(item.kind!=='edge'||!neighbors[item.index].length)continue;for(let axis=0;axis<2;axis++)positions[item.index*2+axis]=neighbors[item.index].reduce((sum,i)=>sum+positions[i*2+axis],0)/neighbors[item.index].length}if(interpolating)requestDraw()}lastDrawTime=started;
+  if(interpolating){const fraction=1-Math.exp(-Math.min(50,started-lastDrawTime||16)/45);let movement=0;for(let i=0;i<graph.nodes.length*2;i++){const delta=targets[i]-positions[i];movement=Math.max(movement,Math.abs(delta));positions[i]+=delta*fraction}interpolating=movement>.02;placeJunctions();if(interpolating)requestDraw()}lastDrawTime=started;
   const sx=x=>(x-view.x)*view.k+width/2,sy=y=>(y-view.y)*view.k+height/2;
   const activeIndex=hovered??selected;nearSet=new Set(activeIndex===null?[]:[activeIndex,...neighbors[activeIndex]]);
   const groups=new Map();for(const l of links){const near=nearSet.has(l.a)&&nearSet.has(l.b),dim=faded(l.a)||faded(l.b),config=relations.get(relation(l.rule)),tone=dim?'dim':near?'near':'normal';const key=style(l.rule)+':'+tone+':'+config.color+':'+config.width;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(l)}
@@ -309,7 +317,7 @@ function startGraph(){
   let labelCount=0;for(const {item,x,y,r,active}of labels){if(labelCount>250&&!active)continue;const text=label(item.record),shown=text.length>36?text.slice(0,35)+'…':text,tw=ctx.measureText(shown).width,keys=[];for(let gx=Math.floor((x-tw/2)/45);gx<=Math.floor((x+tw/2)/45);gx++)for(let gy=Math.floor((y+r+5)/15);gy<=Math.floor((y+r+18)/15);gy++)keys.push(gx+','+gy);if(active||!keys.some(key=>labelCells.has(key))){keys.forEach(key=>labelCells.add(key));ctx.fillStyle=light?'#494951':'#d1dae8';ctx.globalAlpha=.95;ctx.fillText(shown,x,y+r+5);labelCount++}}
   ctx.globalAlpha=1;zoomText.value=Math.round(view.k*100)+'%';zoomText.textContent=zoomText.value;
   const now=performance.now();if(now-lastMini>350){drawMini();lastMini=now}const cost=performance.now()-started;drawCount++;drawTotal+=cost;drawTimes.push(cost);if(drawTimes.length>120)drawTimes.shift();canvas.dataset.drawMs=(drawTotal/drawCount).toFixed(2);canvas.dataset.visibleElements=drawn;canvas.dataset.totalElements=n;canvas.dataset.scale=view.k.toFixed(4);canvas.dataset.center=view.x.toFixed(2)+','+view.y.toFixed(2);
-  if(drawCount%15===1||!layoutRunning){canvas.dataset.drawP95=[...drawTimes].sort((a,b)=>a-b)[Math.floor((drawTimes.length-1)*.95)].toFixed(2);diagnostic.textContent=(dynamic?(layoutRunning?'自然收敛中':'已稳定'):'已暂停')+` · ${n.toLocaleString()} 元素 · ${links.length.toLocaleString()} 连接`}
+  if(drawCount%15===1||!layoutRunning){canvas.dataset.drawP95=[...drawTimes].sort((a,b)=>a-b)[Math.floor((drawTimes.length-1)*.95)].toFixed(2);diagnostic.textContent=(canvas.dataset.layoutState==='unavailable'?'布局线程不可用；显示初始位置，仍可浏览。':dynamic?(layoutRunning?'自然收敛中':'已稳定'):'已暂停')+` · ${n.toLocaleString()} 元素 · ${links.length.toLocaleString()} 连接`}
  }
  function drawMini(){const w=minimap.width,h=minimap.height;mini.clearRect(0,0,w,h);const k=Math.min((w-16)/bounds.w,(h-16)/bounds.h),ox=(w-bounds.w*k)/2,oy=(h-bounds.h*k)/2;mini.fillStyle=light?'#898990':'#98989f';mini.globalAlpha=.7;for(const item of items){if(item.kind==='edge')continue;mini.fillRect(ox+(positions[item.index*2]-bounds.x)*k,oy+(positions[item.index*2+1]-bounds.y)*k,2,2)}mini.globalAlpha=1;mini.strokeStyle='#aa99cf';mini.lineWidth=1.5;mini.strokeRect(ox+(view.x-width/(2*view.k)-bounds.x)*k,oy+(view.y-height/(2*view.k)-bounds.y)*k,width/view.k*k,height/view.k*k)}
  minimap.addEventListener('pointerdown',e=>{const box=minimap.getBoundingClientRect(),w=minimap.width,h=minimap.height,k=Math.min((w-16)/bounds.w,(h-16)/bounds.h);view.x=bounds.x+((e.clientX-box.left)*w/box.width-(w-bounds.w*k)/2)/k;view.y=bounds.y+((e.clientY-box.top)*h/box.height-(h-bounds.h*k)/2)/k;userMoved=true;requestDraw()});
@@ -366,10 +374,10 @@ function startGraph(){
  function runLayout(warm=false){
   stopLayout();layoutRunning=true;
   const physical=[];for(const edge of graph.hyperedges){const config=relations.get(relation(edge)),b=byKey.get('n:'+edge.conclusion).index;for(const p of edge.premises)physical.push(byKey.get('n:'+p).index,b,config.strength/Math.sqrt(Math.max(1,edge.premises.length)),config.distance,{attract:1,repel:-1,none:0}[config.mode])}
-  try{workerURL=URL.createObjectURL(new Blob([document.getElementById('d3-worker-library').textContent,';('+forceWorker.toString()+')()'],{type:'text/javascript'}));worker=new Worker(workerURL);worker.onmessage=e=>{targets.set(e.data.positions);interpolating=true;layoutTicks=e.data.ticks;if(e.data.ready){layoutTime=e.data.ms;if(warm){positions.set(e.data.positions);for(const item of items){if(item.kind!=='edge'||!neighbors[item.index].length)continue;for(let axis=0;axis<2;axis++)positions[item.index*2+axis]=neighbors[item.index].reduce((sum,i)=>sum+positions[i*2+axis],0)/neighbors[item.index].length}updateBounds();if(!userMoved)fit()}canvas.dataset.layoutMs=layoutTime.toFixed(2);if(!dynamic)stopLayout()}else if(layoutTicks%30===0)updateBounds();if(e.data.done)stopLayout();canvas.dataset.layoutTicks=layoutTicks;canvas.dataset.physicsStepMs=Number(e.data.stepMs||0).toFixed(2);canvas.dataset.layoutState=e.data.done?'settled':dynamic?'dynamic':'paused';requestDraw()};worker.onerror=()=>{stopLayout();canvas.dataset.layoutState='unavailable';diagnostic.textContent='布局线程不可用；显示初始位置，仍可浏览。'};canvas.dataset.layoutState='running';canvas.dataset.layoutEngine='d3-force 3.0.0';worker.postMessage({positions:positions.slice(0,graph.nodes.length*2),links:Float32Array.from(physical),degree:items.slice(0,graph.nodes.length).map(x=>x.degree),options,dynamic,warm})}
+  try{workerURL=URL.createObjectURL(new Blob([document.getElementById('d3-worker-library').textContent,';('+forceWorker.toString()+')()'],{type:'text/javascript'}));worker=new Worker(workerURL);worker.onmessage=e=>{targets.set(e.data.positions);interpolating=true;layoutTicks=e.data.ticks;if(e.data.ready){layoutTime=e.data.ms;if(warm){positions.set(e.data.positions);placeJunctions();updateBounds();if(!userMoved)fit()}canvas.dataset.layoutMs=layoutTime.toFixed(2);if(!dynamic)stopLayout()}else if(layoutTicks%30===0)updateBounds();if(e.data.done)stopLayout();canvas.dataset.layoutTicks=layoutTicks;canvas.dataset.physicsStepMs=Number(e.data.stepMs||0).toFixed(2);canvas.dataset.layoutState=e.data.done?'settled':dynamic?'dynamic':'paused';requestDraw()};worker.onerror=()=>{stopLayout();canvas.dataset.layoutState='unavailable';diagnostic.textContent='布局线程不可用；显示初始位置，仍可浏览。'};canvas.dataset.layoutState='running';canvas.dataset.layoutEngine='d3-force 3.0.0';worker.postMessage({positions:positions.slice(0,graph.nodes.length*2),links:Float32Array.from(physical),degree:items.slice(0,graph.nodes.length).map(x=>x.degree),options,dynamic,warm})}
   catch(error){stopLayout();canvas.dataset.layoutState='unavailable';diagnostic.textContent='布局线程不可用；显示初始位置，仍可浏览。';layoutButton.textContent='重新排布'}
  }
- document.addEventListener('visibilitychange',()=>{if(document.hidden){pausedByVisibility=dynamic;stopLayout()}else if(pausedByVisibility&&dynamic){pausedByVisibility=false;runLayout(false)}});
+ document.addEventListener('visibilitychange',()=>{if(document.hidden){pausedByVisibility=dynamic&&layoutRunning;stopLayout()}else {const resume=pausedByVisibility&&dynamic;pausedByVisibility=false;if(resume)runLayout(false)}});
  window.addEventListener('pagehide',()=>{stopLayout();observer.disconnect()},{once:true});
  updateBounds();resize();runLayout(true);
 }
@@ -442,6 +450,167 @@ def dependency_levels(ids, links):
     return {i: (rank[component[i]] - center) * 160 if adj[i] or rev[i] else None for i in ids}
 
 
+def _record_view_report(spec):
+    """Resolve reported identities without running inference or auditing research.
+
+    Older owned snapshots predate record_kind. Adapt only reserved run/receipt
+    identities and structured byte references; never recover IDs from prose.
+    The adapter operates on a copy so the exported snapshot stays unchanged.
+    """
+    adapted = deepcopy(spec)
+    # Record matching is linear in the displayed records, independent of the
+    # smaller default limits intended for combinatorial dependency analysis.
+    limits = adapted.setdefault("limits", {})
+    limits.setdefault("max_nodes", VIEW_LIMITS["nodes"])
+    limits.setdefault("max_hyperedges", VIEW_LIMITS["hyperedges"])
+    legacy = set()
+    for row in adapted["nodes"]:
+        if "record_kind" in row:
+            continue
+        ident, src = row["id"], row.get("source")
+        if ident.startswith("owned:run:") and isinstance(row.get("manifest_sha256"), str):
+            row["record_kind"] = "run"
+            row.setdefault("run_id", ident.removeprefix("owned:run:"))
+        elif ident.startswith("owned:receipt:") and isinstance(row.get("receipt_sha256"), str):
+            row["record_kind"] = "receipt"
+            row.setdefault("run_id", ident.removeprefix("owned:receipt:"))
+        elif row.get("interpretation") and isinstance(row.get("run_id"), str):
+            if isinstance(row["interpretation"], str) and row["interpretation"] in {"MISSING", "PENDING"}:
+                row["record_kind"] = "declared_output"
+            elif isinstance(src, dict) and src.get("sha256") and (src.get("file") or src.get("path")):
+                row["record_kind"] = "artifact"
+        elif isinstance(src, dict) and src.get("receipt_id") and src.get("sha256") and (src.get("path") or src.get("file")):
+            row["record_kind"] = "observation"
+        if "record_kind" in row:
+            legacy.add(ident)
+    # Legacy observations carry an exact receipt identity rather than run_id;
+    # a unique receipt supplies the run. Old artifact inventories lack receipt_id.
+    receipts, by_run = {}, {}
+    for row in adapted["nodes"]:
+        if row.get("record_kind") == "receipt":
+            src = row.get("source") if isinstance(row.get("source"), dict) else {}
+            aliases = [v for v in (row.get("receipt_id"), row.get("receipt_sha256"), src.get("receipt_id")) if v is not None]
+            if aliases and all(isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{64}", v) for v in aliases) and len({v.lower() for v in aliases}) == 1:
+                key = aliases[0].lower()
+                receipts.setdefault(key.lower(), []).append(row)
+                if isinstance(row.get("run_id"), str):
+                    by_run.setdefault(row["run_id"], []).append(key)
+    for row in adapted["nodes"]:
+        if row["id"] not in legacy:
+            continue
+        src = row.get("source") if isinstance(row.get("source"), dict) else {}
+        key = src.get("receipt_id")
+        matches = receipts.get(key.lower(), []) if isinstance(key, str) else []
+        if row["record_kind"] == "observation" and "run_id" not in row and len(matches) == 1:
+            row["run_id"] = matches[0].get("run_id")
+        if row["record_kind"] == "artifact" and not any(row.get(k) for k in ("receipt_id", "receipt_sha256")) and not key:
+            candidates = by_run.get(row.get("run_id"), [])
+            if len(candidates) == 1:
+                row["receipt_id"] = candidates[0]
+    import rds_hypergraph
+    if callable(getattr(rds_hypergraph, "record_topology", None)):
+        return rds_hypergraph.record_topology(adapted)
+    return _legacy_record_report(adapted)
+
+
+def _legacy_record_report(spec):
+    """Conservative typed resolver for installations without record_topology."""
+    rows, issues, indexes, relations = {}, [], {k: {} for k in ("run", "receipt", "artifact")}, []
+    kinds = {"contract", "run", "receipt", "artifact", "declared_output", "lifecycle_fact", "observation"}
+
+    def issue(row, field, reason, candidates=()):
+        issues.append({"node_id": row["id"], "field": field, "reason": reason,
+                       "candidates": sorted(candidates)[:3]})
+
+    for node in spec["nodes"]:
+        if not isinstance(node.get("record_kind"), str) or node["record_kind"] not in kinds:
+            if node.get("record_kind") is not None:
+                issue(node, "record_kind", "INVALID_RECORD_KIND")
+            continue
+        src = node.get("source") if isinstance(node.get("source"), dict) else {}
+        row, valid = {"node": node, "kind": node["record_kind"]}, True
+        for field, aliases in (("run_id", [node.get("run_id")]),
+                ("receipt_id", [node.get("receipt_id"), node.get("receipt_sha256"), src.get("receipt_id")]),
+                ("path", [node.get("artifact_path"), node.get("output_path"), src.get("file"), src.get("path")]),
+                ("sha256", [src.get("sha256")])):
+            values = [v for v in aliases if v is not None]
+            digest = field in {"receipt_id", "sha256"}
+            if any(not isinstance(v, str) or not v or len(v) > (64 if digest else 2048)
+                   or digest and re.fullmatch(r"[0-9a-fA-F]{64}", v) is None for v in values):
+                issue(node, field, "INVALID_BINDING")
+                valid = False
+                continue
+            values = [v.lower() if digest else v for v in values]
+            if len(set(values)) > 1:
+                issue(node, field, "CONFLICTING_BINDINGS")
+                valid = False
+            elif values:
+                row[field] = values[0]
+        if valid:
+            rows[node["id"]] = row
+            kind = row["kind"]
+            key = row.get("run_id") if kind == "run" else row.get("receipt_id") if kind == "receipt" else (
+                row.get("run_id"), row.get("path"), row.get("sha256")) if kind == "artifact" else None
+            if key is not None and not (isinstance(key, tuple) and None in key):
+                indexes[kind].setdefault(key, []).append(node["id"])
+
+    def match(row, kind, key, field):
+        if key is None or isinstance(key, tuple) and None in key:
+            return None
+        candidates = indexes[kind].get(key, [])
+        if len(candidates) != 1:
+            issue(row["node"], field, "AMBIGUOUS_BINDING" if candidates else "UNMATCHED_BINDING", candidates)
+            return None
+        return candidates[0]
+
+    def link(kind, origin, target):
+        if origin is not None:
+            relations.append({"kind": kind, "from": origin, "to": target["node"]["id"],
+                              "binding": "DECLARED_OUTPUT" if kind == "declared_output" else "REPORTED_EXACT_ID_MATCH",
+                              "scientific_support": "UNKNOWN"})
+
+    for row in rows.values():
+        kind = row["kind"]
+        if kind in {"contract", "run"}:
+            continue
+        run = match(row, "run", row.get("run_id"), "run_id")
+        receipt = match(row, "receipt", row.get("receipt_id"), "receipt_id") if kind != "receipt" else None
+        if receipt is not None and rows[receipt].get("run_id") != row.get("run_id"):
+            issue(row["node"], "receipt.run_id", "CONFLICTING_BINDINGS", [receipt])
+            continue
+        if kind == "receipt":
+            if match(row, "receipt", row.get("receipt_id"), "receipt_id") is not None:
+                link("run_receipt", run, row)
+        elif kind == "artifact":
+            if match(row, "artifact", (row.get("run_id"), row.get("path"), row.get("sha256")), "artifact_identity") is not None:
+                link("run_artifact", run, row)
+                link("receipt_artifact", receipt, row)
+        elif kind == "declared_output":
+            if row.get("path"):
+                link("declared_output", run, row)
+        elif kind == "lifecycle_fact":
+            link("run_lifecycle_fact", run, row)
+        elif kind == "observation":
+            link("run_observation", run, row)
+            artifact = match(row, "artifact", (row.get("run_id"), row.get("path"), row.get("sha256")), "artifact_identity")
+            if artifact is not None and rows[artifact].get("receipt_id") != row.get("receipt_id"):
+                issue(row["node"], "artifact.receipt_id", "CONFLICTING_BINDINGS", [artifact])
+            else:
+                link("artifact_observation", artifact, row)
+        if "run_id" not in row and kind in {"lifecycle_fact", "observation"}:
+            issue(row["node"], "run_id", "RUN_NOT_REGISTERED" if row["node"].get("route_id") else "MISSING_BINDING")
+    return {"record_relations": sorted(relations, key=lambda r: (r["kind"], r["from"], r["to"])),
+            "record_topology": {"assurance": "REPORTED_RECORD_IDENTITIES_NOT_SCIENTIFIC_SUPPORT", "issues": issues,
+                                "resolver": "CONSERVATIVE_LEGACY_FALLBACK"}}
+
+
+def _locale_label(row, default):
+    label = row.get("label")
+    if isinstance(label, dict):
+        label = next((label[k] for k in ("zh", "en") if isinstance(label.get(k), str) and label[k]), None)
+    return label if isinstance(label, str) and label else default
+
+
 def replica_view(result):
     """Incidence geometry plus explicitly bound provenance; never alter the map.
 
@@ -459,19 +628,14 @@ def replica_view(result):
              "radius_isolated_unique": "根隔离与唯一性", "ordered_exact_centers": "精确圆心",
              "continuous_cover": "连续覆盖", "global_optimality": "全局最优性",
              "complete_reproducibility": "完整可复现性", "official_complete_acceptance": "正式完整验收"}
-    run_ids = {n["id"].removeprefix("owned:run:"): ids[n["id"]] for n in spec["nodes"]
-               if n["id"].startswith("owned:run:") and isinstance(n.get("manifest_sha256"), str)}
-    receipts = {n["receipt_sha256"]: ids[n["id"]] for n in spec["nodes"]
-                if isinstance(n.get("receipt_sha256"), str)}
-    # Keyed by both byte identity and the exact original relative path.
-    artifacts = {}
-    for row in spec["nodes"]:
-        src = row.get("source")
-        if row.get("interpretation") and isinstance(src, dict) and isinstance(src.get("sha256"), str) and isinstance(src.get("file"), str):
-            artifacts[(src["sha256"], src["file"])] = ids[row["id"]]
+    report = _record_view_report(spec)
+    run_ids = {n["id"]: n.get("run_id", n["id"].removeprefix("owned:run:")) for n in spec["nodes"]
+               if n.get("record_kind") == "run" and isinstance(n.get("run_id"), str) and n["run_id"]
+               or n["id"].startswith("owned:run:") and isinstance(n.get("manifest_sha256"), str)}
     for i, row in enumerate(spec["nodes"]):
         ident = row["id"]
-        kind = {"run": "执行", "receipt": "回执", "artifact": "产物", "fact": "观测"}.get(ident.split(":")[1] if ident.startswith("owned:") else "", "声明")
+        reported_kind = row.get("record_kind", ident.split(":")[1] if ident.startswith("owned:") else "")
+        kind = {"run": "执行", "receipt": "回执", "artifact": "产物", "fact": "观测", "observation": "观测", "lifecycle_fact": "观测"}.get(reported_kind if isinstance(reported_kind, str) else "", "声明")
         label = names.get(ident, row.get("label") or row.get("claim") or ident)
         if not isinstance(label, str):
             label = ident
@@ -484,6 +648,7 @@ def replica_view(result):
             label = (src.get("file", ident).replace("\\", "/").split("/")[-1] if isinstance(src, dict) else ident)
         elif kind == "观测":
             label = ident.removeprefix("owned:fact:").removeprefix("observation.")
+        label = _locale_label(row, label)
         nodes[f"c{i}"] = {"type": "", "label": label, "color": {"rgb": int(palette[kind][1:], 16), "a": 1},
                             "rds": {"record": ident, "kind": kind, "size": 1.5 if ident in goals else 1,
                                     "group": None, "color": palette[kind]}}
@@ -499,48 +664,33 @@ def replica_view(result):
         links.extend([[ids[p], hub, dict(style)] for p in edge["premises"]])
         links.append([hub, ids[edge["conclusion"]], {**style, "arrow": True}])
     pairs = {(s, t) for s, t, _ in links}
-    provenance = 0
+    provenance, declarations = 0, 0
 
-    def bind(s, t, field, value):
-        nonlocal provenance
+    def bind(s, t, relation):
+        nonlocal provenance, declarations
         if s == t or (s, t) in pairs:
             return
         pairs.add((s, t))
-        provenance += 1
-        links.append([s, t, {"relation": "来源绑定", "family": "provenance", "color": "#b7c6c3",
+        declaration = relation["kind"] == "declared_output"
+        provenance += not declaration
+        declarations += declaration
+        links.append([s, t, {"relation": "声明输出" if declaration else "来源绑定", "family": "declaration" if declaration else "provenance", "color": "#b7c6c3",
                             "width": .65, "opacity": .32, "dash": True, "arrow": False,
-                            "binding": {"field": field, "value": value}}])
+                            "binding": dict(relation)}])
 
-    for row in spec["nodes"]:
-        target = ids[row["id"]]
-        run = row.get("run_id")
-        if isinstance(run, str) and run in run_ids:
-            bind(run_ids[run], target, "run_id", run)
-            groups[target] = run
-        src = row.get("source")
-        if isinstance(src, dict):
-            receipt = src.get("receipt_id")
-            if isinstance(receipt, str) and receipt in receipts:
-                bind(receipts[receipt], target, "source.receipt_id", receipt)
-            key = (src.get("sha256"), src.get("path") or src.get("file"))
-            if all(isinstance(v, str) for v in key) and key in artifacts:
-                bind(artifacts[key], target, "source.sha256 + source.path", list(key))
-    for run, uid in run_ids.items():
-        groups[uid] = run
-    # Run -> receipt edges already declared in the TMS map supply membership.
-    for edge in spec["hyperedges"]:
-        ps = [ids[p] for p in edge["premises"]]
-        for p in ps:
-            if p in groups and nodes[p]["rds"]["kind"] == "执行":
-                groups[ids[edge["conclusion"]]] = groups[p]
-    for s, t, meta in links:
-        if meta["family"] == "provenance" and s in groups:
-            groups.setdefault(t, groups[s])
+    completions = {(e["premises"][0], e["conclusion"]): f"h{i}" for i, e in enumerate(spec["hyperedges"]) if len(e["premises"]) == 1}
+    for relation in report["record_relations"]:
+        origin, target = relation["from"], relation["to"]
+        bind(ids[origin], ids[target], relation)
+        if origin in run_ids:
+            if relation["kind"] != "run_receipt" or (origin, target) in completions:
+                groups[ids[target]] = run_ids[origin]
+            if relation["kind"] == "run_receipt" and (origin, target) in completions:
+                groups[completions[origin, target]] = run_ids[origin]
+    for ident, run in run_ids.items():
+        groups[ids[ident]] = run
     for uid, group in groups.items():
         nodes[uid]["rds"]["group"] = group
-    for s, t, meta in links:
-        if meta.get("hyperedge") and nodes[s]["rds"].get("group"):
-            nodes[meta["hyperedge"]]["rds"]["group"] = nodes[s]["rds"]["group"]
     levels = dependency_levels(nodes, links)
     for uid, level in levels.items():
         nodes[uid]["rds"]["flowX"] = level
@@ -577,7 +727,8 @@ def replica_view(result):
                               "group": None, "color": "#8aa1b8"}},
              "links": scope_links, "components": len(components),
              "unlinked_records": sum(degree[uid] == 0 for uid in ids.values())}
-    return {"nodes": nodes, "links": links, "provenance_count": provenance,
+    return {"nodes": nodes, "links": links, "provenance_count": provenance, "declaration_count": declarations,
+            "record_topology": report["record_topology"], "record_relations": report["record_relations"],
             "scope": scope, "relations": sorted({meta["relation"] for _, _, meta in links} | {"项目归属"})}
 
 
@@ -815,8 +966,8 @@ function goalCredits(spec,goal) {
  }
  const queue=[goal];distance.set(goal,0);nodes.set(goal,1);
  for(let i=0;i<queue.length;i++){const id=queue[i],d=distance.get(id);for(const {e} of incoming.get(id)||[])for(const p of e.premises)if(!distance.has(p)){distance.set(p,d+1);queue.push(p);}}
- for(const id of queue){const d=distance.get(id),credit=nodes.get(id)||0,routes=(incoming.get(id)||[]).filter(({e})=>e.premises.some(p=>distance.get(p)===d+1)),total=routes.reduce((sum,r)=>sum+r.w,0);
-  for(const {e,w} of routes){const share=credit*w/total;edges.set(e.id,share);for(const p of e.premises)if(distance.get(p)===d+1)nodes.set(p,(nodes.get(p)||0)+share/e.premises.length);}
+ for(const id of queue){const d=distance.get(id),credit=nodes.get(id)||0,routes=(incoming.get(id)||[]).filter(({e})=>e.premises.every(p=>distance.get(p)===d+1)),total=routes.reduce((sum,r)=>sum+r.w,0);
+  for(const {e,w} of routes){const share=credit*w/total;edges.set(e.id,share);for(const p of e.premises)nodes.set(p,(nodes.get(p)||0)+share/e.premises.length);}
  }
  return {nodes,edges,distance};
 }
@@ -835,24 +986,28 @@ function goalCredits(spec,goal) {
  const defaults={search:'',colors:true,orphans:true,scope:true,sizeMode:'goal',goal:data.graph.goals[0]||'',nodeStyles:{},arrows:true,nodeSize:1,lineSize:1,textFade:0,damping:.4,growth:true,growthSeconds:12,flowStrength:.025,groupStrength:.035,edgeRepulsion:.25,edgeClearance:45,centerStrength:.055,repelStrength:1000,linkStrength:1,linkDistance:180,relations:{}};
  let opts={...defaults}; try{opts={...defaults,...JSON.parse(localStorage.getItem(key)||'null')};}catch{}
  if(!data.graph.goals.includes(opts.goal))opts.goal=defaults.goal;
- opts.nodeStyles={...opts.nodeStyles};opts.relations={...opts.relations};
+ opts.nodeStyles={...opts.nodeStyles};opts.relations=Object.assign(Object.create(null),opts.relations);
  const kindDefaults={'声明':['#c2c8d2','circle'],'执行':['#b39ddb','square'],'回执':['#82c4af','ring'],'产物':['#82b6d4','hexagon'],'观测':['#d5c17e','circle'],'超边':['#9c95af','diamond'],'项目':['#8aa1b8','ring']};
  for(const [kind,[color,shape]] of Object.entries(kindDefaults))opts.nodeStyles[kind]={color,shape,size:1,...opts.nodeStyles[kind]};
  let credits=goalCredits(data.graph,opts.goal);
  const persist=()=>{try{localStorage.setItem(key,JSON.stringify(opts));}catch{}};
- for(const r of view.relations) {const sample=view.links.find(l=>l[2].relation===r)?.[2]||{};opts.relations[r]={mode:'attract',strength:r==='项目归属'?.12:r==='来源绑定'?.45:1,color:sample.color||'#bdc2d2',width:sample.width||1.25,dash:!!sample.dash,...opts.relations[r]};}
+ const relationSamples=new Map();for(const [, , meta] of view.links)if(!relationSamples.has(meta.relation))relationSamples.set(meta.relation,meta);
+ for(const r of view.relations) {const sample=relationSamples.get(r)||{};opts.relations[r]={mode:'attract',strength:r==='项目归属'?.12:r==='声明输出'?.2:r==='来源绑定'?.45:1,color:sample.color||'#bdc2d2',width:sample.width||1.25,dash:!!sample.dash,...opts.relations[r]};}
  function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
  function button(text,action,cls='btn'){const b=el('button',text,cls);b.type='button';b.addEventListener('click',action);return b;}
- function paintLegend(){const row=el('div',undefined,'legend-row');for(const [kind,style] of Object.entries(opts.nodeStyles)){if(kind==='项目'&&!opts.scope)continue;const chip=el('span'),dot=el('span',({circle:'●',square:'■',triangle:'▲',hexagon:'⬡',ring:'○',diamond:'◇'})[style.shape],'symbol');dot.style.color=opts.colors?style.color:'var(--text-muted)';chip.append(dot,el('span',kind==='超边'?'超边汇合点':kind==='项目'?'项目快照':kind));row.append(chip);}$('legend').replaceChildren(row,el('div','多个前提 → ◇ → 结论；不同菱形 = 不同路线','legend-note'),el('div',opts.scope?'弱虚线：项目归属 / 来源绑定；不是科研支持':'虚线：来源绑定 / 提议','legend-note'),el('div',opts.sizeMode==='goal'?'大小：目标相关权重（最短依赖路径的结构估计）':'大小：连接度','legend-note'));}
+ function paintLegend(){const row=el('div',undefined,'legend-row');for(const [kind,style] of Object.entries(opts.nodeStyles)){if(kind==='项目'&&!opts.scope)continue;const chip=el('span'),dot=el('span',({circle:'●',square:'■',triangle:'▲',hexagon:'⬡',ring:'○',diamond:'◇'})[style.shape],'symbol');dot.style.color=opts.colors?style.color:'var(--text-muted)';chip.append(dot,el('span',kind==='超边'?'超边汇合点':kind==='项目'?'项目快照':kind));row.append(chip);}$('legend').replaceChildren(row,el('div','多个前提 → ◇ → 结论；不同菱形 = 不同路线','legend-note'),el('div',opts.scope?'弱虚线：归属 / 来源 / 输出声明；不表示科研支持':'虚线：来源 / 输出声明 / 提议','legend-note'),el('div',opts.sizeMode==='goal'?'大小：目标相关权重（完整最短路线的结构估计）':'大小：连接度','legend-note'));}
  function section(name,open=false){const box=el('div',undefined,'gc-section'+(open?'':' is-collapsed')), head=button('',()=>{box.classList.toggle('is-collapsed');},'gc-head');head.setAttribute('aria-expanded',String(open));head.addEventListener('click',()=>head.setAttribute('aria-expanded',String(!box.classList.contains('is-collapsed'))));head.append(el('span','⌄','chev'),el('span',name,'name'));const body=el('div',undefined,'gc-body');box.append(head,body);panel.append(box);return body;}
  function checkbox(body,label,key,change){const row=el('label',undefined,'gc-item');row.append(el('span',label));const i=el('input');i.type='checkbox';i.checked=opts[key];i.addEventListener('change',()=>{opts[key]=i.checked;persist();change();});row.append(i);body.append(row);}
  function slider(body,label,key,min,max,step,change){const wrap=el('label',undefined,'gc-item col'), row=el('span',undefined,'row'), value=el('span',undefined,'val'),i=el('input');row.append(el('span',label),value);i.type='range';i.min=min;i.max=max;i.step=step;i.value=opts[key];i.setAttribute('aria-label',label);const paint=()=>{value.textContent=Number(i.value).toFixed(step<1?2:0);i.style.setProperty('--p',((i.value-min)/(max-min)*100)+'%');};paint();i.addEventListener('input',()=>{opts[key]=+i.value;paint();persist();change();});wrap.append(row,i);body.append(wrap);}
  const filter=section('筛选');const search=el('input',undefined,'search-input');search.placeholder='搜索节点、记录或来源';search.setAttribute('aria-label','搜索节点');search.value=opts.search;const matches=el('div');matches.setAttribute('aria-label','搜索结果');filter.append(search,matches);let searchTimer;search.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{opts.search=search.value;persist();build();},180);});checkbox(filter,'显示原始未关联记录','orphans',build);checkbox(filter,'显示项目归属层（弱虚线）','scope',build);filter.append(el('p',`${view.scope?.unlinked_records||0} 个记录缺少科研依赖 / 来源关联。归属层只连接同一快照的分组，不补造支持关系。`,'hint'));
  const groups=section('节点样式');checkbox(groups,'按记录类型着色','colors',nodeAppearance);for(const [name,cfg] of Object.entries(opts.nodeStyles)){const row=el('div',undefined,'gc-item');row.append(el('span',name));const color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 节点颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();nodeAppearance();});row.append(color);groups.append(row);const style=el('div',undefined,'relation-style'),shape=el('select');shape.setAttribute('aria-label',name+' 节点形状');for(const [v,t] of (name==='超边'?[['diamond','菱形']]:[['circle','圆点'],['ring','圆环'],['square','方形'],['triangle','三角'],['hexagon','六边形']])){const o=el('option',t);o.value=v;shape.append(o);}shape.value=cfg.shape;shape.addEventListener('change',()=>{cfg.shape=shape.value;persist();nodeAppearance();});const size=el('input');size.type='range';size.min=.5;size.max=2;size.step=.1;size.value=cfg.size;size.setAttribute('aria-label',name+' 节点倍率');size.addEventListener('input',()=>{cfg.size=+size.value;persist();nodeAppearance();});style.append(shape,size);groups.append(style);}
- const weights=section('目标权重');const sizeChoice=el('select');sizeChoice.setAttribute('aria-label','节点大小依据');for(const [v,t] of [['goal','目标相关权重'],['degree','连接度']]){const o=el('option',t);o.value=v;sizeChoice.append(o);}sizeChoice.value=opts.sizeMode;sizeChoice.addEventListener('change',()=>{opts.sizeMode=sizeChoice.value;persist();nodeAppearance();});const goalChoice=el('select');goalChoice.setAttribute('aria-label','研究目标');for(const id of data.graph.goals){const o=el('option',Object.values(view.nodes).find(n=>n.rds.record===id)?.label||id);o.value=id;goalChoice.append(o);}goalChoice.value=opts.goal;goalChoice.addEventListener('change',()=>{opts.goal=goalChoice.value;persist();credits=goalCredits(data.graph,opts.goal);nodeAppearance();if(g.rdsPinned)inspect(g.rdsPinned.id);});weights.append(sizeChoice,goalChoice,el('p','目标权重=1；OR 路线按正权重分配，AND 前提均分。只沿最短依赖路径传播，避免循环累加；排除 CONTRADICTED 规则。来源与归属不计入。','hint'),el('p','这是结构相关性的显示估计，不能当作实际研究贡献。没有目标路径表示关联未记录，不表示贡献为零。','hint'));
+ const weights=section('目标权重');const sizeChoice=el('select');sizeChoice.setAttribute('aria-label','节点大小依据');for(const [v,t] of [['goal','目标相关权重'],['degree','连接度']]){const o=el('option',t);o.value=v;sizeChoice.append(o);}sizeChoice.value=opts.sizeMode;sizeChoice.addEventListener('change',()=>{opts.sizeMode=sizeChoice.value;persist();nodeAppearance();});const goalChoice=el('select');goalChoice.setAttribute('aria-label','研究目标');for(const id of data.graph.goals){const o=el('option',Object.values(view.nodes).find(n=>n.rds.record===id)?.label||id);o.value=id;goalChoice.append(o);}goalChoice.value=opts.goal;goalChoice.addEventListener('change',()=>{opts.goal=goalChoice.value;persist();credits=goalCredits(data.graph,opts.goal);nodeAppearance();if(g.rdsPinned)inspect(g.rdsPinned.id);});weights.append(sizeChoice,goalChoice,el('p','目标权重=1；OR 按正权重分配，AND 前提均分。仅纳入所有前提都位于下一最短依赖层的完整路线；混层或循环路线不分配，排除 CONTRADICTED 规则。来源与归属不计入。','hint'),el('p','这是结构相关性的显示估计，不能当作实际研究贡献。没有可分配目标路径表示关联未记录或不符合完整最短层条件，不表示贡献为零。','hint'));
  const display=section('外观');checkbox(display,'显示结论箭头','arrows',displayOptions);slider(display,'节点大小','nodeSize',.4,3,.1,displayOptions);slider(display,'连线粗细','lineSize',.2,4,.1,displayOptions);slider(display,'标签隐去阈值','textFade',-3,3,.1,displayOptions);checkbox(display,'刷新时逐步生长','growth',()=>opts.growth?playGrowth():finishGrowth());slider(display,'生长回放时长（秒）','growthSeconds',4,30,1,()=>{if(growing)playGrowth();});display.append(el('p','按依赖层次展开结构；不是科研发生的时间线。','hint'));
  const forces=section('力学');slider(forces,'运动阻尼','damping',.1,.85,.05,applyForces);slider(forces,'依赖流向（相对方向）','flowStrength',0,.08,.005,applyForces);slider(forces,'同次执行的记录凝聚','groupStrength',0,.15,.005,applyForces);slider(forces,'超边整线排斥','edgeRepulsion',0,.6,.025,applyForces);slider(forces,'超边留白距离','edgeClearance',15,100,5,applyForces);slider(forces,'图谱向心力','centerStrength',0,.3,.005,applyForces);slider(forces,'节点间排斥','repelStrength',1,3000,25,applyForces);slider(forces,'相连节点吸引','linkStrength',0,2,.05,applyForces);slider(forces,'连线距离','linkDistance',80,400,5,applyForces);forces.append(el('p','拖节点由力牵动邻居；拖背景平移视图。整条超边推开无关节点，自己的前提与结论不受该线排斥。相对流向不会把同层拉成固定竖列。','hint'));
- const relations=section('关系');for(const name of view.relations){const cfg=opts.relations[name],row=el('div',undefined,'gc-item');row.append(el('span',name));const select=el('select');select.setAttribute('aria-label',name+' 力学');for(const [v,t] of [['attract','吸引'],['repel','排斥'],['none','无力']]){const o=el('option',t);o.value=v;select.append(o);}select.value=cfg.mode;select.addEventListener('change',()=>{cfg.mode=select.value;persist();applyForces();});row.append(select);relations.append(row);const style=el('div',undefined,'relation-style'),color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();restyle();});const width=el('input');width.type='range';width.min=.3;width.max=3;width.step=.1;width.value=cfg.width;width.setAttribute('aria-label',name+' 粗细');width.addEventListener('input',()=>{cfg.width=+width.value;persist();restyle();});const dash=el('select');dash.setAttribute('aria-label',name+' 线型');for(const [v,t] of [['solid','实线'],['dash','虚线']]){const o=el('option',t);o.value=v;dash.append(o);}dash.value=cfg.dash?'dash':'solid';dash.addEventListener('change',()=>{cfg.dash=dash.value==='dash';persist();restyle();});style.append(color,width,dash);relations.append(style);}
+ const relations=section('关系'),relationControls=el('div'),relationPager=el('div',undefined,'gc-item'),relationPageText=el('span');let relationPage=0;
+ const previousRelations=button('上一页',()=>{relationPage--;renderRelationControls()}),nextRelations=button('下一页',()=>{relationPage++;renderRelationControls()});relationPager.append(previousRelations,relationPageText,nextRelations);relations.append(relationPager,relationControls);
+ function renderRelationControls(){const start=relationPage*32;relationControls.replaceChildren();previousRelations.disabled=start===0;nextRelations.disabled=start+32>=view.relations.length;relationPageText.textContent=`${start+1}–${Math.min(start+32,view.relations.length)} / ${view.relations.length}`;for(const name of view.relations.slice(start,start+32)){const cfg=opts.relations[name],row=el('div',undefined,'gc-item');row.append(el('span',name));const select=el('select');select.setAttribute('aria-label',name+' 力学');for(const [v,t] of [['attract','吸引'],['repel','排斥'],['none','无力']]){const o=el('option',t);o.value=v;select.append(o);}select.value=cfg.mode;select.addEventListener('change',()=>{cfg.mode=select.value;persist();applyForces();});row.append(select);relationControls.append(row);const style=el('div',undefined,'relation-style'),color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();restyle();});const width=el('input');width.type='range';width.min=.3;width.max=3;width.step=.1;width.value=cfg.width;width.setAttribute('aria-label',name+' 粗细');width.addEventListener('input',()=>{cfg.width=+width.value;persist();restyle();});const dash=el('select');dash.setAttribute('aria-label',name+' 线型');for(const [v,t] of [['solid','实线'],['dash','虚线']]){const o=el('option',t);o.value=v;dash.append(o);}dash.value=cfg.dash?'dash':'solid';dash.addEventListener('change',()=>{cfg.dash=dash.value==='dash';persist();restyle();});style.append(color,width,dash);relationControls.append(style);}}
+ renderRelationControls();
  const info=section('快照来源');info.append(el('p',data.source,'hint'),el('p','快照 SHA-256：'+(data.snapshot_sha256||'未绑定 TMS 快照'),'hint'),el('p','节点与超边保留原始状态；来源线是可视化绑定，不构成科学支持。','hint'));
  const close=button('收起设置',()=>panel.classList.add('is-close'));const actions=el('div',undefined,'gc-actions');actions.append(close);panel.append(actions);
  function displayOptions(){g.setOptions({nodeSize:opts.nodeSize,lineSize:opts.lineSize,textFade:opts.textFade,showArrow:opts.arrows});nodeAppearance();}
@@ -874,21 +1029,22 @@ function goalCredits(spec,goal) {
   for(const id of selected){const n=view.nodes[id];nodes[id]={...n,rds:{...n.rds},color:opts.colors?n.color:null};}
   const links=view.links.filter(([s,t,meta])=>(opts.scope||meta.family!=='membership')&&selected.has(s)&&selected.has(t)).map(([s,t,meta])=>[s,t,{...meta,...opts.relations[meta.relation]}]);
   g.setData({nodes,links});restyle();nodeAppearance(true);
-  $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边 · ${view.provenance_count} 来源线${opts.scope?' · +项目归属层':''}${query?' · 显示 '+nodesCount(nodes)+' 元素':''}`;$('state').textContent='布局收敛中…';
+  $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边 · ${view.provenance_count} 来源线${view.declaration_count?' · '+view.declaration_count+' 输出声明':''}${opts.scope?' · +项目归属层':''}${query?' · 显示 '+nodesCount(nodes)+' 元素':''}`;$('state').textContent='布局收敛中…';
   if(query){matches.append(el('p',`${found.length} 条匹配，含完整超边上下文`,'hint'));for(const id of found.slice(0,20)){const b=button(view.nodes[id].label,()=>inspect(id),'record-link');b.title=recordFor(view.nodes[id]).id;matches.append(b);}}
   if(opts.growth && !query)playGrowth();
  }
  function nodesCount(ns){return Object.keys(ns).length;}
+ function navigate(id){if(!g.nodeLookup.has(id)){opts.search='';search.value='';opts.orphans=true;persist();build();}inspect(id);}
  function inspect(id){
   const n=g.nodeLookup.get(id);if(!n)return;finishGrowth();g.rdsPinned=n;g.rdsLastHL=undefined;g.changed();card.replaceChildren();card.classList.add('show');
   const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.rds.edge!==undefined?'◇ 超边汇合点':n.label||n.id));
   const record=recordFor(n);card.append(el('div',record.id,'path'),el('span',record.status+(n.rds.edge!==undefined?' · 规则状态':''),'tag'),el('span',n.rds.kind,'tag'));
   if(n.rds.virtual)card.append(el('p','显示用项目快照节点。弱虚线只表达分组属于同一快照，不是原始科研超边，不表示任何研究条件已被支持。','hint'));
-  else {const credit=n.rds.edge!==undefined?credits.edges.get(record.id):credits.nodes.get(record.id);card.append(el('p','目标相关权重（结构估计）：'+(credit===undefined?'未记录到所选目标的可分配路径':credit.toFixed(4)),'hint'),el('p','节点排斥倍率：×'+n.rds.chargeWeight.toFixed(2)+'（上限 ×3）','hint'),el('p','按最短依赖路径分配；实际研究贡献未由本页测量。','hint'));}
+  else {const credit=n.rds.edge!==undefined?credits.edges.get(record.id):credits.nodes.get(record.id);card.append(el('p','目标相关权重（结构估计）：'+(credit===undefined?'未记录符合完整最短层条件的可分配路径':credit.toFixed(4)),'hint'),el('p','节点排斥倍率：×'+n.rds.chargeWeight.toFixed(2)+'（上限 ×3）','hint'),el('p','按完整最短依赖路线分配；实际研究贡献未由本页测量。','hint'));}
   if(record.scientific_support)card.append(el('p','scientific_support: '+record.scientific_support,'hint'));
-  if(n.rds.edge!==undefined){card.append(el('p','一个菱形代表一条规则；连线角度只是布局，没有数值或逻辑含义。','hint'),el('h4',`${record.premises.length>1?'AND · 所有前提须共同满足':'前提'} → 结论`));for(const m of n.rds.members){const v=view.nodes[m];card.append(button(v.label+' · '+recordById.get(v.rds.record).status,()=>inspect(m),'record-link'));}card.append(el('p','同一结论的不同菱形表示不同路线（OR）。规则已记录不表示前提或结论已经获得支持。','hint'));}
+  if(n.rds.edge!==undefined){card.append(el('p','一个菱形代表一条规则；连线角度只是布局，没有数值或逻辑含义。','hint'),el('h4',`${record.premises.length>1?'AND · 所有前提须共同满足':'前提'} → 结论`));for(const m of n.rds.members){const v=view.nodes[m];card.append(button(v.label+' · '+recordById.get(v.rds.record).status,()=>navigate(m),'record-link'));}card.append(el('p','同一结论的不同菱形表示不同路线（OR）。规则已记录不表示前提或结论已经获得支持。','hint'));}
   else if(n.rds.kind==='观测')card.append(el('p','观测/事实记录使用独立样式，颜色不表示科学支持。','hint'));
-  const related=g.links.filter(l=>l.source.id===id||l.target.id===id);if(related.length&&n.rds.edge===undefined){card.append(el('h4','关联节点'));for(const l of related){const other=l.source.id===id?l.target:l.source;card.append(button(other.label+' · '+l.rds.relation,()=>inspect(other.id),'record-link'));}}
+  const related=view.links.filter(([s,t,meta])=>(s===id||t===id)&&(opts.scope||meta.family!=='membership')).map(([s,t,rds])=>({source:{id:s,label:view.nodes[s].label},target:{id:t,label:view.nodes[t].label},rds}));if(related.length&&n.rds.edge===undefined){card.append(el('h4','关联节点'));for(const l of related){const other=l.source.id===id?l.target:l.source;card.append(button(other.label+' · '+l.rds.relation,()=>navigate(other.id),'record-link'));}}
   if(!n.rds.virtual&&n.rds.edge===undefined&&!baseLinks.some(([s,t])=>s===id||t===id))card.append(el('p','原始未关联记录：只有项目归属，尚未记录科研依赖或精确来源关联。','hint'));
   card.append(el('h4',n.rds.virtual?'显示层依据':'原始记录'),el('pre',JSON.stringify(record,null,2)));const bindings=related.filter(l=>l.rds.binding).map(l=>l.rds.binding);if(bindings.length)card.append(el('h4','绑定依据'),el('pre',JSON.stringify(bindings,null,2)));
  }
@@ -929,8 +1085,10 @@ def main(argv=None):
             raise ValueError("Use --large only with --demo, and --demo without --hypergraph")
         if bool(args.replica_root) != bool(args.pixi_js):
             raise ValueError("Use --replica-root and --pixi-js together")
-        if args.hypergraph and output == Path(args.hypergraph).resolve():
-            raise ValueError("Output must not overwrite the hypergraph input")
+        if args.hypergraph:
+            source = Path(args.hypergraph).resolve()
+            if output == source or output.exists() and source.exists() and output.samefile(source):
+                raise ValueError("Output must not overwrite the hypergraph input")
         result = read_graph(root, args.hypergraph, demo=args.demo, large=args.large)
         if args.hypergraph and result["status"] == "UNAVAILABLE":
             raise ValueError(result["reason"])

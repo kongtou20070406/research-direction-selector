@@ -15,7 +15,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rds_hypergraph_view import (JS, D3_BUNDLE, graph_view, read_graph, render_html, large_demo,
-    replica_view, dependency_levels, render_replica_html, patch_replica_worker,
+    replica_view, dependency_levels, render_replica_html, patch_replica_worker, _legacy_record_report,
     patch_replica_renderer, REPLICA_APP, REPLICA_FILES)
 from rds_tms_store import current, save
 
@@ -79,7 +79,7 @@ class HypergraphViewTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         snapshot = self.payload(output.read_text(encoding="utf-8"))
         self.assertEqual(snapshot["status"], "AVAILABLE")
-        self.assertEqual(snapshot["source"], str(source))
+        self.assertTrue(Path(snapshot["source"]).samefile(source))
         self.assertIn("removed JSON code fence", str(snapshot["input_review"]))
         self.assertFalse((self.root / ".rds").exists())
 
@@ -180,6 +180,39 @@ class HypergraphViewTests(unittest.TestCase):
         self.assertNotIn("receipts", result)
         self.assertFalse((self.root / ".rds").exists())
 
+    def test_hardlink_output_alias_is_rejected_without_touching_input(self):
+        source, output = self.root / "snapshot.json", self.root / "alias.html"
+        original = json.dumps(example()).encode("utf-8")
+        source.write_bytes(original)
+        os.link(source, output)
+        self.assertTrue(source.samefile(output))
+        result = self.export("--hypergraph", source, "--output", output)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not overwrite", result.stderr)
+        self.assertEqual(source.read_bytes(), original)
+        self.assertEqual(output.read_bytes(), original)
+        self.assertFalse((self.root / ".rds").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows 8.3 file aliases")
+    def test_windows_short_source_path_reports_the_same_file(self):
+        import ctypes
+        source = self.root / "long-synthetic-dependency-snapshot.json"
+        original = json.dumps(example()).encode("utf-8")
+        source.write_bytes(original)
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(source), buffer, len(buffer))
+        self.assertGreater(length, 0)
+        short = Path(buffer.value)
+        self.assertTrue(short.samefile(source))
+        if str(short).lower() == str(source).lower():
+            self.skipTest("8.3 name generation disabled on this volume")
+        output = self.root / "short-path-view.html"
+        result = self.export("--hypergraph", short, "--output", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = self.payload(output.read_text(encoding="utf-8"))
+        self.assertTrue(Path(snapshot["source"]).samefile(source))
+        self.assertEqual(source.read_bytes(), original)
+
     def test_thousand_node_graph_is_complete_without_combinatorial_analysis(self):
         spec = large_demo()
         with patch("rds_hypergraph_view.analyze_hypergraph", side_effect=AssertionError("Large analysis")):
@@ -260,20 +293,163 @@ class ReplicaViewTests(unittest.TestCase):
     def test_provenance_uses_exact_bindings_not_text_or_status(self):
         spec={"schema":1,"nodes":[
             {"id":"owned:run:r","status":"SUPPORTED","source":"run r","manifest_sha256":"m"},
-            {"id":"owned:receipt:r","status":"SUPPORTED","source":"receipt r","receipt_sha256":"receipt-sha"},
+            {"id":"owned:receipt:r","status":"SUPPORTED","source":"receipt r","receipt_sha256":"b"*64},
             {"id":"artifact","status":"SUPPORTED","source":{"file":"out/a.json","sha256":"a"*64,"locator":"artifact"},"run_id":"r","interpretation":"UNPARSED"},
-            {"id":"fact","status":"UNKNOWN","source":{"file":"out/a.json","path":"out/a.json","sha256":"a"*64,"receipt_id":"receipt-sha","locator":"fact"}},
+            {"id":"fact","status":"UNKNOWN","source":{"file":"out/a.json","path":"out/a.json","sha256":"a"*64,"receipt_id":"b"*64,"locator":"fact"}},
             {"id":"similar","status":"SUPPORTED","source":"out/a.json receipt-sha"},
             {"id":"other-path","status":"UNKNOWN","source":{"file":"out/b.json","path":"out/b.json","sha256":"a"*64,"locator":"different"}},
             {"id":"bad-extra","status":"UNKNOWN","source":{"locator":"unknown","receipt_id":{}},"run_id":[]}],
             "hyperedges":[{"id":"done","premises":["owned:run:r"],"conclusion":"owned:receipt:r","status":"SUPPORTED","source":"receipt"}],"goals":["fact"]}
         result=graph_view(spec,"fixture");view=replica_view(result)
         provenance=[l for l in view["links"] if l[2]["family"]=="provenance"]
-        self.assertEqual({(s,t) for s,t,_ in provenance},{("c0","c2"),("c1","c3"),("c2","c3")})
+        self.assertEqual({(s,t) for s,t,_ in provenance},{("c0","c1"),("c0","c2"),("c1","c2"),("c0","c3"),("c2","c3")})
         self.assertTrue(all(l[2]["binding"] for l in provenance))
         self.assertIsNone(view["nodes"]["c4"]["rds"]["group"])
         self.assertEqual(view["nodes"]["c3"]["rds"]["group"],"r")
         self.assertEqual(result["graph"],spec)
+
+    @staticmethod
+    def record_fixture(legacy=False):
+        nodes = []
+        for run, receipt in (("a", "b" * 64), ("b", "c" * 64)):
+            nodes.extend([
+                {"id": f"owned:run:{run}", "status": "SUPPORTED", "source": "fixture",
+                 "record_kind": "run", "run_id": run, "manifest_sha256": "d" * 64},
+                {"id": f"owned:receipt:{run}", "status": "SUPPORTED", "source": "fixture",
+                 "record_kind": "receipt", "run_id": run, "receipt_id": receipt, "receipt_sha256": receipt},
+                {"id": f"artifact:{run}", "status": "SUPPORTED", "record_kind": "artifact", "run_id": run,
+                 "receipt_id": receipt, "interpretation": "UNPARSED",
+                 "source": {"file": "out/shared.json", "sha256": "a" * 64, "locator": "fixture"}}])
+        nodes.extend([
+            {"id": "observation:a", "status": "UNKNOWN", "record_kind": "observation", "run_id": "a",
+             "source": {"file": "out/shared.json", "path": "out/shared.json", "sha256": "a" * 64, "receipt_id": "b" * 64, "locator": "fixture"}},
+            {"id": "declared:a", "status": "UNKNOWN", "record_kind": "declared_output", "run_id": "a",
+             "output_path": "out/pending.json", "interpretation": "PENDING", "source": "fixture"},
+            {"id": "ordinary-goal", "status": "UNKNOWN", "source": "fixture"}])
+        if legacy:
+            for row in nodes:
+                row.pop("record_kind", None)
+                row.pop("receipt_id", None)
+                if row["id"].startswith(("owned:run:", "owned:receipt:", "observation:")):
+                    row.pop("run_id", None)
+        edges = [{"id": "claim", "premises": ["owned:run:a"], "conclusion": "ordinary-goal",
+                  "status": "PROPOSED", "source": "fixture"},
+                 {"id": "completion", "premises": ["owned:run:a"], "conclusion": "owned:receipt:a",
+                  "status": "SUPPORTED", "source": "fixture"}]
+        return {"schema": 1, "nodes": nodes, "hyperedges": edges, "goals": ["ordinary-goal", "observation:a"]}
+
+    def test_typed_and_legacy_artifacts_do_not_cross_runs_or_supply_support(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.record_fixture(legacy)
+                result = graph_view(spec, "fixture")
+                before = deepcopy(result)
+                view = replica_view(result)
+                pairs = {(r["from"], r["to"]) for r in view["record_relations"] if r["kind"] == "artifact_observation"}
+                self.assertEqual(pairs, {("artifact:a", "observation:a")})
+                declaration = next(l for l in view["links"] if l[2]["family"] == "declaration")
+                self.assertEqual(declaration[2]["relation"], "声明输出")
+                self.assertEqual(view["declaration_count"], 1)
+                self.assertTrue(all(r["scientific_support"] == "UNKNOWN" for r in view["record_relations"]))
+                self.assertIsNone(view["nodes"]["c8"]["rds"]["group"])
+                self.assertEqual(view["nodes"]["c1"]["rds"]["group"], "a")
+                self.assertIsNone(view["nodes"]["c4"]["rds"]["group"])
+                self.assertIsNone(view["nodes"]["h0"]["rds"]["group"])
+                self.assertEqual(result, before)
+                self.assertNotIn("observation:a", result["analysis"]["declared_supported_closure"])
+
+    def test_ambiguous_and_conflicting_artifact_bindings_block_only_that_relation(self):
+        for mutation, reason in (("duplicate_artifact", "AMBIGUOUS_BINDING"),
+                                 ("artifact_receipt", "CONFLICTING_BINDINGS"),
+                                 ("observation_path", "CONFLICTING_BINDINGS"),
+                                 ("duplicate_receipt", "AMBIGUOUS_BINDING")):
+            with self.subTest(mutation=mutation), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.record_fixture()
+                if mutation == "duplicate_artifact":
+                    row = deepcopy(spec["nodes"][2]); row["id"] = "duplicate-artifact"; spec["nodes"].append(row)
+                elif mutation == "artifact_receipt":
+                    # Same run has another explicit receipt; local run binding
+                    # survives while artifact->observation fails receipt identity.
+                    spec["nodes"][4]["run_id"] = "a"
+                    spec["nodes"][2]["receipt_id"] = "c" * 64
+                elif mutation == "observation_path":
+                    spec["nodes"][6]["source"]["file"] = "out/conflict.json"
+                else:
+                    row = deepcopy(spec["nodes"][1]); row["id"] = "duplicate-receipt"; spec["nodes"].append(row)
+                view = replica_view(graph_view(spec, "fixture"))
+                artifact_links = [r for r in view["record_relations"] if r["kind"] == "artifact_observation"]
+                if mutation == "duplicate_receipt":
+                    # Explicit run/path/sha/receipt strings still match locally;
+                    # no ambiguous receipt origin can become a display edge.
+                    self.assertFalse(any(r["kind"] in {"run_receipt", "receipt_artifact"} and r["to"] in {"owned:receipt:a", "duplicate-receipt", "artifact:a"} for r in view["record_relations"]))
+                else:
+                    self.assertFalse(artifact_links)
+                self.assertTrue(any(i["reason"] == reason for i in view["record_topology"]["issues"]))
+                if mutation == "artifact_receipt":
+                    self.assertTrue(any(r["kind"] == "run_observation" for r in view["record_relations"]))
+
+    def test_large_graph_calls_available_record_backend_without_analysis(self):
+        spec = self.record_fixture()
+        spec["nodes"].extend({"id": f"extra:{i}", "status": "UNKNOWN", "source": "fixture"} for i in range(210))
+        report = {"record_relations": [{"kind": "run_observation", "from": "owned:run:a", "to": "observation:a",
+                   "binding": "REPORTED_EXACT_ID_MATCH", "scientific_support": "UNKNOWN"}],
+                  "record_topology": {"issues": [], "assurance": "REPORTED_RECORD_IDENTITIES_NOT_SCIENTIFIC_SUPPORT"}}
+        with patch("rds_hypergraph.record_topology", return_value=report, create=True) as backend:
+            result = graph_view(spec, "fixture")
+            self.assertEqual(result["analysis_status"], "NOT_RUN_LARGE_GRAPH")
+            view = replica_view(result)
+        backend.assert_called_once()
+        self.assertEqual(view["record_relations"], report["record_relations"])
+        self.assertEqual(result["graph"], spec)
+
+    def test_locale_labels_survive_both_exports_including_owned_nodes(self):
+        spec = self.record_fixture()
+        spec["nodes"][0]["label"] = {"zh": "执行甲", "en": "Run A"}
+        spec["nodes"][6]["label"] = {"en": "Uninterpreted observation"}
+        result = graph_view(spec, "fixture")
+        view = replica_view(result)
+        self.assertEqual(view["nodes"]["c0"]["label"], "执行甲")
+        self.assertEqual(view["nodes"]["c6"]["label"], "Uninterpreted observation")
+        self.assertEqual(HypergraphViewTests.payload(render_html(result))["graph"], spec)
+
+    def test_malformed_extra_record_kind_reports_issue_without_changing_unknown(self):
+        for kind in ({}, []):
+            with self.subTest(kind=kind), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.record_fixture()
+                spec["nodes"][6]["record_kind"] = kind
+                before = deepcopy(spec)
+                result = graph_view(spec, "fixture")
+                view = replica_view(result)
+                self.assertEqual(result["graph"], before)
+                self.assertEqual(result["graph"]["nodes"][6]["status"], "UNKNOWN")
+                self.assertEqual(view["nodes"]["c6"]["rds"]["kind"], "声明")
+                self.assertTrue(any(i["node_id"] == "observation:a" and i["reason"] == "INVALID_RECORD_KIND"
+                                    for i in view["record_topology"]["issues"]))
+
+    def test_large_record_graph_without_limits_validates_only_an_adapted_copy(self):
+        spec = large_demo()
+        spec.pop("limits", None)
+        spec["nodes"].extend(self.record_fixture()["nodes"])
+        before = deepcopy(spec)
+
+        def strict_backend(adapted):
+            # Match the actual backend entry point's strict validation step.
+            from rds_hypergraph import _validate
+            _validate(adapted)
+            self.assertEqual(adapted["limits"]["max_nodes"], 4096)
+            self.assertEqual(adapted["limits"]["max_hyperedges"], 8192)
+            return _legacy_record_report(adapted)
+
+        with patch("rds_hypergraph_view.analyze_hypergraph", side_effect=AssertionError("No combinatorial analysis")), \
+             patch("rds_hypergraph.record_topology", side_effect=strict_backend, create=True) as backend:
+            result = graph_view(spec, "fixture")
+            self.assertEqual(result["analysis_status"], "NOT_RUN_LARGE_GRAPH")
+            view = replica_view(result)
+        backend.assert_called_once()
+        self.assertTrue(any(r["kind"] == "artifact_observation" for r in view["record_relations"]))
+        self.assertEqual(result["graph"], before)
+        self.assertEqual(spec, before)
+        self.assertNotIn("limits", result["graph"])
 
     def test_cycle_ranks_are_shared_and_long_chain_does_not_recurse(self):
         ids=["a","b","c","orphan"]
@@ -322,11 +498,16 @@ const eq=(got,want)=>{if(Math.abs(got-want)>1e-10)throw Error(`${got} != ${want}
 eq(c.nodes.get('goal'),1);eq(c.edges.get('and'),.75);eq(c.nodes.get('p'),.375);eq(c.nodes.get('q'),.375);eq(c.nodes.get('r'),.25);eq(c.nodes.get('shared'),.75);
 if(c.nodes.has('bad')||c.nodes.has('orphan')||c.edges.has('cycle')||JSON.stringify(spec)!==before)throw Error('Status, cycle or input boundary broken');
 if(scope.goalCredits(spec,'missing').nodes.size)throw Error('Invented missing goal');
+const mixed={nodes:['goal','p','q','r','s'].map(id=>({id,status:'UNKNOWN'})),goals:['goal'],hyperedges:[edge('main',['p','q'],'goal'),edge('alternative',['r'],'goal'),edge('mixed-depth',['q','s'],'p')]};
+const m=scope.goalCredits(mixed,'goal');eq(m.edges.get('main'),.5);eq(m.nodes.get('p'),.25);eq(m.nodes.get('q'),.25);eq(m.nodes.get('r'),.5);
+if(m.edges.has('mixed-depth')||m.nodes.has('s'))throw Error('A partially shortest AND route lost a premise share');
+const empty={nodes:['goal','p','q'].map(id=>({id})),goals:['goal'],hyperedges:[edge('assumption',[],'goal'),edge('and',['p','q'],'goal',3)]};
+const a=scope.goalCredits(empty,'goal');eq(a.edges.get('assumption'),.25);eq(a.edges.get('and'),.75);eq(a.nodes.get('p'),.375);eq(a.nodes.get('q'),.375);
 const tricky={nodes:[{id:'__proto__'},{id:'constructor'}],hyperedges:[edge('toString',['constructor'],'__proto__')],goals:['__proto__']};
 eq(scope.goalCredits(tricky,'__proto__').nodes.get('constructor'),1);
 const chain={nodes:Array.from({length:4096},(_,i)=>({id:String(i)})),hyperedges:Array.from({length:4095},(_,i)=>edge(String(i),[String(i)],String(i+1))),goals:['4095']};
 eq(scope.goalCredits(chain,'4095').nodes.get('0'),1);
-console.log('AND/OR credit, shared premise, contradicted/zero route, cycle, missing goal, prototype IDs and long chain PASS');
+console.log('AND/OR credit, whole-route mixed-depth eligibility, assumption-free route, shared premise, contradicted/zero route, cycle, missing goal, prototype IDs and long chain PASS');
 '''
         with tempfile.TemporaryDirectory() as tmp:
             script=Path(tmp)/"weights.cjs";script.write_text(driver,encoding="utf-8")
@@ -434,6 +615,108 @@ console.log(JSON.stringify({none,attract,repel,zero,flow,group,light,heavy,cappe
                     path=Path(tmp)/f"part-{i}.js";path.write_text(script,encoding="utf-8")
                     check=subprocess.run([shutil.which("node"),"--check",str(path)],capture_output=True,text=True,encoding="utf-8",timeout=10)
                     self.assertEqual(check.returncode,0,check.stderr)
+
+
+class _JSBoundaryTests(unittest.TestCase):
+    """Execute production scripts; stub only browser/renderer transport boundaries."""
+
+    DOM_STUB = r'''
+const vm=require('node:vm'), assert=require('node:assert/strict');
+function browser(payload,blocked=false){
+ const ids={},created=[],frames=[],workers=[],listeners={};let clock=0;
+ function context(){return new Proxy({paths:[],path:[],beginPath(){this.path=[]},moveTo(x,y){this.path.push([x,y])},lineTo(x,y){this.path.push([x,y])},stroke(){this.paths.push(this.path.slice())},measureText(){return {width:40}},createRadialGradient(){return {addColorStop(){}}}},{get(t,k){return k in t?t[k]:()=>{}}});}
+ class Element{
+  constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.events={};this.dataset={};this.style={setProperty(){}};this._text='';this.ctx=context();const classes=new Set();this.classList={add:x=>classes.add(x),remove:x=>classes.delete(x),contains:x=>classes.has(x),toggle:x=>classes.has(x)?classes.delete(x):classes.add(x)};created.push(this);}
+  set id(v){this._id=v;ids[v]=this}get id(){return this._id}
+  set textContent(v){this._text=String(v)}get textContent(){return this._text}
+  append(...cs){this.children.push(...cs)}replaceChildren(...cs){this.children=cs}
+  setAttribute(k,v){this[k]=v}addEventListener(k,f){const old=this.events[k];this.events[k]=old?e=>{old(e);f(e)}:f}
+  getContext(){return this.ctx}getBoundingClientRect(){return {left:0,top:0,width:1000,height:700}}setPointerCapture(){}
+ }
+ const get=id=>ids[id]||Object.assign(new Element('div'),{id});
+ get('snapshot').textContent=JSON.stringify(payload);get('app');get('d3-worker-library').textContent='';
+ const document={hidden:false,getElementById:get,createElement:t=>new Element(t),addEventListener:(k,f)=>listeners[k]=f,body:new Element('body')};
+ const scope={document,window:{addEventListener(){}},devicePixelRatio:1,performance:{now:()=>clock+=16},requestAnimationFrame:f=>frames.push(f),ResizeObserver:class{observe(){}disconnect(){}},Blob:class{},URL:{createObjectURL:()=> 'blob:test',revokeObjectURL(){}},Worker:class{constructor(){if(blocked)throw Error('blocked');workers.push(this)}postMessage(d){this.sent=structuredClone(d)}terminate(){this.dead=true}},setInterval:()=>1,clearInterval(){},setTimeout:()=>1,clearTimeout(){},console};
+ vm.createContext(scope);
+ const flush=()=>{let left=1000;while(frames.length&&left--)frames.shift()();assert.equal(frames.length,0,'draw must quiesce')};
+ const visibility=hidden=>{document.hidden=hidden;listeners.visibilitychange()};
+ const descendants=e=>[e,...e.children.flatMap(c=>typeof c==='object'?descendants(c):[])];
+ const text=e=>[e.textContent,...e.children.map(c=>typeof c==='object'?text(c):String(c))].join(' ');
+ return {scope,ids,created,workers,flush,visibility,descendants,text};
+}
+'''
+
+    def run_js(self, production, driver):
+        script = self.DOM_STUB + "\nconst production=" + json.dumps(production) + ";\n" + driver
+        result = subprocess.run([shutil.which("node"), "-"], input=script,
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        print(result.stdout.strip())
+
+
+@unittest.skipUnless(shutil.which("node"), "Node required for actual Canvas interaction boundaries")
+class CanvasBoundaryTests(_JSBoundaryTests):
+    def test_layout_junction_failure_and_visibility_interactions(self):
+        self.run_js(JS, r'''
+const payload={status:'AVAILABLE',source:'synthetic',graph:{nodes:[{id:'g',label:'Conclusion',status:'UNKNOWN',source:'fixture'}],hyperedges:[{id:'e',premises:[],conclusion:'g',relation:'R',status:'UNKNOWN',source:'fixture'}],goals:['g']}};
+function run(blocked=false){const b=browser(payload,blocked);vm.runInContext(production,b.scope,{timeout:5000});return b;}
+function finish(b){b.workers.at(-1).onmessage({data:{positions:new Float32Array([0,0]),ticks:180,ms:10,ready:true,done:true}});b.flush();}
+const settled=run();finish(settled);
+const segment=settled.ids['hg-canvas'].ctx.paths.find(p=>p.length>=2);
+assert.ok(Math.hypot(segment[1][0]-segment[0][0],segment[1][1]-segment[0][1])>10,'premise-free rule needs a visible incidence segment');
+// A real pointer selection must reach the premise-free rule rather than its conclusion.
+const c=settled.ids['hg-canvas'];c.events.pointerdown({button:0,clientX:segment[0][0],clientY:segment[0][1],pointerId:1});c.events.pointerup();
+assert.match(settled.text(settled.ids['hg-detail']),/超边详情/);
+settled.visibility(true);settled.visibility(false);assert.equal(settled.workers.length,1,'settled graph must not reheat on tab return');
+const active=run();active.visibility(true);assert.ok(active.workers[0].dead);active.visibility(false);active.visibility(false);assert.equal(active.workers.length,2,'running layout resumes exactly once');
+const paused=run();paused.ids['hg-pause'].events.click();paused.visibility(true);paused.visibility(false);assert.equal(paused.workers.length,1,'manual pause survives visibility change');
+for(const blocked of [true,false]){const b=run(blocked);if(!blocked)b.workers[0].onerror();b.flush();b.ids['hg-zoom-in'].events.click();b.ids['hg-canvas'].events.keydown({key:'ArrowRight',preventDefault(){}});b.flush();assert.equal(b.ids['hg-canvas'].dataset.layoutState,'unavailable');assert.match(b.ids['hg-performance'].textContent,/布局线程不可用/);assert.doesNotMatch(b.ids['hg-performance'].textContent,/已稳定/);}
+console.log('Canvas: selectable empty-premise route, settled/running/manual pause visibility, sync/async worker failure after pan and zoom PASS');
+''')
+
+    def test_many_relations_bound_live_controls_and_edit_last_page(self):
+        self.run_js(JS, r'''
+const graph={nodes:[{id:'g',status:'UNKNOWN',source:'fixture'}],hyperedges:Array.from({length:8192},(_,i)=>({id:'e'+i,premises:[],conclusion:'g',relation:'R'+i,status:'UNKNOWN',source:'fixture'})),goals:['g']};
+const b=browser({status:'AVAILABLE',source:'synthetic',graph});vm.runInContext(production,b.scope,{timeout:10000});
+assert.ok(b.created.length<2000,'first render must not materialize thousands of relation editors');
+const next=b.created.find(e=>e.tagName==='BUTTON'&&e.textContent==='下一页');assert.ok(next);
+for(let i=0;i<255;i++)next.events.click();assert.equal(next.disabled,true);
+let live=b.descendants(b.ids.app);assert.ok(live.length<2000,'last page also bounds retained DOM');
+const mode=live.find(e=>e.tagName==='SELECT'&&e['aria-label']==='R8191 · 力学作用');assert.ok(mode,'last allowed relation remains editable');
+mode.value='repel';mode.events.change();
+const previous=live.find(e=>e.tagName==='BUTTON'&&e.textContent==='上一页');previous.events.click();next.events.click();
+live=b.descendants(b.ids.app);assert.equal(live.find(e=>e['aria-label']==='R8191 · 力学作用').value,'repel','paging retains edits');
+console.log('Canvas: 8192 relation editors bounded on first/last page and tail relation edit retained PASS');
+''')
+
+
+@unittest.skipUnless(shutil.which("node"), "Node required for actual Replica interaction boundaries")
+class ReplicaBoundaryTests(_JSBoundaryTests):
+    def test_proto_settings_clone_reload_and_filtered_related_navigation(self):
+        self.run_js(REPLICA_APP, r'''
+const binding={run_id:'owned-run',receipt_id:'receipt-1'},records=[{id:'fact',label:'needle fact',status:'UNKNOWN',source:'fixture'},{id:'run',label:'Owned execution',status:'UNKNOWN',source:'fixture'}];
+const nodes={f:{label:'needle fact',type:'claim',rds:{record:'fact',kind:'声明',size:1}},r:{label:'Owned execution',type:'claim',rds:{record:'run',kind:'执行',size:1}}};
+const payload={status:'AVAILABLE',source:'synthetic',snapshot_sha256:'fixture',counts:{nodes:2,hyperedges:0},graph:{nodes:records,hyperedges:[],goals:[]},replica_view:{nodes,links:[['r','f',{relation:'__proto__',family:'provenance',binding,color:'#aabbcc',width:1}]],relations:['__proto__','constructor','toString'],provenance_count:1}};
+let saved=JSON.stringify({search:'needle',growth:false});
+function run(){const b=browser(payload);b.scope.localStorage={getItem:()=>saved,setItem:(k,v)=>saved=v};b.scope.SIM_WORKER_MAIN='';b.scope.PIXI={Texture:{WHITE:{}}};
+ b.scope.GraphRenderer=class{
+  constructor(){b.renderer=this;this.nodes=[];this.links=[];this.nodeLookup=new Map();this.width=1000;this.height=700;this.worker={onmessage(){},postMessage:d=>{this.message=structuredClone(d)},terminate(){}};}
+  setData({nodes,links}){this.nodes=Object.entries(nodes).map(([id,n])=>({...n,id,x:0,y:0,getSize(){return 10}}));this.nodeLookup=new Map(this.nodes.map(n=>[n.id,n]));this.links=links.map(([s,t,rds])=>({source:this.nodeLookup.get(s),target:this.nodeLookup.get(t),rds}));}
+  setForces(p){this.forces=structuredClone(p)}setOptions(){}changed(){}resetPan(){}zoomTo(){}setScale(){}setPan(){}
+ };
+ vm.runInContext(production,b.scope,{timeout:5000});return b;
+}
+const b=run();assert.ok(b.renderer.nodeLookup.has('f'));assert.ok(!b.renderer.nodeLookup.has('r'),'fixture must filter out provenance target');
+const mode=b.created.find(e=>e['aria-label']==='__proto__ 力学');assert.ok(mode);mode.value='none';mode.events.change();
+assert.equal(Object.hasOwn(b.renderer.forces.relations,'__proto__'),true);assert.equal(b.renderer.forces.relations.__proto__.mode,'none','worker clone preserves selected force');
+assert.equal(Object.hasOwn(JSON.parse(saved).relations,'__proto__'),true);
+b.renderer.onNodeClick(b.renderer.nodeLookup.get('f'));
+assert.match(b.text(b.ids['note-card']),/receipt-1/,'binding evidence survives filter');
+const link=b.descendants(b.ids['note-card']).find(e=>e.tagName==='BUTTON'&&e.textContent.includes('Owned execution'));assert.ok(link,'complete related target remains navigable');link.events.click();
+assert.ok(b.renderer.nodeLookup.has('r'));assert.equal(JSON.parse(saved).search,'');assert.match(b.text(b.ids['note-card']),/Owned execution/,'navigation rebuilds then opens related target');
+const reloaded=run();assert.equal(reloaded.created.find(e=>e['aria-label']==='__proto__ 力学').value,'none','reload preserves prototype-key relation');
+console.log('Replica: prototype-key force own property through worker clone/JSON/reload, full binding and filtered related-record navigation PASS');
+''')
 
 
 if __name__ == "__main__":
