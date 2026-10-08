@@ -18,6 +18,57 @@ It returns the generated proposal before experimental execution; the next
 `drive` call goes through the ordinary candidate selection and experiment path.
 Projects without the binding keep the existing Agent handoff.
 
+## Return the jump to the AI
+
+Generation completes by returning `agent_context`, a hash-bound
+`rds-jump-packet-v1` containing the actual new premises, representation changes,
+rival predictions, discriminating experiment, original source locators and current
+independent feedback. The same projection is available as
+`advise --working-set` -> `working_set.jump_packet`. A continuing Agent reads it
+before choosing the next explanation or experiment, and records its decision in
+the existing checkpoint. `NO_CANDIDATE` still returns the measured discrepancies,
+retrieved inputs and search limits, giving the AI concrete material for another
+approach without inventing an explanation.
+
+The program-owned autonomy adapter also embeds this packet in the frozen model
+request and the actual provider stdin prompt. When present, the reply requires
+`jump_use_json`, a JSON string with the following shape:
+
+```json
+{
+  "schema": 1,
+  "packet_sha256": "<exact delivered packet digest>",
+  "decisions": [
+    {"id": "<delivered item id>", "disposition": "adapt",
+     "reason": "The interaction explains the residual under these assumptions.",
+     "next_step": "Implement that interaction and test its separating prediction."}
+  ]
+}
+```
+
+Every item needs exactly one `adopt`, `adapt`, `reject` or `defer` decision, a
+reason and a concrete next step. The response validator checks the digest,
+inventory and bounded nonempty decision fields, rejecting simple ACK-only replies.
+It cannot establish the semantic quality or causal role of that explanation.
+Ordinary method validation and independent execution still determine whether the
+returned code can be adopted and what its result supports.
+
+The existing ledger records `AUTONOMY_JUMP_REFERENCED` with the exact request,
+original response receipt, decisions and returned source/policy hashes. Provider
+dispatch also retains the prompt digest. Packet availability, attempted provider
+delivery, a response that references the packet, method adoption and experimental
+support remain separate observations. A dispatch intent alone does not prove
+receipt by a provider; neither a citation nor adoption proves scientific benefit.
+
+The packet is at most 32 KiB. Oversized content is retained whole in the existing
+CAS with `NEEDS_ORIGINAL` and explicit omissions; altered or unavailable originals
+yield `UNAVAILABLE`. An autonomous model request waits for complete current
+evidence in either case. The Agent can inspect the original and continue through
+the existing authorized workflow. Repeated packet reads do not start another
+generator or model call. Tests exercise original jump projection separately from
+real local fixture-provider stdin/response/adoption; no paid model or model-level
+scientific improvement is measured by those tests.
+
 ## What actually generates the explanation
 
 The bundled, executable finite integer adapter demonstrates all three inputs:

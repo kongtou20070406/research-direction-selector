@@ -5,6 +5,7 @@ Domain workers generate explanations; structure retains and tests them.
 """
 from copy import deepcopy
 import hashlib
+import re
 
 from rds_artifacts import strict_json
 from rds_project import ProjectStore, digest, require, TERMINAL
@@ -12,6 +13,178 @@ import rds_structure as structure
 
 POLICY_PATH = 'jump-generation.json'
 KINDS = ('probe', 'refresh', 'synthesize')
+PACKET_SCHEMA = 'rds-jump-packet-v1'
+PACKET_BYTES = 32 * 1024
+
+
+def _seal(value):
+    return {**value, 'sha256': digest(value)}
+
+
+def packet(store):
+    """Project verified current jump evidence for an AI, without claiming use.
+
+    A projection writes only an oversized original to the existing CAS. It does
+    not reserve resources, dispatch, record acknowledgement, or change verdicts.
+    All predicates are delivered intact or the entire payload requires an original.
+    """
+    from rds_project import canonical
+    from rds_quick import cas_json
+    from rds_tms_store import current
+    value = {'schema': PACKET_SCHEMA, 'status': 'UNAVAILABLE', 'items': [],
+             'omissions': {'items': 0, 'generation_results': False},
+             'original_scope': None, 'sources': [], 'scientific_support': 'UNKNOWN',
+             'use_assurance': 'NOT_RECORDED', 'authorization': 'UNCHANGED'}
+    try:
+        state = store.snapshot()
+        plan = load_plan(store, state)
+        if plan is None:
+            return None
+        ident = 'jump-' + digest({'contract': state['contract_sha256'], 'plan': plan})[:24]
+        started = structure._find(store, 'JUMP', ident)
+        if started is None:
+            return None
+        event_sha = digest(structure._events(store))
+        req = structure._find(store, 'REQUEST', started['request_id'])
+        require(req is not None and digest(req) == started['request_sha256'], 'Jump request changed')
+        require(started['plan_sha256'] == digest(plan), 'Jump plan identity changed')
+        value.update(id=ident, original_scope=deepcopy(req['scope']),
+                     scope_sha256=req['scope_sha256'], request_id=req['id'],
+                     request_sha256=digest(req), goal=req['goal'])
+        _, saved = structure._live(store, req, allow_owned_updates=True)
+        finished = structure._find(store, 'JUMP_FINISHED', ident)
+        require(finished is not None, 'Jump generation has not finished; recover its original attempts')
+        require(finished['status'] in {'JUMP_PROPOSED', 'NO_CANDIDATE'}, 'Unsupported jump completion')
+        prior, results = [], {}
+        runs = {r['id']: r for r in state['runs']}
+        for stage in plan['stages']:
+            retained = runs.get(stage['run']['id'])
+            require(retained is not None and retained['manifest_sha256'] == digest(stage['run']),
+                    'Jump source manifest identity changed')
+            result, ref = _read_stage(store, stage, req, prior)
+            require(isinstance(result, dict), 'Jump result must be an object')
+            # Proposals are represented once, as verified retained items below.
+            results[stage['kind']] = deepcopy({k: v for k, v in result.items() if k != 'proposals'})
+            prior.append(ref)
+        require(prior == finished['sources'], 'Finished jump source identity changed')
+        source_result = result  # Reuse the already hash-checked synthesis original.
+        raw_proposals = source_result.get('proposals')
+        require(isinstance(raw_proposals, list) and len(raw_proposals) <= 4,
+                'Invalid original generated proposal inventory')
+        require([p.get('id') for p in raw_proposals] == finished['proposal_ids'],
+                'Retained jump proposal inventory changed')
+        require(source_result.get('status') == ('PROPOSED' if raw_proposals else 'NO_CANDIDATE')
+                and finished['status'] == ('JUMP_PROPOSED' if raw_proposals else 'NO_CANDIDATE'),
+                'Jump completion and original synthesis disagree')
+        observed = {r['id']: r for r in structure._verified_feedback(store, req['scope_sha256'])}
+        items = []
+        for raw in raw_proposals:
+            row = structure._find(store, 'PROPOSAL', raw['id'])
+            require(row is not None and row['scope_sha256'] == req['scope_sha256']
+                    and row['proposal_sha256'] == digest(row['proposal']), 'Jump proposal identity changed')
+            proposal = row['proposal']
+            admitted = structure._find(store, 'REQUEST', row['request_id'])
+            require(admitted is not None and admitted['scope_sha256'] == req['scope_sha256']
+                    and admitted['goal'] == req['goal'], 'Jump proposal admission scope changed')
+            # Admission may bind a later receipt-current search request. The
+            # original explanatory content must still match the generator bytes.
+            expected = deepcopy(raw)
+            require(expected.get('request_id') == req['id'], 'Original generated request changed')
+            expected['request_id'] = proposal['request_id']
+            if 'search_allocation' in row:
+                expected['search'] = {'slot': row['search_allocation']['slot']}
+            for ref in prior:
+                expected['exploration']['sources'].append({'kind': 'local_observation', 'source': deepcopy(ref)})
+            require(expected == proposal, 'Retained explanation differs from original synthesis')
+            feedback = structure._feedback_view(row, observed[raw['id']]) if raw['id'] in observed else None
+            exploration = proposal['exploration']
+            items.append({'id': row['id'], 'kind': 'hypothesis', 'proposal_sha256': row['proposal_sha256'],
+                'explanation': '\n'.join(n['label'] for n in proposal.get('new_nodes', [])),
+                'new_nodes': deepcopy(proposal.get('new_nodes', [])),
+                'assumptions': deepcopy(proposal.get('assumptions', [])),
+                'action_kind': proposal.get('action_kind', 'path_repair'),
+                'change': exploration.get('change'), 'rationale': exploration.get('rationale'),
+                'limitation': exploration.get('limitation'),
+                'unknown_premises': deepcopy(exploration.get('unknown_premises', [])),
+                'prediction': deepcopy(proposal.get('prediction')), 'discriminator': deepcopy(row.get('discriminator')),
+                'topology': deepcopy(proposal.get('topology')), 'test': deepcopy(proposal.get('test')),
+                'sources': deepcopy(exploration['sources']),
+                'observation': feedback['observation'] if feedback else 'UNKNOWN',
+                'status': feedback['status'] if feedback else 'HYPOTHESIS_PENDING',
+                'feedback': deepcopy(feedback), 'scientific_support': 'UNKNOWN'})
+        if not items:
+            items = [{'id': ident, 'kind': 'no_candidate', 'status': 'NO_CANDIDATE',
+                      'observation': 'UNKNOWN', 'reason': source_result.get('reason'),
+                      'next_step': finished['next_move'], 'sources': deepcopy(prior),
+                      'scientific_support': 'UNKNOWN'}]
+        # Check the same cut after hash/feedback replay. No partial packet is
+        # presented as current when a concurrent execution or topology edit moved it.
+        latest = store.snapshot()
+        require(latest['contract_sha256'] == state['contract_sha256']
+                and [r['sha256'] for r in latest['receipts']] == [r['sha256'] for r in state['receipts']]
+                and digest(structure._events(store)) == event_sha
+                and current(store.root)['sha256'] == saved['sha256'], 'Jump evidence changed during projection')
+        value.update(status='CURRENT', items=items, sources=prior, generation_status=finished['status'],
+                     generation_results=results)
+        sealed = _seal(value)
+        if len(canonical(sealed).encode('utf-8')) <= PACKET_BYTES:
+            return sealed
+        original = cas_json(store.root, sealed)
+        summary = {k: deepcopy(v) for k, v in value.items() if k not in {'items', 'generation_results', 'sources'}}
+        summary.update(status='NEEDS_ORIGINAL', items=[], sources=[], original=original,
+                       omissions={'items': len(items), 'generation_results': True, 'sources': len(prior)})
+        sealed = _seal(summary)
+        require(len(canonical(sealed).encode('utf-8')) <= PACKET_BYTES, 'Jump scope exceeds packet limit')
+        return sealed
+    except (ValueError, KeyError, TypeError, OSError, UnicodeError) as exc:
+        # Never expose a partly verified item as an available model premise.
+        value.update(status='UNAVAILABLE', items=[], sources=[], diagnostic=str(exc)[:512])
+        value.pop('generation_results', None)
+        sealed = _seal(value)
+        if len(canonical(sealed).encode('utf-8')) > PACKET_BYTES:
+            value['original_scope'] = {'original': cas_json(store.root, value['original_scope']),
+                                       'details_omitted': True}
+            value['omissions'] = {**value['omissions'], 'original_scope': True}
+            sealed = _seal(value)
+        return sealed
+
+
+def validate_use(context, value):
+    """Validate returned evidence references, not inner reasoning or benefit."""
+    from rds_project import canonical
+    require(isinstance(context, dict) and context.get('schema') == PACKET_SCHEMA
+            and context.get('status') == 'CURRENT', 'Jump use requires complete current delivered evidence')
+    require(context.get('sha256') == digest({k: v for k, v in context.items() if k != 'sha256'}),
+            'Jump packet hash changed')
+    require(len(canonical(context).encode('utf-8')) <= PACKET_BYTES
+            and context.get('omissions') == {'items': 0, 'generation_results': False},
+            'Jump use cannot claim omitted evidence')
+    require(isinstance(value, dict) and set(value) == {'schema', 'packet_sha256', 'decisions'}
+            and type(value['schema']) is int and value['schema'] == 1
+            and value['packet_sha256'] == context['sha256'], 'Jump use packet/schema mismatch')
+    ids = [item['id'] for item in context['items']]
+    require(ids and len(ids) == len(set(ids)), 'Jump packet needs distinct delivered item IDs')
+    decisions = value['decisions']
+    require(isinstance(decisions, list) and len(decisions) == len(ids), 'Jump use must address every delivered item once')
+    checked = {}
+    for decision in decisions:
+        require(isinstance(decision, dict) and set(decision) == {'id', 'disposition', 'reason', 'next_step'},
+                'Invalid jump decision fields')
+        ident, disposition = decision['id'], decision['disposition']
+        require(isinstance(ident, str) and ident in ids and ident not in checked, 'Invented or repeated jump item')
+        require(isinstance(disposition, str) and disposition in {'adopt', 'adapt', 'reject', 'defer'},
+                'Invalid jump disposition')
+        cleaned = {'id': ident, 'disposition': disposition}
+        for field in ('reason', 'next_step'):
+            text = decision[field]
+            require(isinstance(text, str) and 8 <= len(text.strip()) and len(text.encode('utf-8')) <= 2048,
+                    'Jump use needs bounded substantive ' + field)
+            tokens = set(re.findall(r'\w+', text.casefold()))
+            require(tokens and not tokens <= {'ack', 'acknowledged', 'ok', 'okay', 'received', 'noted', '收到', '已收到', '已阅'},
+                    'Acknowledgement alone is not jump use')
+            cleaned[field] = text.strip()
+        checked[ident] = cleaned
+    return {'schema': 1, 'packet_sha256': context['sha256'], 'decisions': [checked[ident] for ident in ids]}
 
 
 def load_plan(store, state):
@@ -104,7 +277,7 @@ def generate(root, steps=1):
         require(originals == finished['sources'], 'Finished jump source identity changed')
         for proposal_id in finished['proposal_ids']:
             require(structure._find(store, 'PROPOSAL', proposal_id) is not None, 'Finished jump proposal missing')
-        return finished  # Read-only reuse requires no new budget or campaign admission.
+        return {**finished, 'agent_context': packet(store)}  # No fresh budget or campaign admission.
     prior, dispatched, result = [], 0, None
     for stage in plan['stages']:
         state = store.snapshot()
@@ -164,8 +337,9 @@ def generate(root, steps=1):
             sources.append({'kind': 'local_observation', 'source': deepcopy(ref)})
         retained.append(structure.propose(root, proposal)['id'])
     with structure._meter(store, 'jump-finish'):
-        return structure._put(store, 'JUMP_FINISHED', ident,
+        finished = structure._put(store, 'JUMP_FINISHED', ident,
             {'id': ident, 'status': 'JUMP_PROPOSED' if retained else 'NO_CANDIDATE', 'proposal_ids': retained,
              'sources': prior, 'reason': result.get('reason'), 'scientific_support': 'UNKNOWN',
              'next_move': 'structure next' if retained else 'Inspect retained evidence and revise the bounded plan',
              'execution_authorized': False})
+    return {**finished, 'agent_context': packet(store)}
