@@ -1,5 +1,9 @@
 # Program-owned evidence and Advisor decisions
 
+Artifact import and this workflow share [operation-local result document
+parsing](artifact-import.md), while retaining their original source, receipt and
+execution checks.
+
 For optional complete-plan forecasts, bounded pilots and same-ledger executable
 tool improvement, see [predictive feasibility](predictive-feasibility.md).
 
