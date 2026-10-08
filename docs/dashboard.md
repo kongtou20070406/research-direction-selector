@@ -37,6 +37,36 @@ python -B scripts/rds_dashboard.py --demo --output dist\dashboard-demo.html
 
 运行成功、任务收益和机制支持是不同判断。收据里的 `gain` 仅按原记录展示，不会自动升级成确认结论。未记录字段显示 `—` 或“未记录”；缺少预算时没有资源进度。Lean / mathlib 是适用于数学子任务的协作能力。
 
+## 研究超图
+
+超图使用独立的全画布页面，只显示网络和按需打开的节点/超边详情。深灰背景、细线、按连接数调整大小的圆点与力导向布局适合浏览大图；没有项目总览或其他工作台面板。导出已保存的 TMS 图，或直接查看依赖 JSON：
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --output dist\hypergraph.html
+python -B scripts/rds_hypergraph_view.py --hypergraph dependency-map.json --output dist\hypergraph.html
+```
+
+输入复用 `hypergraph` 的声明适配器，接受原生依赖表、`claims` / `rules` 简写和程序生成的 `dependency_map`。修复及警告保留在原始详情中。只读取现有 TMS 快照及其绑定 CAS，不需要执行契约；不读取或混入工作台收据，不发布新快照。显式文件只决定此次展示的图，不能与 `--demo` 同用。
+
+Canvas 以圆点表示主张，以小菱形表示超边汇合点：同一个汇合点的前提是 **AND**，通向同一结论的不同汇合点保留 **OR** 路线。支持整图平移、缩放、适应全图、小地图定位、搜索及上游依赖聚焦。从节点上开始拖动也平移整图；单击才打开详查。节点名称按缩放级别显示并避免重叠；悬停查看名称和状态，点击打开详情。搜索结果也可通过键盘选择；画布获得焦点后用方向键平移、`+` / `-` 缩放、`0` 适应全图、Esc 关闭详情。
+
+右上角设置可切换统一细线、按声明状态或按关系类型区分线条。按状态时，实线表示 `SUPPORTED`、虚线表示 `PROPOSED`、点线表示 `CONTRADICTED`。按类型时，读取已有的 `relation` / `kind` / `type` 元数据，没有该字段则显示“依赖关系”；每种类型可选实线、虚线、点线、点划线，并单独调整浅色线条颜色、粗细，以及吸引 / 排斥 / 无作用、力度与作用距离。名称包含竞争、冲突、反驳等词的关系默认设为排斥；这只是可修改的显示偏好，不是推导出的科学关系。排斥只在设定距离内生效，吸引使用带平衡长度的弹簧。节点默认采用蓝白、暖白、金橙的星系配色，也可自选统一颜色或按声明状态着色；可调节点大小、轮廓粗细、标签阈值及全局力学参数。所有设置只影响当前页面，不改写输入。
+
+声明的 `UNKNOWN` 不会因为进入依赖闭包而改写为 `SUPPORTED`。分析保持 `INPUT_REPORTED_DEPENDENCY_ANALYSIS_NOT_PROOF`；本页不审计外部证据文件或回执绑定。显示保存图时只验证该快照及其绑定 CAS 的完整性，不扫描项目证据目录。几何布局、聚团和圆点大小不表示科学重要性或证明顺序。
+
+显示上限为 4,096 个主张节点、8,192 条超边及 32,768 条关联连接，输入最多 8 MiB，并仍需满足输入中声明的 schema 限额。超限显示提示，不绘制部分图。布局在离线 Web Worker 中用固定版本 D3 执行。四叉树近似全局排斥，碰撞力保持间距，吸引和定向关系排斥共同作用于主张节点；超边汇合点随关联节点取几何中心，不增加物理粒子。初始预热最多 180 步，每步检查 4.5 秒停止条件（单步可越过阈值），随后衰减至稳定并停止 Worker；初始模拟最多 291 步，重新调参约 248 步。没有持续旋转或随机摇晃，坐标更新经逐帧插值，静止时停止重绘。可暂停 / 继续；平移和缩放不重新激发物理模拟。布局不改写声明，浏览器不可用 Worker 时保留初始位置。绘制按样式批处理和视口裁剪，节点命中采用空间网格，标签避免重叠；Canvas 不为每个节点创建 DOM 元素。
+
+组合阻断分析与大图显示分开：超过 200 节点、400 超边或 2,000 连接时，仍显示完整图，但明确标记 `NOT_RUN_LARGE_GRAPH`，不声称已求得闭包或最小阻断集合。较小图的分析最多 50,000 次组合、128 个阻断集（尊重输入更小的限额），截断保留“不完整”。保存的快照损坏时显示不可用；显式输入错误时 CLI 失败。
+
+以下预览都是合成数据，没有真实实验结论。大图包含 1,200 个主张、1,426 条超边和 3,104 条连接；生成器固定，不使用外部数据。实际浏览器性能取决于硬件、图结构、缩放与显示面积；上限不是每种图结构的帧率保证。
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --demo --output dist\hypergraph-small.html
+python -B scripts/rds_hypergraph_view.py --demo --large --output dist\hypergraph-preview.html
+```
+
+页面只有内联代码和数据，Worker 通过本地 Blob 创建，无 CDN 或网络连接；可直接打开 HTML。`scripts/rds_hypergraph_view.py` 内嵌官方 npm UMD 发行文件：`d3-force@3.0.0`、`d3-quadtree@3.0.1`、`d3-dispatch@3.0.1`、`d3-timer@3.0.1`，保留各自完整 ISC 许可、版本及包 SHA-1。导出时无需 Node.js 或 npm；浏览器运行时不下载依赖。输出必须在项目 `.rds` 之外，且不能覆盖输入图。分享 HTML 会一并分享图中的节点、来源及路径。
+
 ## 载入诊断
 
 可以传入 advisor 返回的 JSON 对象或对象数组：
@@ -71,6 +101,9 @@ python -B scripts/rds_dashboard.py --root C:\research\project --advisor advice.j
 
 ```powershell
 python -B -m unittest discover -s tests -p test_rds_dashboard.py
+python -B -m unittest discover -s tests -p test_rds_hypergraph_view.py
 ```
 
 测试覆盖真实 CPU 项目的成功与失败收据、未知资源与预估记账、两类账本选择、导出不 hash 输入或改变账本、UTF8 输出、无数据库时不创建状态、独立证据轴、脚本注入转义、示例不伪造结果，以及错误数据库与危险输出路径的拒绝。
+
+超图回归另外覆盖真实 TMS/CAS 的只读导出、参考账本保护、显式中文路径与输入修复、原声明和派生闭包分离、损坏与缺失图、输入和画布上限、分析不完整、恶意图字段转义、输入文件保护，以及千节点图完整保留和大图分析跳过状态。安装 Node.js 时还会执行实际导出的 D3 Worker，验证吸引 / 排斥 / 无作用的方向、零力度不施力，以及衰减结束后停止；缺少 Node.js 时明确跳过此项。
