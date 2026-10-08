@@ -468,6 +468,10 @@ def drive(store, max_steps=8, prepare_only=False):
     policy = contract.get('advisor_policy')
     require(policy and 'autonomy' in policy, 'project drive requires a frozen autonomy declaration')
     config = validate_policy(store, contract, policy)
+    from rds_steering import status as steering_status
+    instruction = steering_status(store)
+    if instruction['steering']['paused']:
+        return {**instruction, 'status': 'HUMAN_STEERING_REQUIRED', 'executed': []}
     try:
         owner, allowance = _claim(store)
     except (ValueError, OSError, sqlite3.Error) as exc:
@@ -493,6 +497,11 @@ def drive(store, max_steps=8, prepare_only=False):
                     result['status'] = 'WAITING_FOR_ORIGINAL_ATTEMPT'
                     break
                 continue
+            # Paid work is retained for collection/recovery. A pause also prevents
+            # adopting an old model proposal or purchasing a different repair.
+            if state.get('steering', {}).get('paused'):
+                result.update(status='HUMAN_STEERING_REQUIRED', steering=state['steering'])
+                break
             # Finish/restore model adoption before any future research step.
             receipts = {r['run_id']: r for r in state['receipts']}
             events = state['autonomy_records']
@@ -520,6 +529,9 @@ def drive(store, max_steps=8, prepare_only=False):
                 break
             report = review(store)
             result['advisor'] = report
+            if report.get('steering_handoff'):
+                result.update(status='HUMAN_STEERING_REQUIRED', steering=report['steering'])
+                break
             if report['status'] != 'REVIEWED':
                 result['status'] = 'EVIDENCE_REPAIR_REQUIRED'
                 break

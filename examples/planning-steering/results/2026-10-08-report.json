@@ -1,0 +1,261 @@
+{
+  "quality": "PASS",
+  "protocol_sha256": "450db44b6736ad7b44a05883db736523c2237f12a850789c1e43e017fab77b8c",
+  "groups": {
+    "setup": {
+      "count": 2,
+      "seconds": [
+        0.1893533000111347,
+        0.5723642999946605
+      ],
+      "median_seconds": 0.3808588000028976,
+      "max_seconds": 0.5723642999946605,
+      "stdout_bytes": [
+        497,
+        7402
+      ]
+    },
+    "quality-inspection": {
+      "count": 9,
+      "seconds": [
+        0.3890194999985397,
+        0.37975409999489784,
+        0.24474130000453442,
+        0.2577684000134468,
+        0.24927119999483693,
+        0.376505599997472,
+        0.3744025999912992,
+        0.3968953000003239,
+        0.4439809999894351
+      ],
+      "median_seconds": 0.376505599997472,
+      "max_seconds": 0.4439809999894351,
+      "stdout_bytes": [
+        7402,
+        7402,
+        740,
+        1122,
+        1122,
+        16919,
+        16919,
+        1122,
+        26005
+      ]
+    },
+    "baseline-startup": {
+      "count": 3,
+      "seconds": [
+        0.3575812000053702,
+        0.2941760000103386,
+        0.327110400001402
+      ],
+      "median_seconds": 0.327110400001402,
+      "max_seconds": 0.3575812000053702,
+      "stdout_bytes": [
+        12,
+        12,
+        12
+      ]
+    },
+    "baseline-root-status": {
+      "count": 3,
+      "seconds": [
+        0.38602560000435915,
+        0.40882840000267606,
+        0.413281699991785
+      ],
+      "median_seconds": 0.40882840000267606,
+      "max_seconds": 0.413281699991785,
+      "stdout_bytes": [
+        7402,
+        7402,
+        7402
+      ]
+    },
+    "candidate-startup": {
+      "count": 3,
+      "seconds": [
+        0.30025069999101106,
+        0.3350481999950716,
+        0.3187659999966854
+      ],
+      "median_seconds": 0.3187659999966854,
+      "max_seconds": 0.3350481999950716,
+      "stdout_bytes": [
+        12,
+        12,
+        12
+      ]
+    },
+    "candidate-root-status": {
+      "count": 3,
+      "seconds": [
+        0.4141725000081351,
+        0.4049416000052588,
+        0.45221119999769144
+      ],
+      "median_seconds": 0.4141725000081351,
+      "max_seconds": 0.45221119999769144,
+      "stdout_bytes": [
+        7402,
+        7402,
+        7402
+      ]
+    },
+    "new-project-plan": {
+      "count": 3,
+      "seconds": [
+        0.4078633000026457,
+        0.38025679999554995,
+        0.3464490000042133
+      ],
+      "median_seconds": 0.38025679999554995,
+      "max_seconds": 0.4078633000026457,
+      "stdout_bytes": [
+        984,
+        984,
+        984
+      ]
+    },
+    "existing-project-plan": {
+      "count": 3,
+      "seconds": [
+        0.4309912000026088,
+        0.35379619999730494,
+        0.411004800000228
+      ],
+      "median_seconds": 0.411004800000228,
+      "max_seconds": 0.4309912000026088,
+      "stdout_bytes": [
+        1986,
+        1986,
+        1986
+      ]
+    },
+    "missing-information-plan": {
+      "count": 1,
+      "seconds": [
+        0.3540588000032585
+      ],
+      "median_seconds": 0.3540588000032585,
+      "max_seconds": 0.3540588000032585,
+      "stdout_bytes": [
+        961
+      ]
+    },
+    "original-control-action": {
+      "count": 1,
+      "seconds": [
+        1.2228302000003168
+      ],
+      "median_seconds": 1.2228302000003168,
+      "max_seconds": 1.2228302000003168,
+      "stdout_bytes": [
+        96156
+      ]
+    },
+    "pause-receipt": {
+      "count": 3,
+      "seconds": [
+        0.27217519999248907,
+        0.27195389999542385,
+        0.26905750000150874
+      ],
+      "median_seconds": 0.27195389999542385,
+      "max_seconds": 0.27217519999248907,
+      "stdout_bytes": [
+        1581,
+        1581,
+        1581
+      ]
+    },
+    "recover-original": {
+      "count": 1,
+      "seconds": [
+        0.7057735999987926
+      ],
+      "median_seconds": 0.7057735999987926,
+      "max_seconds": 0.7057735999987926,
+      "stdout_bytes": [
+        95293
+      ]
+    },
+    "post-steering-plan": {
+      "count": 3,
+      "seconds": [
+        0.42222290000063367,
+        0.4494774999911897,
+        0.38797860000340734
+      ],
+      "median_seconds": 0.42222290000063367,
+      "max_seconds": 0.4494774999911897,
+      "stdout_bytes": [
+        2634,
+        2634,
+        2634
+      ]
+    },
+    "paused-registration": {
+      "count": 1,
+      "seconds": [
+        0.8294352999946568
+      ],
+      "median_seconds": 0.8294352999946568,
+      "max_seconds": 0.8294352999946568,
+      "stdout_bytes": [
+        0
+      ]
+    },
+    "redirect-receipt": {
+      "count": 1,
+      "seconds": [
+        0.4487375000026077
+      ],
+      "median_seconds": 0.4487375000026077,
+      "max_seconds": 0.4487375000026077,
+      "stdout_bytes": [
+        1640
+      ]
+    },
+    "redirected-first-valid-action": {
+      "count": 1,
+      "seconds": [
+        2.2544328999938443
+      ],
+      "median_seconds": 2.2544328999938443,
+      "max_seconds": 2.2544328999938443,
+      "stdout_bytes": [
+        87049
+      ]
+    }
+  },
+  "cli_and_setup_processes": 41,
+  "total_subprocess_wall_seconds": 18.504945299981046,
+  "research_budget": {
+    "cpu_seconds": {
+      "cap": 12.0,
+      "spent_measured": 0.0,
+      "charged_estimate": 10.0,
+      "reserved": 0.0,
+      "remaining": 2.0,
+      "unit": "seconds"
+    },
+    "wall_seconds": {
+      "cap": 12.0,
+      "spent_measured": 1.0106011999887414,
+      "charged_estimate": 0.0,
+      "reserved": 0.0,
+      "remaining": 10.989398800011259,
+      "unit": "seconds"
+    }
+  },
+  "original_receipt_sha256": "1f39784fbd6201430fdb03c258e1d8d610e6f72104a3dd422f7745665dd77731",
+  "new_receipt_sha256": "4549faa16ba026c3dd87699b9a27c047b683d958f30c96974d3fa16efc591fe9",
+  "oracle_mse": "172/7875",
+  "original_goal": "NOT_MET",
+  "model_latency": "NOT_RUN",
+  "agent_latency": "NOT_RUN",
+  "scientific_gain": "UNMEASURED",
+  "original_protocol_file_sha256": "56f549481d172726b58fbb0a9dea4f109a1c489e859be38cb7793adf7151fa4b",
+  "protocol_digest_format": "UTF8_JSON_SORTED_KEYS_COMPACT_UNESCAPED_UNICODE"
+}

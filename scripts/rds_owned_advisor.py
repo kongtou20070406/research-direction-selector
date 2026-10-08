@@ -191,6 +191,10 @@ def _state(store, db):
             'contract_history': history,
             'exposures': [strict_json(row['body']) for row in db.execute('SELECT body FROM exposures ORDER BY id')],
             'campaign_started': strict_json(campaign['body']) if campaign else None}
+    from rds_steering import current, view
+    steering = current(db)
+    if steering is not None:
+        state['steering'] = view(steering)
     if 'autonomy' in contract.get('advisor_policy', {}):
         from rds_autonomy import records
         state['autonomy_records'] = records(store, db, contract)
@@ -611,6 +615,30 @@ def review(store, persist=True):
                 result['warnings'].append({'kind': 'EXECUTION_PREREQUISITE_BLOCK' if allowed
                                           else 'PREDICTIVE_FEASIBILITY_BLOCK', 'plans': feasibility['plans']})
         frontier = [r for r in eligible if not ready[r['candidate']].get('dominated_by')]
+        selection_basis = 'AVAILABLE_FROZEN_PARETO_THEN_DECLARATION_ORDER_NOT_GLOBAL_OPTIMUM'
+        steering = state.get('steering')
+        if steering is not None:
+            result['steering'] = deepcopy(steering)
+            withdrawn = set(steering['withdrawn_runs'])
+            blocked = [r['manifest']['id'] for r in active + eligible
+                       if steering['paused'] or r['manifest']['id'] in withdrawn]
+            allowed = lambda r: not steering['paused'] and r['manifest']['id'] not in withdrawn
+            active = [r for r in active if allowed(r)]
+            eligible = [r for r in eligible if allowed(r)]
+            frontier = [r for r in frontier if allowed(r)]
+            # Preference chooses only an already READY, budget/feasibility-admitted
+            # route. It cannot turn an unverified explanation into a prerequisite.
+            rank = {rid: i for i, rid in enumerate(steering['preferred_runs'])}
+            preferred = sorted([r for r in active + eligible if r['manifest']['id'] in rank],
+                               key=lambda r: rank[r['manifest']['id']])
+            if preferred:
+                active = preferred
+                selection_basis = 'CURRENT_USER_PRIORITY_WITHIN_ADMITTED_FROZEN_ROUTES'
+            result['steering_blocked_runs'] = blocked
+            result['steering_handoff'] = bool(steering['paused'] or blocked and not active and not eligible)
+            if result['steering_handoff']:
+                result['next_move'] = {'kind': 'HUMAN_STEERING', 'revision': steering['revision'],
+                                       'reason': 'Retained user instruction prevents new dispatch; inspect project steering'}
         chosen = (active or frontier or eligible)
         if not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
             route = chosen[0]
@@ -618,7 +646,7 @@ def review(store, persist=True):
             # ordinary method, history and current evidence checks.
             choice(advice, context, ready[route['candidate']]['id'])
             result.update(selected_run=route['manifest']['id'], selected_manifest=deepcopy(route['manifest']),
-                          selection_basis='AVAILABLE_FROZEN_PARETO_THEN_DECLARATION_ORDER_NOT_GLOBAL_OPTIMUM')
+                          selection_basis=selection_basis)
         if coverage['errors']:
             result['status'] = 'COLLECTION_FAILED'
             result['warnings'].append({'kind': 'OWNED_EVIDENCE_INCOMPLETE', 'errors': deepcopy(coverage['errors'])})
