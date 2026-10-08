@@ -555,24 +555,75 @@ class AutonomyTests(unittest.TestCase):
         self.assertGreater(before['budget']['wall_seconds']['spent_measured'], 0)
 
     def test_adopted_then_controller_crash_resumes_exact_proposal(self):
+        from types import SimpleNamespace
+
         self.build()
+        request, receipt = self.run_repair()
+        paid = self.store.snapshot()
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(paid['receipts'], [receipt])
+        self.assertEqual(receipt['autonomy_request'], request['request'])
+        self.assertEqual(paid['runs'][0]['attempt_id'], receipt['attempt_id'])
+        self.assertEqual(len(paid['contract_history']), 1)
+        self.assertEqual(self.events('METHOD_REVISION_ADOPTED'), [])
+        self.assertEqual(self.events(autonomy.PROCESSED), [])
+        self.trace.append({'stage': 'paid_before_adoption', 'state': paid, 'request': request})
+
+        # Isolate the intended adoption fault after a real successful worker.
+        # Only this controller clock is synthetic; provider/worker/CLI caps stay real.
+        ticks, faults = [0.], []
+        clock = SimpleNamespace(monotonic=lambda: ticks[0], time=autonomy.time.time)
         original = autonomy._append
         def crash(db, event):
             if event['kind'] == autonomy.PROCESSED and event.get('outcome') == 'ADOPTED':
+                cut = {'stage': 'after_adoption_before_processed',
+                       'state': self.store.snapshot(), 'event': deepcopy(event), 'events': self.events()}
+                faults.append(cut)
+                self.trace.append(cut)
+                ticks[0] = 1.
                 raise RuntimeError('synthetic crash after method adoption')
             return original(db, event)
-        with patch.object(autonomy, '_append', side_effect=crash):
+        with patch.object(autonomy, 'time', clock), patch.object(autonomy, '_append', side_effect=crash):
             with self.assertRaisesRegex(RuntimeError, 'after method adoption'):
-                autonomy.drive(self.store, 4)
+                returned = autonomy.drive(self.store, 4)
+                self.trace.append({'stage': 'unexpected_drive_return', 'result': returned})
         before = self.store.snapshot()
+        self.trace.append({'stage': 'crash_settled_before_cli', 'state': before, 'events': self.events()})
+        self.assertEqual(len(faults), 1)
+        self.assertEqual(len(faults[0]['state']['contract_history']), 2)
+        self.assertEqual(faults[0]['state']['receipts'], [receipt])
+        self.assertFalse(any(e['kind'] == autonomy.PROCESSED for e in faults[0]['events']))
+        self.assertEqual(faults[0]['event']['receipt_sha256'], receipt['sha256'])
         self.assertEqual(len(before['contract_history']), 2)
         self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(before['receipts'], [receipt])
+        self.assertEqual(self.events(autonomy.PROCESSED), [])
+        proposal = self.events('AUTONOMY_PROPOSAL_VALIDATED')
+        adopted = self.events('METHOD_REVISION_ADOPTED')
+        self.assertEqual(len(proposal), 1)
+        self.assertEqual(len(adopted), 1)
+        claim, release = self.events('AUTONOMY_DRIVE_CLAIMED'), self.events('AUTONOMY_DRIVE_RELEASED')
+        self.assertEqual(len(claim), 1)
+        self.assertEqual(len(release), 1)
+        self.assertEqual(claim[0]['controller_reservation'], 30)
+        self.assertEqual(release[0]['owner'], claim[0]['owner'])
+        self.assertEqual(release[0]['executed'], [])
+        self.assertEqual(release[0]['controller_wall_seconds'], 1.)
+        self.assertAlmostEqual(before['budget']['wall_seconds']['reserved'], 0)
+        self.assertAlmostEqual(before['budget']['wall_seconds']['spent_measured'],
+                               paid['budget']['wall_seconds']['spent_measured'] + 1.)
+        self.assertEqual(before['budget']['wall_seconds']['charged_estimate'],
+                         paid['budget']['wall_seconds']['charged_estimate'])
         self.cli('project', 'drive', '--prepare-only', '--max-steps', '4')
         after = self.store.snapshot()
+        self.trace.append({'stage': 'recovered_via_real_cli', 'state': after, 'events': self.events()})
         self.assertEqual(len(after['contract_history']), 2)
         self.assertEqual(self.calls(), ['repair1'])
         self.assertEqual(next(r for r in after['receipts'] if r['run_id']=='repair1'), before['receipts'][0])
         self.assertEqual(len(self.events(autonomy.PROCESSED)), 1)
+        self.assertEqual(self.events('AUTONOMY_PROPOSAL_VALIDATED'), proposal)
+        self.assertEqual(self.events('METHOD_REVISION_ADOPTED'), adopted)
+        self.assertEqual(self.events(autonomy.REQUESTED), [request])
         self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
 
     def test_prepared_partial_copy_resumes_without_another_model_call(self):
