@@ -370,7 +370,15 @@ class Wheel:
         if not self.state_path("pause.json").exists():
             self.write("pause.json", {"reason": reason}, once=True)
 
-    def eligible_proposal(self, state):
+    def mapping_consumed(self, run_id, kind, snapshot):
+        if not isinstance(run_id, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", run_id):
+            return False  # The normal manifest validator reports an invalid mapping.
+        relative = ("screen/" if kind == "screen" else "manifests/") + run_id + ".json"
+        return (self.state_path(relative).exists()
+                or any(run.get("id") == run_id for run in snapshot.get("runs", []))
+                or any(receipt.get("run_id") == run_id for receipt in snapshot.get("receipts", [])))
+
+    def eligible_proposal(self, state, snapshot):
         quota = read_json(self.state_path("quota.json"))
         require(isinstance(quota, dict) and all(type(v) is int and 0 <= v <= 2 for v in quota.values()), "invalid proposer quota")
         dead = set(self.tokens("dead.txt"))
@@ -387,13 +395,17 @@ class Wheel:
                 datetime.fromisoformat(row["ts"].replace("Z", "+00:00"))
                 if (row["factor"] not in dead and row["proposal_id"] not in state["screened"]
                         and row["factor"] not in state["used"] and quota.get(row["proposer_id"], 1) > 0):
+                    template = self.mapping.get("routes", {}).get(row["factor"], {}).get("screen")
+                    if isinstance(template, dict) and self.mapping_consumed(template.get("id"), "screen", snapshot):
+                        continue  # Keep duplicate rows and their proposers' quota unchanged.
                     return row
             except (ValueError, TypeError, KeyError):
                 continue  # Append-only inbox retains rejected original rows.
         return None
 
-    def dispatch(self, state, manifest, factor, kind, proposal=None):
+    def dispatch(self, state, manifest, factor, kind, snapshot, proposal=None):
         relative = ("screen/" if kind == "screen" else "manifests/") + manifest["id"] + ".json"
+        require(not self.mapping_consumed(manifest["id"], kind, snapshot), "execution mapping already consumed")
         state["pending"] = {"manifest": manifest, "factor": factor, "kind": kind,
                             "proposal": proposal, "previous_state": state["last_state"], "submitted": False}
         state["advance"] = False
@@ -419,8 +431,8 @@ class Wheel:
             if remaining < math.ceil(manifest["resource_estimates"]["wall_seconds"] * 1000):
                 self.pause("insufficient wall for next reservation")
                 return 0
-            return self.dispatch(state, manifest, factor, "main")
-        row = self.eligible_proposal(state)
+            return self.dispatch(state, manifest, factor, "main", snapshot)
+        row = self.eligible_proposal(state, snapshot)
         if row is None:
             self.pause("no live factor or eligible proposal")
             return 0
@@ -429,7 +441,7 @@ class Wheel:
             self.pause("no screen budget")
             return 0
         manifest = self.manifest(row["factor"], "screen", budget)
-        return self.dispatch(state, manifest, row["factor"], "screen", row)
+        return self.dispatch(state, manifest, row["factor"], "screen", snapshot, row)
 
     def tick(self):
         if self.state_path("pause.json").exists():

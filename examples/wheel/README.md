@@ -77,7 +77,11 @@ An unchanged screen halves quota with integer division; a changed screen adds
 one, capped at 2, and admits its factor. A zero-delta factor remains dead. Rows
 remain in the append-only inbox, including rejected/processed rows. Each proposal
 is screened once; repeat attempts need a distinct, preauthorized execution
-mapping. Screening never directly admits an unmeasured inbox proposal.
+mapping. A previously registered SCREEN run or retained manifest consumes that
+mapping for every proposer. Duplicate rows remain in the inbox without charging
+their proposer; selection continues to the next eligible distinct mapping, or
+pauses when none remains. Known ID/file collisions are checked before committing
+pending intent. Screening never directly admits an unmeasured inbox proposal.
 
 `state.json` journals quota, queue, dead and transition updates so interruption
 does not repeat a quota update. A pending attempt without a receipt returns 4

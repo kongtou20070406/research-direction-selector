@@ -210,6 +210,56 @@ class WheelTests(unittest.TestCase):
         self.assertTrue(self.wheel.state_path("pause.json").exists())
         self.assertEqual(self.executed(), ["screen_screen_same"])
 
+    def duplicate_screen_case(self, same_proposer, interrupt):
+        self.prepare(factors=[])
+        self.wheel.write("quota.json", {"first": 2})
+        duplicate_proposer = "first" if same_proposer else "second"
+        self.inbox(self.row(proposer="first"), self.row(proposer=duplicate_proposer),
+                   self.row("screen_change", proposer="later"))
+        original_inbox = self.wheel.state_path("inbox.jsonl").read_bytes()
+        self.assertEqual(self.tick(), 0)
+        original_receipt = deepcopy(self.project.receipts["screen_screen_same"])
+        if interrupt:
+            write = self.wheel.write
+
+            def interrupted(name, value, **kwargs):
+                write(name, value, **kwargs)
+                if name == "quota.json":
+                    raise OSError("interrupted screen receipt commit")
+
+            with patch.object(self.wheel, "write", side_effect=interrupted):
+                self.assertEqual(self.tick(), 2)
+        else:
+            self.assertEqual(self.tick(), 0)
+        for _ in range(6):
+            self.assertEqual(self.tick(), 0)
+            if self.wheel.state_path("pause.json").exists():
+                break
+        self.assertTrue(self.wheel.state_path("pause.json").exists())
+        self.assertEqual(self.executed(), ["screen_screen_same", "screen_screen_change", "screen_change"])
+        self.assertEqual(read_json(self.wheel.state_path("quota.json")), {"first": 1, "later": 2})
+        self.assertEqual(self.wheel.state_path("inbox.jsonl").read_bytes(), original_inbox)
+        self.assertEqual(self.project.receipts["screen_screen_same"], original_receipt)
+        self.assertIsNone(read_json(self.wheel.state_path("state.json"))["pending"])
+
+    def test_duplicate_screen_from_another_proposer_does_not_block_later_mapping(self):
+        self.duplicate_screen_case(same_proposer=False, interrupt=False)
+
+    def test_duplicate_screen_with_positive_quota_recovers_after_interruption(self):
+        self.duplicate_screen_case(same_proposer=True, interrupt=True)
+
+    def test_known_mapping_collision_is_rejected_before_pending_intent(self):
+        self.prepare()
+        manifest = self.wheel.manifest("flat", "main")
+        self.wheel.write("manifests/flat.json", manifest, once=True)
+        state = read_json(self.wheel.state_path("state.json"))
+        before = {name: self.wheel.state_path(name).read_bytes() for name in ("state.json", "factors.txt")}
+        with self.assertRaises(wheel_module.WheelError):
+            self.wheel.dispatch(state, manifest, "flat", "main", self.project("status"))
+        self.assertIsNone(state["pending"])
+        self.assertEqual(before, {name: self.wheel.state_path(name).read_bytes() for name in before})
+        self.assertEqual(self.executed(), [])
+
     def test_ambiguous_execute_is_not_resent(self):
         self.prepare()
         original = self.wheel.project
