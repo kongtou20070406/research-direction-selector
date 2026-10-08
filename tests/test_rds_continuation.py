@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from rds_project import ProjectStore, digest
 import rds_autonomy as autonomy
+import rds_continuation as continuation
+import rds_owned_advisor as owned_advisor
 
 
 class ContinuationTests(unittest.TestCase):
@@ -114,12 +117,83 @@ class ContinuationTests(unittest.TestCase):
     def test_large_goal_is_exact_in_original_cas_not_truncated(self):
         value = 'bounded-original-goal-' * 400
         self.f.initialize(mutate_policy=lambda p: p['context']['decision']['goal_conditions'][0].update(op='eq', value=value))
-        out = self.drive()
+        store = ProjectStore(self.f.root)
+        before = self.f.snapshot()
+        report = owned_advisor.review(store)
+        self.assertEqual(report['status'], 'REVIEWED', report)
+        # Test the real projection independently of controller throughput. This
+        # supplied stop status is an observer input, not an executed drive result.
+        out = {'status': 'STEP_LIMIT', 'advisor': report}
+        continuation.attach(store, before['contract'], out, project=True)
+        self.assertEqual(out['handoff']['evidence_status'], 'VERIFIED_STOP_SNAPSHOT', out['handoff'])
         goal = out['handoff']['evidence']['goals']['items'][0]
         self.assertTrue(goal['details_omitted'])
         exact = json.loads((self.f.root / goal['original']['path']).read_text(encoding='utf-8'))
         self.assertEqual(digest(exact), goal['original']['sha256'])
         self.assertEqual(exact['condition']['value'], value)
+        self.f.assert_uncharged(before)
+        self.assertEqual(self.f.snapshot()['receipts'], [])
+
+    def test_missing_report_projection_retains_unknown(self):
+        self.f.initialize()
+        before = self.f.snapshot()
+        out = {'status': 'HANDOFF_REQUIRED'}
+        with patch('rds_advisor_workset.build') as build:
+            continuation.attach(ProjectStore(self.f.root), before['contract'], out, project=True)
+        build.assert_not_called()
+        self.assertEqual(out['status'], 'HANDOFF_REQUIRED')
+        self.assertEqual(out['handoff']['evidence_status'], 'UNAVAILABLE')
+        self.assertEqual(out['handoff']['goal_status'], 'UNKNOWN')
+        self.assertEqual(out['handoff']['scientific_support'], 'UNKNOWN')
+        self.assertNotIn('evidence', out['handoff'])
+        self.assertFalse(out['handoff']['admission_token'])
+        self.f.assert_uncharged(before)
+        self.assertEqual(self.f.snapshot()['receipts'], [])
+
+    def test_expiry_after_review_skips_projection_and_settles_original_allowance(self):
+        self.f.initialize()
+        before = self.f.snapshot()
+        ticks = [0.]
+        # Only the controller sees this clock; real review/SQLite and worker
+        # clocks remain untouched. Advance at a phase boundary, not a call count.
+        clock = SimpleNamespace(monotonic=lambda: ticks[0], time=autonomy.time.time)
+        real_review = owned_advisor.review
+
+        def expire_after_review(store):
+            report = real_review(store)
+            self.assertEqual(report['status'], 'REVIEWED', report)
+            self.assertEqual(report['selected_manifest']['id'], 'baseline')
+            ticks[0] = 9.
+            return report
+
+        with patch.object(autonomy, 'time', clock), \
+                patch.object(owned_advisor, 'review', side_effect=expire_after_review) as review, \
+                patch('rds_advisor_workset.build') as build:
+            out = autonomy.drive(ProjectStore(self.f.root), until_judgment=True, controller_wall_seconds=8)
+        review.assert_called_once()
+        build.assert_not_called()
+        self.assertEqual(out['status'], 'HANDOFF_REQUIRED', out)
+        self.assertEqual(out['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
+        self.assertEqual(out['executed'], [])
+        self.assertEqual(out['handoff']['evidence_status'], 'UNAVAILABLE')
+        self.assertEqual(out['handoff']['goal_status'], 'UNKNOWN')
+        self.assertEqual(out['handoff']['scientific_support'], 'UNKNOWN')
+        self.assertNotIn('evidence', out['handoff'])
+        self.assertFalse(out['handoff']['admission_token'])
+        self.assertEqual(out['handoff']['resource_cut'], 'CONTROLLER_RELEASE_TRANSACTION')
+        self.assertEqual(out['controller_wall_seconds'], 9.)
+        after = self.f.snapshot()
+        self.assertEqual(self.f.starts(), [])
+        self.assertEqual(after['runs'], before['runs'])
+        self.assertEqual(after['receipts'], before['receipts'])
+        self.assertEqual(out['handoff']['resources'], after['budget'])
+        for resource, original in before['budget'].items():
+            expected = dict(original)
+            if resource == 'wall_seconds':
+                expected['spent_measured'] += 8.
+                expected['charged_estimate'] += 1.
+                expected['remaining'] -= 9.
+            self.assertEqual(after['budget'][resource], expected, resource)
 
     def test_post_commit_collection_failure_recovers_original_receipt(self):
         self.f.initialize()
