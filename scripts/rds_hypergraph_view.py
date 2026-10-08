@@ -542,7 +542,7 @@ def _legacy_record_report(spec):
                 issue(node, "record_kind", "INVALID_RECORD_KIND")
             continue
         src = node.get("source") if isinstance(node.get("source"), dict) else {}
-        row, valid = {"node": node, "kind": node["record_kind"]}, True
+        row = {"node": node, "kind": node["record_kind"], "invalid_fields": set()}
         for field, aliases in (("run_id", [node.get("run_id")]),
                 ("receipt_id", [node.get("receipt_id"), node.get("receipt_sha256"), src.get("receipt_id")]),
                 ("path", [node.get("artifact_path"), node.get("output_path"), src.get("file"), src.get("path")]),
@@ -553,7 +553,7 @@ def _legacy_record_report(spec):
                    or field == "path" and "\0" in v
                    or digest and re.fullmatch(r"[0-9a-fA-F]{64}", v) is None for v in values):
                 issue(node, field, "INVALID_BINDING")
-                valid = False
+                row["invalid_fields"].add(field)
                 continue
             values = [v.lower() if digest else v for v in values]
             if field == "path" and source_base is not None:
@@ -561,24 +561,23 @@ def _legacy_record_report(spec):
                     values = [str((source_base / v).resolve()) for v in values]
                 except (OSError, ValueError, RuntimeError):
                     issue(node, field, "INVALID_BINDING")
-                    valid = False
+                    row["invalid_fields"].add(field)
                     continue
             if len(set(values)) > 1:
                 issue(node, field, "CONFLICTING_BINDINGS")
-                valid = False
+                row["invalid_fields"].add(field)
             elif values:
                 row[field] = values[0]
-        if valid:
-            for field in required.get(row["kind"], ()):
-                if field not in row:
-                    issue(node, field, "RUN_NOT_REGISTERED" if field == "run_id" and node.get("route_id")
-                          and row["kind"] in {"lifecycle_fact", "observation"} else "MISSING_BINDING")
-            rows[node["id"]] = row
-            kind = row["kind"]
-            key = row.get("run_id") if kind == "run" else row.get("receipt_id") if kind == "receipt" else (
-                row.get("run_id"), row.get("path"), row.get("sha256")) if kind == "artifact" else None
-            if key is not None and not (isinstance(key, tuple) and None in key):
-                indexes[kind].setdefault(key, []).append(node["id"])
+        for field in required.get(row["kind"], ()):
+            if field not in row and field not in row["invalid_fields"]:
+                issue(node, field, "RUN_NOT_REGISTERED" if field == "run_id" and node.get("route_id")
+                      and row["kind"] in {"lifecycle_fact", "observation"} else "MISSING_BINDING")
+        rows[node["id"]] = row
+        kind = row["kind"]
+        key = row.get("run_id") if kind == "run" else row.get("receipt_id") if kind == "receipt" else (
+            row.get("run_id"), row.get("path"), row.get("sha256")) if kind == "artifact" else None
+        if key is not None and not (isinstance(key, tuple) and None in key):
+            indexes[kind].setdefault(key, []).append(node["id"])
 
     def match(row, kind, key, field):
         if key is None or isinstance(key, tuple) and None in key:
@@ -602,17 +601,22 @@ def _legacy_record_report(spec):
         run = match(row, "run", row.get("run_id"), "run_id")
         receipt = match(row, "receipt", row.get("receipt_id"), "receipt_id") if kind != "receipt" else None
         receipt_conflict = False
-        if receipt is not None and rows[receipt].get("run_id") != row.get("run_id"):
-            issue(row["node"], "receipt.run_id", "CONFLICTING_BINDINGS", [receipt])
-            receipt_conflict = True
+        if receipt is not None:
+            receipt_run = rows[receipt].get("run_id")
+            if receipt_run is None:
+                receipt_conflict = True  # Origin ownership is missing or invalid.
+            elif row.get("run_id") is not None and receipt_run != row["run_id"]:
+                issue(row["node"], "receipt.run_id", "CONFLICTING_BINDINGS", [receipt])
+                receipt_conflict = True
         if kind == "receipt":
-            if match(row, "receipt", row.get("receipt_id"), "receipt_id") is not None:
-                link("run_receipt", run, row)
+            # Preserve origin ambiguity diagnostics independently of membership.
+            match(row, "receipt", row.get("receipt_id"), "receipt_id")
+            link("run_receipt", run, row)
         elif kind == "artifact":
-            if match(row, "artifact", (row.get("run_id"), row.get("path"), row.get("sha256")), "artifact_identity") is not None:
-                link("run_artifact", run, row)
-                if not receipt_conflict:
-                    link("receipt_artifact", receipt, row)
+            match(row, "artifact", (row.get("run_id"), row.get("path"), row.get("sha256")), "artifact_identity")
+            link("run_artifact", run, row)
+            if row.get("run_id") is not None and not receipt_conflict:
+                link("receipt_artifact", receipt, row)
         elif kind == "declared_output":
             if row.get("path"):
                 link("declared_output", run, row)
@@ -620,9 +624,11 @@ def _legacy_record_report(spec):
             link("run_lifecycle_fact", run, row)
         elif kind == "observation":
             link("run_observation", run, row)
-            if receipt_conflict:
+            if receipt_conflict or "receipt_id" in row["invalid_fields"]:
                 continue  # The independently exact run link remains available.
             artifact = match(row, "artifact", (row.get("run_id"), row.get("path"), row.get("sha256")), "artifact_identity")
+            if artifact is not None and "receipt_id" in rows[artifact]["invalid_fields"]:
+                continue  # Invalid receipt metadata cannot match absent metadata.
             if artifact is not None and rows[artifact].get("receipt_id") != row.get("receipt_id"):
                 issue(row["node"], "artifact.receipt_id", "CONFLICTING_BINDINGS", [artifact])
             else:

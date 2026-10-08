@@ -375,6 +375,146 @@ class ReplicaViewTests(unittest.TestCase):
                 self.assertEqual(result, before)
                 self.assertEqual(result["analysis"]["goals"]["opaque"]["status"], "UNKNOWN")
 
+    @staticmethod
+    def field_fixture():
+        spec = ReplicaViewTests.record_fixture()
+        spec["nodes"].append({"id": "lifecycle:a", "status": "UNKNOWN", "source": "fixture",
+                              "record_kind": "lifecycle_fact", "run_id": "a"})
+        return spec
+
+    def test_fallback_review_four_production_counterexamples_keep_membership(self):
+        for position, field, relation in ((6, "output_path", "run_observation"),
+                                         (6, "receipt_id", "run_observation"),
+                                         (9, "receipt_id", "run_lifecycle_fact"),
+                                         (7, "receipt_id", "declared_output")):
+            with self.subTest(position=position, field=field), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.field_fixture()
+                spec["nodes"][position][field] = "out/conflict.json" if field == "output_path" else []
+                original = deepcopy(spec)
+                result = graph_view(spec, "synthetic production fallback")
+                before = deepcopy(result)
+                view = replica_view(result)
+                self.assertIn(relation, [r["kind"] for r in view["record_relations"]
+                                        if r["to"] == spec["nodes"][position]["id"]])
+                page = render_html(result)
+                self.assertEqual(HypergraphViewTests.payload(page)["graph"], original)
+                self.assertEqual(result, before)
+                self.assertEqual(spec, original)
+                self.assertTrue(all(r["scientific_support"] == "UNKNOWN" for r in view["record_relations"]))
+
+    def test_fallback_field_matrix_preserves_inference_and_required_diagnostics(self):
+        cases = ((1, "receipt_id", [], {"run_receipt"}),
+                 (1, "output_path", [], {"run_receipt"}),
+                 (2, "artifact_path", [], {"run_artifact", "receipt_artifact"}),
+                 (2, "receipt_id", [], {"run_artifact"}),
+                 (6, "output_path", [], {"run_observation"}),
+                 (6, "receipt_id", [], {"run_observation"}),
+                 (7, "receipt_id", [], {"declared_output"}),
+                 (7, "output_path", [], set()),
+                 (9, "receipt_id", [], {"run_lifecycle_fact"}),
+                 (9, "output_path", [], {"run_lifecycle_fact"}),
+                 (2, "artifact_path", "bad\0path", {"run_artifact", "receipt_artifact"}),
+                 *((position, "run_id", [], set()) for position in (1, 2, 6, 7, 9)))
+        baseline = graph_view(self.field_fixture(), "fixture")
+        for position, field, value, expected in cases:
+            with self.subTest(position=position, field=field), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.field_fixture()
+                target = spec["nodes"][position]
+                target[field] = value
+                result = graph_view(spec, "fixture")
+                before = deepcopy(result)
+                view = replica_view(result)
+                self.assertEqual({r["kind"] for r in view["record_relations"] if r["to"] == target["id"]}, expected)
+                for field in baseline["analysis"].keys() - {"reported_nodes"}:
+                    self.assertEqual(result["analysis"][field], baseline["analysis"][field], field)
+                self.assertEqual(result, before)
+        required = {"run": {"run_id"}, "receipt": {"run_id", "receipt_id"},
+                    "artifact": {"run_id", "path", "sha256"}, "declared_output": {"run_id", "path"},
+                    "lifecycle_fact": {"run_id"}, "observation": {"run_id"}}
+        for kind, fields in required.items():
+            with self.subTest(kind=kind), patch("rds_hypergraph.record_topology", None, create=True):
+                row = {"id": "record", "status": "UNKNOWN", "source": "fixture", "record_kind": kind}
+                row["output_path" if kind == "receipt" else "receipt_id"] = []
+                spec = {"nodes": [row], "hyperedges": [], "goals": ["record"]}
+                result = graph_view(spec, "fixture")
+                view = replica_view(result)
+                self.assertEqual({i["field"] for i in view["record_topology"]["issues"]
+                                  if i["reason"] == "MISSING_BINDING"}, fields)
+                self.assertTrue(any(i["reason"] == "INVALID_BINDING" for i in view["record_topology"]["issues"]))
+                self.assertEqual(view["record_relations"], [])
+                self.assertEqual(result["analysis"]["goals"]["record"]["status"], "UNKNOWN")
+
+    def test_fallback_membership_and_origin_identity_are_separate(self):
+        with patch("rds_hypergraph.record_topology", None, create=True):
+            spec = self.field_fixture()
+            spec["nodes"][2]["source"] = "artifact without path or byte identity"
+            view = replica_view(graph_view(spec, "fixture"))
+            self.assertEqual({r["kind"] for r in view["record_relations"] if r["to"] == "artifact:a"},
+                             {"run_artifact", "receipt_artifact"})
+            self.assertFalse(any(r["kind"] == "artifact_observation" for r in view["record_relations"]))
+            self.assertEqual({i["field"] for i in view["record_topology"]["issues"]
+                              if i["node_id"] == "artifact:a" and i["reason"] == "MISSING_BINDING"}, {"path", "sha256"})
+
+    def test_fallback_invalid_receipt_is_never_compatible_absence(self):
+        for position in (None, 2, 6):
+            with self.subTest(position=position), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.field_fixture()
+                spec["nodes"][2].pop("receipt_id")
+                spec["nodes"][6]["source"].pop("receipt_id")
+                if position is not None:
+                    spec["nodes"][position]["receipt_id"] = []
+                view = replica_view(graph_view(spec, "fixture"))
+                self.assertEqual(any(r["kind"] == "artifact_observation" for r in view["record_relations"]), position is None)
+                self.assertTrue(any(r["kind"] == "run_observation" for r in view["record_relations"]))
+                self.assertTrue(any(r["kind"] == "run_artifact" and r["to"] == "artifact:a" for r in view["record_relations"]))
+        for value in (None, []):
+            with self.subTest(receipt_run=value), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.field_fixture()
+                if value is None:
+                    spec["nodes"][1].pop("run_id")
+                else:
+                    spec["nodes"][1]["run_id"] = value
+                view = replica_view(graph_view(spec, "fixture"))
+                self.assertFalse(any(r["kind"] in {"receipt_artifact", "artifact_observation"}
+                                     and r["to"] in {"artifact:a", "observation:a"} for r in view["record_relations"]))
+                self.assertTrue(any(r["kind"] == "run_observation" for r in view["record_relations"]))
+
+    def test_fallback_bad_extras_keep_valid_origin_indexes_and_ambiguity(self):
+        for position, field, relation in ((0, "receipt_id", "run_observation"),
+                                          (1, "output_path", "receipt_artifact"),
+                                          (2, "receipt_id", "artifact_observation")):
+            for duplicate in (False, True):
+                with self.subTest(position=position, duplicate=duplicate), patch("rds_hypergraph.record_topology", None, create=True):
+                    spec = self.field_fixture()
+                    row = spec["nodes"][position]
+                    if duplicate:
+                        row = deepcopy(row); row["id"] = "duplicate-origin"; spec["nodes"].append(row)
+                    row[field] = []
+                    view = replica_view(graph_view(spec, "fixture"))
+                    matches = [r for r in view["record_relations"] if r["kind"] == relation
+                               and r["to"] in {"artifact:a", "observation:a"}]
+                    self.assertEqual(bool(matches), not duplicate and position != 2)
+                    if duplicate:
+                        self.assertTrue(any(i["reason"] == "AMBIGUOUS_BINDING" and "duplicate-origin" in i["candidates"]
+                                            for i in view["record_topology"]["issues"]))
+                    if duplicate and position == 1:
+                        self.assertTrue(any(r["kind"] == "artifact_observation" for r in view["record_relations"]))
+
+    def test_fallback_conflicting_receipt_aliases_keep_independent_membership(self):
+        for position, expected in ((0, None), (1, "run_receipt"), (2, "run_artifact"),
+                                   (6, "run_observation"), (7, "declared_output"), (9, "run_lifecycle_fact")):
+            with self.subTest(position=position), patch("rds_hypergraph.record_topology", None, create=True):
+                spec = self.field_fixture()
+                target = spec["nodes"][position]
+                target.update(receipt_id="b" * 64, receipt_sha256="e" * 64)
+                view = replica_view(graph_view(spec, "fixture"))
+                if expected is None:
+                    self.assertTrue(any(r["kind"] == "run_observation" for r in view["record_relations"]))
+                else:
+                    self.assertEqual({r["kind"] for r in view["record_relations"] if r["to"] == target["id"]}, {expected})
+                self.assertTrue(any(i["node_id"] == target["id"] and i["field"] == "receipt_id"
+                                    and i["reason"] == "CONFLICTING_BINDINGS" for i in view["record_topology"]["issues"]))
+
     def test_fallback_cross_run_receipt_keeps_independent_run_links(self):
         for position, kind in ((2, "run_artifact"), (6, "run_observation"), (7, "declared_output"),
                                (9, "run_lifecycle_fact")):
@@ -461,8 +601,11 @@ class ReplicaViewTests(unittest.TestCase):
                 artifact_links = [r for r in view["record_relations"] if r["kind"] == "artifact_observation"]
                 if mutation == "duplicate_receipt":
                     # Explicit run/path/sha/receipt strings still match locally;
-                    # no ambiguous receipt origin can become a display edge.
-                    self.assertFalse(any(r["kind"] in {"run_receipt", "receipt_artifact"} and r["to"] in {"owned:receipt:a", "duplicate-receipt", "artifact:a"} for r in view["record_relations"]))
+                    # no ambiguous receipt origin supplies receipt->artifact.
+                    # Each receipt record still has independent run membership.
+                    self.assertFalse(any(r["kind"] == "receipt_artifact" and r["to"] == "artifact:a" for r in view["record_relations"]))
+                    self.assertEqual({r["to"] for r in view["record_relations"] if r["kind"] == "run_receipt"},
+                                     {"owned:receipt:a", "owned:receipt:b", "duplicate-receipt"})
                 else:
                     self.assertFalse(artifact_links)
                 self.assertTrue(any(i["reason"] == reason for i in view["record_topology"]["issues"]))
