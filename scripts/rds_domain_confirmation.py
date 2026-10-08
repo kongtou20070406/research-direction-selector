@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 
 from rds_artifacts import strict_json
-from rds_project import ProjectStore, file_sha, require
+from rds_project import ProjectStore, digest, file_sha, require
 
 MAX_BYTES = 2 * 1024 * 1024
 DOMAINS = {'mathematics': 'exact_certificate', 'algorithms': 'integer_sum_squares',
@@ -22,6 +22,19 @@ def goal_conditions(policy):
     if 'confirmation' in policy:
         conditions.append({'fact': 'confirmation.task_status', 'op': 'eq', 'value': 'PASS'})
     return conditions
+
+
+def confirmation_fact(confirmation):
+    """Only an evaluated PASS/FAIL answers the declared acceptance predicate.
+
+    PENDING and UNKNOWN remain inspectable outcomes with original provenance;
+    comparing either string to PASS must not refute the task goal.
+    """
+    verdict = confirmation['task_confirmation']
+    settled = verdict in {'PASS', 'FAIL'}
+    return {'id': 'confirmation.task_status', 'kind': 'DERIVED' if settled else 'UNKNOWN',
+            'value': verdict, 'reliable': settled,
+            'source': {'locator': 'program replay of frozen domain evidence ' + digest(confirmation)}}
 
 
 def _ref(store, contract, ref, role):
