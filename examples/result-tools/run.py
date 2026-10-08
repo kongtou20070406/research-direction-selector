@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO / 'scripts'))
 from rds_project import ProjectStore
 
 
-def run(workspace):
+def run(workspace, *, recipe=False):
     root = Path(workspace).resolve()
     if root.is_relative_to(REPO):
         raise ValueError('Choose a fresh sibling workspace outside the checkout')
@@ -100,6 +100,7 @@ def run(workspace):
                                     for name, _, _, _, predicates, _ in specs for field, op, value in predicates]}
     write('decision.json', decision)
     bindings, tools, commands, nodes, routes, observations = [], [], [], [], [], []
+    recipe_routes, source_paths = [], []
     for name, entry, args, expected, predicates, sources in specs:
         cases = [{'args': args, 'expected': expected}]
         write(name + '/cases.json', cases)
@@ -126,32 +127,46 @@ def run(workspace):
             *[arg for fact in facts for arg in ('--observation-fact', fact)])
         if prepared['execution_started'] or (root / 'outputs' / (name + '.json')).exists():
             raise RuntimeError('Preparation unexpectedly executed a result tool')
-        bindings.extend(prepared['required_bindings'])
-        bindings.extend({'role': 'data', **ref} for ref in sources)
-        tools.append(prepared['binding'])
-        commands.append(prepared['argv'])
-        nodes.append({'id': name + '-task', 'sources': ['public synthetic fixture'],
-                      'executable': {'decisions': [decision['id']], 'preconditions': [], 'action': action}})
-        observations.extend({'fact': name + '.' + field, 'run_id': name, 'path': 'outputs/' + name + '.json',
-                             'selector': {'pointer': '/cases/0/value/' + field}} for field, _, _ in predicates)
-    protocol = {role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role)
-                for role in ('code', 'config', 'data')}
-    protocol.update({
-                'data_split': 'public-finite-software', 'init': 'none', 'seed': 0, 'checkpoint': 'none',
-                'schedule': 'three finite result calls', 'sample_work': {'cases': 3}, 'numeric_protocol': 'Python integers'})
-    protocol_ref = write('protocol.json', protocol)
-    bindings.append({'role': 'protocol', **protocol_ref})
-    for spec, argv in zip(specs, commands):
-        name = spec[0]
-        routes.append({'candidate': name, 'manifest': {'schema': 1, 'id': name, 'arm': 'tool', 'control_id': None,
-            'protocol': protocol_ref, 'argv': argv, 'outpaths': ['outputs/' + name + '.json'],
-            'timeout_seconds': 10, 'resource_estimates': {'wall_seconds': 10}}})
-    contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': commands, 'output_roots': ['outputs'],
-                'budget': {'wall_seconds': 60}, 'advisor_policy': {'schema': 1, 'context': {'decision': decision},
-                    'graph': {'nodes': nodes, 'edges': []}, 'routes': routes, 'observations': observations,
-                    'tool_bindings': tools}}
-    write('contract.json', contract)
-    call('init', 'project', 'init', '--contract', str(root / 'contract.json'))
+        if recipe:
+            source_paths.extend(ref['path'] for ref in sources)
+            recipe_routes.append({'action': action, 'prepared_application': 'reports/' + name + '-prepare.json',
+                'run': {'timeout_seconds': 10, 'resource_estimates': {'wall_seconds': 10}},
+                'observations': [{'fact': name + '.' + field, 'path': 'outputs/' + name + '.json',
+                                 'selector': {'pointer': '/cases/0/value/' + field}} for field, _, _ in predicates]})
+        else:
+            bindings.extend(prepared['required_bindings'])
+            bindings.extend({'role': 'data', **ref} for ref in sources)
+            tools.append(prepared['binding'])
+            commands.append(prepared['argv'])
+            nodes.append({'id': name + '-task', 'sources': ['public synthetic fixture'],
+                          'executable': {'decisions': [decision['id']], 'preconditions': [], 'action': action}})
+            observations.extend({'fact': name + '.' + field, 'run_id': name, 'path': 'outputs/' + name + '.json',
+                                 'selector': {'pointer': '/cases/0/value/' + field}} for field, _, _ in predicates)
+    protocol = {'data_split': 'public-finite-software', 'init': 'none', 'seed': 0, 'checkpoint': 'none',
+                'schedule': 'three finite result calls', 'sample_work': {'cases': 3}, 'numeric_protocol': 'Python integers'}
+    if recipe:
+        declaration = {'schema': 1, 'files': {'data': list(dict.fromkeys(source_paths))},
+            'protocol': {'path': 'protocol.json', 'metadata': protocol},
+            'context': {'decision': decision}, 'routes': recipe_routes,
+            'output_roots': ['outputs'], 'budget': {'wall_seconds': 60}}
+        write('recipe.json', declaration)
+        call('init', 'project', 'init', '--recipe', str(root / 'recipe.json'))
+    else:
+        protocol.update({role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role)
+                         for role in ('code', 'config', 'data')})
+        protocol_ref = write('protocol.json', protocol)
+        bindings.append({'role': 'protocol', **protocol_ref})
+        for spec, argv in zip(specs, commands):
+            name = spec[0]
+            routes.append({'candidate': name, 'manifest': {'schema': 1, 'id': name, 'arm': 'tool', 'control_id': None,
+                'protocol': protocol_ref, 'argv': argv, 'outpaths': ['outputs/' + name + '.json'],
+                'timeout_seconds': 10, 'resource_estimates': {'wall_seconds': 10}}})
+        contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': commands, 'output_roots': ['outputs'],
+                    'budget': {'wall_seconds': 60}, 'advisor_policy': {'schema': 1, 'context': {'decision': decision},
+                        'graph': {'nodes': nodes, 'edges': []}, 'routes': routes, 'observations': observations,
+                        'tool_bindings': tools}}
+        write('contract.json', contract)
+        call('init', 'project', 'init', '--contract', str(root / 'contract.json'))
     call('before', 'project', 'next')
     for index in range(3):
         call('advance-' + str(index), 'project', 'advance')
@@ -184,4 +199,6 @@ def run(workspace):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', required=True)
-    print(json.dumps(run(parser.parse_args().workspace), indent=2, allow_nan=False))
+    parser.add_argument('--recipe', action='store_true', help='Assemble the same owned consumers from a compact recipe')
+    args = parser.parse_args()
+    print(json.dumps(run(args.workspace, recipe=args.recipe), indent=2, allow_nan=False))
