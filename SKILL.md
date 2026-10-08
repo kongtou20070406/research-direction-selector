@@ -75,8 +75,8 @@ ON applicable research request:
             KEEP scoped exhaustion distinct from scientific impossibility
             REQUIRE program-replayed domain confirmation before claiming goal completion
         ELSE:
-        RUN project advance --brief FOR at most one program-selected authorized step
-        FOR several already frozen steps: optionally USE project drive --until-judgment
+            RUN project advance --brief FOR at most one program-selected authorized step
+        FOR either policy, optionally continue several already frozen steps WITH project drive --until-judgment
             WITH explicit --controller-wall-seconds FROM existing wall budget for ordinary owned projects
             OR the frozen autonomy allowance; READ docs/deterministic-continuation.md
             CONSUME the exact stop, original evidence and settled resources; NEVER infer new authority
