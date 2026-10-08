@@ -24,6 +24,14 @@ Replace the bracketed text with your actual question or file path. If the projec
 
 ## Try the CLI without writing a contract by hand
 
+For a first plan, the Agent can use `project plan` before project initialization.
+It returns the known goal, evaluation, resources and next action, grouping missing
+information without inventing an execution budget. A small `--intent` file can
+carry the user's declared inputs; an existing project supplies its original
+contract and receipt locators. The draft starts no experiment. See
+[planning and steering](planning-and-steering.md) for examples and for pausing or
+redirecting an existing project from the current user request.
+
 Requires Python 3.11 or later. From a repository checkout, choose a **new, empty** directory. The preparation script creates a small synthetic dataset and matching code, evaluator, protocol, and file hashes. It refuses to reuse a non-empty directory.
 
 ```powershell
