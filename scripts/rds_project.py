@@ -320,6 +320,8 @@ class ProjectStore:
         return claims
 
     def _check_start(self, db, run):
+        from rds_steering import check_dispatch
+        check_dispatch(db, run['id'])
         from rds_method_revision import pending_revision
         require(pending_revision(db) is None, 'Resume prepared method revision before executing')
         # This run is already reserved. Do not charge its estimate a second time,
@@ -810,6 +812,8 @@ class ProjectStore:
             contract = self._contract(db)
             require('advisor_policy' not in contract,
                     'Program-owned Advisor requires project advance/create/execute; theory allowance cannot bypass it')
+            from rds_steering import check_dispatch
+            check_dispatch(db, run_id)
             require('stop_policy' not in contract and 'maintenance_allowance' not in contract,
                     'Configured stop/maintenance policies require project create/execute; theory allowance cannot bypass them')
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
@@ -921,6 +925,8 @@ class ProjectStore:
             require(pending_revision(db) is None, 'Resume prepared method revision before registering')
             require(digest(self._contract(db)) == run['effective_contract_sha256'],
                     'Method revision changed during run registration')
+            from rds_steering import check_dispatch
+            check_dispatch(db, run_id)
             self._advisor_check(db, spec, advisor_token)
             if 'autonomy' in contract.get('advisor_policy', {}):
                 from rds_autonomy import bind_run
@@ -1449,6 +1455,10 @@ class ProjectStore:
                     "runs": self._runs(db),
                     "exposures": [json.loads(r["body"]) for r in db.execute("SELECT body FROM exposures ORDER BY id")],
                     "receipts": [self._receipt(r) for r in db.execute("SELECT run_id,sha256,body FROM receipts ORDER BY run_id")]}
+            from rds_steering import current, view
+            steering = current(db)
+            if steering is not None:
+                snapshot['steering'] = view(steering)
             if 'method_evolution' in contract:
                 from rds_method_revision import contract_history, pending_revision
                 snapshot['contract_history'] = contract_history(db)
@@ -1514,6 +1524,9 @@ class ProjectStore:
                 raise
             raise ValueError(initialize) from None
         runs = snap["runs"]
+        if snap.get('steering', {}).get('paused'):
+            return {'next_move': 'New dispatch is paused by the current user; inspect the retained instruction and original attempts',
+                    'command': f'{command} project steering', 'steering': snap['steering']}
         receipts = {r["run_id"]: r for r in snap["receipts"]}
         live = [r for r in runs if r["status"] == "RUNNING"]
         failed = [r for r in runs if r["status"] in ("FAILED", "INTERRUPTED")]

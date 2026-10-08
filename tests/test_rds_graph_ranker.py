@@ -228,19 +228,46 @@ class GraphRankerCLITests(unittest.TestCase):
         self.assertEqual(report['selected_run'], 'baseline')
         self.assertEqual(report['graph_ranker']['status'], 'ABSTAINED')
 
-    def test_retained_human_preference_has_priority_over_neural_order(self):
+    def steer(self, kind, **values):
+        snap = self.snapshot()
+        request = {'id': 'instruction', 'kind': kind, 'message': 'Synthetic current user instruction',
+                   'contract_sha256': snap['contract_sha256'],
+                   'expected_revision': snap.get('steering', {}).get('revision'), **values}
+        return self.output('project', 'steer', '--request', self.write_json('steering.json', request),
+                           '--source', 'current-user-message:synthetic-graph-ranker-case', '--user-directed')
+
+    def test_real_human_preference_has_priority_over_neural_order(self):
         self.initialize(model())
-        from rds_owned_advisor import review, _state
-        def directed(store, db):
-            state = _state(store, db)
-            state['steering'] = {'preferred_runs': ['baseline'], 'paused': False}
-            return state
-        # An integration-boundary state, not an instruction written by a model.
-        with patch('rds_owned_advisor._state', side_effect=directed):
-            report = review(ProjectStore(self.root))
+        self.assertEqual(self.output('project', 'next')['selected_run'], 'repair')
+        self.steer('redirect', prefer=['baseline'])
+        report = self.output('project', 'next')
         self.assertEqual(report['selected_run'], 'baseline')
         self.assertEqual(report['graph_ranker']['precedence'], 'HUMAN_PREFERENCE')
         self.assertFalse(report['graph_ranker']['selection_applied'])
+        self.assertEqual(report['selection_basis'], 'CURRENT_USER_PRIORITY_WITHIN_ADMITTED_FROZEN_ROUTES')
+        self.output('project', 'advance')
+        self.assertEqual(self.starts(), ['baseline'])
+
+    def test_real_withdrawal_excludes_high_score_and_zero_new_launch_for_it(self):
+        self.initialize(model())
+        self.assertEqual(self.output('project', 'next')['selected_run'], 'repair')
+        self.steer('redirect', withdraw=['repair'])
+        report = self.output('project', 'next')
+        self.assertEqual(report['graph_ranker']['scope'], ['baseline'])
+        self.output('project', 'advance')
+        self.assertEqual(self.starts(), ['baseline'])
+        self.output('project', 'advance')
+        self.assertEqual(self.starts(), ['baseline'])
+
+    def test_real_pause_preserves_budget_and_starts_no_neural_route(self):
+        self.initialize(model())
+        before = self.snapshot()['budget']
+        self.steer('pause')
+        report = self.output('project', 'advance')
+        self.assertIsNone(report['selected_run'])
+        self.assertEqual(report['graph_ranker']['precedence'], 'HUMAN_PAUSE')
+        self.assertEqual(self.starts(), [])
+        self.assertEqual(before, self.snapshot()['budget'])
 
 
 if __name__ == '__main__':

@@ -297,6 +297,9 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                     return result
             require(len(rows) < contract['execution_policy']['max_attempts'],
                     'Execution policy: unchanged route reached max_attempts; failures do not establish scientific impossibility')
+        from rds_steering import current
+        require(current(db) is None,
+                'Human steering requires project create/execute; new quick child allowances cannot bypass it')
         amount = number(seconds, 'external wall allowance', True)
         row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
         require(row['spent'] + row['charged'] + row['reserved'] + amount <= row['cap'] + 1e-9,
@@ -396,6 +399,10 @@ def execute(args, review=None):
             # Native research records can share this database before project init.
             has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
             source_contract = source_store._contract(db) if has_contract else {}
+            if source_contract:
+                from rds_steering import current
+                require(current(db) is None,
+                        'Human steering requires project create/execute; use the original child root to inspect or recover an existing quick job')
         require('advisor_policy' not in source_contract,
                 'Program-owned Advisor requires project advance/create/execute; quick exec cannot bypass it')
         require('stop_policy' not in source_contract and 'maintenance_allowance' not in source_contract,
@@ -689,6 +696,12 @@ def brief(root, value, version, formal=False):
         flags = relevant + [kind for kind in flags if kind not in advisory_moves]
         summary['flags'] = list(dict.fromkeys(flags))[:3]
     owned = value.get('advisor') or value
+    if 'steering' in owned:
+        state = owned['steering']
+        summary['steering'] = {key: state.get(key) for key in ('revision', 'paused', 'kind', 'instruction_id')}
+        for key in ('withdrawn_runs', 'preferred_runs'):
+            summary['steering'][key] = state.get(key, [])[:3]
+            summary['steering']['omitted_' + key] = max(0, len(state.get(key, [])) - 3)
     if 'working_set' in owned:
         summary['working_set'] = owned['working_set']
     if 'advisor' in value and 'receipt' in value:

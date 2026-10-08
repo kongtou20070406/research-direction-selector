@@ -1115,6 +1115,16 @@ def cmd_project(args):
     """Run a locked external project without claiming task or mechanism gains."""
     from rds_project import ProjectStore
     store = ProjectStore(args.root)
+    if args.action == 'plan':
+        from rds_steering import plan
+        return plan(store, load_spec(args.intent) if args.intent else None,
+                    output=args.output, save_as=args.save_as)
+    if args.action == 'steering':
+        from rds_steering import status
+        return status(store)
+    if args.action == 'steer':
+        from rds_steering import submit
+        return submit(store, load_spec(args.request), user_directed=args.user_directed, source=args.source)
     if args.action == "init":
         return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
     if args.action == "revise":
@@ -1499,6 +1509,15 @@ def parser():
 
     project = commands.add_parser("project", help="Locked local project runner with receipts and resource accounting")
     pr_actions = project.add_subparsers(dest="action", required=True)
+    pr_plan = pr_actions.add_parser('plan', help='Prepare a minimal draft with explicit unknowns; never authorize or launch work')
+    pr_plan.add_argument('--intent', help='Optional declared goal/scope/budget/evaluation JSON')
+    pr_plan.add_argument('--output', help='Write a new project-relative proposal artifact')
+    pr_plan.add_argument('--save-as', help='Retain the draft in an initialized project checkpoint and CAS')
+    pr_actions.add_parser('steering', help='Read the current user instruction, active work disposition and live resources')
+    pr_steer = pr_actions.add_parser('steer', help='Record a host-attested current-user instruction; preserve original execution authority')
+    pr_steer.add_argument('--request', required=True)
+    pr_steer.add_argument('--user-directed', action='store_true', help='Caller attests this is a current user request, not imported text')
+    pr_steer.add_argument('--source', required=True, help='Locator of the current user request in the trusted host')
     pr_init = pr_actions.add_parser("init")
     pr_init.add_argument("--contract", required=True)
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",

@@ -1,0 +1,260 @@
+{
+  "quality": "PASS",
+  "protocol_sha256": "524a03c0e07363fd141fd45daccf63425f2fc9474d7b77cefa4109d43c8472d7",
+  "protocol_digest_format": "UTF8_JSON_SORTED_KEYS_COMPACT_UNESCAPED_UNICODE",
+  "groups": {
+    "setup": {
+      "count": 2,
+      "seconds": [
+        0.25678540000808425,
+        0.5931267999985721
+      ],
+      "median_seconds": 0.4249561000033282,
+      "max_seconds": 0.5931267999985721,
+      "stdout_bytes": [
+        497,
+        7402
+      ]
+    },
+    "quality-inspection": {
+      "count": 9,
+      "seconds": [
+        0.37535469999420457,
+        0.41592109999328386,
+        0.3227349999942817,
+        0.3860891999938758,
+        0.47979460000351537,
+        0.5365469000098528,
+        0.3596194999990985,
+        0.3501671999983955,
+        0.3841155000118306
+      ],
+      "median_seconds": 0.3841155000118306,
+      "max_seconds": 0.5365469000098528,
+      "stdout_bytes": [
+        7402,
+        7402,
+        741,
+        1123,
+        1123,
+        16924,
+        16924,
+        1123,
+        26010
+      ]
+    },
+    "baseline-startup": {
+      "count": 3,
+      "seconds": [
+        0.3392683999991277,
+        0.32418300000426825,
+        0.2745735000062268
+      ],
+      "median_seconds": 0.32418300000426825,
+      "max_seconds": 0.3392683999991277,
+      "stdout_bytes": [
+        12,
+        12,
+        12
+      ]
+    },
+    "baseline-root-status": {
+      "count": 3,
+      "seconds": [
+        0.3760877999884542,
+        0.35220599999593105,
+        0.41122409999661613
+      ],
+      "median_seconds": 0.3760877999884542,
+      "max_seconds": 0.41122409999661613,
+      "stdout_bytes": [
+        7402,
+        7402,
+        7402
+      ]
+    },
+    "candidate-startup": {
+      "count": 3,
+      "seconds": [
+        0.32893540000077337,
+        0.2880548999964958,
+        0.3435210999887204
+      ],
+      "median_seconds": 0.32893540000077337,
+      "max_seconds": 0.3435210999887204,
+      "stdout_bytes": [
+        12,
+        12,
+        12
+      ]
+    },
+    "candidate-root-status": {
+      "count": 3,
+      "seconds": [
+        0.37533879998954944,
+        0.36404729999776464,
+        0.37932110000110697
+      ],
+      "median_seconds": 0.37533879998954944,
+      "max_seconds": 0.37932110000110697,
+      "stdout_bytes": [
+        7402,
+        7402,
+        7402
+      ]
+    },
+    "new-project-plan": {
+      "count": 3,
+      "seconds": [
+        0.38644360000034794,
+        0.4111867000028724,
+        0.40422700000635814
+      ],
+      "median_seconds": 0.40422700000635814,
+      "max_seconds": 0.4111867000028724,
+      "stdout_bytes": [
+        984,
+        984,
+        984
+      ]
+    },
+    "existing-project-plan": {
+      "count": 3,
+      "seconds": [
+        0.36976159999903757,
+        0.42691979999653995,
+        0.34576250000100117
+      ],
+      "median_seconds": 0.36976159999903757,
+      "max_seconds": 0.42691979999653995,
+      "stdout_bytes": [
+        2025,
+        2025,
+        2025
+      ]
+    },
+    "missing-information-plan": {
+      "count": 1,
+      "seconds": [
+        0.3917246999917552
+      ],
+      "median_seconds": 0.3917246999917552,
+      "max_seconds": 0.3917246999917552,
+      "stdout_bytes": [
+        961
+      ]
+    },
+    "original-control-action": {
+      "count": 1,
+      "seconds": [
+        2.0160043999931077
+      ],
+      "median_seconds": 2.0160043999931077,
+      "max_seconds": 2.0160043999931077,
+      "stdout_bytes": [
+        96158
+      ]
+    },
+    "pause-receipt": {
+      "count": 3,
+      "seconds": [
+        0.46934650000184774,
+        0.4563112000032561,
+        0.354047000000719
+      ],
+      "median_seconds": 0.4563112000032561,
+      "max_seconds": 0.46934650000184774,
+      "stdout_bytes": [
+        1582,
+        1582,
+        1582
+      ]
+    },
+    "recover-original": {
+      "count": 1,
+      "seconds": [
+        0.7007053999986965
+      ],
+      "median_seconds": 0.7007053999986965,
+      "max_seconds": 0.7007053999986965,
+      "stdout_bytes": [
+        95294
+      ]
+    },
+    "post-steering-plan": {
+      "count": 3,
+      "seconds": [
+        0.4398922999971546,
+        0.42936410001129843,
+        0.4385194000060437
+      ],
+      "median_seconds": 0.4385194000060437,
+      "max_seconds": 0.4398922999971546,
+      "stdout_bytes": [
+        2674,
+        2674,
+        2674
+      ]
+    },
+    "paused-registration": {
+      "count": 1,
+      "seconds": [
+        0.8042073999968125
+      ],
+      "median_seconds": 0.8042073999968125,
+      "max_seconds": 0.8042073999968125,
+      "stdout_bytes": [
+        0
+      ]
+    },
+    "redirect-receipt": {
+      "count": 1,
+      "seconds": [
+        0.41064399998867884
+      ],
+      "median_seconds": 0.41064399998867884,
+      "max_seconds": 0.41064399998867884,
+      "stdout_bytes": [
+        1641
+      ]
+    },
+    "redirected-first-valid-action": {
+      "count": 1,
+      "seconds": [
+        2.024399899994023
+      ],
+      "median_seconds": 2.024399899994023,
+      "max_seconds": 2.024399899994023,
+      "stdout_bytes": [
+        87049
+      ]
+    }
+  },
+  "cli_and_setup_processes": 41,
+  "total_subprocess_wall_seconds": 19.89648479995958,
+  "research_budget": {
+    "cpu_seconds": {
+      "cap": 12.0,
+      "spent_measured": 0.0,
+      "charged_estimate": 10.0,
+      "reserved": 0.0,
+      "remaining": 2.0,
+      "unit": "seconds"
+    },
+    "wall_seconds": {
+      "cap": 12.0,
+      "spent_measured": 1.1842839000019012,
+      "charged_estimate": 0.0,
+      "reserved": 0.0,
+      "remaining": 10.815716099998099,
+      "unit": "seconds"
+    }
+  },
+  "original_receipt_sha256": "7310056c118daef2a64ee742ce9cf84a15a8f83d1e22b4bb10cb3a9f6f651311",
+  "new_receipt_sha256": "99515ee8d8c6c0760f1c3963f52132eda3cee6fafb85e605ac8c38f2fbbc86eb",
+  "oracle_mse": "172/7875",
+  "original_goal": "NOT_MET",
+  "model_latency": "NOT_RUN",
+  "agent_latency": "NOT_RUN",
+  "scientific_gain": "UNMEASURED"
+}
