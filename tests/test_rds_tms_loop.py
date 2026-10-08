@@ -28,6 +28,36 @@ def declaration():
 
 
 class TMSLoopTests(unittest.TestCase):
+    def test_record_metadata_and_non_inference_relations_survive_saved_cli_round_trip(self):
+        spec = {'schema': 1, 'nodes': [
+            {'id': 'opaque-run', 'status': 'SUPPORTED', 'source': 'synthetic run',
+             'record_kind': 'run', 'run_id': 'example'},
+            {'id': 'opaque-fact', 'status': 'UNKNOWN', 'source': 'synthetic lifecycle',
+             'record_kind': 'lifecycle_fact', 'run_id': 'example'}],
+            'hyperedges': [], 'goals': ['opaque-fact']}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def cli(*arguments):
+                result = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'),
+                    '--root', str(root), 'hypergraph', '--json', *arguments], capture_output=True, text=True,
+                    encoding='utf-8', timeout=15, env={**os.environ, 'RDS_USAGE_DB': str(root / 'usage.sqlite3')})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(result.stdout)
+            first = cli('--declare', canonical(spec))
+            saved = current(root)
+            self.assertEqual(saved['dependency_map'], spec)
+            self.assertEqual(first['record_relations'][0]['kind'], 'run_lifecycle_fact')
+            self.assertEqual(first['goals']['opaque-fact']['status'], 'UNKNOWN')
+            repeated = cli()
+            self.assertEqual(repeated['record_relations'], first['record_relations'])
+            self.assertEqual(repeated['record_topology'], first['record_topology'])
+            self.assertEqual(current(root)['sha256'], saved['sha256'])
+            changed = cli('--retract-node', 'opaque-run')
+            self.assertEqual(changed['record_relations'], first['record_relations'])
+            self.assertEqual(changed['declared_supported_closure'], [])
+            self.assertEqual(current(root)['dependency_map']['nodes'][0]['run_id'], 'example')
+            self.assertNotEqual(current(root)['sha256'], saved['sha256'])
+
     def test_scripted_agent_loop_carries_only_changes_and_small_observations(self):
         with tempfile.TemporaryDirectory() as root:
             # This is an application transport simulation, not a live LLM eval.

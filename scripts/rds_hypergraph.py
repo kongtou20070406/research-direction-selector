@@ -354,6 +354,169 @@ def _goal_relevance(edges, goals):
     return relevant_nodes, relevant_edges
 
 
+def record_topology(spec):
+    """Inspect explicit record identities; these relations never participate in inference.
+
+    Generic input metadata is reported data, not an independently audited ledger.
+    No identifier is recovered from an opaque node ID, locator, or fact name.
+    """
+    nodes, edges, goals, _ = _validate(spec)
+    kinds = {'contract', 'run', 'receipt', 'artifact', 'declared_output', 'lifecycle_fact', 'observation'}
+    rows, issues, invalid = {}, [], set()
+
+    def issue(node, reason, field, candidates=()):
+        issues.append({'node_id': node['id'], 'reason': reason, 'field': field,
+                       'candidates': sorted(candidates)[:3], 'omitted_candidates': max(0, len(candidates) - 3)})
+
+    for ident, node in nodes.items():
+        kind = node.get('record_kind')
+        if not isinstance(kind, str) or kind not in kinds:
+            if kind is not None:
+                issue(node, 'INVALID_RECORD_KIND', 'record_kind')
+                invalid.add(ident)
+            continue
+        row = {'node': node, 'kind': kind}
+        source = node['source'] if isinstance(node['source'], dict) else {}
+        for field, values in (
+                ('run_id', [node.get('run_id')]),
+                ('receipt_id', [node.get('receipt_id'), node.get('receipt_sha256'), source.get('receipt_id')]),
+                ('path', [node.get('artifact_path'), node.get('output_path'), source.get('file'), source.get('path')]),
+                ('sha256', [source.get('sha256')])):
+            present = [value for value in values if value is not None]
+            digest_field = field in {'receipt_id', 'sha256'}
+            if any(not isinstance(value, str) or not value or len(value) > (64 if digest_field else 2048)
+                   or digest_field and (len(value) != 64 or any(c not in '0123456789abcdefABCDEF' for c in value))
+                   for value in present):
+                issue(node, 'INVALID_BINDING', field)
+                invalid.add(ident)
+                continue
+            present = [value.lower() if digest_field else value for value in present]
+            if len(set(present)) > 1:
+                issue(node, 'CONFLICTING_BINDINGS', field)
+                invalid.add(ident)
+            elif present:
+                row[field] = present[0]
+        rows[ident] = row
+
+    indexes = {'run': {}, 'receipt': {}, 'artifact': {}}
+    for ident, row in rows.items():
+        if ident in invalid:
+            continue
+        kind = row['kind']
+        key = (row.get('run_id') if kind == 'run' else row.get('receipt_id') if kind == 'receipt'
+               else (row.get('run_id'), row.get('path'), row.get('sha256')) if kind == 'artifact' else None)
+        if key is None or isinstance(key, tuple) and None in key:
+            continue
+        indexes[kind].setdefault(key, []).append(ident)
+
+    relations = []
+
+    def match(row, index, key, field):
+        if key is None or isinstance(key, tuple) and None in key:
+            return None
+        found = indexes[index].get(key, [])
+        if len(found) != 1:
+            issue(row['node'], 'AMBIGUOUS_BINDING' if found else 'UNMATCHED_BINDING', field, found)
+            return None
+        return found[0]
+
+    def link(kind, origin, row, *, declaration=False):
+        if origin is not None:
+            relations.append({'kind': kind, 'from': origin, 'to': row['node']['id'],
+                              'binding': 'DECLARED_OUTPUT' if declaration else 'REPORTED_EXACT_ID_MATCH',
+                              'scientific_support': 'UNKNOWN'})
+
+    for ident, row in rows.items():
+        if ident in invalid:
+            continue
+        kind = row['kind']
+        if kind in {'contract', 'run'}:
+            continue
+        run = match(row, 'run', row.get('run_id'), 'run_id')
+        receipt = None
+        if kind in {'artifact', 'observation', 'lifecycle_fact', 'declared_output'}:
+            receipt = match(row, 'receipt', row.get('receipt_id'), 'receipt_id')
+            if receipt is not None and rows[receipt].get('run_id') != row.get('run_id'):
+                issue(row['node'], 'CONFLICTING_BINDINGS', 'receipt.run_id', [receipt])
+                continue
+        if kind == 'receipt':
+            # A duplicated receipt identity cannot become an unambiguous origin.
+            own = match(row, 'receipt', row.get('receipt_id'), 'receipt_id')
+            if own is not None:
+                link('run_receipt', run, row)
+        elif kind == 'artifact':
+            own = match(row, 'artifact', (row.get('run_id'), row.get('path'), row.get('sha256')), 'artifact_identity')
+            if own is not None:
+                link('run_artifact', run, row)
+                link('receipt_artifact', receipt, row)
+        elif kind == 'declared_output':
+            # The path is a declaration, with no claim that output bytes exist.
+            if row.get('path'):
+                link('declared_output', run, row, declaration=True)
+        elif kind == 'lifecycle_fact':
+            link('run_lifecycle_fact', run, row)
+        elif kind == 'observation':
+            link('run_observation', run, row)
+            artifact = match(row, 'artifact', (row.get('run_id'), row.get('path'), row.get('sha256')), 'artifact_identity')
+            if artifact is not None and rows[artifact].get('receipt_id') != row.get('receipt_id'):
+                issue(row['node'], 'CONFLICTING_BINDINGS', 'artifact.receipt_id', [artifact])
+            else:
+                link('artifact_observation', artifact, row)
+        if 'run_id' not in row and kind in {'lifecycle_fact', 'observation'}:
+            issue(row['node'], 'RUN_NOT_REGISTERED' if row['node'].get('route_id') else 'MISSING_BINDING', 'run_id')
+
+    relations.sort(key=lambda relation: (relation['kind'], relation['from'], relation['to']))
+    linked = {ident for relation in relations for ident in (relation['from'], relation['to'])}
+    dependency_linked = {ident for edge in edges for ident in [*edge['premises'], edge['conclusion']]}
+    counts = {}
+    for relation in relations:
+        counts[relation['kind']] = counts.get(relation['kind'], 0) + 1
+    context = {ident for ident, row in rows.items() if row['kind'] == 'contract'}
+    dependency_pairs = [(tail, edge['conclusion']) for edge in edges for tail in edge['premises']]
+    record_pairs = [(relation['from'], relation['to']) for relation in relations]
+
+    def components(universe, pairs):
+        adjacency = {ident: set() for ident in universe}
+        for left, right in pairs:
+            if left in adjacency and right in adjacency:
+                adjacency[left].add(right)
+                adjacency[right].add(left)
+        result, seen = [], set()
+        for ident in sorted(adjacency):
+            if ident in seen:
+                continue
+            pending, members = [ident], []
+            seen.add(ident)
+            while pending:
+                item = pending.pop()
+                members.append(item)
+                for neighbor in adjacency[item] - seen:
+                    seen.add(neighbor)
+                    pending.append(neighbor)
+            result.append({'node_ids': sorted(members), 'goal_ids': sorted(set(members) & set(goals))})
+        return result
+
+    dependency_components = components(nodes, dependency_pairs)
+    record_components = components(rows, record_pairs)
+    combined_components = components(nodes, dependency_pairs + record_pairs)
+    goal_path_nodes, _ = _goal_relevance(edges, goals)
+    combined_goal_nodes = {ident for group in combined_components if group['goal_ids'] for ident in group['node_ids']}
+    return {'record_relations': relations,
+            'record_topology': {'assurance': 'REPORTED_RECORD_IDENTITIES_NOT_SCIENTIFIC_SUPPORT',
+                                'node_count': len(nodes), 'relation_counts': counts,
+                                'dependency_unlinked_node_ids': sorted(set(nodes) - dependency_linked),
+                                'record_unlinked_node_ids': sorted(set(rows) - linked - context),
+                                'project_context_node_ids': sorted(context),
+                                'unclassified_node_ids': sorted(set(nodes) - set(rows)),
+                                'dependency_components': dependency_components,
+                                'record_components': record_components,
+                                'record_and_dependency_components': combined_components,
+                                'dependency_no_goal_path_node_ids': sorted(set(nodes) - goal_path_nodes),
+                                'record_and_dependency_no_goal_connection_node_ids': sorted(set(nodes) - combined_goal_nodes),
+                                'graph_semantics': 'Components are undirected structural groups. Dependency goal paths follow non-CONTRADICTED reported rules without checking AND satisfaction. Combined record connectivity is not a proof path or scientific support.',
+                                'issues': sorted(issues, key=lambda row: (row['node_id'], row['field'], row['reason']))}}
+
+
 def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
     """Least declared closure and complete minimal missing-evidence sets, or UNKNOWN."""
     nodes, edges, goals, limits = _validate(spec)
@@ -456,7 +619,7 @@ def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
             [sorted(v) for v in sorted(families[goal], key=lambda v: (len(v), sorted(v)))]
         results[goal] = {"status": status, "minimal_missing_evidence_sets": sets,
                          "blocker_sets_complete": supported or not truncated}
-    return {"schema": 1, "assurance": ASSURANCE,
+    return {**record_topology(spec), "schema": 1, "assurance": ASSURANCE,
             "declared_supported_closure": sorted(closure),
             "declared_derivation_rules": derivations,
             "active_contradicted_conclusion_rules": sorted(conflicts),

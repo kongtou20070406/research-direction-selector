@@ -67,6 +67,128 @@ def relevance_reference(edges, goals):
 
 
 class HypergraphTests(unittest.TestCase):
+    def record_fixture(self):
+        spec = graph({'opaque-a': 'SUPPORTED', 'opaque-b': 'SUPPORTED', 'opaque-c': 'SUPPORTED',
+                      'opaque-d': 'UNKNOWN', 'opaque-e': 'UNKNOWN', 'opaque-f': 'SUPPORTED',
+                      'opaque-g': 'SUPPORTED'}, [], ['opaque-d'])
+        metadata = [
+            {'record_kind': 'run', 'run_id': 'run.with.dots'},
+            {'record_kind': 'receipt', 'run_id': 'run.with.dots', 'receipt_id': 'a' * 64},
+            {'record_kind': 'artifact', 'run_id': 'run.with.dots', 'receipt_id': 'a' * 64,
+             'artifact_path': 'out/result.json', 'source': {'locator': 'synthetic original',
+                                                          'file': 'out/result.json', 'sha256': 'b' * 64}},
+            {'record_kind': 'observation', 'run_id': 'run.with.dots', 'receipt_id': 'a' * 64,
+             'output_path': 'out/result.json', 'source': {'locator': '/score', 'file': 'out/result.json',
+                                                        'sha256': 'b' * 64, 'receipt_id': 'a' * 64}},
+            {'record_kind': 'declared_output', 'run_id': 'run.with.dots', 'output_path': 'out/missing.json'},
+            {'record_kind': 'lifecycle_fact', 'run_id': 'run.with.dots'},
+            {'record_kind': 'contract'}]
+        for node, fields in zip(spec['nodes'], metadata):
+            node.update(fields)
+        return spec
+
+    def test_record_relations_are_exact_and_leave_every_inference_field_unchanged(self):
+        spec = self.record_fixture()
+        plain = deepcopy(spec)
+        for node in plain['nodes']:
+            for key in ('record_kind', 'run_id', 'receipt_id', 'output_path', 'artifact_path'):
+                node.pop(key, None)
+        expected, actual = analyze_hypergraph(plain), analyze_hypergraph(spec)
+        for field in expected.keys() - {'record_relations', 'record_topology', 'reported_nodes'}:
+            self.assertEqual(actual[field], expected[field], field)
+        self.assertEqual(actual['record_topology']['relation_counts'], {
+            'artifact_observation': 1, 'declared_output': 1, 'receipt_artifact': 1,
+            'run_artifact': 1, 'run_lifecycle_fact': 1, 'run_observation': 1, 'run_receipt': 1})
+        self.assertEqual(actual['record_topology']['project_context_node_ids'], ['opaque-g'])
+        self.assertEqual(actual['record_topology']['record_unlinked_node_ids'], [])
+        self.assertEqual(actual['record_topology']['dependency_unlinked_node_ids'], sorted(n['id'] for n in spec['nodes']))
+        self.assertEqual(actual['record_topology']['issues'], [])
+        self.assertNotIn('opaque-d', actual['declared_supported_closure'])
+        self.assertNotIn('opaque-e', actual['declared_supported_closure'])
+        self.assertTrue(all(r['scientific_support'] == 'UNKNOWN' for r in actual['record_relations']))
+        self.assertEqual(spec, self.record_fixture())
+
+    def test_record_relations_report_ambiguous_and_conflicting_bindings_without_guessing(self):
+        spec = self.record_fixture()
+        duplicate = deepcopy(spec['nodes'][0])
+        duplicate['id'] = 'duplicate-run'
+        spec['nodes'].append(duplicate)
+        spec['nodes'][3]['source']['receipt_id'] = 'c' * 64
+        result = analyze_hypergraph(spec)
+        self.assertFalse(any(r['kind'].startswith('run_') or r['kind'] == 'declared_output'
+                             for r in result['record_relations']))
+        self.assertFalse(any(r['to'] == 'opaque-d' for r in result['record_relations']))
+        self.assertTrue(any(i['reason'] == 'AMBIGUOUS_BINDING' for i in result['record_topology']['issues']))
+        self.assertTrue(any(i['node_id'] == 'opaque-d' and i['reason'] == 'CONFLICTING_BINDINGS'
+                            for i in result['record_topology']['issues']))
+
+    def test_record_relations_do_not_match_equal_bytes_across_runs_or_disagreeing_receipts(self):
+        spec = self.record_fixture()
+        other = deepcopy(spec['nodes'][0])
+        other.update(id='another-run', run_id='another')
+        spec['nodes'].append(other)
+        spec['nodes'][3]['run_id'] = 'another'
+        result = analyze_hypergraph(spec)
+        self.assertFalse(any(r['to'] == 'opaque-d' for r in result['record_relations']))
+        self.assertTrue(any(i['field'] == 'receipt.run_id' for i in result['record_topology']['issues']))
+        spec['nodes'][3].pop('receipt_id')
+        spec['nodes'][3]['source'].pop('receipt_id')
+        result = analyze_hypergraph(spec)
+        self.assertFalse(any(r['kind'] == 'artifact_observation' for r in result['record_relations']))
+        self.assertTrue(any(i['reason'] == 'UNMATCHED_BINDING' and i['field'] == 'artifact_identity'
+                            for i in result['record_topology']['issues']))
+
+    def test_record_conflicts_preserve_only_independent_exact_field_relations(self):
+        spec = self.record_fixture()
+        spec['nodes'][2]['receipt_id'] = 'c' * 64
+        result = analyze_hypergraph(spec)
+        self.assertTrue(any(r['kind'] == 'run_observation' and r['to'] == 'opaque-d'
+                            for r in result['record_relations']))
+        self.assertFalse(any(r['kind'] == 'artifact_observation' for r in result['record_relations']))
+        self.assertTrue(any(i['node_id'] == 'opaque-d' and i['field'] == 'artifact.receipt_id'
+                            for i in result['record_topology']['issues']))
+
+    def test_structural_goal_paths_and_record_components_never_discharge_and_obligations(self):
+        spec = self.record_fixture()
+        spec['nodes'].append({'id': 'formal-goal', 'status': 'UNKNOWN', 'source': 'synthetic formal goal'})
+        spec['hyperedges'] = [{'id': 'and-rule', 'premises': ['opaque-d', 'opaque-e'],
+                              'conclusion': 'formal-goal', 'status': 'PROPOSED', 'source': 'synthetic rule'}]
+        spec['goals'] = ['formal-goal']
+        result = analyze_hypergraph(spec)
+        topology = result['record_topology']
+        self.assertIn('opaque-a', topology['dependency_no_goal_path_node_ids'])
+        self.assertNotIn('opaque-a', topology['record_and_dependency_no_goal_connection_node_ids'])
+        self.assertEqual(topology['record_and_dependency_no_goal_connection_node_ids'], ['opaque-g'])
+        self.assertNotIn('formal-goal', topology['record_unlinked_node_ids'])
+        self.assertIn('formal-goal', topology['unclassified_node_ids'])
+        self.assertEqual(len(topology['dependency_components']), 6)
+        self.assertEqual(len(topology['record_components']), 2)
+        self.assertEqual(result['goals']['formal-goal']['status'], 'UNKNOWN')
+        self.assertNotIn('formal-goal', result['declared_supported_closure'])
+
+    def test_record_relations_leave_unregistered_routes_and_untyped_locators_unlinked(self):
+        spec = graph({'owned:run:pretend': 'SUPPORTED', 'owned:fact:run.pretend.failed': 'SUPPORTED',
+                      'pending': 'UNKNOWN'}, [], ['pending'])
+        spec['nodes'][0]['source'] = 'owned run pretend'
+        spec['nodes'][1].update(record_kind='lifecycle_fact', route_id='pretend')
+        spec['nodes'][2].update(record_kind='observation', route_id='pretend', output_path='out/a.json')
+        result = analyze_hypergraph(spec)
+        self.assertEqual(result['record_relations'], [])
+        self.assertEqual(result['record_topology']['unclassified_node_ids'], ['owned:run:pretend'])
+        self.assertEqual([i['reason'] for i in result['record_topology']['issues']], ['RUN_NOT_REGISTERED'] * 2)
+
+    def test_record_relations_diagnose_invalid_metadata_without_changing_supported_status(self):
+        spec = self.record_fixture()
+        spec['nodes'][0]['run_id'] = ['run.with.dots']
+        spec['nodes'][1]['receipt_id'] = 'invalid'
+        spec['nodes'][2]['artifact_path'] = 'different.json'
+        spec['nodes'][3]['record_kind'] = {'untrusted': 'observation'}
+        result = analyze_hypergraph(spec)
+        self.assertEqual(result['record_relations'], [])
+        self.assertIn('opaque-a', result['declared_supported_closure'])
+        self.assertEqual({i['reason'] for i in result['record_topology']['issues']},
+                         {'INVALID_BINDING', 'CONFLICTING_BINDINGS', 'INVALID_RECORD_KIND', 'UNMATCHED_BINDING'})
+
     def test_ordered_first_witness_survives_delayed_early_rule(self):
         spec = graph({'a': 'SUPPORTED', 'b': 'UNKNOWN', 'c': 'UNKNOWN'}, [
             ('early', ['b'], 'c', 'SUPPORTED'),

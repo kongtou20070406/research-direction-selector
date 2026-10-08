@@ -168,6 +168,45 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]['sha256'], receipt['sha256'])
 
+    def test_record_bindings_reach_real_cli_without_promoting_scientific_support(self):
+        self.initialize()
+        initial = self.output('project', 'next')
+        self.assertEqual(initial['record_relations'], [])
+        self.assertTrue(all(issue['reason'] == 'RUN_NOT_REGISTERED'
+                            for issue in initial['record_topology']['issues']))
+        pending_nodes = current(self.root)['dependency_map']['nodes']
+        self.assertTrue(all('run_id' not in node for node in pending_nodes
+                            if node.get('record_kind') in {'lifecycle_fact', 'observation'}))
+        self.create()
+        pending = self.output('advise')
+        self.assertEqual(pending['record_topology']['relation_counts']['run_lifecycle_fact'], 5)
+        self.assertEqual(pending['record_topology']['relation_counts']['declared_output'], 1)
+        output = next(node for node in current(self.root)['dependency_map']['nodes']
+                      if node.get('record_kind') == 'declared_output')
+        self.assertEqual((output['output_path'], output['status'], output['interpretation']),
+                         ('outputs/baseline.json', 'UNKNOWN', 'PENDING'))
+        complete = self.execute()
+        self.assert_owned_receipt(complete['receipt'], 'baseline', 'SUCCEEDED')
+        review = complete['advisor']
+        self.assertEqual(review['record_topology']['relation_counts']['run_receipt'], 1)
+        self.assertEqual(review['record_topology']['relation_counts']['artifact_observation'], 1)
+        nodes = current(self.root)['dependency_map']['nodes']
+        run = next(node for node in nodes if node.get('record_kind') == 'run')
+        receipt = next(node for node in nodes if node.get('record_kind') == 'receipt')
+        self.assertEqual(run['run_id'], 'baseline')
+        self.assertEqual(receipt['run_id'], run['run_id'])
+        self.assertEqual(receipt['receipt_id'], complete['receipt']['sha256'])
+        self.assertTrue(all(node['run_id'] == 'baseline' and node['receipt_id'] == receipt['receipt_id']
+                            for node in nodes if node.get('record_kind') == 'lifecycle_fact' and 'run_id' in node))
+        self.assertTrue(all(relation['scientific_support'] == 'UNKNOWN' for relation in review['record_relations']))
+        before = self.snapshot()
+        repeated = self.output('project', 'next')
+        self.assertEqual(repeated['record_relations'], review['record_relations'])
+        self.assertEqual(repeated['record_topology'], review['record_topology'])
+        self.assertEqual(self.snapshot()['budget'], before['budget'])
+        self.assertEqual(self.snapshot()['receipts'], before['receipts'])
+        self.assertEqual(self.starts(), ['baseline'])
+
     def test_negative_result_is_collected_without_model_context_and_changes_route(self):
         self.initialize()
         self.assertEqual(self.output('advise')['selected_run'], 'baseline')
@@ -575,6 +614,16 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         missing = next(row for row in review['coverage']['declared_outputs'] if row['path'] == 'outputs/weights.bin')
         self.assertEqual(missing, {'run_id': 'baseline', 'path': 'outputs/weights.bin', 'status': 'MISSING'})
         self.assertTrue(review['coverage']['gaps'])
+        declared = [row for row in review['record_relations'] if row['kind'] == 'declared_output']
+        self.assertTrue(declared)
+        self.assertTrue(all(row['binding'] == 'DECLARED_OUTPUT' and row['scientific_support'] == 'UNKNOWN'
+                            for row in declared))
+        # Partial original bytes can retain provenance without supplying a reliable measurement.
+        self.assertEqual(review['context']['facts']['baseline.score']['kind'], 'UNKNOWN')
+        saved_outputs = [node for node in current(self.root)['dependency_map']['nodes']
+                         if node.get('record_kind') == 'declared_output']
+        self.assertTrue(all(node['status'] == 'UNKNOWN' and node['interpretation'] == 'MISSING'
+                            for node in saved_outputs))
         before = self.snapshot()['budget']
         self.call('project', 'advance', ok=False)
         self.assertEqual(self.starts(), ['baseline'])
