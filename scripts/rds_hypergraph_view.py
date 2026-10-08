@@ -2,8 +2,10 @@
 """Export a standalone, offline, read-only force-directed hypergraph explorer."""
 import argparse
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 import sys
 
@@ -374,6 +376,452 @@ function startGraph(){
 '''
 
 
+# The user-selected replica has no published license at this pinned revision.
+# Read its local checkout at export time; do not redistribute it in this repository.
+REPLICA_COMMIT = "b811f4d12f909d496d44c7f2d98b3a408eb1a627"
+REPLICA_FILES = {
+    "renderer.js": "e3b0aed506ab9ed6717ef1ef2fb177eb08c52be574bdbba5cff612dd62c75ca7",
+    "sim-worker.js": "cd618311568bd64bef2b52ea0c302d17c25eeb4bc6c8041f5d312c284bc07316",
+    "style.css": "3f3c8ce502225c01b664d3842643301bd926a8e81252152fecd7c438f29eb59d",
+}
+PIXI_SHA256 = "712a3e1943b062a907d86c5bb56b67c7b32a3f03b3654768b00b7016d30a24c6"
+
+
+def dependency_levels(ids, links):
+    """Longest-path ranks on the SCC condensation; cycles share a rank.
+
+    Iterative traversal keeps the full display limit independent of Python's
+    recursion limit. Disconnected records with no directed relation are unranked.
+    """
+    adj, rev = {i: [] for i in ids}, {i: [] for i in ids}
+    for s, t, _ in links:
+        adj[s].append(t)
+        rev[t].append(s)
+    seen, order = set(), []
+    for first in ids:
+        if first in seen:
+            continue
+        seen.add(first)
+        stack = [(first, iter(adj[first]))]
+        while stack:
+            n, it = stack[-1]
+            nxt = next(it, None)
+            if nxt is None:
+                order.append(n)
+                stack.pop()
+            elif nxt not in seen:
+                seen.add(nxt)
+                stack.append((nxt, iter(adj[nxt])))
+    component, cid = {}, -1
+    for first in reversed(order):
+        if first in component:
+            continue
+        cid += 1
+        component[first] = cid
+        stack = [first]
+        while stack:
+            for nxt in rev[stack.pop()]:
+                if nxt not in component:
+                    component[nxt] = cid
+                    stack.append(nxt)
+    out, indegree = {c: set() for c in component.values()}, {c: 0 for c in component.values()}
+    for s, t, _ in links:
+        a, b = component[s], component[t]
+        if a != b and b not in out[a]:
+            out[a].add(b)
+            indegree[b] += 1
+    rank = {c: 0 for c in out}
+    queue = [c for c in out if not indegree[c]]
+    for c in queue:
+        for nxt in out[c]:
+            rank[nxt] = max(rank[nxt], rank[c] + 1)
+            indegree[nxt] -= 1
+            if not indegree[nxt]:
+                queue.append(nxt)
+    center = max(rank.values(), default=0) / 2
+    return {i: (rank[component[i]] - center) * 160 if adj[i] or rev[i] else None for i in ids}
+
+
+def replica_view(result):
+    """Incidence geometry plus explicitly bound provenance; never alter the map.
+
+    Provenance is a separate view relation, not an inference or scientific edge.
+    Do not join records by similar text, orphan IDs, or status.
+    """
+    spec = result.get("graph")
+    if not spec:
+        return {"nodes": {}, "links": [], "provenance_count": 0, "relations": []}
+    nodes, links, groups = {}, [], {}
+    ids = {n["id"]: f"c{i}" for i, n in enumerate(spec["nodes"])}
+    goals = set(spec["goals"])
+    palette = {"声明": "#b3b3b3", "执行": "#ada4bc", "回执": "#93b3a3", "产物": "#8fa5b1", "观测": "#acaf8f"}
+    names = {"radius_minimal_polynomial": "半径最小多项式", "radius_irreducible": "不可约性",
+             "radius_isolated_unique": "根隔离与唯一性", "ordered_exact_centers": "精确圆心",
+             "continuous_cover": "连续覆盖", "global_optimality": "全局最优性",
+             "complete_reproducibility": "完整可复现性", "official_complete_acceptance": "正式完整验收"}
+    run_ids = {n["id"].removeprefix("owned:run:"): ids[n["id"]] for n in spec["nodes"]
+               if n["id"].startswith("owned:run:") and isinstance(n.get("manifest_sha256"), str)}
+    receipts = {n["receipt_sha256"]: ids[n["id"]] for n in spec["nodes"]
+                if isinstance(n.get("receipt_sha256"), str)}
+    # Keyed by both byte identity and the exact original relative path.
+    artifacts = {}
+    for row in spec["nodes"]:
+        src = row.get("source")
+        if row.get("interpretation") and isinstance(src, dict) and isinstance(src.get("sha256"), str) and isinstance(src.get("file"), str):
+            artifacts[(src["sha256"], src["file"])] = ids[row["id"]]
+    for i, row in enumerate(spec["nodes"]):
+        ident = row["id"]
+        kind = {"run": "执行", "receipt": "回执", "artifact": "产物", "fact": "观测"}.get(ident.split(":")[1] if ident.startswith("owned:") else "", "声明")
+        label = names.get(ident, row.get("label") or row.get("claim") or ident)
+        if not isinstance(label, str):
+            label = ident
+        if ident.startswith("owned:run:"):
+            label = ident.removeprefix("owned:run:")
+        elif ident.startswith("owned:receipt:"):
+            label = ident.removeprefix("owned:receipt:") + " · 回执"
+        elif kind == "产物":
+            src = row.get("source", {})
+            label = (src.get("file", ident).replace("\\", "/").split("/")[-1] if isinstance(src, dict) else ident)
+        elif kind == "观测":
+            label = ident.removeprefix("owned:fact:").removeprefix("observation.")
+        nodes[f"c{i}"] = {"type": "", "label": label, "color": {"rgb": int(palette[kind][1:], 16), "a": 1},
+                            "rds": {"record": ident, "kind": kind, "size": 1.5 if ident in goals else 1,
+                                    "group": None, "color": palette[kind]}}
+    for i, edge in enumerate(spec["hyperedges"]):
+        hub = f"h{i}"
+        relation = edge.get("relation") if isinstance(edge.get("relation"), str) and edge["relation"].strip() else "依赖"
+        members = [ids[p] for p in edge["premises"]] + [ids[edge["conclusion"]]]
+        nodes[hub] = {"type": "hyperedge", "label": ("AND" if len(edge["premises"]) > 1 else "") + " ◇",
+                      "color": {"rgb": 0x9c95af, "a": 1},
+                      "rds": {"edge": i, "kind": "超边", "members": members, "size": .65, "group": None}}
+        style = {"relation": relation, "family": "dependency", "hyperedge": hub, "color": "#bdc2d2",
+                 "width": 1.25, "opacity": .55, "dash": edge["status"] != "SUPPORTED", "arrow": False}
+        links.extend([[ids[p], hub, dict(style)] for p in edge["premises"]])
+        links.append([hub, ids[edge["conclusion"]], {**style, "arrow": True}])
+    pairs = {(s, t) for s, t, _ in links}
+    provenance = 0
+
+    def bind(s, t, field, value):
+        nonlocal provenance
+        if s == t or (s, t) in pairs:
+            return
+        pairs.add((s, t))
+        provenance += 1
+        links.append([s, t, {"relation": "来源绑定", "family": "provenance", "color": "#b7c6c3",
+                            "width": .65, "opacity": .32, "dash": True, "arrow": False,
+                            "binding": {"field": field, "value": value}}])
+
+    for row in spec["nodes"]:
+        target = ids[row["id"]]
+        run = row.get("run_id")
+        if isinstance(run, str) and run in run_ids:
+            bind(run_ids[run], target, "run_id", run)
+            groups[target] = run
+        src = row.get("source")
+        if isinstance(src, dict):
+            receipt = src.get("receipt_id")
+            if isinstance(receipt, str) and receipt in receipts:
+                bind(receipts[receipt], target, "source.receipt_id", receipt)
+            key = (src.get("sha256"), src.get("path") or src.get("file"))
+            if all(isinstance(v, str) for v in key) and key in artifacts:
+                bind(artifacts[key], target, "source.sha256 + source.path", list(key))
+    for run, uid in run_ids.items():
+        groups[uid] = run
+    # Run -> receipt edges already declared in the TMS map supply membership.
+    for edge in spec["hyperedges"]:
+        ps = [ids[p] for p in edge["premises"]]
+        for p in ps:
+            if p in groups and nodes[p]["rds"]["kind"] == "执行":
+                groups[ids[edge["conclusion"]]] = groups[p]
+    for s, t, meta in links:
+        if meta["family"] == "provenance" and s in groups:
+            groups.setdefault(t, groups[s])
+    for uid, group in groups.items():
+        nodes[uid]["rds"]["group"] = group
+    for s, t, meta in links:
+        if meta.get("hyperedge") and nodes[s]["rds"].get("group"):
+            nodes[meta["hyperedge"]]["rds"]["group"] = nodes[s]["rds"]["group"]
+    levels = dependency_levels(nodes, links)
+    for uid, level in levels.items():
+        nodes[uid]["rds"]["flowX"] = level
+    return {"nodes": nodes, "links": links, "provenance_count": provenance,
+            "relations": sorted({meta["relation"] for _, _, meta in links})}
+
+
+def _replace_once(source, old, new):
+    if source.count(old) != 1:
+        raise ValueError("Pinned replica patch no longer matches: " + old[:70])
+    return source.replace(old, new, 1)
+
+
+def patch_replica_renderer(source):
+    """Small, auditable patches to the exact user-selected renderer."""
+    source = _replace_once(source, "new Blob([`(${workerMain.toString()})()`]", "new Blob([document.getElementById('d3-worker-lib').textContent, `\\n(${workerMain.toString()})()`]")
+    source = _replace_once(source, "this.worker = new Worker(blobUrl", "this.workerBlobUrl = blobUrl; this.worker = new Worker(blobUrl")
+    source = _replace_once(source, "getSize() { return this.r.opts.nodeSize *", "getSize() { return (this.rds?.size || 1) * this.r.opts.nodeSize *")
+    source = _replace_once(source, "if (this.rendered) return false;", "if (this.rendered || this.rdsHidden) return false;")
+    source = _replace_once(source, "const r = this.r, { x, y } = this", "if(this.rdsHidden){this.circle.visible=this.text.visible=false;if(this.highlight)this.highlight.visible=false;return;}\n      const r = this.r, { x, y } = this")
+    source = _replace_once(source, "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();", "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();\n      if(s.rdsHidden || t.rdsHidden){this.px.visible=this.arrow.visible=false;return;}")
+    source = _replace_once(source, "if (n.rendered) continue;", "if (n.rendered || n.rdsHidden) continue;")
+    source = _replace_once(source, "c.beginFill(0xffffff).drawCircle(0, 0, 100).endFill();", "c.beginFill(0xffffff); if(this.type === 'hyperedge') c.drawPolygon([0,-100,100,0,0,100,-100,0]); else c.drawCircle(0,0,100); c.endFill();")
+    source = _replace_once(source, "const related = !hl || isHl || this.neighbors.has(hl.id);", "const related = !hl || isHl || r.rdsRelated?.has(this.id) || this.neighbors.has(hl.id);")
+    source = _replace_once(source, "const on = s === hl || t === hl;", "const on = s === hl || t === hl || (this.rds?.hyperedge && r.rdsRelated?.has(this.rds.hyperedge));")
+    source = _replace_once(source, "const col = on ? r.colors.lineHighlight : r.colors.line;", "const col = on ? r.colors.lineHighlight : this.rds?.color ? hexToColor(this.rds.color) : r.colors.line;")
+    source = _replace_once(source, "a *= col.a;", "a *= col.a * (this.rds?.opacity ?? 1);")
+    source = _replace_once(source, "const w = r.opts.lineSize / r.scale;", "const w = r.opts.lineSize * (this.rds?.width || 1) / r.scale;")
+    source = _replace_once(source, "let showArrow = r.opts.showArrow && vis", "let showArrow = r.opts.showArrow && this.rds?.arrow && vis")
+    source = _replace_once(source, "new PIXI.Sprite(PIXI.Texture.WHITE)", "new PIXI.TilingSprite(this.rds?.dash ? r.rdsDashTexture : PIXI.Texture.WHITE,1,1)")
+    source = _replace_once(source, "line.tint = lerpColor(line.tint, col.rgb);", "line.tint = lerpColor(line.tint, col.rgb); line.tileScale.set(1/r.scale, w/4);")
+    source = _replace_once(source, "this.nodes = []; this.nodeLookup", "const dashCanvas=document.createElement('canvas'); dashCanvas.width=12; dashCanvas.height=4; const dc=dashCanvas.getContext('2d'); dc.fillStyle='#fff'; dc.fillRect(0,0,6,4); this.rdsDashTexture=PIXI.Texture.from(dashCanvas);\n      this.nodes = []; this.nodeLookup")
+    source = _replace_once(source, "for (const [s, t] of data.links)", "for (const [s, t, meta] of data.links)")
+    source = _replace_once(source, "this.links.push(l); this.linkLookup.set(key, l); changed = true;", "l.rds = meta; this.links.push(l); this.linkLookup.set(key, l); changed = true;")
+    source = _replace_once(source, "n.label = spec.label || id;\n        } else", "n.label = spec.label || id; n.rds = spec.rds;\n        } else")
+    source = _replace_once(source, "n.color = spec.color || null; n.label = spec.label || id;", "n.color = spec.color || null; n.label = spec.label || id; n.rds = spec.rds;")
+    source = _replace_once(source, "links: this.links.map(l => [l.source.id, l.target.id])", "links: this.links.map(l => [l.source.id, l.target.id, l.rds])")
+    # Keep upstream node dragging: pin just the grabbed node, reheat to .3,
+    # and let adjacent particles follow through their configured forces.
+    source = _replace_once(source, "app.stage.on('pointerup', up).on('pointerupoutside', up);", "app.stage.on('pointerup', up).on('pointerupoutside', up);\n      window.addEventListener('blur', up); view.addEventListener('pointercancel', up);")
+    source = _replace_once(source, "getHighlightNode() { return this.dragNode || this.highlightNode; }", """getHighlightNode() {
+      const hl=this.dragNode || this.highlightNode || this.rdsPinned;
+      if(this.rdsLastHL !== hl) {
+        this.rdsLastHL=hl; this.rdsRelated=new Set(hl ? [hl.id] : []);
+        if(hl) for(const n of this.nodes) if(n.rds?.members && (n===hl || n.rds.members.includes(hl.id))) {
+          this.rdsRelated.add(n.id); for(const id of n.rds.members) this.rdsRelated.add(id);
+        }
+      }
+      return hl;
+    }""")
+    return source
+
+
+def patch_replica_worker(source):
+    source, count = re.subn(r"importScripts\([\s\S]*?\);", "", source, count=1)
+    if count != 1:
+        raise ValueError("Pinned replica worker import no longer matches")
+    source = _replace_once(source, "schedule();\n  if (nodes.length === 0) return;", "if (nodes.length === 0) return;\n  schedule();")
+    source = _replace_once(source, "repelStrength: 1000", "repelStrength: 1000, damping: 0.4, flowStrength: 0.025, groupStrength: 0.035, edgeRepulsion: 0.25, edgeClearance: 45, relations: {}")
+    source = _replace_once(source, "const VELOCITY_KEEP = 0.6;", "// Damping is adjustable; .4 retains upstream velocity multiplier .6.")
+    source = _replace_once(source, "n.vx *= VELOCITY_KEEP;", "n.vx *= 1 - Math.max(0.1, Math.min(0.85, params.damping));")
+    source = _replace_once(source, "n.vy *= VELOCITY_KEEP;", "n.vy *= 1 - Math.max(0.1, Math.min(0.85, params.damping));")
+    source = _replace_once(source, "const forces = [fx, fy, fLink, fCharge, fCollide];", """function fFlow(a) {
+  if(!params.flowStrength) return;
+  for(const l of links) {
+    const s=l.source,t=l.target;
+    const cfg=params.relations[l.relation];if(cfg && (cfg.mode==='none'||cfg.strength===0))continue;
+    if(s.flowX == null || t.flowX == null || t.flowX<=s.flowX) continue;
+    const k=Math.min(5,Math.max(0,params.linkDistance*.6-(t.x-s.x))*params.flowStrength)*a;
+    s.vx-=k*.5;t.vx+=k*.5;
+  }
+}
+function fGroups(a) {
+  if(!params.groupStrength) return;
+  const centers=new Map();
+  for(const n of nodes) if(n.group) { const c=centers.get(n.group)||[0,0,0]; c[0]+=n.x;c[1]+=n.y;c[2]++;centers.set(n.group,c); }
+  for(const n of nodes) if(n.group) {const c=centers.get(n.group); n.vx+=(c[0]/c[2]-n.x)*params.groupStrength*a; n.vy+=(c[1]/c[2]-n.y)*params.groupStrength*a; }
+}
+function fSigned(a) {
+  for(const l of links) {
+    const cfg=params.relations[l.relation] || {mode:'attract',strength:1};
+    if(cfg.mode !== 'repel' || !cfg.strength || !params.linkStrength) continue;
+    const s=l.source,t=l.target; let dx=t.x-s.x,dy=t.y-s.y,d=Math.hypot(dx,dy);
+    if(d<.001){dx=.001;dy=0;d=.001;}
+    const k=Math.min(8,Math.max(0,params.linkDistance-d)*.12)*cfg.strength*params.linkStrength*a/d;
+    s.vx-=dx*k*.5;s.vy-=dy*k*.5;t.vx+=dx*k*.5;t.vy+=dy*k*.5;
+  }
+}
+// A capsule field along each incidence leg, excluding the whole hyperedge's
+// membership. Spatial bins and a rotating bounded budget keep work local.
+let edgeOffset=0;
+function fEdgeField(a) {
+  if(!params.edgeRepulsion) return;
+  const radius=Math.max(5,params.edgeClearance),cell=radius*2,grid=new Map();
+  for(const n of nodes) {const key=Math.floor(n.x/cell)+','+Math.floor(n.y/cell);const bucket=grid.get(key)||[];bucket.push(n);grid.set(key,bucket);}
+  const edges=links.filter(l=>l.hyperedge),budget=60000;let checks=0,processed=0;
+  for(let i=0;i<edges.length && checks<budget;i++) {
+    const l=edges[(edgeOffset+i)%edges.length],s=l.source,t=l.target,cfg=params.relations[l.relation];
+    processed++;if(cfg && (cfg.mode==='none'||cfg.strength===0))continue;
+    const members=nodeById.get(l.hyperedge)?.members || new Set([s.id,t.id]);
+    const dx=t.x-s.x,dy=t.y-s.y,length2=dx*dx+dy*dy;if(length2<1e-8)continue;
+    const samples=Math.min(64,Math.max(1,Math.ceil(Math.sqrt(length2)/cell))),seen=new Set();
+    for(let j=0;j<=samples && checks<budget;j++) {
+      const bx=Math.floor((s.x+dx*j/samples)/cell),by=Math.floor((s.y+dy*j/samples)/cell);
+      for(let gx=bx-1;gx<=bx+1;gx++)for(let gy=by-1;gy<=by+1;gy++)for(const n of grid.get(gx+','+gy)||[]) {
+        if(checks++>=budget)break;if(n===s||n===t||members.has(n.id)||n.id===l.hyperedge||seen.has(n.id))continue;seen.add(n.id);
+        const u=Math.max(0,Math.min(1,((n.x-s.x)*dx+(n.y-s.y)*dy)/length2));
+        let nx=n.x-(s.x+dx*u),ny=n.y-(s.y+dy*u),d=Math.hypot(nx,ny);if(d>=radius)continue;
+        if(d<.001){const len=Math.sqrt(length2);nx=-dy/len;ny=dx/len;d=1;}
+        const force=Math.min(6,(radius-d)*params.edgeRepulsion)*a,px=nx/d*force,py=ny/d*force;
+        n.vx+=px;n.vy+=py;s.vx-=px*(1-u);s.vy-=py*(1-u);t.vx-=px*u;t.vy-=py*u;
+      }
+    }
+  }
+  if(edges.length)edgeOffset=(edgeOffset+Math.max(1,processed))%edges.length;
+}
+const forces = [fx, fy, fLink, fCharge, fCollide, fFlow, fGroups, fSigned, fEdgeField];""")
+    source = _replace_once(source, "fLink.strength((l, i, ls) => params.linkStrength * baseLinkStrength(l, i, ls));", """fLink.strength((l,i,ls) => { const cfg=params.relations[l.relation] || {mode:'attract',strength:1}; return cfg.mode === 'attract' ? params.linkStrength*cfg.strength*baseLinkStrength(l,i,ls) : 0; });
+  // Relative flow uses current parameters; no fixed column coordinates.""")
+    source = _replace_once(source, ".map(([s, t]) => ({ source: nodeById.get(s), target: nodeById.get(t) }));", ".map(([s,t,meta]) => ({...meta, source:nodeById.get(s), target:nodeById.get(t)}));")
+    source = _replace_once(source, "if (m.forceNode) {", """if(m.layoutTargets) {
+    for(const n of nodes) {const target=m.layoutTargets[n.id]; n.flowX=target?.flowX ?? null; n.group=target?.group ?? null; n.members=new Set(target?.members || []);}
+    needParams=true; needInit=true;
+  }
+  if (m.forceNode) {""")
+    return source
+
+
+def render_replica_html(result, replica_root, pixi_js):
+    sources = {}
+    for name, expected in REPLICA_FILES.items():
+        raw = (Path(replica_root) / "replica" / name).read_bytes()
+        # A checkout with LF rather than CRLF must match the same upstream bytes.
+        normalized = raw.replace(b"\r\n", b"\n")
+        if hashlib.sha256(normalized).hexdigest() != expected:
+            raise ValueError("Replica source does not match pinned commit: " + name)
+        sources[name] = raw.decode("utf-8").replace("\r\n", "\n")
+    pixi = Path(pixi_js).read_bytes()
+    if hashlib.sha256(pixi).hexdigest() != PIXI_SHA256:
+        raise ValueError("PixiJS must be the official 7.4.3 dist/pixi.min.js")
+    payload = {**result, "replica_view": replica_view(result),
+               "renderer": {"repository": "https://github.com/runningZ1/obsidian-graph-replica", "commit": REPLICA_COMMIT,
+                            "pixi": "7.4.3", "runtime_network": False}}
+    data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
+    data = data.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    # Template replacement happens before data insertion. No data enters JS/HTML.
+    assets = {"__STYLE__": sources["style.css"] + REPLICA_EXTRA_CSS,
+              "__PIXI__": "/* " + PIXI_LICENSE + " */\n" + pixi.decode("utf-8"), "__D3__": D3_BUNDLE,
+              "__WORKER__": patch_replica_worker(sources["sim-worker.js"]),
+              "__RENDERER__": patch_replica_renderer(sources["renderer.js"]), "__APP__": REPLICA_APP}
+    page = REPLICA_HTML
+    for key, value in assets.items():
+        page = page.replace(key, value.replace("</script", "<\\/script"))
+    return page.replace("__DATA__", data)
+
+
+PIXI_LICENSE = '''The MIT License
+Copyright (c) 2013-2023 Mathew Groves, Chad Engler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.'''
+
+REPLICA_HTML = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; worker-src blob:; connect-src 'none'">
+<title>RDS · 关系图谱</title><style>__STYLE__</style></head><body class="theme-dark">
+<header class="view-header"><span id="source-name">RDS</span><span class="title">关系图谱</span><span class="spacer"></span>
+<button class="icon-btn" id="fit" aria-label="适应画布" title="适应画布">⊡</button>
+<button class="icon-btn" id="restart" aria-label="重新布局" title="重新布局">↻</button>
+<button class="icon-btn" id="grow" aria-label="重播生长" title="重播生长">▷</button>
+<button class="icon-btn" id="skip-growth" aria-label="立即显示全部" title="立即显示全部" hidden>»</button>
+<button class="icon-btn" id="theme" aria-label="切换主题" title="切换主题">◐</button>
+<button class="icon-btn" id="settings" aria-label="图谱设置" title="图谱设置">⚙</button></header>
+<main id="graph" aria-label="RDS 超图画布"><div class="graph-controls" id="controls"></div>
+<button class="icon-btn graph-controls-gear" id="gear" aria-label="展开图谱设置">⚙</button>
+<section class="note-card" id="note-card" aria-label="节点详查"></section>
+<aside id="legend" aria-label="图例"></aside><div id="counts"></div><div id="state" role="status"></div><div id="hover-info" role="tooltip" hidden></div><div id="growth-info"></div></main>
+<script id="snapshot" type="application/json">__DATA__</script>
+<script id="d3-worker-lib" type="text/plain">__D3__</script>
+<script>__PIXI__</script><script>__WORKER__</script><script>__RENDERER__</script><script>__APP__</script></body></html>'''
+
+REPLICA_EXTRA_CSS = '''
+#source-name{font-size:12px;color:var(--text-muted);max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#legend,#counts{position:absolute;bottom:12px;font-size:12px;color:var(--text-muted);z-index:1}
+#legend{left:12px;bottom:34px;max-width:calc(100% - 36px);border:1px solid var(--background-modifier-border);border-radius:6px;background:var(--background-primary);padding:8px 10px;line-height:1.7;pointer-events:none}
+#legend .legend-row{display:flex;flex-wrap:wrap;gap:2px 12px}#legend .symbol{font-size:14px;margin-right:4px}#legend .legend-note{font-size:11px;color:var(--text-muted)}
+#counts{right:16px;pointer-events:none}#state{position:absolute;left:16px;top:14px;font-size:12px;color:var(--text-muted);pointer-events:none;z-index:1}
+#hover-info{position:absolute;left:12px;top:35px;max-width:calc(100% - 36px);z-index:2;background:var(--background-secondary);border:1px solid var(--background-modifier-border);padding:7px 10px;border-radius:5px;color:var(--text-normal);font-size:12px;pointer-events:none;white-space:pre-line}
+#growth-info{position:absolute;left:16px;top:14px;color:var(--text-muted);font-size:12px;pointer-events:none;z-index:2}.icon-btn[hidden],#hover-info[hidden]{display:none}
+.note-card{width:370px;max-height:65%;bottom:132px}.note-card pre{white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.6;color:var(--text-muted)}
+button.record-link{display:block;border:0;background:none;color:var(--text-normal);text-align:left;font:inherit;cursor:pointer;padding:4px;width:100%;border-radius:4px}
+.record-link:hover{background:var(--background-modifier-hover)}.note-card .path{color:var(--text-muted)}
+.gc-head{border:0;background:none;width:calc(100% - 8px);color:inherit;font:inherit;text-align:left}.gc-head .chev{font-size:14px}
+.gc-body select{background:var(--background-primary);color:var(--text-normal);border:1px solid var(--background-modifier-border);border-radius:4px;padding:4px;font:inherit}
+.gc-item input[type=checkbox]{accent-color:var(--interactive-accent)}.gc-item input[type=color]{width:25px;height:23px;border:0;background:none}
+.relation-style{display:flex;gap:7px;align-items:center;margin:6px 0 10px}.relation-style input[type=range]{flex:1;width:70px}.relation-style select{width:70px}
+@media(max-width:600px){.view-header .title{display:none}.graph-controls{width:245px}.note-card{width:calc(100% - 24px);bottom:154px}#legend{font-size:11px}}
+'''
+
+REPLICA_APP = r'''
+(() => {
+ 'use strict';
+ const data=JSON.parse(document.getElementById('snapshot').textContent), view=data.replica_view;
+ const $=id=>document.getElementById(id), panel=$('controls'), card=$('note-card');
+ const source=(data.source || '').split(/[\\/]/).filter(Boolean);
+ $('source-name').textContent=(data.demo?'演示数据':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13 · 本地 RDS':source.at(-1)||'RDS')+' · 只读';
+ $('source-name').title=data.source || '';
+ if(!data.graph){$('state').textContent=data.reason || data.status;return;}
+ const g=new GraphRenderer($('graph'),SIM_WORKER_MAIN), recordById=new Map(data.graph.nodes.map(n=>[n.id,n]));
+ const key='rds-replica-v2:'+ (data.snapshot_sha256 || data.source);
+ const defaults={search:'',colors:true,orphans:true,arrows:true,nodeSize:1,lineSize:1,textFade:0,damping:.4,growth:true,growthSeconds:12,flowStrength:.025,groupStrength:.035,edgeRepulsion:.25,edgeClearance:45,centerStrength:.055,repelStrength:1000,linkStrength:1,linkDistance:180,relations:{}};
+ let opts={...defaults}; try{opts={...defaults,...JSON.parse(localStorage.getItem(key)||'null')};}catch{}
+ const persist=()=>{try{localStorage.setItem(key,JSON.stringify(opts));}catch{}};
+ for(const r of view.relations) opts.relations[r]={mode:'attract',strength:r==='来源绑定'?.45:1,color:r==='来源绑定'?'#b7c6c3':'#bdc2d2',width:r==='来源绑定'?.65:1.25,dash:r==='来源绑定',...opts.relations[r]};
+ function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
+ function button(text,action,cls='btn'){const b=el('button',text,cls);b.type='button';b.addEventListener('click',action);return b;}
+ const legendRow=el('div',undefined,'legend-row');
+ for(const [name,color,symbol] of [['声明','#b3b3b3','●'],['执行','#ada4bc','●'],['回执','#93b3a3','●'],['产物','#8fa5b1','●'],['观测记录','#acaf8f','●'],['超边汇合点','#9c95af','◇']]){const chip=el('span'),dot=el('span',symbol,'symbol');dot.style.color=color;chip.append(dot,el('span',name));legendRow.append(chip);}
+ $('legend').append(legendRow,el('div','多个前提 → ◇ 超边 → 结论；不同菱形 = 不同路线','legend-note'),el('div','角度无含义 · 颜色不代表已证明 · 虚线是来源绑定 / 提议','legend-note'));
+ function section(name,open=false){const box=el('div',undefined,'gc-section'+(open?'':' is-collapsed')), head=button('',()=>{box.classList.toggle('is-collapsed');},'gc-head');head.setAttribute('aria-expanded',String(open));head.addEventListener('click',()=>head.setAttribute('aria-expanded',String(!box.classList.contains('is-collapsed'))));head.append(el('span','⌄','chev'),el('span',name,'name'));const body=el('div',undefined,'gc-body');box.append(head,body);panel.append(box);return body;}
+ function checkbox(body,label,key,change){const row=el('label',undefined,'gc-item');row.append(el('span',label));const i=el('input');i.type='checkbox';i.checked=opts[key];i.addEventListener('change',()=>{opts[key]=i.checked;persist();change();});row.append(i);body.append(row);}
+ function slider(body,label,key,min,max,step,change){const wrap=el('label',undefined,'gc-item col'), row=el('span',undefined,'row'), value=el('span',undefined,'val'),i=el('input');row.append(el('span',label),value);i.type='range';i.min=min;i.max=max;i.step=step;i.value=opts[key];i.setAttribute('aria-label',label);const paint=()=>{value.textContent=Number(i.value).toFixed(step<1?2:0);i.style.setProperty('--p',((i.value-min)/(max-min)*100)+'%');};paint();i.addEventListener('input',()=>{opts[key]=+i.value;paint();persist();change();});wrap.append(row,i);body.append(wrap);}
+ const filter=section('筛选');const search=el('input',undefined,'search-input');search.placeholder='搜索节点、记录或来源';search.setAttribute('aria-label','搜索节点');search.value=opts.search;const matches=el('div');matches.setAttribute('aria-label','搜索结果');filter.append(search,matches);let searchTimer;search.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{opts.search=search.value;persist();build();},180);});checkbox(filter,'显示未连接节点','orphans',build);
+ const groups=section('颜色组');checkbox(groups,'按记录类型着色','colors',build);for(const [name,c] of [['声明','#b3b3b3'],['执行','#ada4bc'],['回执','#93b3a3'],['产物','#8fa5b1'],['观测','#acaf8f']]){const r=el('div',undefined,'gc-item');const dot=el('span','●');dot.style.color=c;r.append(el('span',name),dot);groups.append(r);}
+ const display=section('外观');checkbox(display,'显示结论箭头','arrows',displayOptions);slider(display,'节点大小','nodeSize',.4,3,.1,displayOptions);slider(display,'连线粗细','lineSize',.2,4,.1,displayOptions);slider(display,'标签隐去阈值','textFade',-3,3,.1,displayOptions);checkbox(display,'刷新时逐步生长','growth',()=>opts.growth?playGrowth():finishGrowth());slider(display,'生长回放时长（秒）','growthSeconds',4,30,1,()=>{if(growing)playGrowth();});display.append(el('p','按依赖层次展开结构；不是科研发生的时间线。','hint'));
+ const forces=section('力学');slider(forces,'运动阻尼','damping',.1,.85,.05,applyForces);slider(forces,'依赖流向（相对方向）','flowStrength',0,.08,.005,applyForces);slider(forces,'同次执行的记录凝聚','groupStrength',0,.15,.005,applyForces);slider(forces,'超边整线排斥','edgeRepulsion',0,.6,.025,applyForces);slider(forces,'超边留白距离','edgeClearance',15,100,5,applyForces);slider(forces,'图谱向心力','centerStrength',0,.3,.005,applyForces);slider(forces,'节点间排斥','repelStrength',1,3000,25,applyForces);slider(forces,'相连节点吸引','linkStrength',0,2,.05,applyForces);slider(forces,'连线距离','linkDistance',80,400,5,applyForces);forces.append(el('p','拖节点由力牵动邻居；拖背景平移视图。整条超边推开无关节点，自己的前提与结论不受该线排斥。相对流向不会把同层拉成固定竖列。','hint'));
+ const relations=section('关系');for(const name of view.relations){const cfg=opts.relations[name],row=el('div',undefined,'gc-item');row.append(el('span',name));const select=el('select');select.setAttribute('aria-label',name+' 力学');for(const [v,t] of [['attract','吸引'],['repel','排斥'],['none','无力']]){const o=el('option',t);o.value=v;select.append(o);}select.value=cfg.mode;select.addEventListener('change',()=>{cfg.mode=select.value;persist();applyForces();});row.append(select);relations.append(row);const style=el('div',undefined,'relation-style'),color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();restyle();});const width=el('input');width.type='range';width.min=.3;width.max=3;width.step=.1;width.value=cfg.width;width.setAttribute('aria-label',name+' 粗细');width.addEventListener('input',()=>{cfg.width=+width.value;persist();restyle();});const dash=el('select');dash.setAttribute('aria-label',name+' 线型');for(const [v,t] of [['solid','实线'],['dash','虚线']]){const o=el('option',t);o.value=v;dash.append(o);}dash.value=cfg.dash?'dash':'solid';dash.addEventListener('change',()=>{cfg.dash=dash.value==='dash';persist();restyle();});style.append(color,width,dash);relations.append(style);}
+ const info=section('快照来源');info.append(el('p',data.source,'hint'),el('p','快照 SHA-256：'+(data.snapshot_sha256||'未绑定 TMS 快照'),'hint'),el('p','节点与超边保留原始状态；来源线是可视化绑定，不构成科学支持。','hint'));
+ const close=button('收起设置',()=>panel.classList.add('is-close'));const actions=el('div',undefined,'gc-actions');actions.append(close);panel.append(actions);
+ function displayOptions(){g.setOptions({nodeSize:opts.nodeSize,lineSize:opts.lineSize,textFade:opts.textFade,showArrow:opts.arrows});}
+ function applyForces(){g.setForces({damping:opts.damping,flowStrength:opts.flowStrength,groupStrength:opts.groupStrength,edgeRepulsion:opts.edgeRepulsion,edgeClearance:opts.edgeClearance,centerStrength:opts.centerStrength,repelStrength:opts.repelStrength,linkStrength:opts.linkStrength,linkDistance:opts.linkDistance,relations:opts.relations});$('state').textContent='布局收敛中…';}
+ function restyle(){for(const l of g.links){const cfg=opts.relations[l.rds.relation];Object.assign(l.rds,{color:cfg.color,width:cfg.width,dash:cfg.dash});if(l.rendered)l.line.texture=cfg.dash?g.rdsDashTexture:PIXI.Texture.WHITE;}g.changed();}
+ function build(){
+  finishGrowth();g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');matches.replaceChildren();autoFit=true;started=performance.now();
+  const query=opts.search.trim().toLowerCase(),nodes=Object.create(null),selected=new Set(),found=[],degree=new Set(view.links.flatMap(([s,t])=>[s,t]));
+  for(const [id,n] of Object.entries(view.nodes)){
+   const row=n.rds.edge!==undefined?data.graph.hyperedges[n.rds.edge]:recordById.get(n.rds.record);
+   if((!query||JSON.stringify(row).toLowerCase().includes(query)||n.label.toLowerCase().includes(query))&&(opts.orphans||degree.has(id))){selected.add(id);if(query)found.push(id);}
+  }
+  if(query)for(const [id,n] of Object.entries(view.nodes))if(n.rds.members&&(selected.has(id)||n.rds.members.some(m=>found.includes(m)))){selected.add(id);for(const m of n.rds.members)selected.add(m);}
+  for(const [id,n] of Object.entries(view.nodes))if(n.type==='hyperedge'&&!n.rds.members.every(x=>selected.has(x)))selected.delete(id);
+  for(const id of selected){const n=view.nodes[id];nodes[id]={...n,color:opts.colors?n.color:null};}
+  const links=view.links.filter(([s,t])=>selected.has(s)&&selected.has(t)).map(([s,t,meta])=>[s,t,{...meta,...opts.relations[meta.relation]}]);
+  g.setData({nodes,links});g.worker.postMessage({layoutTargets:Object.fromEntries(Object.entries(nodes).map(([id,n])=>[id,{flowX:n.rds.flowX,group:n.rds.group,members:n.rds.members}])),alpha:.3,run:true});restyle();
+  $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边 · ${view.provenance_count} 来源线${query?' · 当前显示 '+nodesCount(nodes)+' 个元素':''}`;$('state').textContent='布局收敛中…';
+  if(query){matches.append(el('p',`${found.length} 条匹配，含完整超边上下文`,'hint'));for(const id of found.slice(0,20)){const b=button(view.nodes[id].label,()=>inspect(id),'record-link');b.title=view.nodes[id].rds.record||data.graph.hyperedges[view.nodes[id].rds.edge].id;matches.append(b);}}
+  if(opts.growth && !query)playGrowth();
+ }
+ function nodesCount(ns){return Object.keys(ns).length;}
+ function inspect(id){const n=g.nodeLookup.get(id);if(!n)return;finishGrowth();g.rdsPinned=n;g.rdsLastHL=undefined;g.changed();card.replaceChildren();card.classList.add('show');const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.rds.edge!==undefined?'◇ 超边汇合点':n.label||n.id));const record=n.rds.edge!==undefined?data.graph.hyperedges[n.rds.edge]:recordById.get(n.rds.record);card.append(el('div',record.id,'path'),el('span',record.status+(n.rds.edge!==undefined?' · 规则状态':''),'tag'),el('span',n.rds.kind,'tag'));if(record.scientific_support)card.append(el('p','scientific_support: '+record.scientific_support,'hint'));if(n.rds.edge!==undefined){card.append(el('p','一个菱形代表一条规则；连线角度只是布局，没有数值或逻辑含义。','hint'),el('h4',`${record.premises.length>1?'AND · 所有前提须共同满足':'前提'} → 结论`));for(const m of n.rds.members){const v=view.nodes[m];card.append(button(v.label+' · '+recordById.get(v.rds.record).status,()=>inspect(m),'record-link'));}card.append(el('p','同一结论的不同菱形表示不同路线（OR）。规则已记录不表示前提或结论已经获得支持。','hint'));}else if(n.rds.kind==='观测'){card.append(el('p','黄色表示观测/事实记录类型。原始状态可能 UNKNOWN，颜色不表示科学支持。','hint'));}const related=view.links.filter(([s,t])=>s===id||t===id);if(related.length&&n.rds.edge===undefined){card.append(el('h4','关联节点'));for(const [s,t,meta] of related){const other=s===id?t:s;card.append(button(view.nodes[other].label+' · '+meta.relation,()=>inspect(other),'record-link'));}}card.append(el('h4','原始记录'),el('pre',JSON.stringify(record,null,2)));const bindings=related.filter(x=>x[2].binding).map(x=>x[2].binding);if(bindings.length)card.append(el('h4','来源绑定依据'),el('pre',JSON.stringify(bindings,null,2)));}
+ g.onNodeClick=n=>inspect(n.id);
+ g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent=`◇ 超边汇合点 · ${e.premises.length>1?'AND':'依赖'}\n${e.premises.length} 个前提 → ${target.label} · ${recordById.get(target.rds.record).status}\n角度无含义；点击查看整条规则及来源`;}else tip.textContent=n.label+' · '+n.rds.kind+(n.rds.kind==='观测'?'\n黄色是记录类型，不代表已证明':'');};
+ let growing=false,growthTimer=null,growthOrder=[],growthStart=0;
+ function finishGrowth(){clearInterval(growthTimer);growthTimer=null;growing=false;for(const n of g.nodes)n.rdsHidden=false;$('growth-info').textContent='';$('skip-growth').hidden=true;g.changed();}
+ function playGrowth(){finishGrowth();g.highlightNode=g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');$('hover-info').hidden=true;growthOrder=[...g.nodes].sort((a,b)=>(a.rds.flowX??1e8)-(b.rds.flowX??1e8));if(!growthOrder.length)return;growing=true;growthStart=performance.now();for(const n of growthOrder)n.rdsHidden=true;$('state').textContent='';$('skip-growth').hidden=false;let shown=0;const advance=()=>{const desired=Math.min(growthOrder.length,Math.max(1,Math.ceil((performance.now()-growthStart)/(opts.growthSeconds*1000)*growthOrder.length)));while(shown<desired){const n=growthOrder[shown++];n.rdsHidden=false;n.fadeAlpha=0;}g.changed();$('growth-info').textContent=`依赖结构生长 · ${shown} / ${growthOrder.length} · 非时间线`;if(shown===growthOrder.length)finishGrowth();};advance();growthTimer=setInterval(advance,60);}
+ $('grow').addEventListener('click',playGrowth);$('skip-growth').addEventListener('click',finishGrowth);
+ function fit(){if(!g.nodes.length)return;const xs=g.nodes.map(n=>n.x),ys=g.nodes.map(n=>n.y),left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);const free=g.width-(panel.classList.contains('is-close')?60:300),scale=Math.min(1.3,Math.max(1/128,Math.min(free/(right-left+150),(g.height-100)/(bottom-top+150))));g.targetScale=scale;g.setScale(scale);g.setPan(free/2-(left+right)/2*scale,g.height/2-(top+bottom)/2*scale);g.panvX=g.panvY=0;g.changed();}
+ $('fit').addEventListener('click',fit);$('restart').addEventListener('click',()=>{g.reheat();$('state').textContent='布局收敛中…';});$('theme').addEventListener('click',()=>{document.body.classList.toggle('theme-dark');g.readColors();});for(const id of ['settings','gear'])$(id).addEventListener('click',()=>panel.classList.toggle('is-close'));
+ let lastUpdate=performance.now(), autoFit=true,started=performance.now();const receive=g.worker.onmessage;g.worker.onmessage=e=>{lastUpdate=performance.now();receive(e);};const statusTimer=setInterval(()=>{if(performance.now()-lastUpdate>600){$('state').textContent='';if(autoFit && performance.now()-started>1200){autoFit=false;fit();}}},250);
+ $('graph').addEventListener('pointerdown',e=>{if(e.target.tagName==='CANVAS')autoFit=false;});$('graph').addEventListener('wheel',()=>autoFit=false,{passive:true});
+ window.addEventListener('pagehide',()=>{clearInterval(statusTimer);clearInterval(growthTimer);clearTimeout(searchTimer);g.worker.terminate();URL.revokeObjectURL(g.workerBlobUrl);g.app.destroy(true,{children:true,texture:true,baseTexture:true});},{once:true});
+ displayOptions();applyForces();build();g.resetPan();g.zoomTo(.6);
+})();
+'''
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -384,6 +832,8 @@ def main(argv=None):
     parser.add_argument("--demo", action="store_true", help="Synthetic visual preview only")
     parser.add_argument("--large", action="store_true", help="With --demo: 1,200 synthetic claim nodes")
     parser.add_argument("--output", default="rds-hypergraph.html")
+    parser.add_argument("--replica-root", help="Local checkout of the pinned runningZ1/obsidian-graph-replica")
+    parser.add_argument("--pixi-js", help="Official pixi.js 7.4.3 dist/pixi.min.js (required with --replica-root)")
     args = parser.parse_args(argv)
     root, output = Path(args.root).resolve(), Path(args.output).resolve()
     try:
@@ -391,13 +841,16 @@ def main(argv=None):
             raise ValueError("Output must be an .html file outside the .rds ledger")
         if args.demo and args.hypergraph or args.large and not args.demo:
             raise ValueError("Use --large only with --demo, and --demo without --hypergraph")
+        if bool(args.replica_root) != bool(args.pixi_js):
+            raise ValueError("Use --replica-root and --pixi-js together")
         if args.hypergraph and output == Path(args.hypergraph).resolve():
             raise ValueError("Output must not overwrite the hypergraph input")
         result = read_graph(root, args.hypergraph, demo=args.demo, large=args.large)
         if args.hypergraph and result["status"] == "UNAVAILABLE":
             raise ValueError(result["reason"])
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(render_html(result), encoding="utf-8")
+        page = render_replica_html(result, args.replica_root, args.pixi_js) if args.replica_root else render_html(result)
+        output.write_text(page, encoding="utf-8")
     except (OSError, ValueError, sqlite3.Error) as exc:
         parser.error(str(exc))
     print(json.dumps({"output": str(output), "status": result["status"], "source": result["source"],

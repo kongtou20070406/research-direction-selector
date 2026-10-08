@@ -39,6 +39,47 @@ python -B scripts/rds_dashboard.py --demo --output dist\dashboard-demo.html
 
 ## 研究超图
 
+### Obsidian 复刻页面
+
+可直接使用空投指定的 [runningZ1/obsidian-graph-replica](https://github.com/runningZ1/obsidian-graph-replica) 的 Pixi 渲染器、暗色主题、缩放插值、平移惯性和独立 D3 Worker。固定源码 commit 为 `b811f4d12f909d496d44c7f2d98b3a408eb1a627`，PixiJS 固定 `7.4.3`。导出器核对三个上游源码文件和 Pixi 官方 UMD 的 SHA-256，拒绝不匹配的文件，不使用该项目的合成 Vault。
+
+上游该版本没有发布 LICENSE，因此其源码保留在本地 checkout；本仓库只包含 RDS 适配器，不把上游源码纳入 RDS 的许可证。用户本地导出时把经核对的源码、Pixi 和 D3 一并内嵌，运行时不使用 CDN。Pixi MIT 与 D3 ISC 的完整许可保留在导出文件中。页面 CSP 禁用连接；Pixi 需要的代码生成权限仅供固定版本渲染器使用，原始图字段仍通过转义 JSON 和 `textContent` 显示。
+
+准备上游 checkout 和官方 npm 包后：
+
+```powershell
+git clone https://github.com/runningZ1/obsidian-graph-replica dist/obsidian-graph-replica
+git -C dist/obsidian-graph-replica checkout --detach b811f4d12f909d496d44c7f2d98b3a408eb1a627
+npm pack pixi.js@7.4.3 --ignore-scripts --pack-destination dist
+python -c "import tarfile; from pathlib import Path; t=tarfile.open('dist/pixi.js-7.4.3.tgz'); Path('dist/pixi.min.js').write_bytes(t.extractfile('package/dist/pixi.min.js').read()); t.close()"
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --replica-root dist/obsidian-graph-replica --pixi-js dist/pixi.min.js --output dist/hypergraph.html
+```
+
+同样支持 `--hypergraph <dependency.json>` 或明确标识为演示的 `--demo --large`。显示和分析上限仍沿用下文的边界。只读导出当前 TMS 时保留原始快照 SHA-256、节点、超边、状态和来源；不重跑科研过程。界面只提供图谱、搜索、显示/力学设置和按需详查。
+
+- 圆点代表原始节点，小菱形代表超边。所有共同前提汇入同一菱形，再连向结论；同一结论的不同菱形保留不同 OR 路线。悬停/详查高亮完整超边。搜索命中某条超边或其节点时保留整条前提集合。
+- 可视化另用细虚线表达精确的 `run_id`、`source.receipt_id`、`source.sha256 + source.path/file` 绑定。它们不会加入原始逻辑超边、闭包或阻断分析，不按相似名称生成关联，也不把运行成功视为科学支持。没有绑定的记录保留为未连接节点。
+- 依赖流向力只约束相连节点的相对前后方向，不把同层节点吸附到固定列；使用强连通分量凝缩，循环内部不施方向约束。来源凝聚力只把有明确记录绑定的同次执行聚拢。两项附加力均可调到零，不改动声明。
+- 超边整线排斥是每条关联线段周围的留白力场：无关节点进入留白距离时受到排斥，线段两端承受按投影位置分配的反作用；该超边的全部前提、结论和汇合点豁免。空间网格仅查询附近节点，每步候选检查预算 60,000、每段采样最多 64 个间隔，超预算按轮转顺序近似；不执行节点数乘边数的全量配对。此力与留白距离可调，关系选择无力时不施该关系的方向/线场作用。
+- 每种关系可选吸引、排斥或无力，并调整浅色、粗细和实线/虚线。状态不会自动触发排斥。排斥仅在作用距离内生效；吸引是有平衡长度的弹簧。节点按记录类型使用柔和颜色，大小沿用连接度加目标显示倍率。
+- **拖动节点是力学拖拽**：抓住的节点跟随指针并激活模拟，邻居通过关系力逐步跟随；未连接节点不会刚性同步平移。**拖动背景才平移画布**，保留上游平移惯性。运动阻尼默认 `0.4`（每步速度乘 `0.6`），可在 `0.1–0.85` 之间调节；松手清除固定位置，按约 300 步的能量衰减收敛后停止。窗口失焦/指针取消也会释放拖拽。
+
+关系和布局偏好仅写浏览器本地存储，以图快照身份隔离。几何趋势表示声明结构，不能解释成科学重要性、正确性或任务已经验收。点击记录可查看原始状态及完整来源；从详查可跳到相关节点。
+
+常驻图例说明黄色是观测记录、菱形是超边汇合点，颜色不表示已证明，夹角没有逻辑或数值含义。悬停汇合点显示前提数量和结论，点击列出全部 AND 前提、结论及规则来源。刷新默认用 12 秒按依赖层次逐步显现完整结构；可调 4–30 秒、重播或立即显示全部。它是可视化展开，不是科研时间线，不添加/删除实际节点，也不据此改变逻辑分析。没有绑定的记录在展开后仍保留为独立节点。空筛选会停止 Worker 计时器。
+
+集成回归使用本地固定版本资产，明确设置路径；不下载测试依赖：
+
+```powershell
+$env:RDS_REPLICA_ROOT=(Resolve-Path dist/obsidian-graph-replica).Path
+$env:RDS_PIXI_JS=(Resolve-Path dist/pixi.min.js).Path
+python -B -m unittest discover -s tests -p test_rds_hypergraph_view.py
+```
+
+未提供这些本地资产时，两项集成测试明确跳过，其余结构、来源边界及现有导出回归继续执行。提供资产时执行实际 Worker，验证各类力、节点拖拽的弹性传播、阻尼、释放和自动停止，并检查离线脚本及数据转义。它不证明任意设备或任意最大规模的帧率。
+
+### 无外部源码的基础 Canvas 导出
+
 超图使用独立的全画布页面，只显示网络和按需打开的节点/超边详情。深灰背景、细线、按连接数调整大小的圆点与力导向布局适合浏览大图；没有项目总览或其他工作台面板。导出已保存的 TMS 图，或直接查看依赖 JSON：
 
 ```powershell

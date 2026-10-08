@@ -1,6 +1,8 @@
 """Real offline export boundaries for native and explicit dependency maps."""
 from copy import deepcopy
 import json
+import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
@@ -12,7 +14,9 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from rds_hypergraph_view import JS, D3_BUNDLE, graph_view, read_graph, render_html, large_demo
+from rds_hypergraph_view import (JS, D3_BUNDLE, graph_view, read_graph, render_html, large_demo,
+    replica_view, dependency_levels, render_replica_html, patch_replica_worker,
+    patch_replica_renderer, REPLICA_APP, REPLICA_FILES)
 from rds_tms_store import current, save
 
 
@@ -234,6 +238,150 @@ console.log(JSON.stringify(result));
         observations = json.loads(result.stdout)
         self.assertLess(observations["attract"], observations["none"])
         self.assertGreater(observations["repel"], observations["none"])
+
+
+class ReplicaViewTests(unittest.TestCase):
+    def test_and_or_routes_remain_separate_with_original_status(self):
+        spec=example()
+        before=deepcopy(spec)
+        result=graph_view(spec,"fixture")
+        view=replica_view(result)
+        hubs=[n for n in view["nodes"].values() if n["type"]=="hyperedge"]
+        self.assertEqual(len(hubs),len(spec["hyperedges"]))
+        self.assertEqual(len(view["links"]),sum(len(e["premises"])+1 for e in spec["hyperedges"]))
+        for i,edge in enumerate(spec["hyperedges"]):
+            legs=[l for l in view["links"] if l[2].get("hyperedge")==f"h{i}"]
+            self.assertEqual(len(legs),len(edge["premises"])+1)
+            self.assertEqual(sum(l[2]["arrow"] for l in legs),1)
+            self.assertEqual(len(view["nodes"][f"h{i}"]["rds"]["members"]),len(edge["premises"])+1)
+        self.assertEqual(spec,before)
+        self.assertEqual(result["graph"],before)
+
+    def test_provenance_uses_exact_bindings_not_text_or_status(self):
+        spec={"schema":1,"nodes":[
+            {"id":"owned:run:r","status":"SUPPORTED","source":"run r","manifest_sha256":"m"},
+            {"id":"owned:receipt:r","status":"SUPPORTED","source":"receipt r","receipt_sha256":"receipt-sha"},
+            {"id":"artifact","status":"SUPPORTED","source":{"file":"out/a.json","sha256":"a"*64,"locator":"artifact"},"run_id":"r","interpretation":"UNPARSED"},
+            {"id":"fact","status":"UNKNOWN","source":{"file":"out/a.json","path":"out/a.json","sha256":"a"*64,"receipt_id":"receipt-sha","locator":"fact"}},
+            {"id":"similar","status":"SUPPORTED","source":"out/a.json receipt-sha"},
+            {"id":"other-path","status":"UNKNOWN","source":{"file":"out/b.json","path":"out/b.json","sha256":"a"*64,"locator":"different"}},
+            {"id":"bad-extra","status":"UNKNOWN","source":{"locator":"unknown","receipt_id":{}},"run_id":[]}],
+            "hyperedges":[{"id":"done","premises":["owned:run:r"],"conclusion":"owned:receipt:r","status":"SUPPORTED","source":"receipt"}],"goals":["fact"]}
+        result=graph_view(spec,"fixture");view=replica_view(result)
+        provenance=[l for l in view["links"] if l[2]["family"]=="provenance"]
+        self.assertEqual({(s,t) for s,t,_ in provenance},{("c0","c2"),("c1","c3"),("c2","c3")})
+        self.assertTrue(all(l[2]["binding"] for l in provenance))
+        self.assertIsNone(view["nodes"]["c4"]["rds"]["group"])
+        self.assertEqual(view["nodes"]["c3"]["rds"]["group"],"r")
+        self.assertEqual(result["graph"],spec)
+
+    def test_cycle_ranks_are_shared_and_long_chain_does_not_recurse(self):
+        ids=["a","b","c","orphan"]
+        ranks=dependency_levels(ids,[["a","b",{}],["b","a",{}],["b","c",{}]])
+        self.assertEqual(ranks["a"],ranks["b"])
+        self.assertLess(ranks["b"],ranks["c"])
+        self.assertIsNone(ranks["orphan"])
+        chain=[str(i) for i in range(4096)]
+        ranks=dependency_levels(chain,[[chain[i],chain[i+1],{}] for i in range(4095)])
+        self.assertLess(ranks[chain[0]],ranks[chain[-1]])
+
+    def test_replica_large_map_is_complete_and_no_status_drives_repulsion(self):
+        spec=large_demo();view=replica_view(graph_view(spec,"synthetic",demo=True))
+        self.assertEqual(len(view["nodes"]),1200+1426)
+        self.assertEqual(len(view["links"]),3104)
+        self.assertEqual(view["provenance_count"],0)
+        self.assertFalse(any(l[2].get("mode")=="repel" for l in view["links"]))
+
+    def test_external_renderer_mismatch_fails_before_any_script_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/"replica").mkdir()
+            (root/"replica/renderer.js").write_text("throw Error('untrusted')",encoding="utf-8")
+            with self.assertRaisesRegex(ValueError,"pinned commit"):
+                render_replica_html(graph_view(example(),"fixture"),root,root/"pixi.js")
+        with self.assertRaisesRegex(ValueError,"no longer matches"):
+            patch_replica_renderer("window.GraphRenderer = unrecognized;")
+
+    @unittest.skipUnless(os.environ.get("RDS_REPLICA_ROOT") and shutil.which("node"),
+                         "Local pinned replica checkout and Node required for integration")
+    def test_pinned_replica_worker_cools_and_extra_forces_have_correct_direction(self):
+        upstream=Path(os.environ["RDS_REPLICA_ROOT"])
+        for name,expected in REPLICA_FILES.items():
+            raw=(upstream/"replica"/name).read_bytes().replace(b"\r\n",b"\n")
+            self.assertEqual(hashlib.sha256(raw).hexdigest(),expected)
+        worker=patch_replica_worker((upstream/"replica/sim-worker.js").read_text(encoding="utf-8"))
+        # Execute the actual pinned worker with virtual time; isolate each force.
+        driver="const vm=require('node:vm'); const {performance}=require('node:perf_hooks');\nconst library="+json.dumps(D3_BUNDLE)+";\nconst worker="+json.dumps(worker)+";\n"+r'''
+function run(mode,extras={},strength=1){
+ const q=new Map();let timer=0,output,steps=0;
+ const math=Object.create(Math);math.random=()=>.5;
+ const scope={performance,Float32Array,Map,Math:math,Date,
+  setTimeout:fn=>{q.set(++timer,fn);return timer},clearTimeout:id=>q.delete(id),setInterval:()=>0,clearInterval:()=>{},postMessage:x=>output=x};scope.self=scope;
+ vm.createContext(scope);vm.runInContext(library+';'+worker,scope);
+ scope.onmessage({data:{nodes:{a:[-80,-120],b:[80,120]},links:[['a','b',{relation:'R'}]],
+  forces:{centerStrength:0,repelStrength:1,linkStrength:strength,linkDistance:mode==='attract'?60:350,flowStrength:0,groupStrength:0,relations:{R:{mode,strength:1}},...extras},
+  layoutTargets:{a:{flowX:-300,group:'same'},b:{flowX:300,group:'same'}},alpha:1,run:true}});
+ while(q.size&&steps<400){const [id,fn]=q.entries().next().value;q.delete(id);fn();steps++;}
+ if(q.size||steps>302||!output)throw Error('Worker did not cool');
+ const p=Array.from(new Float32Array(output.buffer));if(!p.every(Number.isFinite))throw Error('Nonfinite');
+ return {x:p[2]-p[0],y:p[3]-p[1],distance:Math.hypot(p[2]-p[0],p[3]-p[1]),steps};
+}
+const none=run('none'),attract=run('attract'),repel=run('repel'),zero=run('repel',{},0),flow=run('attract',{flowStrength:.08,linkStrength:0,linkDistance:350}),group=run('none',{groupStrength:.06});
+if(!(attract.distance<none.distance&&repel.distance>none.distance&&zero.distance===none.distance&&flow.x>none.x&&group.distance<none.distance))throw Error(JSON.stringify({none,attract,repel,zero,flow,group}));
+function drag(damping){
+ const q=new Map();let timer=0,output;
+ const scope={performance,Float32Array,Map,Math,Date,setTimeout:fn=>{q.set(++timer,fn);return timer},clearTimeout:id=>q.delete(id),setInterval:()=>0,clearInterval:()=>{},postMessage:x=>output=x};scope.self=scope;
+ vm.createContext(scope);vm.runInContext(library+';'+worker,scope);
+ const step=()=>{const [id,fn]=q.entries().next().value;q.delete(id);fn();};
+ const point=()=>Array.from(new Float32Array(output.buffer));
+ scope.onmessage({data:{nodes:{a:[-200,0],b:[0,0],c:[200,0],orphan:[2000,800]},links:[['a','b',{relation:'R'}],['b','c',{relation:'R'}]],forces:{centerStrength:0,repelStrength:1,linkStrength:.4,linkDistance:200,flowStrength:0,groupStrength:0,damping},alpha:1,run:true}});
+ while(q.size)step();const before=point();
+ scope.onmessage({data:{forceNode:{id:'a',x:500,y:80},alpha:.3,alphaTarget:.3,run:true}});
+ for(let i=0;i<10;i++)step();const early=point();
+ for(let i=0;i<90;i++)step();const held=point();
+ if(held[0]!==500||held[1]!==80||held[2]-before[2]<40||Math.abs(held[6]-before[6])>5)throw Error('Dragged node did not elastically move neighbors');
+ scope.onmessage({data:{forceNode:{id:'a',x:null,y:null},alphaTarget:0}});
+ let ticks=0;while(q.size&&ticks<310){step();ticks++;}if(q.size||!point().every(Number.isFinite))throw Error('Drag did not release/cool');
+ return {earlyMove:Math.abs(early[2]-before[2]),neighborMove:held[2]-before[2],orphanMove:held[6]-before[6],releaseTicks:ticks};
+}
+const dragLow=drag(.15),dragHigh=drag(.8);if(!(dragLow.earlyMove>dragHigh.earlyMove))throw Error('Damping did not slow response');
+function field(strength,member=false,empty=false){
+ const q=new Map();let timer=0,output;const scope={performance,Float32Array,Map,Math,Date,setTimeout:fn=>{q.set(++timer,fn);return timer},clearTimeout:id=>q.delete(id),setInterval:()=>0,clearInterval:()=>{},postMessage:x=>output=x};scope.self=scope;
+ vm.createContext(scope);vm.runInContext(library+';'+worker,scope);
+ scope.onmessage({data:{nodes:empty?{}:{a:[-200,0],b:[200,0],h:[0,700],n:[0,18]},links:empty?[]:[['a','b',{hyperedge:'h',relation:'R'}]],layoutTargets:{h:{members:member?['a','b','n']:['a','b']}},forces:{centerStrength:0,repelStrength:1,linkStrength:0,flowStrength:0,groupStrength:0,edgeRepulsion:strength,edgeClearance:45},alpha:1,run:true}});
+ const [id,fn]=q.entries().next().value;q.delete(id);fn();if(empty){if(q.size)throw Error('Empty graph kept scheduling');return;}
+ return Array.from(new Float32Array(output.buffer));
+}
+field(0,false,true);const baselineField=field(0),repulsiveField=field(.5),memberField=field(.5,true);
+if(!(repulsiveField[7]>baselineField[7]+3&&repulsiveField[1]<baselineField[1]&&memberField[7]===baselineField[7]))throw Error('Whole-edge field did not repel foreign node or exempt members');
+console.log(JSON.stringify({none,attract,repel,zero,flow,group,dragLow,dragHigh,baselineField,repulsiveField,memberField}));
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            script=Path(tmp)/"worker.cjs";script.write_text(driver,encoding="utf-8")
+            result=subprocess.run([shutil.which("node"),str(script)],capture_output=True,text=True,encoding="utf-8",timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    @unittest.skipUnless(os.environ.get("RDS_REPLICA_ROOT") and os.environ.get("RDS_PIXI_JS"),
+                         "Local pinned replica/Pixi assets required for offline export integration")
+    def test_offline_replica_export_contains_real_map_and_escaped_data(self):
+        spec=example();spec["nodes"][0]["label"]="</script><script>alert('owned')</script> __APP__"
+        result=graph_view(spec,"fixture",snapshot_sha256="original-snapshot")
+        page=render_replica_html(result,os.environ["RDS_REPLICA_ROOT"],os.environ["RDS_PIXI_JS"])
+        payload=HypergraphViewTests.payload(page)
+        self.assertEqual(payload["graph"],spec)
+        self.assertEqual(payload["snapshot_sha256"],"original-snapshot")
+        self.assertFalse(payload["renderer"]["runtime_network"])
+        self.assertNotIn("<script>alert('owned')",page)
+        self.assertNotIn('src="https://',page)
+        self.assertNotIn("importScripts(",page)
+        self.assertIn("Copyright (c) 2013-2023 Mathew Groves, Chad Engler",page)
+        self.assertIn(REPLICA_APP,page)
+        # Runtime scripts themselves are parsed by Node without loading a browser.
+        if shutil.which("node"):
+            with tempfile.TemporaryDirectory() as tmp:
+                for i,script in enumerate(re.findall(r'<script>(.*?)</script>',page,re.S)):
+                    path=Path(tmp)/f"part-{i}.js";path.write_text(script,encoding="utf-8")
+                    check=subprocess.run([shutil.which("node"),"--check",str(path)],capture_output=True,text=True,encoding="utf-8",timeout=10)
+                    self.assertEqual(check.returncode,0,check.stderr)
 
 
 if __name__ == "__main__":
