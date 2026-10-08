@@ -57,6 +57,9 @@ ON applicable research request:
         USE only the capability needed for this task; DO NOT run the whole catalog
 
     IF new goal-driven campaign:
+        USE project init --recipe <recipe.json> FOR explicit finite routes and qualified tool consumers
+            TO assemble hashes/protocol/route associations; see docs/project-assembly.md
+        RETAIN project init --contract FOR advanced policies; a prose plan is not a recipe
         FREEZE the actual objective, permitted routes, result readers and budget
                in advisor_policy; see docs/program-owned-advisor.md
         RETAIN serious alternatives/explanations and their distinguishing observations
@@ -150,6 +153,7 @@ All commands below use `CLI` above. Links load detail on demand.
 | First inspectable plan | `project plan [--intent <intent.json>] [--save-as <checkpoint-id>]` | [Planning and steering](docs/planning-and-steering.md) |
 | Current user's new direction | `project steering`, then `project steer --request <request.json> --user-directed --source <current-message-locator>` | [Planning and steering](docs/planning-and-steering.md) |
 | Start locked campaign | `project init --contract <contract.json>`; freeze `advisor_policy` for program-owned selection | [Contract template](docs/project-contract.md), [owned Advisor](docs/program-owned-advisor.md) |
+| Assemble finite research routes | `project init --recipe <recipe.json>`; declare semantics once, generate mechanical bindings | [Project assembly](docs/project-assembly.md) |
 | Advance campaign | `project next` to inspect; `project advance --brief` executes one selected step in a policy-bound project | [Owned Advisor](docs/program-owned-advisor.md), [development loop](docs/development-loop.md) |
 | Drive bounded research loop | `project drive --max-steps <n>`; frozen `autonomy`, ordinary repair routes, persistent costs and optional domain confirmation | [Research drive](docs/autonomy-loop.md), [domain confirmation](docs/domain-confirmation.md) |
 | Improve a blocked tool | `project improve --code-path <path> --id <revision>`, then `project revise --proposal <path>` | [Forecasts and tool improvement](docs/predictive-feasibility.md) |
