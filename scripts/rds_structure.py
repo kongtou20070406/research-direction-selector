@@ -5,8 +5,10 @@ Definition, admission, observation and logical support remain separate.
 """
 from copy import deepcopy
 from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -23,6 +25,53 @@ import rds_search_allocation as search_allocation
 
 PREFIX = 'STRUCTURE_'
 MAX_BYTES = 128 * 1024
+_CONTROL_OWNER = ContextVar('rds_structure_control_owner', default=None)
+
+
+def _owned_control_check(store, db, context, cap=0.):
+    from rds_autonomy import _events as autonomy_events
+    require(str(store.root.resolve()) == context['root'] and os.getpid() == context['pid'],
+            'Structure control scope belongs to another project/process')
+    active = None
+    for event in autonomy_events(db, ('AUTONOMY_DRIVE_CLAIMED', 'AUTONOMY_DRIVE_RELEASED')):
+        if event['kind'] == 'AUTONOMY_DRIVE_CLAIMED':
+            active = event
+        elif active and event['owner'] == active['owner']:
+            active = None
+    require(active is not None and active['owner'] == context['owner'] and active['pid'] == os.getpid(),
+            'Structure control owner is no longer the active drive')
+    if 'claim_sha256' in context:
+        require(active['sha256'] == context['claim_sha256'], 'Structure control owner claim changed')
+    allowance = active['controller_reservation']
+    remaining = context['remaining']()
+    require(type(remaining) in (int, float) and math.isfinite(remaining)
+            and cap <= remaining <= allowance, 'Insufficient owned structure control allowance')
+    row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
+    require(row is not None and row['reserved'] + 1e-9 >= allowance,
+            'Structure control owner reservation is missing')
+    store._campaign_deadline(db, store._contract(db), admit=True)
+    return active
+
+
+@contextmanager
+def owned_control(store, owner, remaining):
+    """Explicitly use one active drive's declared allowance, never a PID guess.
+
+    The owner accounts this elapsed control work once when releasing its claim.
+    Child events retain diagnostics and crash recovery without a second reserve.
+    """
+    require(isinstance(owner, str) and owner and callable(remaining), 'Declare an owner and remaining allowance callback')
+    require(_CONTROL_OWNER.get() is None, 'Nested structure control owner scopes are forbidden')
+    context = {'root': str(store.root.resolve()), 'owner': owner, 'pid': os.getpid(), 'remaining': remaining}
+    with store._db() as db:
+        db.execute('BEGIN IMMEDIATE')
+        active = _owned_control_check(store, db, context)
+        context['claim_sha256'] = active['sha256']
+    token = _CONTROL_OWNER.set(context)
+    try:
+        yield
+    finally:
+        _CONTROL_OWNER.reset(token)
 
 
 def _read_ref(store, ref):
@@ -97,19 +146,24 @@ def _meter(store, operation):
     when an invocation or branch changes. Worker time is accounted separately.
     """
     ident, cap = uuid.uuid4().hex, 2.0
+    context = _CONTROL_OWNER.get()
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         events = _events(store, db)
         settled = {e['id'] for e in events if e['kind'] == PREFIX + 'CONTROL_FINISHED'}
         require(all(e['id'] in settled for e in events if e['kind'] == PREFIX + 'CONTROL_STARTED'),
                 'Interrupted structure controller reservation; use structure recover')
-        row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
-        require(row and row['cap'] - row['spent'] - row['charged'] - row['reserved'] >= cap,
-                'Insufficient wall_seconds for bounded structure control work')
-        store._campaign_deadline(db, store._contract(db), admit=True)
-        db.execute("UPDATE budget SET reserved=reserved+? WHERE resource='wall_seconds'", (cap,))
+        if context is not None:
+            _owned_control_check(store, db, context, cap)
+        else:
+            row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
+            require(row and row['cap'] - row['spent'] - row['charged'] - row['reserved'] >= cap,
+                    'Insufficient wall_seconds for bounded structure control work')
+            store._campaign_deadline(db, store._contract(db), admit=True)
+            db.execute("UPDATE budget SET reserved=reserved+? WHERE resource='wall_seconds'", (cap,))
         db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': PREFIX + 'CONTROL_STARTED',
-                   'id': ident, 'operation': operation, 'cap': cap, 'pid': os.getpid()}),))
+                   'id': ident, 'operation': operation, 'cap': cap, 'pid': os.getpid(),
+                   **({'budget_owner': context['owner'], 'owner_claim_sha256': context['claim_sha256']} if context else {})}),))
     start = time.monotonic()
     try:
         yield
@@ -117,9 +171,11 @@ def _meter(store, operation):
         elapsed = time.monotonic() - start
         with store._db() as db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute("UPDATE budget SET reserved=reserved-?,spent=spent+? WHERE resource='wall_seconds'", (cap, elapsed))
+            if context is None:
+                db.execute("UPDATE budget SET reserved=reserved-?,spent=spent+? WHERE resource='wall_seconds'", (cap, elapsed))
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': PREFIX + 'CONTROL_FINISHED',
-                       'id': ident, 'wall_seconds': elapsed, 'over_cap': elapsed > cap}),))
+                       'id': ident, 'wall_seconds': elapsed, 'over_cap': elapsed > cap,
+                       **({'budget_owner': context['owner'], 'accounting': 'OWNING_DRIVE_ALLOWANCE'} if context else {})}),))
 
 
 def recover_control(root):
@@ -132,9 +188,17 @@ def recover_control(root):
         for event in pending:
             require(event.get('pid') is not None and _alive(event['pid']) is False,
                     'Controller may still be active; retain reservation for host reconciliation')
-            db.execute("UPDATE budget SET reserved=reserved-?,charged=charged+? WHERE resource='wall_seconds'", (event['cap'], event['cap']))
+            if 'budget_owner' not in event:
+                db.execute("UPDATE budget SET reserved=reserved-?,charged=charged+? WHERE resource='wall_seconds'", (event['cap'], event['cap']))
+            else:
+                from rds_autonomy import _events as autonomy_events
+                claims = autonomy_events(db, ('AUTONOMY_DRIVE_CLAIMED',))
+                require(any(e['owner'] == event['budget_owner'] and e['sha256'] == event['owner_claim_sha256']
+                            and e['pid'] == event['pid'] for e in claims), 'Interrupted structure owner claim is missing')
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': PREFIX + 'CONTROL_FINISHED',
-                       'id': event['id'], 'wall_seconds': None, 'charged_estimate': event['cap'], 'status': 'UNKNOWN'}),))
+                       'id': event['id'], 'wall_seconds': None, 'charged_estimate': event['cap'] if 'budget_owner' not in event else 0.,
+                       'status': 'UNKNOWN', **({'budget_owner': event['budget_owner'],
+                        'accounting': 'OWNING_DRIVE_ALLOWANCE'} if 'budget_owner' in event else {})}),))
     return {'status': 'RECOVERED', 'reconciled_controls': len(pending), 'execution_started': False}
 
 

@@ -79,6 +79,9 @@ ON applicable research request:
         IF advisor_policy declares autonomy:
             READ docs/autonomy-loop.md
             RUN project drive --max-steps <bounded-pass> TO recover and continue the same ledger
+            IF jump-generation.json is frozen, drive prepares and collects its selected generator routes
+                RETURN verified jump evidence with execution feedback to each actual model request
+                KEEP ancestor hypotheses historical after a method revision; do not relabel their support
             TREAT obstacles as inputs for different permitted routes or method/tool proposals
             CONSUME original repair/rejection receipts; do not repeat uncertain delivery
             KEEP scoped exhaustion distinct from scientific impossibility

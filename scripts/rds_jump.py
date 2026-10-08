@@ -21,6 +21,49 @@ def _seal(value):
     return {**value, 'sha256': digest(value)}
 
 
+def _origin(store, state):
+    """Locate one original generation through verified effective ancestors."""
+    from rds_method_revision import contract_history
+    with store._db(True) as db:
+        history = contract_history(db)
+    require(history[-1]['sha256'] == state['contract_sha256'], 'Jump effective ancestry changed')
+    events = [e for e in structure._events(store) if e['kind'] == structure.PREFIX + 'JUMP']
+    require(len(events) <= 1, 'Multiple jump generations require an explicit new plan/workspace')
+    if not events:
+        return None
+    _, errors = store._bindings(state['contract'])
+    require(not errors, 'Jump current frozen bindings changed: ' + '; '.join(errors))
+    started = structure._find(store, 'JUMP', events[0]['id'])
+    req = structure._find(store, 'REQUEST', started['request_id'])
+    require(req is not None and digest(req) == started['request_sha256'], 'Jump request changed')
+    ancestor = next((h for h in history if h['sha256'] == req['scope']['contract_sha256']), None)
+    require(ancestor is not None, 'Jump original contract is not a verified ancestor')
+    origin = {**state, 'contract': ancestor['contract'], 'contract_sha256': ancestor['sha256']}
+    plan = load_plan(store, origin)
+    require(plan is not None and started['plan_sha256'] == digest(plan)
+            and started['id'] == 'jump-' + digest({'contract': ancestor['sha256'], 'plan': plan})[:24],
+            'Jump original plan identity changed')
+    current = {b['path']: b for b in state['contract']['bindings']}
+    for binding in ancestor['contract']['bindings']:
+        if binding['role'] in {'config', 'data', 'evaluator'}:
+            require(current.get(binding['path']) == binding, 'Jump immutable source compatibility changed')
+        if binding['role'] == 'code' and any(binding['path'] in stage['run']['argv'] for stage in plan['stages']):
+            require(current.get(binding['path']) == binding, 'Jump generator code compatibility changed')
+    return started, req, plan, origin, history
+
+
+def _origin_live(store, req, origin):
+    # Reuse the unchanged structure ancestry/scope checks against the verified
+    # origin contract. This view cannot admit or execute a historical proposal.
+    class HistoricalView:
+        def __getattr__(self, name):
+            return getattr(store, name)
+
+        def snapshot(self):
+            return origin
+    return structure._live(HistoricalView(), req, allow_owned_updates=True)
+
+
 def packet(store):
     """Project verified current jump evidence for an AI, without claiming use.
 
@@ -37,21 +80,21 @@ def packet(store):
              'use_assurance': 'NOT_RECORDED', 'authorization': 'UNCHANGED'}
     try:
         state = store.snapshot()
-        plan = load_plan(store, state)
-        if plan is None:
+        found = _origin(store, state)
+        if found is None:
+            load_plan(store, state)  # A corrupt configured plan still stops visibly.
             return None
-        ident = 'jump-' + digest({'contract': state['contract_sha256'], 'plan': plan})[:24]
-        started = structure._find(store, 'JUMP', ident)
-        if started is None:
-            return None
+        started, req, plan, origin, history = found
+        ident = started['id']
         event_sha = digest(structure._events(store))
-        req = structure._find(store, 'REQUEST', started['request_id'])
-        require(req is not None and digest(req) == started['request_sha256'], 'Jump request changed')
-        require(started['plan_sha256'] == digest(plan), 'Jump plan identity changed')
         value.update(id=ident, original_scope=deepcopy(req['scope']),
                      scope_sha256=req['scope_sha256'], request_id=req['id'],
-                     request_sha256=digest(req), goal=req['goal'])
-        _, saved = structure._live(store, req, allow_owned_updates=True)
+                     request_sha256=digest(req), goal=req['goal'],
+                     origin_contract_sha256=origin['contract_sha256'],
+                     current_contract_sha256=state['contract_sha256'],
+                     evidence_scope='CURRENT' if origin['contract_sha256'] == state['contract_sha256'] else 'HISTORICAL',
+                     admission_authorized=False)
+        _, saved = _origin_live(store, req, origin)
         finished = structure._find(store, 'JUMP_FINISHED', ident)
         require(finished is not None, 'Jump generation has not finished; recover its original attempts')
         require(finished['status'] in {'JUMP_PROPOSED', 'NO_CANDIDATE'}, 'Unsupported jump completion')
@@ -112,6 +155,7 @@ def packet(store):
                 'observation': feedback['observation'] if feedback else 'UNKNOWN',
                 'status': feedback['status'] if feedback else 'HYPOTHESIS_PENDING',
                 'feedback': deepcopy(feedback), 'scientific_support': 'UNKNOWN'})
+            items[-1]['evidence_scope'] = value['evidence_scope']
         if not items:
             items = [{'id': ident, 'kind': 'no_candidate', 'status': 'NO_CANDIDATE',
                       'observation': 'UNKNOWN', 'reason': source_result.get('reason'),
@@ -126,13 +170,33 @@ def packet(store):
                 and current(store.root)['sha256'] == saved['sha256'], 'Jump evidence changed during projection')
         value.update(status='CURRENT', items=items, sources=prior, generation_status=finished['status'],
                      generation_results=results)
+        if len(history) > 1:
+            with store._db(True) as db:
+                from rds_artifacts import strict_json
+                revisions = [strict_json(r['body']) for r in db.execute(
+                    "SELECT body FROM events WHERE json_extract(body,'$.kind')='METHOD_REVISION_ADOPTED' ORDER BY id")]
+            value['method_context'] = {
+                'verified_contract_lineage': [h['sha256'] for h in history],
+                'revisions': revisions,
+                'executions': [{k: deepcopy(r[k]) for k in ('run_id', 'sha256', 'run_status',
+                    'effective_contract_sha256', 'artifacts') if k in r} for r in state['receipts']],
+                'current_scope_feedback': structure._verified_feedback(store,
+                    digest(structure._binding_scope(state, saved))),
+                'historical_feedback_is_current_support': False}
+        latest = store.snapshot()
+        require(latest['contract_sha256'] == state['contract_sha256']
+                and [r['sha256'] for r in latest['receipts']] == [r['sha256'] for r in state['receipts']]
+                and digest(structure._events(store)) == event_sha
+                and current(store.root)['sha256'] == saved['sha256'], 'Jump lineage changed during projection')
         sealed = _seal(value)
         if len(canonical(sealed).encode('utf-8')) <= PACKET_BYTES:
             return sealed
         original = cas_json(store.root, sealed)
-        summary = {k: deepcopy(v) for k, v in value.items() if k not in {'items', 'generation_results', 'sources'}}
+        summary = {k: deepcopy(v) for k, v in value.items() if k not in {'items', 'generation_results', 'sources', 'method_context'}}
         summary.update(status='NEEDS_ORIGINAL', items=[], sources=[], original=original,
                        omissions={'items': len(items), 'generation_results': True, 'sources': len(prior)})
+        if 'method_context' in value:
+            summary['omissions']['method_context'] = True
         sealed = _seal(summary)
         require(len(canonical(sealed).encode('utf-8')) <= PACKET_BYTES, 'Jump scope exceeds packet limit')
         return sealed
@@ -240,7 +304,35 @@ def _read_stage(store, stage, req, prior):
                            'path': stage['output'], 'sha256': sha}
 
 
-def generate(root, steps=1):
+def prepare_owned(store, selected_manifest):
+    """Prepare/collect frozen generators; the owning drive alone executes them."""
+    before = digest(structure._events(store))
+    try:
+        state = store.snapshot()
+        found = _origin(store, state)
+        if found is not None:
+            started, _, _, origin, _ = found
+            finished = structure._find(store, 'JUMP_FINISHED', started['id'])
+            if finished is not None:
+                context = packet(store)
+                require(context is not None and context['status'] in {'CURRENT', 'NEEDS_ORIGINAL'},
+                        'Completed jump original evidence is unavailable')
+                return None
+            require(origin['contract_sha256'] == state['contract_sha256'],
+                    'Unfinished jump cannot cross a method revision')
+        else:
+            plan = load_plan(store, state)
+            if plan is None or selected_manifest != plan['stages'][0]['run']:
+                return None
+        result = generate(store.root, _prepare_only=True, _selected_manifest=selected_manifest)
+        return {**result, 'changed': digest(structure._events(store)) != before,
+                'execution_started': False}
+    except (ValueError, KeyError, TypeError, OSError, UnicodeError) as exc:
+        return {'status': 'JUMP_UNAVAILABLE', 'changed': digest(structure._events(store)) != before,
+                'diagnostic': str(exc)[:512], 'execution_started': False, 'retry_authorized': False}
+
+
+def generate(root, steps=1, *, _prepare_only=False, _selected_manifest=None):
     """Advance at most three already-authorized routes; never redispatch attempts.
 
     One frozen plan permits one generation per contract. A new evidence round
@@ -249,11 +341,12 @@ def generate(root, steps=1):
     require(type(steps) is int and 1 <= steps <= 3, 'Jump steps must be 1..3')
     store = ProjectStore(root)
     state = store.snapshot()
-    plan = load_plan(store, state)
+    found = _origin(store, state)
+    plan = found[2] if found is not None else load_plan(store, state)
     if plan is None:
         return {'status': 'JUMP_NOT_CONFIGURED', 'execution_started': False, 'scientific_support': 'UNKNOWN'}
-    ident = 'jump-' + digest({'contract': state['contract_sha256'], 'plan': plan})[:24]
-    started = structure._find(store, 'JUMP', ident)
+    ident = found[0]['id'] if found else 'jump-' + digest({'contract': state['contract_sha256'], 'plan': plan})[:24]
+    started = found[0] if found else None
     if started is None:
         requests = structure.request(root, 1)['tasks']
         if not requests:
@@ -267,7 +360,6 @@ def generate(root, steps=1):
                 expected=req['snapshot_sha256'], check_snapshot=True)
     req = structure._find(store, 'REQUEST', started['request_id'])
     require(req is not None and digest(req) == started['request_sha256'], 'Jump request changed')
-    structure._live(store, req, allow_owned_updates=True)
     finished = structure._find(store, 'JUMP_FINISHED', ident)
     if finished is not None:
         originals = []
@@ -277,7 +369,11 @@ def generate(root, steps=1):
         require(originals == finished['sources'], 'Finished jump source identity changed')
         for proposal_id in finished['proposal_ids']:
             require(structure._find(store, 'PROPOSAL', proposal_id) is not None, 'Finished jump proposal missing')
-        return {**finished, 'agent_context': packet(store)}  # No fresh budget or campaign admission.
+        context = packet(store)
+        require(context is not None and context['status'] in {'CURRENT', 'NEEDS_ORIGINAL'},
+                'Finished jump evidence is unavailable')
+        return {**finished, 'agent_context': context}  # No fresh budget or campaign admission.
+    structure._live(store, req, allow_owned_updates=True)
     prior, dispatched, result = [], 0, None
     for stage in plan['stages']:
         state = store.snapshot()
@@ -285,6 +381,9 @@ def generate(root, steps=1):
         if run:
             require(run['manifest_sha256'] == digest(stage['run']), 'Jump run ID already belongs to another manifest')
             if run['status'] not in TERMINAL and run.get('attempt_id') is not None:
+                if _prepare_only:
+                    return {'status': 'RECOVERY_REQUIRED', 'id': ident, 'run_id': run['id'],
+                            'execution_started': False}
                 recovered = store.recover(run['id'])
                 if recovered.get('run_status') not in {'SUCCEEDED', 'FAILED', 'INTERRUPTED'}:
                     return {'status': 'RECOVERY_REQUIRED', 'run_id': run['id'], 'execution_started': False}
@@ -294,6 +393,10 @@ def generate(root, steps=1):
                 return {'status': 'JUMP_STOPPED', 'run_id': run['id'], 'reason': run['status'],
                         'scientific_support': 'UNKNOWN', 'retry_authorized': False}
         if run is None or run['status'] not in TERMINAL:
+            if _prepare_only:
+                return {'status': 'READY_TO_EXECUTE' if _selected_manifest == stage['run'] else 'JUMP_WAITING_ADMISSION',
+                        'id': ident, 'next_stage': stage['kind'], 'selected_manifest': deepcopy(stage['run']),
+                        'sources': prior, 'scientific_support': 'UNKNOWN'}
             if dispatched >= steps:
                 return {'status': 'JUMP_STEP_LIMIT', 'id': ident, 'next_stage': stage['kind'],
                         'sources': prior, 'scientific_support': 'UNKNOWN'}
@@ -306,9 +409,13 @@ def generate(root, steps=1):
                 return {'status': 'JUMP_STOPPED', 'run_id': stage['run']['id'],
                         'reason': receipt.get('run_status', 'UNKNOWN'), 'scientific_support': 'UNKNOWN',
                         'retry_authorized': False}
-        with structure._meter(store, 'jump-consume'):
+        if _prepare_only:
             result, ref = _read_stage(store, stage, req, prior)
             prior.append(ref)
+        else:
+            with structure._meter(store, 'jump-consume'):
+                result, ref = _read_stage(store, stage, req, prior)
+                prior.append(ref)
     require(isinstance(result, dict) and result.get('status') in {'PROPOSED', 'NO_CANDIDATE'},
             'Synthesis must return PROPOSED or NO_CANDIDATE')
     proposals = result.get('proposals')
@@ -316,21 +423,23 @@ def generate(root, steps=1):
             bool(proposals) == (result['status'] == 'PROPOSED'), 'Invalid generated proposal count')
     retained = []
     admission = req
-    if proposals and 'search_allocation' in req:
+    if proposals:
         # Generation adds receipts. Bind adoption to a fresh allocation over
         # those originals while retaining the earlier generation request chain.
         admission = next((r for r in structure.request(root, 8)['tasks']
                           if r['goal'] == req['goal'] and r['scope_sha256'] == req['scope_sha256']), None)
         require(admission is not None, 'Original jump goal no longer has an open admission request')
-        slots = [s for s in admission['search_allocation']['slots'] if s['kind'] == 'explore']
-        require(len(slots) >= len(proposals), 'Generated proposals exceed allocated exploration slots')
+        if 'search_allocation' in admission:
+            slots = [s for s in admission['search_allocation']['slots'] if s['kind'] == 'explore']
+            require(len(slots) >= len(proposals), 'Generated proposals exceed allocated exploration slots')
     for index, proposal in enumerate(proposals):
         require(isinstance(proposal, dict) and proposal.get('request_id') == req['id'],
                 'Generated proposal must retain the original request')
         proposal = deepcopy(proposal)
         if admission is not req:
             proposal['request_id'] = admission['id']
-            proposal['search'] = {'slot': slots[index]['slot']}
+            if 'search_allocation' in admission:
+                proposal['search'] = {'slot': slots[index]['slot']}
         sources = proposal.get('exploration', {}).get('sources')
         require(isinstance(sources, list), 'Generated explanation must declare its sources')
         for ref in prior:

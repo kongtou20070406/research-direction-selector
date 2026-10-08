@@ -18,6 +18,46 @@ It returns the generated proposal before experimental execution; the next
 `drive` call goes through the ordinary candidate selection and experiment path.
 Projects without the binding keep the existing Agent handoff.
 
+## Drive the full loop in one ledger
+
+With both a frozen `jump-generation.json` and an autonomy policy, `project drive`
+prepares the generator when the owned Advisor selects its first route. The same
+drive executes each selected route, collects its original receipt, admits the
+generated hypothesis against fresh owned evidence and places the jump packet in
+the next actual model request. The model may adapt the proposed method; its
+returned code still passes ordinary method revision and independent execution.
+
+```text
+python -B examples/jump-loop/run.py --workspace <new-absolute-sibling-workspace>
+python -B examples/jump-loop/run.py --workspace <another-new-workspace> --native <absolute-codex-executable>
+```
+
+The default is an explicitly scripted engineering fixture. It computes the first
+implementation from the received candidate expression, deliberately introduces
+an offset, receives an independent `FAIL` and then returns a corrected method.
+The second request must contain both the original generated jump and the exact
+first counterexample. This exercises ten real project routes and two revisions.
+The native option uses the existing frozen `codex_exec` adapter, Sol/high/default,
+at most two provider calls and the same independent exact finite checker. It may
+succeed earlier or stop without a valid method. Neither option measures scientific
+gain; the public three-point polynomial is an engineering acceptance case.
+
+After a compatible method revision, the packet validates the original generation
+against verified contract ancestry. It carries origin/current contract hashes,
+method adoptions and actual receipt/output locators. Its `CURRENT` status means
+the projection was checked against the current ledger; `evidence_scope: HISTORICAL`
+and `admission_authorized: false` preserve the status of the old hypothesis. Past
+feedback cannot acquire current-scope support. Missing originals, incompatible
+generator bindings or an unfinished generation crossing a revision stop visibly.
+
+Nested structure control uses the drive's explicit controller reservation and is
+charged once. Standalone structure calls retain their own bounded metering.
+Repeated drive calls recover original attempts and do not repurchase a completed
+model request. `STEP_LIMIT` permits another bounded pass on the same ledger;
+uncertain provider delivery still requires reconciliation. The example retains
+each CLI response in `out/trajectory.json`, original provider traces and receipts,
+and a summary showing actual status and unmeasured scientific gain.
+
 ## Return the jump to the AI
 
 Generation completes by returning `agent_context`, a hash-bound

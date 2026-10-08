@@ -496,6 +496,8 @@ def drive(store, max_steps=8, prepare_only=False):
     policy = contract.get('advisor_policy')
     require(policy and 'autonomy' in policy, 'project drive requires a frozen autonomy declaration')
     config = validate_policy(store, contract, policy)
+    has_jump = any(b['path'] == 'jump-generation.json' and b['role'] == 'config'
+                   for b in contract['bindings'])
     from rds_steering import SteeringBlocked, status as steering_status
     instruction = steering_status(store)
     if instruction['steering']['paused']:
@@ -576,6 +578,19 @@ def drive(store, max_steps=8, prepare_only=False):
                 db.execute('BEGIN IMMEDIATE')
                 store._campaign_deadline(db, state['contract'], admit=True)
             manifest = report.get('selected_manifest')
+            if has_jump:
+                from rds_jump import prepare_owned
+                from rds_structure import owned_control
+                with owned_control(store, owner, lambda: allowance - (time.monotonic() - started - worker_wall)):
+                    prepared_jump = prepare_owned(store, manifest)
+                if prepared_jump is not None:
+                    result['jump_generation'] = prepared_jump
+                    if prepared_jump['changed']:
+                        continue  # Re-select from the changed original evidence.
+                    if prepared_jump['status'] != 'READY_TO_EXECUTE' and not (
+                            prepared_jump['status'] == 'JUMP_WAITING_ADMISSION' and manifest is not None):
+                        result['status'] = prepared_jump['status']
+                        break
             if manifest is None:
                 confirmation = report.get('confirmation')
                 if confirmation and all(v != 'PENDING' for v in confirmation['execution'].values()) and confirmation['task_confirmation'] == 'UNKNOWN':
@@ -638,4 +653,7 @@ def drive(store, max_steps=8, prepare_only=False):
             _append(db, {'kind': 'AUTONOMY_DRIVE_RELEASED', 'owner': owner, 'reason': result['status'],
                          'controller_wall_seconds': overhead, 'executed': deepcopy(executed)})
         result['controller_wall_seconds'] = overhead
+    if has_jump:
+        from rds_jump import packet
+        result['jump_packet'] = packet(store)
     return result
