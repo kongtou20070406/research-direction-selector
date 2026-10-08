@@ -4,6 +4,7 @@ Fixtures are controlled software workloads. No model or scientific gain is
 measured. The start-boundary test injects a real committed user instruction.
 """
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from copy import deepcopy
 import json
 import os
@@ -352,6 +353,8 @@ class SteeringDriveTests(unittest.TestCase):
     cli = autonomy_fixture.AutonomyTests.cli
     calls = autonomy_fixture.AutonomyTests.calls
     events = autonomy_fixture.AutonomyTests.events
+    request = autonomy_fixture.AutonomyTests.request
+    run_repair = autonomy_fixture.AutonomyTests.run_repair
 
     def steer(self, kind):
         snap = self.store.snapshot()
@@ -386,6 +389,77 @@ class SteeringDriveTests(unittest.TestCase):
         self.assertEqual(result['status'], 'HUMAN_STEERING_REQUIRED')
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.store.snapshot()['budget'], before)
+
+    def pause_directly(self):
+        snap = self.store.snapshot()
+        return submit(self.store, {'id': 'race-pause', 'kind': 'pause', 'message': 'Pause committed during controller transition',
+                      'contract_sha256': snap['contract_sha256'], 'expected_revision': snap.get('steering', {}).get('revision')},
+                      user_directed=True, source='current-user:controller-race')
+
+    def test_pause_after_initial_read_prevents_controller_reservation(self):
+        self.build()
+        import rds_autonomy as autonomy
+        import rds_steering as steering
+        real_status = steering.status
+        before = self.store.snapshot()['budget']
+        def read_then_pause(store):
+            result = real_status(store)
+            if not result['steering']['paused']:
+                self.pause_directly()
+            return result
+        with patch.object(steering, 'status', side_effect=read_then_pause):
+            result = autonomy.drive(self.store, max_steps=1)
+        self.assertEqual(result['status'], 'HUMAN_STEERING_REQUIRED')
+        self.assertEqual(self.events('AUTONOMY_DRIVE_CLAIMED'), [])
+        self.assertEqual(self.store.snapshot()['budget'], before)
+        self.assertEqual(self.calls(), [])
+
+    def paid_adoption_race(self, between_transactions):
+        self.build()
+        self.run_repair()
+        import rds_autonomy as autonomy
+        import rds_method_revision as revision
+        original = self.store.snapshot()
+        source = (self.root / 'code.py').read_bytes()
+        real_apply, real_db = revision.apply, self.store._db
+        writes = 0
+        @contextmanager
+        def database(readonly=False):
+            nonlocal writes
+            if not readonly:
+                writes += 1
+                if writes == 2:
+                    # PREPARED committed; ADOPTED transaction has not begun.
+                    self.pause_directly()
+            with real_db(readonly) as db:
+                yield db
+        def apply_after_pause(*args, **kwargs):
+            if between_transactions:
+                with patch.object(self.store, '_db', side_effect=database):
+                    return real_apply(*args, **kwargs)
+            self.pause_directly()
+            return real_apply(*args, **kwargs)
+        with patch.object(revision, 'apply', side_effect=apply_after_pause):
+            result = autonomy.drive(self.store, max_steps=4)
+        self.assertEqual(result['status'], 'HUMAN_STEERING_REQUIRED')
+        self.assertEqual((self.root / 'code.py').read_bytes(), source)
+        self.assertEqual(self.events('METHOD_REVISION_ADOPTED'), [])
+        self.assertEqual(self.events('AUTONOMY_MODEL_PROCESSED'), [])
+        self.assertEqual(self.store.snapshot()['receipts'], original['receipts'])
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(bool(self.events('METHOD_REVISION_PREPARED')), between_transactions)
+        self.steer('resume')
+        self.cli('project', 'drive', '--max-steps', '4')
+        final = self.store.snapshot()
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(next(r for r in final['receipts'] if r['run_id'] == 'repair1'), original['receipts'][0])
+        self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
+
+    def test_pause_before_adoption_keeps_paid_proposal_for_resume(self):
+        self.paid_adoption_race(False)
+
+    def test_pause_between_preparation_and_adoption_keeps_recoverable_proposal(self):
+        self.paid_adoption_race(True)
 
 
 if __name__ == '__main__':

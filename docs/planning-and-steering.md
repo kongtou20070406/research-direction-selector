@@ -100,6 +100,11 @@ Steering, reservation and project process launch share the existing SQLite
 transaction boundary. A committed instruction invalidates a previously prepared
 Advisor token. Launch admission rechecks immediately before process creation; a
 withdrawn route cannot use an older selection to pass that boundary.
+Controller reservation and both preparation/adoption transactions for automatic
+model revisions also recheck the instruction. A pause between prepared and adopted
+leaves the exact paid proposal recoverable; it is not recorded as a rejected
+method and buys no replacement call. Explicit method-revision commands retain
+their existing authority and validation rules.
 
 Already launched work, including an admitted model worker and its provider call,
 finishes or recovers under the original attempt and receipt. This slice does not

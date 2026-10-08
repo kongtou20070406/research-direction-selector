@@ -286,7 +286,7 @@ def _replace(path, data):
             os.unlink(temporary)
 
 
-def apply(store, proposal):
+def apply(store, proposal, *, admission_guard=None):
     """Validate, durably prepare and adopt an authorized revision, or resume it."""
     require(isinstance(proposal, dict) and set(proposal) == {'id', 'parent_sha256', 'reason', 'policy', 'code_replacements'},
             'Revision requires id, parent_sha256, reason, policy and code_replacements')
@@ -308,6 +308,8 @@ def apply(store, proposal):
             _, errors = store._bindings(previous)
             require(not errors, '; '.join(errors))
             return {**event, 'status': 'ALREADY_ADOPTED', 'execution_started': False}
+        if admission_guard is not None:
+            admission_guard(db)
         _idle(store, db)
         if pending:
             require(pending['id'] == proposal['id'] and pending['proposal_sha256'] == proposal_sha,
@@ -397,6 +399,8 @@ def apply(store, proposal):
             require(event['proposal_sha256'] == proposal_sha, 'Revision ID reused with changed proposal')
             return {**event, 'status': 'ALREADY_ADOPTED', 'execution_started': False}
         require(retained == pending, 'Prepared revision changed before adoption')
+        if admission_guard is not None:
+            admission_guard(db)
         _idle(store, db)
         changes = {c['path']: c for c in pending['changes']}
         # Verify every target and unaffected input before writing any target.

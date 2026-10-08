@@ -408,7 +408,10 @@ def process_result(store, event, receipt):
                 _processed_once(db, {'kind': PROCESSED, 'run_id': rid, 'receipt_sha256': receipt['sha256'],
                                      'outcome': outcome, 'reason': reason})
             return outcome
-    result = apply(store, proposal)
+    def admit_adoption(db):
+        from rds_steering import check_dispatch
+        check_dispatch(db, rid)
+    result = apply(store, proposal, admission_guard=admit_adoption)
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         _processed_once(db, {'kind': PROCESSED, 'run_id': rid, 'receipt_sha256': receipt['sha256'],
@@ -434,6 +437,8 @@ def _claim(store):
             _append(db, {'kind': 'AUTONOMY_DRIVE_RELEASED', 'owner': active['owner'], 'reason': 'OWNER_DEAD_NO_WORKER_RELAUNCH'})
             db.commit()  # Dead-owner accounting must survive an exhausted new budget.
             return _claim(store)  # Re-read ownership in a new transaction, including races.
+        from rds_steering import check_dispatch
+        check_dispatch(db, None)
         config = store._contract(db)['advisor_policy']['autonomy']
         row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
         available = max(0., row['cap'] - row['spent'] - row['charged'] - row['reserved'])
@@ -468,12 +473,14 @@ def drive(store, max_steps=8, prepare_only=False):
     policy = contract.get('advisor_policy')
     require(policy and 'autonomy' in policy, 'project drive requires a frozen autonomy declaration')
     config = validate_policy(store, contract, policy)
-    from rds_steering import status as steering_status
+    from rds_steering import SteeringBlocked, status as steering_status
     instruction = steering_status(store)
     if instruction['steering']['paused']:
         return {**instruction, 'status': 'HUMAN_STEERING_REQUIRED', 'executed': []}
     try:
         owner, allowance = _claim(store)
+    except SteeringBlocked as exc:
+        return {**steering_status(store), 'status': 'HUMAN_STEERING_REQUIRED', 'reason': str(exc), 'executed': []}
     except (ValueError, OSError, sqlite3.Error) as exc:
         return {'status': 'CONTROLLER_ADMISSION_BLOCKED', 'reason': str(exc), 'executed': [],
                 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}
@@ -511,8 +518,8 @@ def drive(store, max_steps=8, prepare_only=False):
                 original = unfinished[0]
                 try:
                     process_result(store, original, receipts[original['run_id']])
-                except ModelResultIntegrityError:
-                    raise  # Repair original evidence; never buy another method.
+                except (ModelResultIntegrityError, SteeringBlocked):
+                    raise  # Keep original evidence/proposals; a pause is not rejection.
                 except (ValueError, KeyError, TypeError, UnicodeError) as exc:
                     # An invalid suggestion is feedback for the next distinct
                     # authorized method, not an excuse to repeat this attempt.
@@ -595,6 +602,8 @@ def drive(store, max_steps=8, prepare_only=False):
                              'run_status': receipt.get('run_status'), 'receipt_sha256': receipt.get('sha256')})
         else:
             result['status'] = 'CONTROL_TRANSITION_LIMIT'
+    except SteeringBlocked as exc:
+        result.update(status='HUMAN_STEERING_REQUIRED', reason=str(exc), steering=steering_status(store)['steering'])
     except (ValueError, OSError, sqlite3.Error, KeyError, TypeError, UnicodeError) as exc:
         result.update(status='HANDOFF_REQUIRED', reason=str(exc))
     finally:
