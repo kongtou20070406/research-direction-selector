@@ -454,7 +454,7 @@ def replica_view(result):
     nodes, links, groups = {}, [], {}
     ids = {n["id"]: f"c{i}" for i, n in enumerate(spec["nodes"])}
     goals = set(spec["goals"])
-    palette = {"声明": "#b3b3b3", "执行": "#ada4bc", "回执": "#93b3a3", "产物": "#8fa5b1", "观测": "#acaf8f"}
+    palette = {"声明": "#c2c8d2", "执行": "#b39ddb", "回执": "#82c4af", "产物": "#82b6d4", "观测": "#d5c17e"}
     names = {"radius_minimal_polynomial": "半径最小多项式", "radius_irreducible": "不可约性",
              "radius_isolated_unique": "根隔离与唯一性", "ordered_exact_centers": "精确圆心",
              "continuous_cover": "连续覆盖", "global_optimality": "全局最优性",
@@ -544,8 +544,41 @@ def replica_view(result):
     levels = dependency_levels(nodes, links)
     for uid, level in levels.items():
         nodes[uid]["rds"]["flowX"] = level
+    # Project containment is a display layer, never a new logical assertion.
+    # Join one representative per existing component, rather than a full clique.
+    parent = {uid: uid for uid in nodes}
+    degree = {uid: 0 for uid in nodes}
+
+    def find(uid):
+        while parent[uid] != uid:
+            parent[uid] = parent[parent[uid]]
+            uid = parent[uid]
+        return uid
+
+    for s, t, _ in links:
+        parent[find(t)] = find(s)
+        degree[s] += 1
+        degree[t] += 1
+    components = {}
+    for uid in nodes:
+        components.setdefault(find(uid), []).append(uid)
+    scope_links = []
+    for members in components.values():
+        representative = max(members, key=lambda uid: (
+            nodes[uid]["rds"].get("record") in goals,
+            nodes[uid]["rds"]["kind"] == "执行", degree[uid]))
+        scope_links.append(["scope", representative, {
+            "relation": "项目归属", "family": "membership", "color": "#8196b0",
+            "width": .6, "opacity": .23, "dash": True, "arrow": False,
+            "binding": {"field": "displayed_snapshot", "source": result.get("source"),
+                        "sha256": result.get("snapshot_sha256")}}])
+    scope = {"node": {"type": "", "label": "项目快照", "color": {"rgb": 0x8aa1b8, "a": 1},
+                      "rds": {"virtual": True, "kind": "项目", "size": 1, "flowX": None,
+                              "group": None, "color": "#8aa1b8"}},
+             "links": scope_links, "components": len(components),
+             "unlinked_records": sum(degree[uid] == 0 for uid in ids.values())}
     return {"nodes": nodes, "links": links, "provenance_count": provenance,
-            "relations": sorted({meta["relation"] for _, _, meta in links})}
+            "scope": scope, "relations": sorted({meta["relation"] for _, _, meta in links} | {"项目归属"})}
 
 
 def _replace_once(source, old, new):
@@ -558,12 +591,25 @@ def patch_replica_renderer(source):
     """Small, auditable patches to the exact user-selected renderer."""
     source = _replace_once(source, "new Blob([`(${workerMain.toString()})()`]", "new Blob([document.getElementById('d3-worker-lib').textContent, `\\n(${workerMain.toString()})()`]")
     source = _replace_once(source, "this.worker = new Worker(blobUrl", "this.workerBlobUrl = blobUrl; this.worker = new Worker(blobUrl")
-    source = _replace_once(source, "getSize() { return this.r.opts.nodeSize *", "getSize() { return (this.rds?.size || 1) * this.r.opts.nodeSize *")
+    source = _replace_once(source, "getSize() { return this.r.opts.nodeSize * Math.max(8, Math.min(3 * Math.sqrt(this.weight + 1), 30)); }", """getSize() { return (this.rds?.size || 1) * this.r.opts.nodeSize * (this.rds?.radius ?? Math.max(8, Math.min(3*Math.sqrt(this.weight+1),30))); }
+    drawBody(c) {
+      const shape=this.type==='hyperedge'?'diamond':this.rds?.shape || 'circle';
+      this.rdsShape=shape;c.clear();
+      if(shape==='ring'){c.lineStyle(22,0xffffff,1).drawCircle(0,0,88);return;}
+      c.beginFill(0xffffff);
+      if(shape==='diamond')c.drawPolygon([0,-100,100,0,0,100,-100,0]);
+      else if(shape==='square')c.drawRect(-82,-82,164,164);
+      else if(shape==='triangle')c.drawPolygon([0,-100,95,75,-95,75]);
+      else if(shape==='hexagon')c.drawPolygon([100,0,50,87,-50,87,-100,0,-50,-87,50,-87]);
+      else c.drawCircle(0,0,100);
+      c.endFill();
+    }""")
     source = _replace_once(source, "if (this.rendered) return false;", "if (this.rendered || this.rdsHidden) return false;")
     source = _replace_once(source, "const r = this.r, { x, y } = this", "if(this.rdsHidden){this.circle.visible=this.text.visible=false;if(this.highlight)this.highlight.visible=false;return;}\n      const r = this.r, { x, y } = this")
     source = _replace_once(source, "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();", "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();\n      if(s.rdsHidden || t.rdsHidden){this.px.visible=this.arrow.visible=false;return;}")
     source = _replace_once(source, "if (n.rendered) continue;", "if (n.rendered || n.rdsHidden) continue;")
-    source = _replace_once(source, "c.beginFill(0xffffff).drawCircle(0, 0, 100).endFill();", "c.beginFill(0xffffff); if(this.type === 'hyperedge') c.drawPolygon([0,-100,100,0,0,100,-100,0]); else c.drawCircle(0,0,100); c.endFill();")
+    source = _replace_once(source, "c.beginFill(0xffffff).drawCircle(0, 0, 100).endFill();", "this.drawBody(c);")
+    source = _replace_once(source, "const c = this.circle;\n      c.tint", "const c = this.circle;\n      if(this.rdsShape!==(this.type==='hyperedge'?'diamond':this.rds?.shape || 'circle'))this.drawBody(c);\n      c.tint")
     source = _replace_once(source, "const related = !hl || isHl || this.neighbors.has(hl.id);", "const related = !hl || isHl || r.rdsRelated?.has(this.id) || this.neighbors.has(hl.id);")
     source = _replace_once(source, "const on = s === hl || t === hl;", "const on = s === hl || t === hl || (this.rds?.hyperedge && r.rdsRelated?.has(this.rds.hyperedge));")
     source = _replace_once(source, "const col = on ? r.colors.lineHighlight : r.colors.line;", "const col = on ? r.colors.lineHighlight : this.rds?.color ? hexToColor(this.rds.color) : r.colors.line;")
@@ -608,7 +654,7 @@ def patch_replica_worker(source):
   for(const l of links) {
     const s=l.source,t=l.target;
     const cfg=params.relations[l.relation];if(cfg && (cfg.mode==='none'||cfg.strength===0))continue;
-    if(s.flowX == null || t.flowX == null || t.flowX<=s.flowX) continue;
+    if(l.family==='membership' || s.flowX == null || t.flowX == null || t.flowX<=s.flowX) continue;
     const k=Math.min(5,Math.max(0,params.linkDistance*.6-(t.x-s.x))*params.flowStrength)*a;
     s.vx-=k*.5;t.vx+=k*.5;
   }
@@ -661,8 +707,11 @@ const forces = [fx, fy, fLink, fCharge, fCollide, fFlow, fGroups, fSigned, fEdge
     source = _replace_once(source, "fLink.strength((l, i, ls) => params.linkStrength * baseLinkStrength(l, i, ls));", """fLink.strength((l,i,ls) => { const cfg=params.relations[l.relation] || {mode:'attract',strength:1}; return cfg.mode === 'attract' ? params.linkStrength*cfg.strength*baseLinkStrength(l,i,ls) : 0; });
   // Relative flow uses current parameters; no fixed column coordinates.""")
     source = _replace_once(source, ".map(([s, t]) => ({ source: nodeById.get(s), target: nodeById.get(t) }));", ".map(([s,t,meta]) => ({...meta, source:nodeById.get(s), target:nodeById.get(t)}));")
+    source = _replace_once(source, "fLink.distance(params.linkDistance);", "fLink.distance(l=>params.linkDistance*(l.family==='membership'?2:1));")
+    source = _replace_once(source, "fCharge.strength(-Math.max(1, Math.abs(params.repelStrength)));", """fCharge.strength(n=>-Math.max(1,Math.abs(params.repelStrength))*Math.max(1,Math.min(3,n.chargeWeight || 1)));
+  fCollide.radius(n=>Math.max(24,Math.min(120,n.collisionRadius || 60)));""")
     source = _replace_once(source, "if (m.forceNode) {", """if(m.layoutTargets) {
-    for(const n of nodes) {const target=m.layoutTargets[n.id]; n.flowX=target?.flowX ?? null; n.group=target?.group ?? null; n.members=new Set(target?.members || []);}
+    for(const n of nodes) {const target=m.layoutTargets[n.id]; n.flowX=target?.flowX ?? null; n.group=target?.group ?? null; n.members=new Set(target?.members || []);n.chargeWeight=target?.chargeWeight ?? 1;n.collisionRadius=target?.collisionRadius ?? 60;}
     needParams=true; needInit=true;
   }
   if (m.forceNode) {""")
@@ -756,6 +805,21 @@ button.record-link{display:block;border:0;background:none;color:var(--text-norma
 '''
 
 REPLICA_APP = r'''
+// Display-only credit on shortest dependency paths. Does not infer support.
+function goalCredits(spec,goal) {
+ const ids=new Set(spec.nodes.map(n=>n.id)),incoming=new Map(),distance=new Map(),nodes=new Map(),edges=new Map();
+ if(!ids.has(goal))return {nodes,edges,distance};
+ for(const e of spec.hyperedges)if(e.status!=='CONTRADICTED'){
+  const w=e.weight===undefined?1:typeof e.weight==='number'&&Number.isFinite(e.weight)?Math.min(1e6,Math.max(0,e.weight)):0;
+  if(!w)continue;const list=incoming.get(e.conclusion)||[];list.push({e,w});incoming.set(e.conclusion,list);
+ }
+ const queue=[goal];distance.set(goal,0);nodes.set(goal,1);
+ for(let i=0;i<queue.length;i++){const id=queue[i],d=distance.get(id);for(const {e} of incoming.get(id)||[])for(const p of e.premises)if(!distance.has(p)){distance.set(p,d+1);queue.push(p);}}
+ for(const id of queue){const d=distance.get(id),credit=nodes.get(id)||0,routes=(incoming.get(id)||[]).filter(({e})=>e.premises.some(p=>distance.get(p)===d+1)),total=routes.reduce((sum,r)=>sum+r.w,0);
+  for(const {e,w} of routes){const share=credit*w/total;edges.set(e.id,share);for(const p of e.premises)if(distance.get(p)===d+1)nodes.set(p,(nodes.get(p)||0)+share/e.premises.length);}
+ }
+ return {nodes,edges,distance};
+}
 (() => {
  'use strict';
  const data=JSON.parse(document.getElementById('snapshot').textContent), view=data.replica_view;
@@ -764,50 +828,72 @@ REPLICA_APP = r'''
  $('source-name').textContent=(data.demo?'演示数据':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13 · 本地 RDS':source.at(-1)||'RDS')+' · 只读';
  $('source-name').title=data.source || '';
  if(!data.graph){$('state').textContent=data.reason || data.status;return;}
+ const baseLinks=view.links;
+ if(view.scope){view.nodes.scope=view.scope.node;view.links=[...baseLinks,...view.scope.links];}
  const g=new GraphRenderer($('graph'),SIM_WORKER_MAIN), recordById=new Map(data.graph.nodes.map(n=>[n.id,n]));
  const key='rds-replica-v2:'+ (data.snapshot_sha256 || data.source);
- const defaults={search:'',colors:true,orphans:true,arrows:true,nodeSize:1,lineSize:1,textFade:0,damping:.4,growth:true,growthSeconds:12,flowStrength:.025,groupStrength:.035,edgeRepulsion:.25,edgeClearance:45,centerStrength:.055,repelStrength:1000,linkStrength:1,linkDistance:180,relations:{}};
+ const defaults={search:'',colors:true,orphans:true,scope:true,sizeMode:'goal',goal:data.graph.goals[0]||'',nodeStyles:{},arrows:true,nodeSize:1,lineSize:1,textFade:0,damping:.4,growth:true,growthSeconds:12,flowStrength:.025,groupStrength:.035,edgeRepulsion:.25,edgeClearance:45,centerStrength:.055,repelStrength:1000,linkStrength:1,linkDistance:180,relations:{}};
  let opts={...defaults}; try{opts={...defaults,...JSON.parse(localStorage.getItem(key)||'null')};}catch{}
+ if(!data.graph.goals.includes(opts.goal))opts.goal=defaults.goal;
+ opts.nodeStyles={...opts.nodeStyles};opts.relations={...opts.relations};
+ const kindDefaults={'声明':['#c2c8d2','circle'],'执行':['#b39ddb','square'],'回执':['#82c4af','ring'],'产物':['#82b6d4','hexagon'],'观测':['#d5c17e','circle'],'超边':['#9c95af','diamond'],'项目':['#8aa1b8','ring']};
+ for(const [kind,[color,shape]] of Object.entries(kindDefaults))opts.nodeStyles[kind]={color,shape,size:1,...opts.nodeStyles[kind]};
+ let credits=goalCredits(data.graph,opts.goal);
  const persist=()=>{try{localStorage.setItem(key,JSON.stringify(opts));}catch{}};
- for(const r of view.relations) opts.relations[r]={mode:'attract',strength:r==='来源绑定'?.45:1,color:r==='来源绑定'?'#b7c6c3':'#bdc2d2',width:r==='来源绑定'?.65:1.25,dash:r==='来源绑定',...opts.relations[r]};
+ for(const r of view.relations) {const sample=view.links.find(l=>l[2].relation===r)?.[2]||{};opts.relations[r]={mode:'attract',strength:r==='项目归属'?.12:r==='来源绑定'?.45:1,color:sample.color||'#bdc2d2',width:sample.width||1.25,dash:!!sample.dash,...opts.relations[r]};}
  function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
  function button(text,action,cls='btn'){const b=el('button',text,cls);b.type='button';b.addEventListener('click',action);return b;}
- const legendRow=el('div',undefined,'legend-row');
- for(const [name,color,symbol] of [['声明','#b3b3b3','●'],['执行','#ada4bc','●'],['回执','#93b3a3','●'],['产物','#8fa5b1','●'],['观测记录','#acaf8f','●'],['超边汇合点','#9c95af','◇']]){const chip=el('span'),dot=el('span',symbol,'symbol');dot.style.color=color;chip.append(dot,el('span',name));legendRow.append(chip);}
- $('legend').append(legendRow,el('div','多个前提 → ◇ 超边 → 结论；不同菱形 = 不同路线','legend-note'),el('div','角度无含义 · 颜色不代表已证明 · 虚线是来源绑定 / 提议','legend-note'));
+ function paintLegend(){const row=el('div',undefined,'legend-row');for(const [kind,style] of Object.entries(opts.nodeStyles)){if(kind==='项目'&&!opts.scope)continue;const chip=el('span'),dot=el('span',({circle:'●',square:'■',triangle:'▲',hexagon:'⬡',ring:'○',diamond:'◇'})[style.shape],'symbol');dot.style.color=opts.colors?style.color:'var(--text-muted)';chip.append(dot,el('span',kind==='超边'?'超边汇合点':kind==='项目'?'项目快照':kind));row.append(chip);}$('legend').replaceChildren(row,el('div','多个前提 → ◇ → 结论；不同菱形 = 不同路线','legend-note'),el('div',opts.scope?'弱虚线：项目归属 / 来源绑定；不是科研支持':'虚线：来源绑定 / 提议','legend-note'),el('div',opts.sizeMode==='goal'?'大小：目标相关权重（最短依赖路径的结构估计）':'大小：连接度','legend-note'));}
  function section(name,open=false){const box=el('div',undefined,'gc-section'+(open?'':' is-collapsed')), head=button('',()=>{box.classList.toggle('is-collapsed');},'gc-head');head.setAttribute('aria-expanded',String(open));head.addEventListener('click',()=>head.setAttribute('aria-expanded',String(!box.classList.contains('is-collapsed'))));head.append(el('span','⌄','chev'),el('span',name,'name'));const body=el('div',undefined,'gc-body');box.append(head,body);panel.append(box);return body;}
  function checkbox(body,label,key,change){const row=el('label',undefined,'gc-item');row.append(el('span',label));const i=el('input');i.type='checkbox';i.checked=opts[key];i.addEventListener('change',()=>{opts[key]=i.checked;persist();change();});row.append(i);body.append(row);}
  function slider(body,label,key,min,max,step,change){const wrap=el('label',undefined,'gc-item col'), row=el('span',undefined,'row'), value=el('span',undefined,'val'),i=el('input');row.append(el('span',label),value);i.type='range';i.min=min;i.max=max;i.step=step;i.value=opts[key];i.setAttribute('aria-label',label);const paint=()=>{value.textContent=Number(i.value).toFixed(step<1?2:0);i.style.setProperty('--p',((i.value-min)/(max-min)*100)+'%');};paint();i.addEventListener('input',()=>{opts[key]=+i.value;paint();persist();change();});wrap.append(row,i);body.append(wrap);}
- const filter=section('筛选');const search=el('input',undefined,'search-input');search.placeholder='搜索节点、记录或来源';search.setAttribute('aria-label','搜索节点');search.value=opts.search;const matches=el('div');matches.setAttribute('aria-label','搜索结果');filter.append(search,matches);let searchTimer;search.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{opts.search=search.value;persist();build();},180);});checkbox(filter,'显示未连接节点','orphans',build);
- const groups=section('颜色组');checkbox(groups,'按记录类型着色','colors',build);for(const [name,c] of [['声明','#b3b3b3'],['执行','#ada4bc'],['回执','#93b3a3'],['产物','#8fa5b1'],['观测','#acaf8f']]){const r=el('div',undefined,'gc-item');const dot=el('span','●');dot.style.color=c;r.append(el('span',name),dot);groups.append(r);}
+ const filter=section('筛选');const search=el('input',undefined,'search-input');search.placeholder='搜索节点、记录或来源';search.setAttribute('aria-label','搜索节点');search.value=opts.search;const matches=el('div');matches.setAttribute('aria-label','搜索结果');filter.append(search,matches);let searchTimer;search.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{opts.search=search.value;persist();build();},180);});checkbox(filter,'显示原始未关联记录','orphans',build);checkbox(filter,'显示项目归属层（弱虚线）','scope',build);filter.append(el('p',`${view.scope?.unlinked_records||0} 个记录缺少科研依赖 / 来源关联。归属层只连接同一快照的分组，不补造支持关系。`,'hint'));
+ const groups=section('节点样式');checkbox(groups,'按记录类型着色','colors',nodeAppearance);for(const [name,cfg] of Object.entries(opts.nodeStyles)){const row=el('div',undefined,'gc-item');row.append(el('span',name));const color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 节点颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();nodeAppearance();});row.append(color);groups.append(row);const style=el('div',undefined,'relation-style'),shape=el('select');shape.setAttribute('aria-label',name+' 节点形状');for(const [v,t] of (name==='超边'?[['diamond','菱形']]:[['circle','圆点'],['ring','圆环'],['square','方形'],['triangle','三角'],['hexagon','六边形']])){const o=el('option',t);o.value=v;shape.append(o);}shape.value=cfg.shape;shape.addEventListener('change',()=>{cfg.shape=shape.value;persist();nodeAppearance();});const size=el('input');size.type='range';size.min=.5;size.max=2;size.step=.1;size.value=cfg.size;size.setAttribute('aria-label',name+' 节点倍率');size.addEventListener('input',()=>{cfg.size=+size.value;persist();nodeAppearance();});style.append(shape,size);groups.append(style);}
+ const weights=section('目标权重');const sizeChoice=el('select');sizeChoice.setAttribute('aria-label','节点大小依据');for(const [v,t] of [['goal','目标相关权重'],['degree','连接度']]){const o=el('option',t);o.value=v;sizeChoice.append(o);}sizeChoice.value=opts.sizeMode;sizeChoice.addEventListener('change',()=>{opts.sizeMode=sizeChoice.value;persist();nodeAppearance();});const goalChoice=el('select');goalChoice.setAttribute('aria-label','研究目标');for(const id of data.graph.goals){const o=el('option',Object.values(view.nodes).find(n=>n.rds.record===id)?.label||id);o.value=id;goalChoice.append(o);}goalChoice.value=opts.goal;goalChoice.addEventListener('change',()=>{opts.goal=goalChoice.value;persist();credits=goalCredits(data.graph,opts.goal);nodeAppearance();if(g.rdsPinned)inspect(g.rdsPinned.id);});weights.append(sizeChoice,goalChoice,el('p','目标权重=1；OR 路线按正权重分配，AND 前提均分。只沿最短依赖路径传播，避免循环累加；排除 CONTRADICTED 规则。来源与归属不计入。','hint'),el('p','这是结构相关性的显示估计，不能当作实际研究贡献。没有目标路径表示关联未记录，不表示贡献为零。','hint'));
  const display=section('外观');checkbox(display,'显示结论箭头','arrows',displayOptions);slider(display,'节点大小','nodeSize',.4,3,.1,displayOptions);slider(display,'连线粗细','lineSize',.2,4,.1,displayOptions);slider(display,'标签隐去阈值','textFade',-3,3,.1,displayOptions);checkbox(display,'刷新时逐步生长','growth',()=>opts.growth?playGrowth():finishGrowth());slider(display,'生长回放时长（秒）','growthSeconds',4,30,1,()=>{if(growing)playGrowth();});display.append(el('p','按依赖层次展开结构；不是科研发生的时间线。','hint'));
  const forces=section('力学');slider(forces,'运动阻尼','damping',.1,.85,.05,applyForces);slider(forces,'依赖流向（相对方向）','flowStrength',0,.08,.005,applyForces);slider(forces,'同次执行的记录凝聚','groupStrength',0,.15,.005,applyForces);slider(forces,'超边整线排斥','edgeRepulsion',0,.6,.025,applyForces);slider(forces,'超边留白距离','edgeClearance',15,100,5,applyForces);slider(forces,'图谱向心力','centerStrength',0,.3,.005,applyForces);slider(forces,'节点间排斥','repelStrength',1,3000,25,applyForces);slider(forces,'相连节点吸引','linkStrength',0,2,.05,applyForces);slider(forces,'连线距离','linkDistance',80,400,5,applyForces);forces.append(el('p','拖节点由力牵动邻居；拖背景平移视图。整条超边推开无关节点，自己的前提与结论不受该线排斥。相对流向不会把同层拉成固定竖列。','hint'));
  const relations=section('关系');for(const name of view.relations){const cfg=opts.relations[name],row=el('div',undefined,'gc-item');row.append(el('span',name));const select=el('select');select.setAttribute('aria-label',name+' 力学');for(const [v,t] of [['attract','吸引'],['repel','排斥'],['none','无力']]){const o=el('option',t);o.value=v;select.append(o);}select.value=cfg.mode;select.addEventListener('change',()=>{cfg.mode=select.value;persist();applyForces();});row.append(select);relations.append(row);const style=el('div',undefined,'relation-style'),color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();restyle();});const width=el('input');width.type='range';width.min=.3;width.max=3;width.step=.1;width.value=cfg.width;width.setAttribute('aria-label',name+' 粗细');width.addEventListener('input',()=>{cfg.width=+width.value;persist();restyle();});const dash=el('select');dash.setAttribute('aria-label',name+' 线型');for(const [v,t] of [['solid','实线'],['dash','虚线']]){const o=el('option',t);o.value=v;dash.append(o);}dash.value=cfg.dash?'dash':'solid';dash.addEventListener('change',()=>{cfg.dash=dash.value==='dash';persist();restyle();});style.append(color,width,dash);relations.append(style);}
  const info=section('快照来源');info.append(el('p',data.source,'hint'),el('p','快照 SHA-256：'+(data.snapshot_sha256||'未绑定 TMS 快照'),'hint'),el('p','节点与超边保留原始状态；来源线是可视化绑定，不构成科学支持。','hint'));
  const close=button('收起设置',()=>panel.classList.add('is-close'));const actions=el('div',undefined,'gc-actions');actions.append(close);panel.append(actions);
- function displayOptions(){g.setOptions({nodeSize:opts.nodeSize,lineSize:opts.lineSize,textFade:opts.textFade,showArrow:opts.arrows});}
+ function displayOptions(){g.setOptions({nodeSize:opts.nodeSize,lineSize:opts.lineSize,textFade:opts.textFade,showArrow:opts.arrows});nodeAppearance();}
  function applyForces(){g.setForces({damping:opts.damping,flowStrength:opts.flowStrength,groupStrength:opts.groupStrength,edgeRepulsion:opts.edgeRepulsion,edgeClearance:opts.edgeClearance,centerStrength:opts.centerStrength,repelStrength:opts.repelStrength,linkStrength:opts.linkStrength,linkDistance:opts.linkDistance,relations:opts.relations});$('state').textContent='布局收敛中…';}
  function restyle(){for(const l of g.links){const cfg=opts.relations[l.rds.relation];Object.assign(l.rds,{color:cfg.color,width:cfg.width,dash:cfg.dash});if(l.rendered)l.line.texture=cfg.dash?g.rdsDashTexture:PIXI.Texture.WHITE;}g.changed();}
+ function recordFor(n){return n.rds.virtual?{id:'display:project-snapshot',status:'显示层',source:data.source,snapshot_sha256:data.snapshot_sha256,meaning:'同一快照的项目归属；不是原始科研节点',components:view.scope.components,unlinked_records:view.scope.unlinked_records}:n.rds.edge!==undefined?data.graph.hyperedges[n.rds.edge]:recordById.get(n.rds.record);}
+ let lastTargets='';
+ function nodeAppearance(force=false){for(const n of g.nodes){const style=opts.nodeStyles[n.rds.kind],weight=n.rds.edge!==undefined?credits.edges.get(data.graph.hyperedges[n.rds.edge].id):credits.nodes.get(n.rds.record);n.rds.shape=style.shape;n.rds.size=style.size*(n.type==='hyperedge'?.65:opts.sizeMode==='degree'?view.nodes[n.id].rds.size:1);n.rds.radius=opts.sizeMode==='goal'?(n.rds.virtual?12:6+20*Math.sqrt(Math.min(1,weight||0))):undefined;n.rds.chargeWeight=n.rds.virtual?1:1+2*Math.sqrt(Math.min(1,weight||0));n.rds.collisionRadius=Math.max(24,Math.min(120,24+n.getSize()*1.8));n.color=opts.colors?{rgb:parseInt(style.color.slice(1),16),a:1}:null;if(n.rendered){n.text.style=n.textStyle();}}
+  const targets=Object.fromEntries(g.nodes.map(n=>[n.id,{flowX:n.rds.flowX,group:n.rds.group,members:n.rds.members,chargeWeight:n.rds.chargeWeight,collisionRadius:n.rds.collisionRadius}])),signature=JSON.stringify(targets);if(force||signature!==lastTargets){lastTargets=signature;g.worker.postMessage({layoutTargets:targets,alpha:.3,run:true});}paintLegend();g.changed();}
  function build(){
   finishGrowth();g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');matches.replaceChildren();autoFit=true;started=performance.now();
-  const query=opts.search.trim().toLowerCase(),nodes=Object.create(null),selected=new Set(),found=[],degree=new Set(view.links.flatMap(([s,t])=>[s,t]));
+  const query=opts.search.trim().toLowerCase(),nodes=Object.create(null),selected=new Set(),found=[],degree=new Set(baseLinks.flatMap(([s,t])=>[s,t]));
   for(const [id,n] of Object.entries(view.nodes)){
-   const row=n.rds.edge!==undefined?data.graph.hyperedges[n.rds.edge]:recordById.get(n.rds.record);
-   if((!query||JSON.stringify(row).toLowerCase().includes(query)||n.label.toLowerCase().includes(query))&&(opts.orphans||degree.has(id))){selected.add(id);if(query)found.push(id);}
+   if(n.rds.virtual&&!opts.scope)continue;const row=recordFor(n);
+   if((!query||JSON.stringify(row).toLowerCase().includes(query)||n.label.toLowerCase().includes(query))&&(n.rds.virtual||opts.orphans||degree.has(id))){selected.add(id);if(query)found.push(id);}
   }
   if(query)for(const [id,n] of Object.entries(view.nodes))if(n.rds.members&&(selected.has(id)||n.rds.members.some(m=>found.includes(m)))){selected.add(id);for(const m of n.rds.members)selected.add(m);}
   for(const [id,n] of Object.entries(view.nodes))if(n.type==='hyperedge'&&!n.rds.members.every(x=>selected.has(x)))selected.delete(id);
-  for(const id of selected){const n=view.nodes[id];nodes[id]={...n,color:opts.colors?n.color:null};}
-  const links=view.links.filter(([s,t])=>selected.has(s)&&selected.has(t)).map(([s,t,meta])=>[s,t,{...meta,...opts.relations[meta.relation]}]);
-  g.setData({nodes,links});g.worker.postMessage({layoutTargets:Object.fromEntries(Object.entries(nodes).map(([id,n])=>[id,{flowX:n.rds.flowX,group:n.rds.group,members:n.rds.members}])),alpha:.3,run:true});restyle();
-  $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边 · ${view.provenance_count} 来源线${query?' · 当前显示 '+nodesCount(nodes)+' 个元素':''}`;$('state').textContent='布局收敛中…';
-  if(query){matches.append(el('p',`${found.length} 条匹配，含完整超边上下文`,'hint'));for(const id of found.slice(0,20)){const b=button(view.nodes[id].label,()=>inspect(id),'record-link');b.title=view.nodes[id].rds.record||data.graph.hyperedges[view.nodes[id].rds.edge].id;matches.append(b);}}
+  for(const id of selected){const n=view.nodes[id];nodes[id]={...n,rds:{...n.rds},color:opts.colors?n.color:null};}
+  const links=view.links.filter(([s,t,meta])=>(opts.scope||meta.family!=='membership')&&selected.has(s)&&selected.has(t)).map(([s,t,meta])=>[s,t,{...meta,...opts.relations[meta.relation]}]);
+  g.setData({nodes,links});restyle();nodeAppearance(true);
+  $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边 · ${view.provenance_count} 来源线${opts.scope?' · +项目归属层':''}${query?' · 显示 '+nodesCount(nodes)+' 元素':''}`;$('state').textContent='布局收敛中…';
+  if(query){matches.append(el('p',`${found.length} 条匹配，含完整超边上下文`,'hint'));for(const id of found.slice(0,20)){const b=button(view.nodes[id].label,()=>inspect(id),'record-link');b.title=recordFor(view.nodes[id]).id;matches.append(b);}}
   if(opts.growth && !query)playGrowth();
  }
  function nodesCount(ns){return Object.keys(ns).length;}
- function inspect(id){const n=g.nodeLookup.get(id);if(!n)return;finishGrowth();g.rdsPinned=n;g.rdsLastHL=undefined;g.changed();card.replaceChildren();card.classList.add('show');const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.rds.edge!==undefined?'◇ 超边汇合点':n.label||n.id));const record=n.rds.edge!==undefined?data.graph.hyperedges[n.rds.edge]:recordById.get(n.rds.record);card.append(el('div',record.id,'path'),el('span',record.status+(n.rds.edge!==undefined?' · 规则状态':''),'tag'),el('span',n.rds.kind,'tag'));if(record.scientific_support)card.append(el('p','scientific_support: '+record.scientific_support,'hint'));if(n.rds.edge!==undefined){card.append(el('p','一个菱形代表一条规则；连线角度只是布局，没有数值或逻辑含义。','hint'),el('h4',`${record.premises.length>1?'AND · 所有前提须共同满足':'前提'} → 结论`));for(const m of n.rds.members){const v=view.nodes[m];card.append(button(v.label+' · '+recordById.get(v.rds.record).status,()=>inspect(m),'record-link'));}card.append(el('p','同一结论的不同菱形表示不同路线（OR）。规则已记录不表示前提或结论已经获得支持。','hint'));}else if(n.rds.kind==='观测'){card.append(el('p','黄色表示观测/事实记录类型。原始状态可能 UNKNOWN，颜色不表示科学支持。','hint'));}const related=view.links.filter(([s,t])=>s===id||t===id);if(related.length&&n.rds.edge===undefined){card.append(el('h4','关联节点'));for(const [s,t,meta] of related){const other=s===id?t:s;card.append(button(view.nodes[other].label+' · '+meta.relation,()=>inspect(other),'record-link'));}}card.append(el('h4','原始记录'),el('pre',JSON.stringify(record,null,2)));const bindings=related.filter(x=>x[2].binding).map(x=>x[2].binding);if(bindings.length)card.append(el('h4','来源绑定依据'),el('pre',JSON.stringify(bindings,null,2)));}
+ function inspect(id){
+  const n=g.nodeLookup.get(id);if(!n)return;finishGrowth();g.rdsPinned=n;g.rdsLastHL=undefined;g.changed();card.replaceChildren();card.classList.add('show');
+  const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.rds.edge!==undefined?'◇ 超边汇合点':n.label||n.id));
+  const record=recordFor(n);card.append(el('div',record.id,'path'),el('span',record.status+(n.rds.edge!==undefined?' · 规则状态':''),'tag'),el('span',n.rds.kind,'tag'));
+  if(n.rds.virtual)card.append(el('p','显示用项目快照节点。弱虚线只表达分组属于同一快照，不是原始科研超边，不表示任何研究条件已被支持。','hint'));
+  else {const credit=n.rds.edge!==undefined?credits.edges.get(record.id):credits.nodes.get(record.id);card.append(el('p','目标相关权重（结构估计）：'+(credit===undefined?'未记录到所选目标的可分配路径':credit.toFixed(4)),'hint'),el('p','按最短依赖路径分配；实际研究贡献未由本页测量。','hint'));}
+  if(record.scientific_support)card.append(el('p','scientific_support: '+record.scientific_support,'hint'));
+  if(n.rds.edge!==undefined){card.append(el('p','一个菱形代表一条规则；连线角度只是布局，没有数值或逻辑含义。','hint'),el('h4',`${record.premises.length>1?'AND · 所有前提须共同满足':'前提'} → 结论`));for(const m of n.rds.members){const v=view.nodes[m];card.append(button(v.label+' · '+recordById.get(v.rds.record).status,()=>inspect(m),'record-link'));}card.append(el('p','同一结论的不同菱形表示不同路线（OR）。规则已记录不表示前提或结论已经获得支持。','hint'));}
+  else if(n.rds.kind==='观测')card.append(el('p','观测/事实记录使用独立样式，颜色不表示科学支持。','hint'));
+  const related=g.links.filter(l=>l.source.id===id||l.target.id===id);if(related.length&&n.rds.edge===undefined){card.append(el('h4','关联节点'));for(const l of related){const other=l.source.id===id?l.target:l.source;card.append(button(other.label+' · '+l.rds.relation,()=>inspect(other.id),'record-link'));}}
+  if(!n.rds.virtual&&n.rds.edge===undefined&&!baseLinks.some(([s,t])=>s===id||t===id))card.append(el('p','原始未关联记录：只有项目归属，尚未记录科研依赖或精确来源关联。','hint'));
+  card.append(el('h4',n.rds.virtual?'显示层依据':'原始记录'),el('pre',JSON.stringify(record,null,2)));const bindings=related.filter(l=>l.rds.binding).map(l=>l.rds.binding);if(bindings.length)card.append(el('h4','绑定依据'),el('pre',JSON.stringify(bindings,null,2)));
+ }
  g.onNodeClick=n=>inspect(n.id);
- g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent=`◇ 超边汇合点 · ${e.premises.length>1?'AND':'依赖'}\n${e.premises.length} 个前提 → ${target.label} · ${recordById.get(target.rds.record).status}\n角度无含义；点击查看整条规则及来源`;}else tip.textContent=n.label+' · '+n.rds.kind+(n.rds.kind==='观测'?'\n黄色是记录类型，不代表已证明':'');};
+ g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent=`◇ 超边汇合点 · ${e.premises.length>1?'AND':'依赖'}\n${e.premises.length} 个前提 → ${target.label} · ${recordById.get(target.rds.record).status}\n角度无含义；点击查看整条规则及来源`;}else tip.textContent=n.label+' · '+n.rds.kind+(n.rds.virtual?'\n显示用归属节点，不是科研声明':n.rds.kind==='观测'?'\n记录类型，不代表已证明':'');};
  let growing=false,growthTimer=null,growthOrder=[],growthStart=0;
  function finishGrowth(){clearInterval(growthTimer);growthTimer=null;growing=false;for(const n of g.nodes)n.rdsHidden=false;$('growth-info').textContent='';$('skip-growth').hidden=true;g.changed();}
  function playGrowth(){finishGrowth();g.highlightNode=g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');$('hover-info').hidden=true;growthOrder=[...g.nodes].sort((a,b)=>(a.rds.flowX??1e8)-(b.rds.flowX??1e8));if(!growthOrder.length)return;growing=true;growthStart=performance.now();for(const n of growthOrder)n.rdsHidden=true;$('state').textContent='';$('skip-growth').hidden=false;let shown=0;const advance=()=>{const desired=Math.min(growthOrder.length,Math.max(1,Math.ceil((performance.now()-growthStart)/(opts.growthSeconds*1000)*growthOrder.length)));while(shown<desired){const n=growthOrder[shown++];n.rdsHidden=false;n.fadeAlpha=0;}g.changed();$('growth-info').textContent=`依赖结构生长 · ${shown} / ${growthOrder.length} · 非时间线`;if(shown===growthOrder.length)finishGrowth();};advance();growthTimer=setInterval(advance,60);}

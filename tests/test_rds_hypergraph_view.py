@@ -285,6 +285,54 @@ class ReplicaViewTests(unittest.TestCase):
         ranks=dependency_levels(chain,[[chain[i],chain[i+1],{}] for i in range(4095)])
         self.assertLess(ranks[chain[0]],ranks[chain[-1]])
 
+    def test_project_scope_connects_components_without_inventing_dependencies(self):
+        spec={"schema":1,"nodes":[{"id":x,"status":"UNKNOWN","source":"fixture"} for x in ["a","b","lonely"]],
+              "hyperedges":[{"id":"route","premises":["a"],"conclusion":"b","status":"SUPPORTED","source":"fixture"}],"goals":["b"]}
+        before=deepcopy(spec);result=graph_view(spec,"source.json",snapshot_sha256="saved-sha");view=replica_view(result)
+        self.assertEqual(view["scope"]["components"],2)
+        self.assertEqual(view["scope"]["unlinked_records"],1)
+        self.assertTrue(view["scope"]["node"]["rds"]["virtual"])
+        self.assertEqual({t for _,t,_ in view["scope"]["links"]},{"c1","c2"})
+        adj={uid:set() for uid in [*view["nodes"],"scope"]}
+        for s,t,meta in view["links"]+view["scope"]["links"]:
+            adj[s].add(t);adj[t].add(s)
+            if meta["family"]=="membership":
+                self.assertTrue(meta["dash"])
+                self.assertNotIn("hyperedge",meta)
+                self.assertEqual(meta["binding"]["sha256"],"saved-sha")
+        seen={"scope"};queue=["scope"]
+        for uid in queue:
+            for other in adj[uid]-seen:seen.add(other);queue.append(other)
+        self.assertEqual(seen,set(adj))
+        self.assertEqual(result["graph"],before)
+        self.assertEqual(len(view["links"]),2)  # Original incidence stays separate.
+        self.assertIsNone(view["nodes"]["c2"]["rds"]["flowX"])
+
+    @unittest.skipUnless(shutil.which("node"),"Node required to execute actual goal-weight calculation")
+    def test_actual_goal_weights_split_and_or_and_bound_cycles(self):
+        function=REPLICA_APP.split("(() => {",1)[0]
+        driver="const vm=require('node:vm');const scope={};vm.createContext(scope);vm.runInContext("+json.dumps(function)+",scope);\n"+r'''
+const ids=['goal','p','q','r','shared','bad','orphan'];
+const edge=(id,p,c,weight=1,status='SUPPORTED')=>({id,premises:p,conclusion:c,weight,status});
+const spec={nodes:ids.map(id=>({id,status:'UNKNOWN'})),goals:['goal'],hyperedges:[
+ edge('and',['p','q'],'goal',3),edge('or',['r'],'goal'),edge('p-from-shared',['shared'],'p'),
+ edge('q-from-shared',['shared'],'q'),edge('cycle',['goal'],'p'),edge('bad',['bad'],'goal',100,'CONTRADICTED'),edge('zero',['orphan'],'goal',0)]};
+const before=JSON.stringify(spec),c=scope.goalCredits(spec,'goal');
+const eq=(got,want)=>{if(Math.abs(got-want)>1e-10)throw Error(`${got} != ${want}`);};
+eq(c.nodes.get('goal'),1);eq(c.edges.get('and'),.75);eq(c.nodes.get('p'),.375);eq(c.nodes.get('q'),.375);eq(c.nodes.get('r'),.25);eq(c.nodes.get('shared'),.75);
+if(c.nodes.has('bad')||c.nodes.has('orphan')||c.edges.has('cycle')||JSON.stringify(spec)!==before)throw Error('Status, cycle or input boundary broken');
+if(scope.goalCredits(spec,'missing').nodes.size)throw Error('Invented missing goal');
+const tricky={nodes:[{id:'__proto__'},{id:'constructor'}],hyperedges:[edge('toString',['constructor'],'__proto__')],goals:['__proto__']};
+eq(scope.goalCredits(tricky,'__proto__').nodes.get('constructor'),1);
+const chain={nodes:Array.from({length:4096},(_,i)=>({id:String(i)})),hyperedges:Array.from({length:4095},(_,i)=>edge(String(i),[String(i)],String(i+1))),goals:['4095']};
+eq(scope.goalCredits(chain,'4095').nodes.get('0'),1);
+console.log('AND/OR credit, shared premise, contradicted/zero route, cycle, missing goal, prototype IDs and long chain PASS');
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            script=Path(tmp)/"weights.cjs";script.write_text(driver,encoding="utf-8")
+            result=subprocess.run([shutil.which("node"),str(script)],capture_output=True,text=True,encoding="utf-8",timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr)
+
     def test_replica_large_map_is_complete_and_no_status_drives_repulsion(self):
         spec=large_demo();view=replica_view(graph_view(spec,"synthetic",demo=True))
         self.assertEqual(len(view["nodes"]),1200+1426)
@@ -311,7 +359,7 @@ class ReplicaViewTests(unittest.TestCase):
         worker=patch_replica_worker((upstream/"replica/sim-worker.js").read_text(encoding="utf-8"))
         # Execute the actual pinned worker with virtual time; isolate each force.
         driver="const vm=require('node:vm'); const {performance}=require('node:perf_hooks');\nconst library="+json.dumps(D3_BUNDLE)+";\nconst worker="+json.dumps(worker)+";\n"+r'''
-function run(mode,extras={},strength=1){
+function run(mode,extras={},strength=1,nodeWeight=1,radius=60){
  const q=new Map();let timer=0,output,steps=0;
  const math=Object.create(Math);math.random=()=>.5;
  const scope={performance,Float32Array,Map,Math:math,Date,
@@ -319,7 +367,7 @@ function run(mode,extras={},strength=1){
  vm.createContext(scope);vm.runInContext(library+';'+worker,scope);
  scope.onmessage({data:{nodes:{a:[-80,-120],b:[80,120]},links:[['a','b',{relation:'R'}]],
   forces:{centerStrength:0,repelStrength:1,linkStrength:strength,linkDistance:mode==='attract'?60:350,flowStrength:0,groupStrength:0,relations:{R:{mode,strength:1}},...extras},
-  layoutTargets:{a:{flowX:-300,group:'same'},b:{flowX:300,group:'same'}},alpha:1,run:true}});
+  layoutTargets:{a:{flowX:-300,group:'same',chargeWeight:nodeWeight,collisionRadius:radius},b:{flowX:300,group:'same',collisionRadius:radius}},alpha:1,run:true}});
  while(q.size&&steps<400){const [id,fn]=q.entries().next().value;q.delete(id);fn();steps++;}
  if(q.size||steps>302||!output)throw Error('Worker did not cool');
  const p=Array.from(new Float32Array(output.buffer));if(!p.every(Number.isFinite))throw Error('Nonfinite');
@@ -327,6 +375,10 @@ function run(mode,extras={},strength=1){
 }
 const none=run('none'),attract=run('attract'),repel=run('repel'),zero=run('repel',{},0),flow=run('attract',{flowStrength:.08,linkStrength:0,linkDistance:350}),group=run('none',{groupStrength:.06});
 if(!(attract.distance<none.distance&&repel.distance>none.distance&&zero.distance===none.distance&&flow.x>none.x&&group.distance<none.distance))throw Error(JSON.stringify({none,attract,repel,zero,flow,group}));
+const light=run('none',{repelStrength:300},1,1),heavy=run('none',{repelStrength:300},1,3),capped=run('none',{repelStrength:300},1,300);
+if(!(heavy.distance>light.distance&&Math.abs(capped.distance-heavy.distance)<.001))throw Error('Goal weight did not strengthen bounded repulsion');
+const smallBody=run('attract',{repelStrength:1},1,1,24),largeBody=run('attract',{repelStrength:1},1,1,120);
+if(!(largeBody.distance>smallBody.distance+50))throw Error('Collision radius did not reserve room for large nodes');
 function drag(damping){
  const q=new Map();let timer=0,output;
  const scope={performance,Float32Array,Map,Math,Date,setTimeout:fn=>{q.set(++timer,fn);return timer},clearTimeout:id=>q.delete(id),setInterval:()=>0,clearInterval:()=>{},postMessage:x=>output=x};scope.self=scope;
@@ -353,7 +405,7 @@ function field(strength,member=false,empty=false){
 }
 field(0,false,true);const baselineField=field(0),repulsiveField=field(.5),memberField=field(.5,true);
 if(!(repulsiveField[7]>baselineField[7]+3&&repulsiveField[1]<baselineField[1]&&memberField[7]===baselineField[7]))throw Error('Whole-edge field did not repel foreign node or exempt members');
-console.log(JSON.stringify({none,attract,repel,zero,flow,group,dragLow,dragHigh,baselineField,repulsiveField,memberField}));
+console.log(JSON.stringify({none,attract,repel,zero,flow,group,light,heavy,capped,smallBody,largeBody,dragLow,dragHigh,baselineField,repulsiveField,memberField}));
 '''
         with tempfile.TemporaryDirectory() as tmp:
             script=Path(tmp)/"worker.cjs";script.write_text(driver,encoding="utf-8")
