@@ -118,3 +118,11 @@ admission/collection work is retained, and composition can perform more internal
 collections. This does **not** demonstrate a reduction over ordinary host batching
 in model round trips, latency or token cost. Real provider calls are `NOT_RUN`,
 token savings are `NOT_MEASURED`, and scientific gain remains `UNKNOWN`.
+
+The three-tool example reserves a 120-second scheduling window for repeated
+original evidence collection and waits up to 180 seconds for each composite CLI
+response. Its existing project execution budget remains 60 seconds, and each
+tool keeps its 10-second timeout. `--recipe --compose` also exercises the same
+consumer through the recipe initializer. A scheduling or host timeout is a
+retained failure/handoff, never permission to overwrite evidence or repeat a
+completed attempt.

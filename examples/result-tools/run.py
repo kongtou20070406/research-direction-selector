@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO / 'scripts'))
 from rds_project import ProjectStore
 
 
-def run(workspace, *, compose=False):
+def run(workspace, *, recipe=False, compose=False):
     root = Path(workspace).resolve()
     if root.is_relative_to(REPO):
         raise ValueError('Choose a fresh sibling workspace outside the checkout')
@@ -38,7 +38,9 @@ def run(workspace, *, compose=False):
         if args[0] == 'rsi':
             args = (*args, '--json')
         argv = [sys.executable, '-B', str(REPO / 'scripts/rds_cli.py'), '--root', str(root), *args]
-        proc = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=40,
+        # A composite includes several original admission/collection passes.
+        # This host wait does not change tool timeouts or the project budget.
+        proc = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=180 if args[:2] == ('project', 'compose-tools') else 40,
                               env={**os.environ, 'RDS_USAGE_DB': str(root / 'usage.sqlite3')})
         trace.append({'stage': stage, 'argv': argv, 'returncode': proc.returncode,
                       'stdout': proc.stdout, 'stderr': proc.stderr})
@@ -100,6 +102,7 @@ def run(workspace, *, compose=False):
                                     for name, _, _, _, predicates, _ in specs for field, op, value in predicates]}
     write('decision.json', decision)
     bindings, tools, commands, nodes, routes, observations = [], [], [], [], [], []
+    recipe_routes, source_paths = [], []
     for name, entry, args, expected, predicates, sources in specs:
         cases = [{'args': args, 'expected': expected}]
         write(name + '/cases.json', cases)
@@ -126,39 +129,52 @@ def run(workspace, *, compose=False):
             *[arg for fact in facts for arg in ('--observation-fact', fact)])
         if prepared['execution_started'] or (root / 'outputs' / (name + '.json')).exists():
             raise RuntimeError('Preparation unexpectedly executed a result tool')
-        bindings.extend(prepared['required_bindings'])
-        bindings.extend({'role': 'data', **ref} for ref in sources)
-        tools.append(prepared['binding'])
-        commands.append(prepared['argv'])
-        nodes.append({'id': name + '-task', 'sources': ['public synthetic fixture'],
-                      'executable': {'decisions': [decision['id']], 'preconditions': [], 'action': action}})
-        observations.extend({'fact': name + '.' + field, 'run_id': name, 'path': 'outputs/' + name + '.json',
-                             'selector': {'pointer': '/cases/0/value/' + field}} for field, _, _ in predicates)
-    protocol = {role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role)
-                for role in ('code', 'config', 'data')}
-    protocol.update({
-                'data_split': 'public-finite-software', 'init': 'none', 'seed': 0, 'checkpoint': 'none',
-                'schedule': 'three finite result calls', 'sample_work': {'cases': 3}, 'numeric_protocol': 'Python integers'})
-    protocol_ref = write('protocol.json', protocol)
-    bindings.append({'role': 'protocol', **protocol_ref})
-    for spec, argv in zip(specs, commands):
-        name = spec[0]
-        routes.append({'candidate': name, 'manifest': {'schema': 1, 'id': name, 'arm': 'tool', 'control_id': None,
-            'protocol': protocol_ref, 'argv': argv, 'outpaths': ['outputs/' + name + '.json'],
-            'timeout_seconds': 10, 'resource_estimates': {'wall_seconds': 10}}})
-    contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': commands, 'output_roots': ['outputs'],
-                'budget': {'wall_seconds': 60}, 'advisor_policy': {'schema': 1, 'context': {'decision': decision},
-                    'graph': {'nodes': nodes, 'edges': []}, 'routes': routes, 'observations': observations,
-                    'tool_bindings': tools}}
-    write('contract.json', contract)
-    call('init', 'project', 'init', '--contract', str(root / 'contract.json'))
+        if recipe:
+            source_paths.extend(ref['path'] for ref in sources)
+            recipe_routes.append({'action': action, 'prepared_application': 'reports/' + name + '-prepare.json',
+                'run': {'timeout_seconds': 10, 'resource_estimates': {'wall_seconds': 10}},
+                'observations': [{'fact': name + '.' + field, 'path': 'outputs/' + name + '.json',
+                                 'selector': {'pointer': '/cases/0/value/' + field}} for field, _, _ in predicates]})
+        else:
+            bindings.extend(prepared['required_bindings'])
+            bindings.extend({'role': 'data', **ref} for ref in sources)
+            tools.append(prepared['binding'])
+            commands.append(prepared['argv'])
+            nodes.append({'id': name + '-task', 'sources': ['public synthetic fixture'],
+                          'executable': {'decisions': [decision['id']], 'preconditions': [], 'action': action}})
+            observations.extend({'fact': name + '.' + field, 'run_id': name, 'path': 'outputs/' + name + '.json',
+                                 'selector': {'pointer': '/cases/0/value/' + field}} for field, _, _ in predicates)
+    protocol = {'data_split': 'public-finite-software', 'init': 'none', 'seed': 0, 'checkpoint': 'none',
+                'schedule': 'three finite result calls', 'sample_work': {'cases': 3}, 'numeric_protocol': 'Python integers'}
+    if recipe:
+        declaration = {'schema': 1, 'files': {'data': list(dict.fromkeys(source_paths))},
+            'protocol': {'path': 'protocol.json', 'metadata': protocol},
+            'context': {'decision': decision}, 'routes': recipe_routes,
+            'output_roots': ['outputs'], 'budget': {'wall_seconds': 60}}
+        write('recipe.json', declaration)
+        call('init', 'project', 'init', '--recipe', str(root / 'recipe.json'))
+    else:
+        protocol.update({role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role)
+                         for role in ('code', 'config', 'data')})
+        protocol_ref = write('protocol.json', protocol)
+        bindings.append({'role': 'protocol', **protocol_ref})
+        for spec, argv in zip(specs, commands):
+            name = spec[0]
+            routes.append({'candidate': name, 'manifest': {'schema': 1, 'id': name, 'arm': 'tool', 'control_id': None,
+                'protocol': protocol_ref, 'argv': argv, 'outpaths': ['outputs/' + name + '.json'],
+                'timeout_seconds': 10, 'resource_estimates': {'wall_seconds': 10}}})
+        contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': commands, 'output_roots': ['outputs'],
+                    'budget': {'wall_seconds': 60}, 'advisor_policy': {'schema': 1, 'context': {'decision': decision},
+                        'graph': {'nodes': nodes, 'edges': []}, 'routes': routes, 'observations': observations,
+                        'tool_bindings': tools}}
+        write('contract.json', contract)
+        call('init', 'project', 'init', '--contract', str(root / 'contract.json'))
     if compose:
-        from rds_project import digest
         from rds_tool_calls import SCHEMA
         call('discovery', 'rsi', 'discover', '--name', 'extract')
         # Follow this example's declared route order, as in the existing consumer.
         # Each internal call still rechecks selection; a mismatch stops the request.
-        request = {'schema': SCHEMA, 'contract_sha256': digest(contract), 'max_wall_seconds': 60,
+        request = {'schema': SCHEMA, 'contract_sha256': ProjectStore(root).snapshot()['contract_sha256'], 'max_wall_seconds': 120,
                    'steps': [{'op': 'status'}, {'op': 'collect'}] + [
                        {'op': 'execute_tool', 'run_id': spec[0]} for spec in specs] + [
                        {'op': 'collect'}, {'op': 'costs'}]}
@@ -206,6 +222,7 @@ def run(workspace, *, compose=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', required=True)
+    parser.add_argument('--recipe', action='store_true', help='Assemble the same owned consumers from a compact recipe')
     parser.add_argument('--compose', action='store_true', help='Use the same tools through bounded composition')
     args = parser.parse_args()
-    print(json.dumps(run(args.workspace, compose=args.compose), indent=2, allow_nan=False))
+    print(json.dumps(run(args.workspace, recipe=args.recipe, compose=args.compose), indent=2, allow_nan=False))

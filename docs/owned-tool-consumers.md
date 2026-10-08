@@ -6,6 +6,10 @@ freeze → next/advance → original result → decision consumer**. It connects
 RSI assets to a declared current obligation; discovery or registration alone
 does not establish applicability, execution or scientific benefit.
 
+[Project assembly](project-assembly.md) can consume saved `prepare-application`
+reports through `project init --recipe`. It verifies original qualification and
+builds the bindings/routes; the same native costs and consumers remain in use.
+
 For JSON result reading, metric differences and failure inspection, use the
 [finite result tools](result-tools.md) and their [three-consumer example](../examples/result-tools/README.md).
 They feed returned values into original goal predicates through this interface.
