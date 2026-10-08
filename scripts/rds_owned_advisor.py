@@ -35,7 +35,7 @@ def validate_policy(store, contract):
         return None
     policy = contract['advisor_policy']
     require(isinstance(policy, dict) and {'schema', 'context', 'graph', 'routes', 'observations'} <= set(policy)
-            and set(policy) <= {'schema', 'context', 'graph', 'routes', 'observations', 'feasibility', 'tool_bindings', 'confirmation', 'autonomy'},
+            and set(policy) <= {'schema', 'context', 'graph', 'routes', 'observations', 'feasibility', 'tool_bindings', 'confirmation', 'autonomy', 'graph_ranker'},
             'advisor_policy needs schema, context, graph, routes and observations')
     require(type(policy['schema']) is int and policy['schema'] == 1, 'advisor_policy schema must be 1')
     require(len(canonical(policy).encode('utf-8')) <= MAX_JSON_BYTES, 'advisor_policy exceeds 2 MiB')
@@ -157,6 +157,9 @@ def validate_policy(store, contract):
     if 'autonomy' in policy:
         from rds_autonomy import validate_policy as validate_autonomy
         validate_autonomy(store, contract, policy)
+    if 'graph_ranker' in policy:
+        from rds_graph_ranker import validate
+        validate(policy['graph_ranker'])
     return policy
 
 
@@ -640,6 +643,19 @@ def review(store, persist=True):
                 result['next_move'] = {'kind': 'HUMAN_STEERING', 'revision': steering['revision'],
                                        'reason': 'Retained user instruction prevents new dispatch; inspect project steering'}
         chosen = (active or frontier or eligible)
+        if 'graph_ranker' in policy:
+            from rds_graph_ranker import rank
+            steering = state.get('steering') or {}
+            precedence = ('EVIDENCE_COVERAGE_FAILED' if coverage['errors'] else
+                          'GOAL_ALREADY_CONFIRMED' if selection.get('goal', {}).get('status') == 'TRUE' else
+                          'HUMAN_PREFERENCE' if steering.get('preferred_runs') else
+                          'HUMAN_PAUSE' if steering.get('paused') else
+                          'ACTIVE_RESERVATION' if active else
+                          'FEASIBILITY_PILOT_ORDER' if feasibility and feasibility['bounded_pilots'] else None)
+            ranked, result['graph_ranker'] = rank(policy['graph_ranker'], graph, context['facts'],
+                                                frontier, precedence=precedence)
+            if result['graph_ranker']['selection_applied']:
+                chosen = ranked
         if not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
             route = chosen[0]
             # Every dispatch, including a reservation, must still satisfy the
@@ -647,6 +663,8 @@ def review(store, persist=True):
             choice(advice, context, ready[route['candidate']]['id'])
             result.update(selected_run=route['manifest']['id'], selected_manifest=deepcopy(route['manifest']),
                           selection_basis=selection_basis)
+            if result.get('graph_ranker', {}).get('selection_applied'):
+                result['selection_basis'] = 'AVAILABLE_FROZEN_PARETO_THEN_NEURAL_PREFERENCE_NOT_GLOBAL_OPTIMUM'
         if coverage['errors']:
             result['status'] = 'COLLECTION_FAILED'
             result['warnings'].append({'kind': 'OWNED_EVIDENCE_INCOMPLETE', 'errors': deepcopy(coverage['errors'])})

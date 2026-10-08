@@ -713,6 +713,12 @@ def brief(root, value, version, formal=False):
     if owned.get('assurance') == 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF':
         summary.update(selected_run=owned.get('selected_run'), snapshot_sha256=owned.get('snapshot_sha256'),
                        authorization='UNCHANGED', scientific_support='UNKNOWN', assurance=owned['assurance'])
+        if owned.get('graph_ranker'):
+            ranker = owned['graph_ranker']
+            summary['graph_ranker'] = {key: ranker.get(key) for key in (
+                'status', 'mode', 'selection_applied', 'precedence', 'reason')}
+            summary['graph_ranker']['preferred'] = ranker.get('preferred', [])[:4]
+            summary['graph_ranker']['scope_count'] = len(ranker.get('scope', []))
         if owned.get('next_move'):
             move = owned['next_move']
             summary['next_move'] = move.get('kind', move) if isinstance(move, dict) else move
