@@ -151,6 +151,9 @@ def compile_recipe(store, recipe):
             _object(observation, {'fact', 'path', 'selector'}, {'format'}, 'recipe observation')
             observations.append({**deepcopy(observation), 'run_id': run['id']})
     require(FILE_ROLES <= {b['role'] for b in bindings}, 'Recipe requires code/config/data/evaluator inputs')
+    # JSON object order and the order of a file inventory carry no research
+    # meaning. Keep retries stable when an agent reformats either declaration.
+    bindings.sort(key=lambda binding: (binding['role'], binding['path']))
     for role in ('code', 'config', 'data'):
         metadata[role + '_sha256'] = store._role_sha({'bindings': bindings}, role)
     protocol_raw = (canonical(metadata) + '\n').encode('utf-8')

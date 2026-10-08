@@ -200,6 +200,23 @@ class ProjectAssemblyTests(unittest.TestCase):
         self.assertIn({'role': 'config', 'path': 'config.json', 'sha256': self.sha('config.json')}, contract['bindings'])
         self.assertIn({'role': 'evaluator', 'path': 'config.json', 'sha256': self.sha('config.json')}, contract['bindings'])
 
+    def test_reordered_file_inventory_preserves_contract_and_live_budget(self):
+        self.write('extra.py', '# same explicit code inventory\n')
+        self.recipe['files']['code'].append('extra.py')
+        original, raw, _ = assembly.compile_recipe(self.store, self.recipe)
+        self.init()
+        self.call('project', 'advance')
+        before = self.store.snapshot()
+        reordered = deepcopy(self.recipe)
+        reordered['files'] = {role: list(reversed(paths))
+                              for role, paths in reversed(list(reordered['files'].items()))}
+        compiled, repeated, _ = assembly.compile_recipe(self.store, reordered)
+        self.assertEqual(compiled, original)
+        self.assertEqual(repeated, raw)
+        self.init(reordered)
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(self.starts(), ['baseline'])
+
     def test_real_cli_two_routes_preserve_goal_values_cost_attempts_and_recovery(self):
         initialized = self.init()
         self.assertIn('assembly', initialized)
