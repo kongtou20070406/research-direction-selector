@@ -1084,6 +1084,7 @@ class CanvasBoundaryTests(_JSBoundaryTests):
         self.run_js(JS, "const payload=" + json.dumps(payload) + ";\n" + r'''
 const b=browser(payload);vm.runInContext(production,b.scope,{timeout:10000});
 const canvas=b.created.find(e=>e.tagName==='CANVAS'&&e.id!=='hg-minimap'),ctx=canvas.ctx,strokes=[],labels=[];
+assert.ok(!b.created.some(e=>e.tagName==='BUTTON'&&e['aria-label']==='研究说明'),'empty graph summary has no entry');
 const stroke=ctx.stroke;ctx.stroke=function(){strokes.push(this.strokeStyle);stroke.call(this)};
 ctx.fillText=(...args)=>labels.push(args);b.flush();
 for(const color of ['#39b872','#e65b63','#9299a6'])assert.ok(strokes.includes(color),'independent status stroke '+color);
@@ -1154,6 +1155,7 @@ function run(){const b=browser(payload);b.scope.localStorage={getItem:()=>saved,
  vm.runInContext(production,b.scope,{timeout:5000});return b;
 }
 const b=run();assert.ok(b.renderer.nodeLookup.has('f'));assert.ok(!b.renderer.nodeLookup.has('r'),'fixture must filter out provenance target');
+assert.equal(b.ids['graph-info'].hidden,true,'empty graph summary has no visible entry');
 const mode=b.created.find(e=>e['aria-label']==='__proto__ 力学');assert.ok(mode);mode.value='none';mode.events.change();
 assert.equal(Object.hasOwn(b.renderer.forces.relations,'__proto__'),true);assert.equal(b.renderer.forces.relations.__proto__.mode,'none','worker clone preserves selected force');
 assert.equal(Object.hasOwn(JSON.parse(saved).relations,'__proto__'),true);

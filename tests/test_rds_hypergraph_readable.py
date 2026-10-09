@@ -195,12 +195,14 @@ class ReadableBrowserBoundaryTests(boundary._JSBoundaryTests):
     def test_production_canvas_reads_summary_as_text_and_searches_it(self):
         original = result()
         value = agent_input(original)["readable"]
+        value["graph"] = {"title": "研究图", "summary": "图级用途 <img src=x>"}
         value["nodes"]["goal"] = {"title": "目的", "summary": "解释用途 </script><img src=x>"}
         value["hyperedges"]["__proto__"] = {"title": "联合检查", "summary": "两个前提缺一不可。"}
         overlay = with_readable(original, value)
         payload = {**overlay, "display": display_records(overlay)}
         self.run_js(JS, "const payload=JSON.parse(" + json.dumps(json.dumps(payload)) + ");\n" + r'''
 const b=browser(payload);vm.runInContext(production,b.scope,{timeout:10000});b.flush();
+const info=b.created.find(e=>e.tagName==='BUTTON'&&e['aria-label']==='研究说明');assert.ok(info);info.events.click();assert.match(b.text(b.ids['hg-detail']),/图级用途 <img src=x>/);assert.ok(!b.descendants(b.ids['hg-detail']).some(e=>e.tagName==='IMG'));
 const search=b.ids['hg-search'];search.value='解释用途';search.events.input();b.flush();
 let found=b.ids['hg-search-results'].children.find(e=>e.tagName==='BUTTON');assert.ok(found);found.events.click();b.flush();
 assert.match(b.text(b.ids['hg-detail']),/解释用途 <\/script><img src=x>/);
@@ -215,12 +217,13 @@ console.log('Readable Canvas summary search, literal text and complete AND navig
     def test_production_replica_reads_summary_and_keeps_filter_navigation(self):
         original = result()
         value = agent_input(original)["readable"]
+        value["graph"] = {"title": "研究图", "summary": "图级用途 <img src=x>"}
         value["nodes"]["goal"] = {"title": "目的", "summary": "解释用途 </script><img src=x>"}
         value["hyperedges"]["__proto__"] = {"title": "联合检查", "summary": "两个前提缺一不可。"}
         overlay = with_readable(original, value)
         payload = {**overlay, "display": display_records(overlay), "replica_view": replica_view(overlay)}
         self.run_js(REPLICA_APP, "const payload=JSON.parse(" + json.dumps(json.dumps(payload)) + ");\n" + r'''
-const b=browser(payload);b.scope.localStorage={getItem:()=>JSON.stringify({search:'解释用途',growth:false}),setItem(){}};
+const b=browser(payload);b.scope.localStorage={getItem:()=>JSON.stringify({search:'解释用途',growth:false,scope:false}),setItem(){}};
 b.scope.SIM_WORKER_MAIN='';b.scope.PIXI={Texture:{WHITE:{}}};
 b.scope.GraphRenderer=class{
  constructor(){b.renderer=this;this.nodes=[];this.links=[];this.nodeLookup=new Map();this.width=1000;this.height=700;this.worker={onmessage(){},postMessage:d=>{this.message=structuredClone(d)},terminate(){}};}
@@ -228,6 +231,7 @@ b.scope.GraphRenderer=class{
  setForces(p){this.forces=structuredClone(p)}setOptions(){}changed(){}resetPan(){}zoomTo(){}setScale(){}setPan(){}
 };
 vm.runInContext(production,b.scope,{timeout:5000});
+assert.equal(b.ids['graph-info'].hidden,false);b.ids['graph-info'].events.click();assert.match(b.text(b.ids['note-card']),/图级用途 <img src=x>/);assert.ok(!b.descendants(b.ids['note-card']).some(e=>e.tagName==='IMG'));
 assert.ok(b.renderer.nodeLookup.has('c2'),'summary finds original goal');
 b.renderer.onNodeClick(b.renderer.nodeLookup.get('c2'));
 assert.match(b.text(b.ids['note-card']),/解释用途 <\/script><img src=x>/);

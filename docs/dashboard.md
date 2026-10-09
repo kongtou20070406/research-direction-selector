@@ -143,6 +143,8 @@ python -B scripts/rds_hypergraph_view.py --root C:\research\project --readable-j
 
 也适用于 `--hypergraph map.json`；Replica 可追加既有 `--replica-root` / `--pixi-js` 参数。Python 接口是 `rds_hypergraph_readable.agent_input(result)`、`validate_readable(value, result)` 和 `with_readable(result, value)`，返回新展示层，原记录保持原样。
 
+填写整张图的 `graph.summary` 后，页面显示一个“研究说明”按钮，点击查看；说明为空时隐藏入口。关闭归属层也能查看说明，画布上不常驻介绍段落。
+
 Agent 可直接采用以下指令：
 
 > 阅读 raw 和已有源文件，返回完整 readable 对象。保持 schema、graph_sha256、snapshot_sha256 与 ID 键原样，只填写 graph、nodes、hyperedges 下的 title 和 summary。title 用简短自然语言描述对象；summary 用一两句解释用途、输入输出或既有关系。成功、失败、缺失与未判定依据原始证据，运行成功不称为科研证明。未知用途留空，不依据文件名猜结论。不添加状态、权重、来源或关系成员，不新增节点或边。不要返回 raw、Markdown 或脚本。
