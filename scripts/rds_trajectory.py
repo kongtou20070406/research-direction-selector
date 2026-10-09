@@ -231,11 +231,11 @@ def _report(root, manifest_path):
             if kind in {'providers', 'tools'}:
                 require(_text(spec.get('namespace')), 'provider/tool namespace required')
                 require(spec.get('phase', 'UNKNOWN') in PHASES, 'unsupported phase')
-            if spec['source'] not in documents:
-                errors.append({'kind': kind, 'index': index, 'reason': 'source unavailable'})
-                continue
             source = next(item for item in sources if item['id'] == spec['source'])
             locator = {**source, 'pointer': spec['pointer'], 'fields': spec.get('fields', {})}
+            if spec['source'] not in documents:
+                errors.append({'kind': kind, 'index': index, 'source': locator, 'reason': 'source unavailable'})
+                continue
             try:
                 record = _pointer(documents[spec['source']], spec['pointer'])
                 require(isinstance(record, dict), 'selected record must be an object')
@@ -262,25 +262,25 @@ def _report(root, manifest_path):
     tokens = {field: _total(providers, field) for field in TOKEN_FIELDS + ('total_tokens', 'latency_seconds')}
     # Invalid/unknown identity cannot disappear into a seemingly complete total.
     for field in tokens.values():
-        if any(e.get('kind') == 'providers' or 'kind' not in e for e in errors) or any(c['kind'] == 'providers' for c in conflicts):
+        if any(e.get('kind') == 'providers' for e in errors) or any(c['kind'] == 'providers' for c in conflicts):
             field.update(value=None, status='UNKNOWN')
     llm = [row for row in tools if row['origin'] == 'llm']
     round_trips = {(row['namespace'], row['round_trip_id']) for row in llm if row['round_trip_id'] is not None}
     tool_incomplete = any(row['round_trip_id'] is None for row in llm) or any(
-        e.get('kind') == 'tools' or 'kind' not in e for e in errors) or any(c['kind'] == 'tools' for c in conflicts)
+        e.get('kind') == 'tools' for e in errors) or any(c['kind'] == 'tools' for c in conflicts)
     phases = {phase: {'provider_attempts': len(rows), 'tokens': {key: _total(rows, key) for key in TOKEN_FIELDS + ('total_tokens',)}}
               for phase in sorted({row['phase'] for row in providers})
               for rows in [[row for row in providers if row['phase'] == phase]]}
-    if any(e.get('kind') == 'providers' or 'kind' not in e for e in errors) or any(c['kind'] == 'providers' for c in conflicts):
+    if any(e.get('kind') == 'providers' for e in errors) or any(c['kind'] == 'providers' for c in conflicts):
         for phase in phases.values():
             for field in phase['tokens'].values():
                 field.update(value=None, status='UNKNOWN')
     tool_totals = {key: _total(tools, key) for key in ('schema_tokens', 'returned_tokens', 'format_error', 'retry', 'regenerated_code')}
-    if any(e.get('kind') == 'tools' or 'kind' not in e for e in errors) or any(c['kind'] == 'tools' for c in conflicts):
+    if any(e.get('kind') == 'tools' for e in errors) or any(c['kind'] == 'tools' for c in conflicts):
         for field in tool_totals.values():
             field.update(value=None, status='UNKNOWN')
     accepted = [row for row in outcomes if row['status'] == 'PASS']
-    outcome_incomplete = (any(e.get('kind') == 'outcomes' or 'kind' not in e for e in errors)
+    outcome_incomplete = (any(e.get('kind') == 'outcomes' for e in errors)
                           or any(c['kind'] == 'outcomes' for c in conflicts))
     started = _timestamp(goal.get('started_at'))
     times = [_timestamp(row['observed_at']) for row in accepted]
@@ -294,6 +294,13 @@ def _report(root, manifest_path):
         for field in outcome_totals.values():
             field.update(value=None, status='UNKNOWN')
     costs = summarize_costs(groups['receipts'])
+    # Inventory errors affect only the kinds that actually select that source.
+    # Unread receipt selectors remain missing cost, even beside valid receipts.
+    receipt_errors = [error for error in errors if error.get('kind') == 'receipts']
+    if receipt_errors:
+        costs['missing'].extend(receipt_errors)
+        if costs['status'] != 'CONFLICT':
+            costs['status'] = 'PARTIAL'
     return {'schema': 'rds-trajectory-report-v1', 'manifest_sha256': digest(raw),
             'status': 'CONFLICT' if conflicts or costs['status'] == 'CONFLICT' else 'PARTIAL',
             'coverage': {'scope': 'SUPPLIED_RECORDS_ONLY', 'declared': manifest.get('coverage'),

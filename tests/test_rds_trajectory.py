@@ -298,6 +298,133 @@ class TrajectoryTests(unittest.TestCase):
         (self.root / 'provider.json').unlink()
         self.assertEqual(self.run_report()['source_inventory'][0]['status'], 'UNKNOWN')
 
+    def unavailable_source(self, failure):
+        name = 'unavailable.json'
+        expected = b'{"original":"unavailable evidence"}'
+        if failure == 'hash':
+            (self.root / name).write_bytes(b'{"changed":true}')
+        self.manifest['sources'].append({'id': name, 'path': name, 'sha256': digest(expected)})
+        return name
+
+    def complete_receipt(self):
+        from test_rds_costs import receipt
+        return receipt(resources={key: {'measured': value, 'unit': unit} for key, value, unit in (
+            ('wall_seconds', 2, 'seconds'), ('cpu_seconds', 1, 'seconds'),
+            ('gpu_seconds', 0, 'seconds'), ('api_tokens', 0, 'tokens'), ('api_cost', 0, 'USD'))})
+
+    def populate_independent_kinds(self):
+        self.provider()
+        self.tool()
+        self.outcome()
+        name = self.source('receipt.json', self.complete_receipt())
+        self.manifest['receipts'].append({'source': name, 'pointer': ''})
+
+    def test_unavailable_receipt_keeps_other_category_totals_and_cost_missing(self):
+        for failure in ('missing', 'hash'):
+            with self.subTest(failure=failure):
+                self.manifest['sources'] = []
+                for kind in ('providers', 'tools', 'outcomes', 'receipts'):
+                    self.manifest[kind] = []
+                self.populate_independent_kinds()
+                before = self.run_report()
+                self.assertEqual(before['receipt_costs']['status'], 'KNOWN')
+                name = self.unavailable_source(failure)
+                spec = {'source': name, 'pointer': '/original-receipt'}
+                self.manifest['receipts'].append(spec)
+                original = {s['path']: (self.root / s['path']).read_bytes()
+                            for s in self.manifest['sources'] if (self.root / s['path']).exists()}
+                result = self.run_report()
+                for key in ('provider_usage', 'phases', 'tool_burden', 'outcome_summary'):
+                    self.assertEqual(result[key], before[key], key)
+                costs = result['receipt_costs']
+                self.assertEqual(costs['status'], 'PARTIAL')
+                for key in ('measurements', 'estimates', 'totals', 'attempts'):
+                    self.assertEqual(costs[key], before['receipt_costs'][key], key)
+                problem = next(e for e in costs['missing'] if e.get('kind') == 'receipts')
+                self.assertEqual(problem['source'], {**self.manifest['sources'][-1],
+                    'pointer': spec['pointer'], 'fields': {}})
+                self.assertEqual(result['source_inventory'][-1]['status'], 'UNKNOWN')
+                self.assertTrue(any(e.get('source') == name and 'kind' not in e for e in result['errors']))
+                self.assertEqual(result['coverage']['complete_research_cost'], 'UNKNOWN')
+                self.assertEqual({p: (self.root / p).read_bytes() for p in original}, original)
+                self.assertFalse((self.root / '.rds').exists())
+
+    def test_unselected_unavailable_inventory_does_not_change_selected_summaries(self):
+        self.populate_independent_kinds()
+        before = self.run_report()
+        for failure in ('missing', 'hash'):
+            with self.subTest(failure=failure):
+                self.manifest['sources'] = self.manifest['sources'][:4]
+                name = self.unavailable_source(failure)
+                result = self.run_report()
+                for key in ('provider_usage', 'phases', 'tool_burden', 'outcome_summary', 'receipt_costs'):
+                    self.assertEqual(result[key], before[key], key)
+                self.assertEqual(result['source_inventory'][-1]['status'], 'UNKNOWN')
+                self.assertEqual(len(result['errors']), 1)
+                self.assertEqual(result['errors'][0]['source'], name)
+                self.assertNotIn('kind', result['errors'][0])
+                self.assertEqual(result['coverage']['complete_research_cost'], 'UNKNOWN')
+
+    def test_shared_unavailable_source_marks_every_referencing_kind_unknown(self):
+        self.populate_independent_kinds()
+        name = self.unavailable_source('hash')
+        for kind in ('providers', 'tools', 'outcomes', 'receipts'):
+            self.manifest[kind].append({**self.manifest[kind][0], 'source': name})
+        result = self.run_report()
+        problems = [e for e in result['errors'] if e.get('kind')]
+        self.assertEqual({e['kind'] for e in problems}, {'providers', 'tools', 'outcomes', 'receipts'})
+        self.assertTrue(all(isinstance(e.get('source'), dict) and e['source']['id'] == name for e in problems))
+        self.assertIsNone(result['provider_usage']['total_tokens']['value'])
+        self.assertEqual(result['provider_usage']['total_tokens']['observed_subtotal'], 130)
+        self.assertIsNone(result['phases']['planning']['tokens']['total_tokens']['value'])
+        self.assertIsNone(result['tool_burden']['llm_round_trips'])
+        self.assertIsNone(result['tool_burden']['returned_tokens']['value'])
+        self.assertEqual(result['tool_burden']['returned_tokens']['observed_subtotal'], 10)
+        self.assertIsNone(result['outcome_summary']['seconds_to_first_reported_pass'])
+        self.assertIsNone(result['outcome_summary']['incorrect_claims']['value'])
+        self.assertIsNone(result['outcome_summary']['supplied_tokens_per_reported_pass'])
+        self.assertEqual(result['receipt_costs']['status'], 'PARTIAL')
+        self.assertTrue(any(e.get('source', {}).get('id') == name for e in result['receipt_costs']['missing']))
+        self.assertEqual(result['coverage']['complete_research_cost'], 'UNKNOWN')
+
+    def test_unavailable_receipt_does_not_promote_observed_cost_to_complete_inventory(self):
+        name = self.source('receipt.json', self.complete_receipt())
+        self.manifest['receipts'].append({'source': name, 'pointer': ''})
+        before = self.run_report()
+        self.assertEqual(before['receipt_costs']['status'], 'KNOWN')
+        absent = self.unavailable_source('missing')
+        self.manifest['receipts'].append({'source': absent, 'pointer': '/paid-attempt'})
+        result = self.run_report()
+        self.assertEqual(result['receipt_costs']['status'], 'PARTIAL')
+        self.assertEqual(result['receipt_costs']['totals'], before['receipt_costs']['totals'])
+        self.assertEqual(result['receipt_costs']['attempts'], before['receipt_costs']['attempts'])
+        self.assertEqual(result['receipt_costs']['missing'][0]['source']['id'], absent)
+        self.assertEqual(result['receipt_costs']['missing'][0]['source']['pointer'], '/paid-attempt')
+        self.assertEqual(result['coverage']['complete_research_cost'], 'UNKNOWN')
+
+    def test_unavailable_selected_kind_does_not_hide_independent_categories(self):
+        for kind in ('providers', 'tools', 'outcomes'):
+            with self.subTest(kind=kind):
+                self.manifest['sources'] = []
+                for group in ('providers', 'tools', 'outcomes', 'receipts'):
+                    self.manifest[group] = []
+                self.populate_independent_kinds()
+                before = self.run_report()
+                name = self.unavailable_source('missing')
+                self.manifest[kind].append({**self.manifest[kind][0], 'source': name})
+                result = self.run_report()
+                if kind != 'providers':
+                    self.assertEqual(result['provider_usage'], before['provider_usage'])
+                    self.assertEqual(result['phases'], before['phases'])
+                if kind != 'tools':
+                    self.assertEqual(result['tool_burden'], before['tool_burden'])
+                if kind != 'outcomes':
+                    # The ratio also needs complete provider usage; other outcome facts do not.
+                    for key in ('seconds_to_first_reported_pass', 'incorrect_claims', 'human_rescues'):
+                        self.assertEqual(result['outcome_summary'][key], before['outcome_summary'][key])
+                self.assertEqual(result['receipt_costs'], before['receipt_costs'])
+                self.assertEqual([e['kind'] for e in result['errors'] if 'kind' in e], [kind])
+
     def test_source_escape_and_duplicate_keys_are_bounded(self):
         self.provider()
         self.manifest['sources'][0]['path'] = '../outside.json'

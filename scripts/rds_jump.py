@@ -206,17 +206,20 @@ def packet(store):
         sealed = _seal(summary)
         require(len(canonical(sealed).encode('utf-8')) <= PACKET_BYTES, 'Jump scope exceeds packet limit')
         return sealed
-    except (ValueError, KeyError, TypeError, OSError, UnicodeError) as exc:
+    except (ValueError, KeyError, TypeError, OSError, UnicodeError, RecursionError) as exc:
         # Never expose a partly verified item as an available model premise.
-        value.update(status='UNAVAILABLE', items=[], sources=[], diagnostic=str(exc)[:512])
-        value.pop('generation_results', None)
-        sealed = _seal(value)
-        if len(canonical(sealed).encode('utf-8')) > PACKET_BYTES:
-            value['original_scope'] = {'original': cas_json(store.root, value['original_scope']),
-                                       'details_omitted': True}
-            value['omissions'] = {**value['omissions'], 'original_scope': True}
-            sealed = _seal(value)
-        return sealed
+        # The failure may come from an already assigned nested scope/lineage.
+        # Do not serialize it again, including through CAS, on this error path.
+        unavailable = {'schema': PACKET_SCHEMA, 'status': 'UNAVAILABLE',
+            'items': [], 'sources': [], 'original_scope': None,
+            'omissions': {'items': 0, 'generation_results': True, 'original_scope': True},
+            'diagnostic': str(exc)[:512], 'scientific_support': 'UNKNOWN',
+            'use_assurance': 'NOT_RECORDED', 'authorization': 'UNCHANGED'}
+        for key in ('id', 'request_id', 'request_sha256', 'scope_sha256', 'goal',
+                    'origin_contract_sha256', 'current_contract_sha256', 'evidence_scope'):
+            if type(value.get(key)) is str:
+                unavailable[key] = value[key][:256]
+        return _seal(unavailable)
 
 
 def validate_use(context, value):
@@ -291,6 +294,65 @@ def _python_script_operand(argv):
     return None
 
 
+def _interpreter_script_operand(argv):
+    """Return (argv index, literal main path) for supported interpreters.
+
+    Other existing project file arguments still require an explicit immutable
+    binding below. This does not infer arbitrary wrapper/import dependencies.
+    """
+    def file_at(index):
+        return (index, argv[index]) if index is not None and index < len(argv) else None
+    name = Path(argv[0]).name.casefold().removesuffix('.exe')
+    if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', name):
+        return file_at(_python_script_operand(argv))
+    shells = {'sh', 'bash', 'dash', 'ksh', 'zsh'}
+    if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:
+        return None
+    index = 1
+    while index < len(argv):
+        option = argv[index]
+        if option == '--':
+            return file_at(index + 1)
+        if option == '-':
+            return None
+        if not option.startswith(('-', '+')):
+            return file_at(index)
+        if name in shells:
+            if option.startswith('-') and not option.startswith('--') and any(c in option[1:] for c in 'cs'):
+                return None  # Inline command or stdin, not a main script file.
+            if option in {'-o', '+o', '--rcfile', '--init-file'} or (
+                    option[:1] in {'-', '+'} and not option.startswith('--') and option.endswith('o')):
+                index += 2
+            else:
+                index += 1
+        else:
+            # Preload/loop flags are not interchangeable with inline execution.
+            inline = {'node': ('-e', '-p', '--eval', '--print'),
+                      'nodejs': ('-e', '-p', '--eval', '--print'),
+                      'ruby': ('-e',), 'perl': ('-e', '-E'),
+                      'php': ('-r', '--run'), 'julia': ('-e', '-E', '--eval', '--print'),
+                      'lua': (), 'rscript': ('-e',)}[name]
+            if any(option == flag or option.startswith(flag + '=')
+                   or (len(flag) == 2 and option.startswith(flag) and len(option) > 2)
+                   for flag in inline):
+                return None
+            values = {'node': {'-r', '--require', '--loader', '--experimental-loader', '--import', '--title', '--input-type'},
+                      'nodejs': {'-r', '--require', '--loader', '--experimental-loader', '--import', '--title', '--input-type'},
+                      'ruby': {'-r', '-I', '-C', '-F', '-K', '-E', '--encoding', '--external-encoding', '--internal-encoding'},
+                      'perl': {'-I', '-m', '-M', '-F'},
+                      'php': {'-c', '--php-ini', '-d', '--define', '-f', '--file'},
+                      'julia': {'-p', '--procs', '-t', '--threads', '-H', '--home', '-L', '--load', '--machine-file', '-J', '--sysimage'},
+                      'lua': {'-e', '-l'}, 'rscript': set()}[name]
+            # PHP's explicit file flag names the main script itself.
+            if name == 'php' and option in {'-f', '--file', '-F', '--process-file'}:
+                return file_at(index + 1)
+            if name == 'php' and (option.startswith(('--file=', '--process-file=')) or
+                                  (option.startswith(('-f', '-F')) and len(option) > 2)):
+                return index, option.split('=', 1)[1] if option.startswith('--') else option[2:]
+            index += 2 if option in values else 1
+    return None
+
+
 def _generator_bindings(store, contract, plan):
     """Frozen explicit dependencies, with conservative legacy code fallback.
 
@@ -312,7 +374,8 @@ def _generator_bindings(store, contract, plan):
                     'Generator code paths must be distinct frozen code bindings')
             identities.append(identity)
     for stage in plan['stages']:
-        script_operand = _python_script_operand(stage['run']['argv'])
+        operand = _interpreter_script_operand(stage['run']['argv'])
+        script_operand, script_path = operand if operand is not None else (None, None)
         data_or_output = {_code_identity(store, b['path']) for b in contract['bindings'] if b['role'] != 'code'}
         data_or_output.update(_code_identity(store, p) for p in stage['run']['outpaths'])
         for index, arg in enumerate(stage['run']['argv']):
@@ -320,17 +383,21 @@ def _generator_bindings(store, contract, plan):
                 continue  # Interpreter options are not code/data path operands.
             candidate = (arg.split('=', 1)[1] if index != 0 and index != script_operand
                          and arg.startswith('-') and '=' in arg else arg)
+            if index == script_operand:
+                candidate = script_path
             try:
                 path = Path(candidate)
                 path = (path if path.is_absolute() else store.root / path).resolve()
                 if not path.is_relative_to(store.root.resolve()):
+                    require(index != script_operand,
+                            'Jump argv entrypoint must be project-relative frozen code')
                     continue
                 identity = os.path.normcase(str(path))
-            except (ValueError, OSError):
+            except OSError:
                 continue  # Executables/options outside the root are not code bindings.
             entrypoint = index == 0 or index == script_operand or (
-                identity not in data_or_output and path.suffix.casefold() in {
-                    '.py', '.pyw', '.js', '.mjs', '.cjs', '.sh', '.ps1', '.bat', '.cmd', '.exe'})
+                identity not in data_or_output and (path.is_file() or path.suffix.casefold() in {
+                    '.py', '.pyw', '.js', '.mjs', '.cjs', '.sh', '.ps1', '.bat', '.cmd', '.exe'}))
             if not entrypoint and identity not in code:
                 continue  # Runtime data/output arguments are not code entrypoints.
             require(identity in code, 'Jump argv entrypoint is not a frozen code binding')
