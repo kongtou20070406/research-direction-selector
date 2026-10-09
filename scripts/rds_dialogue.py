@@ -55,9 +55,12 @@ def _report(store, ref):
     return value
 
 
-def _interaction(plan, contract=None, request_artifact=None):
+def _interaction(plan, contract=None, request_artifact=None, *, runs=()):
     steering = plan.get('steering') or {'paused': False, 'withdrawn_runs': [], 'preferred_runs': []}
     routes = [r['manifest']['id'] for r in (contract or {}).get('advisor_policy', {}).get('routes', [])]
+    legacy = contract is not None and 'advisor_policy' not in contract
+    if legacy:
+        routes = [r['id'] for r in runs]
     affected = routes if steering['paused'] else sorted(set(steering['withdrawn_runs'] + steering['preferred_runs']))
     kind = steering.get('kind')
     dispatch_source = {'command': 'project steering', 'revision': steering.get('revision')}
@@ -65,7 +68,7 @@ def _interaction(plan, contract=None, request_artifact=None):
                           'request_artifact_scope': 'LATEST_REQUEST_ONLY'}
     affected_source = ({'command': 'project status', 'contract_sha256': digest(contract)}
                        if steering['paused'] and contract is not None else dispatch_source)
-    affected_pointer = '/contract/advisor_policy/routes' if steering['paused'] else '/steering'
+    affected_pointer = ('/runs' if legacy else '/contract/advisor_policy/routes') if steering['paused'] else '/steering'
     return {'instruction': _detail(steering, dispatch_source, '/steering'),
             'instruction_source': instruction_source,
             'dispatch_source': dispatch_source,
@@ -80,7 +83,7 @@ def _interaction(plan, contract=None, request_artifact=None):
             'judgment': 'Host resolves material missing inputs or proposed revisions with the person; retained instructions create no new resource authority.'}
 
 
-def build(store, draft):
+def build(store, draft, *, _context=None):
     result = {'schema': 'rds-research-dialogue-v1', 'status': 'NO_CURRENT_ADVICE',
               'interaction': _interaction(draft),
               'goal': _detail(draft.get('goal'), 'project plan', '/goal'),
@@ -97,29 +100,36 @@ def build(store, draft):
     from rds_owned_advisor import _state, _fingerprint, _read_original
     from rds_tms_store import current
     try:
-        with store._db(True) as db:
-            db.execute('BEGIN')
-            state = _state(store, db)
-            from rds_steering import current as current_instruction
-            retained_instruction = current_instruction(db)
-            row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
-                             "ORDER BY id DESC LIMIT 1").fetchone()
+        if _context is None:
+            with store._db(True) as db:
+                db.execute('BEGIN')
+                state = _state(store, db)
+                from rds_steering import current as current_instruction
+                retained_instruction = current_instruction(db)
+                row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
+                                 "ORDER BY id DESC LIMIT 1").fetchone()
+        else:
+            state = _context['state']
+            retained_instruction = _context['instruction']
+            row = _context['report_event']
         contract = state['contract']
+        require(digest(contract) == draft['contract_sha256'], 'Plan dialogue contract snapshot differs')
         decision = contract.get('advisor_policy', {}).get('context', {}).get('decision')
         goal_pointer = ('/contract/advisor_policy/context/decision' if decision else
                         '/contract/description' if contract.get('description') else '/contract/objective_sha256')
         result['goal'] = _detail(draft.get('goal'), 'project status contract ' + draft['contract_sha256'],
                                  goal_pointer)
-        # Use the latest coherent ledger state for human steering, even when the
-        # saved advice is stale or its original evidence is unavailable.
+        # Keep this draft's original coherent state. Later changes may stale
+        # its advice but cannot replace its instruction, budget or active work.
         from rds_steering import dispositions, view
         instruction = state.get('steering', view(None))
+        require(instruction == draft['steering'] and dispositions(state['runs'], instruction) == draft['active_work'],
+                'Plan dialogue steering snapshot differs')
         result['interaction'] = _interaction({'steering': instruction,
             'active_work': dispositions(state['runs'], instruction)}, contract,
-            (retained_instruction or {}).get('request_artifact'))
-        result['budget'] = {b['resource']: {'cap': b['cap'], 'spent_measured': b['spent'],
-            'charged_estimate': b['charged'], 'reserved': b['reserved'],
-            'remaining': b['cap'] - b['spent'] - b['charged'] - b['reserved']} for b in state['budget']}
+            (retained_instruction or {}).get('request_artifact'), runs=state['runs'])
+        if _context is not None and 'error' in _context:
+            raise ValueError(_context['error'])
         if row is None:
             result['reason'] = 'No retained owned Advisor report; project next can collect and review within existing authorization.'
             return result

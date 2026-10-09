@@ -155,7 +155,7 @@ def _preparation_contract(store, db):
     table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
     if table and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
         contract = store._contract(db)
-        require('tool_bindings' not in contract.get('advisor_policy', {}),
+        require('advisor_policy' not in contract,
                 'Qualify finite tool inputs before this owned project init; live work must use its frozen budget and routes')
         return True  # Initialized legacy flow retains its existing native entry.
     return False

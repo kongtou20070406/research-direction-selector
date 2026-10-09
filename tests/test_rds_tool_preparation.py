@@ -227,11 +227,15 @@ class ToolPreparationTests(unittest.TestCase):
         state = self.store.initialize(legacy)
         self.assertEqual(state['budget']['wall_seconds']['charged_estimate'], 0)
 
-    def test_initialized_legacy_native_validation_keeps_its_existing_entry(self):
+    def test_full_without_tool_bindings_refuses_private_validation_before_launch(self):
         legacy = deepcopy(self.contract)
         del legacy['advisor_policy']['tool_bindings']
         self.store.initialize(legacy)
-        self.assertEqual(self.qualify()['status'], 'LOCAL_CASES_PASSED')
+        before = self.store.snapshot()
+        with patch('rds_tools.execute', side_effect=AssertionError('FULL must not launch private child')):
+            with self.assertRaisesRegex(ValueError, 'before this owned project init'):
+                self.qualify()
+        self.assertEqual(self.store.snapshot(), before)
         self.assertEqual(self.intents(), [])
 
     def test_interrupted_comparison_blocks_owned_init_and_recovers_original_qualification(self):

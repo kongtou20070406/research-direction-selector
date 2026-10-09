@@ -93,7 +93,24 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
     filename = db.execute('PRAGMA database_list').fetchone()[2]
     if not filename or Path(filename).resolve() != _database(root, kind):
         raise ValueError('Checkpoint transaction belongs to a different ledger')
-    if completion:
+    if kind == 'project' and decision:
+        from rds_method_revision import contract_history
+        contract = contract_history(db)[-1]['contract']
+        note_only = (set(decision) == {'plan_draft', 'source_kind'}
+                     and decision['source_kind'] == 'UNVERIFIED_PLAN_PROPOSAL')
+        if 'advisor_policy' in contract and not note_only:
+            from rds_project import ProjectStore, require
+            from rds_owned_history import checkpoint_id as owned_checkpoint_id, snapshot as owned_snapshot, _check_choice
+            require(_owned_run_id is not None, 'Program-owned Advisor owns decision checkpoints; use project next/advance')
+            store = ProjectStore(root)
+            run = store._run(db, _owned_run_id)
+            if _settled_attempt is None:
+                require(checkpoint_id == owned_checkpoint_id('before', run)
+                        and run['status'] == 'RESERVED' and run['attempt_id'] is None
+                        and snapshot == owned_snapshot(store, db),
+                        'Owned decision checkpoint requires its native reservation and live snapshot')
+                _check_choice(store, db, run, decision, snapshot)
+    if completion or _settled_attempt is not None:
         # Only the receipt-bound completion checkpoint of an existing admitted
         # attempt can accompany settlement after a workspace binding changes.
         from rds_project import ProjectStore, TERMINAL, require

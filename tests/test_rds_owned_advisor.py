@@ -252,6 +252,35 @@ class OwnedAdvisorCLITests(unittest.TestCase):
     # Full-analysis admission now needs room for all configured conditional routes.
     # Cap refusal is tested separately in test_rds_advisor_coverage; these cases
     # preserve the original execution, race, history and budget assertions.
+    def test_default_candidate_cap_covers_thirteen_frozen_routes(self):
+        def add_routes(policy):
+            for i in range(11):
+                ident = 'extra-' + str(i)
+                route = deepcopy(policy['routes'][0])
+                route['candidate'] = route['manifest']['id'] = ident
+                route['manifest']['argv'] = [sys.executable, '-B', 'code.py', ident, 'positive', 'outputs/' + ident + '.json']
+                route['manifest']['outpaths'] = ['outputs/' + ident + '.json']
+                self.contract['allowed_commands'].append(route['manifest']['argv'])
+                node = deepcopy(policy['graph']['nodes'][0])
+                node['id'] = node['executable']['action']['id'] = ident
+                policy['routes'].append(route)
+                policy['graph']['nodes'].append(node)
+        self.initialize(mutate_policy=add_routes)
+        result = self.output('project', 'next')
+        search = next(row['search'] for row in result['recommendations'] if 'search' in row)
+        self.assertEqual(search['truncation']['limits']['max_candidates'], 13)
+        self.assertFalse(search['truncation']['truncated'])
+        self.assertTrue(search['analysis_coverage']['full'])
+        self.assertEqual(len(search['candidates']) + len(search['blocked_candidates']), 13)
+        self.assertEqual(self.starts(), [])
+
+    def test_invalid_explicit_candidate_cap_is_refused_before_init(self):
+        result = self.initialize(mutate_policy=lambda policy: policy['context'].update(max_candidates=True), ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('must be an integer', result.stderr)
+        self.assertFalse(ProjectStore(self.root).path.exists())
+        self.assertEqual(self.starts(), [])
+
     def test_complete_search_retains_pending_routes_and_completed_dependencies(self):
         def policy(value):
             value['context']['max_candidates'] = 2

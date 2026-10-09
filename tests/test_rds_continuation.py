@@ -546,8 +546,29 @@ class RecipeContinuationTests(unittest.TestCase):
         for expected_starts, expected_status in [(['baseline'], 'STEP_LIMIT'),
                                                   (['baseline', 'repair'], 'JUDGMENT_REQUIRED')]:
             step_args = ('--max-steps', '1') if len(expected_starts) == 1 else ()
-            out = self.f.call('project', 'drive', '--until-judgment',
-                              '--controller-wall-seconds', '8', *step_args)
+            retained_receipts, retained_attempts = {}, {}
+            for _ in range(3):
+                out = self.f.call('project', 'drive', '--until-judgment',
+                                  '--controller-wall-seconds', '8', *step_args)
+                live = self.f.store.snapshot()
+                self.assertEqual(live['contract_sha256'], before['contract_sha256'])
+                for receipt in live['receipts']:
+                    previous = retained_receipts.setdefault(receipt['run_id'], receipt)
+                    self.assertEqual(receipt, previous)
+                for run in live['runs']:
+                    if run['attempt_id'] is not None:
+                        previous = retained_attempts.setdefault(run['id'], run['attempt_id'])
+                        self.assertEqual(run['attempt_id'], previous)
+                if out['status'] != 'HANDOFF_REQUIRED':
+                    break
+                self.assertEqual(out['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', out)
+                self.assertGreaterEqual(out['controller_wall_seconds'], 8)
+                self.assertEqual(out['handoff']['resource_cut'], 'CONTROLLER_RELEASE_TRANSACTION')
+                self.assertGreater(live['budget']['wall_seconds']['remaining'], 0)
+                self.assertEqual(live['budget']['wall_seconds']['reserved'], 0)
+                self.assertEqual(len(set(self.f.starts())), len(self.f.starts()))
+                controller_spent += min(out['controller_wall_seconds'], 8)
+                controller_charged += max(0., out['controller_wall_seconds'] - 8)
             diagnostic = {key: out.get(key) for key in ('status', 'reason', 'controller_wall_seconds')}
             diagnostic['handoff'] = {key: out.get('handoff', {}).get(key)
                                     for key in ('evidence_status', 'diagnostic', 'resource_cut')}

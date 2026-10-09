@@ -256,6 +256,26 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(result['discarded_candidates'], [{"rule_id": "root", "id": "root:repair",
             "action_id": "repair", "reason": "missing required observables"}])
 
+    def test_off_decision_fallback_does_not_inherit_an_unrelated_current_choice(self):
+        fallback = node('unused')['executable']['action']
+        fallback.update(id='interpretation', kind='INTERPRETATION_UPDATE',
+                        outcomes=[{'observation': 'different boundary', 'next_decision': 'keep'}])
+        unrelated = node('other', [{'fact': 'ready', 'value': True, 'on_false': fallback}])
+        unrelated['executable']['decisions'] = ['other-decision']
+        graph = {'nodes': [node('root'), unrelated], 'edges': []}
+        context = {'decision': {'id': 'choose', 'current_choice': 'keep'},
+                   'facts': {'ready': fact(False)}}
+        result = search_directions(graph, context)
+        row = next(r for r in result['analysis_coverage']['analyzed_nodes'] if r['id'] == 'other')
+        self.assertTrue(row['fallback_actions'][0]['action_validation']['valid'])
+        self.assertFalse(any('Invalid active fallback for other' in reason
+                             for reason in result['analysis_coverage']['reasons']))
+        self.assertFalse(any(r.get('action', {}).get('id') == 'interpretation' for r in result['candidates']))
+        context['decision']['id'] = 'other-decision'
+        selected = search_directions(graph, context)
+        self.assertTrue(any('Invalid active fallback for other' in reason
+                            for reason in selected['analysis_coverage']['reasons']))
+
     def test_distinct_resources_never_dominate_or_share_budget(self):
         graph = {"nodes": [node("cpu"), node("gpu")], "edges": []}
         costs = {name + "-test": fact(value, resource=name, unit="seconds", comparison_group="same-trial")

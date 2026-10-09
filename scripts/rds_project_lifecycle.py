@@ -204,6 +204,15 @@ def _state(store, db):
         checkpoints = [dict(r) for r in db.execute('SELECT * FROM checkpoints ORDER BY id')]
     state = {'contract_sha256': digest(contract), 'runs': runs, 'receipts': receipts, 'budget': budget,
              'last_event': dict(last) if last else None, 'checkpoints': checkpoints}
+    dependency = None
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+        row = db.execute('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+        if row is not None:
+            from rds_math import MAX_BYTES
+            require(len(row['body'].encode('utf-8')) <= MAX_BYTES
+                    and digest(json.loads(row['body'])) == row['sha256'], 'Activation dependency snapshot integrity failure')
+            dependency = row['sha256']
+    state['dependency_snapshot_sha256'] = dependency
     return contract, state, digest(state)
 
 

@@ -1522,8 +1522,9 @@ class ProjectStore:
         _recover_prospective(self, contract, receipt)
         return receipt
 
-    def snapshot(self, check_bindings=False):
+    def snapshot(self, check_bindings=False, *, _dialogue=False):
         require(isinstance(check_bindings, bool), "check_bindings must be Boolean")
+        require(type(_dialogue) is bool, "dialogue snapshot must be Boolean")
         with self._db(True) as db:
             db.execute("BEGIN")
             contract = self._contract(db)
@@ -1548,6 +1549,22 @@ class ProjectStore:
                 pending = pending_revision(db)
                 snapshot['method_revision_pending'] = ({'id': pending['id'], 'sha256': pending['sha256']}
                                                        if pending else None)
+            if _dialogue:
+                # Optional view inputs share this original read; ordinary
+                # snapshots do not collect owned history or report context.
+                from rds_owned_advisor import _state
+                row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
+                                 "ORDER BY id DESC LIMIT 1").fetchone()
+                context = {'instruction': steering, 'report_event': dict(row) if row else None}
+                try:
+                    context['state'] = _state(self, db)
+                except (ValueError, KeyError, TypeError, OSError, UnicodeError, sqlite3.Error) as exc:
+                    # Optional display cannot impose owned-history bounds on
+                    # the ordinary plan. Preserve this read's original facts.
+                    from rds_steering import view
+                    context['state'] = {'contract': contract, 'runs': snapshot['runs'], 'steering': view(steering)}
+                    context['error'] = str(exc)[:512]
+                snapshot['_dialogue_context'] = context
         if check_bindings:
             found, errors = self._bindings(contract)
             snapshot["binding_check"] = {"files": found, "errors": errors}

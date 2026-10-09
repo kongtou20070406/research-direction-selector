@@ -205,7 +205,7 @@ def _workspace_roots(workspace, inventory):
                     inventory.entry()
                     path = Path(entry.path)
                     if entry.is_dir():
-                        if entry.name == '.rds':
+                        if os.path.normcase(entry.name) == os.path.normcase('.rds'):
                             # Discover through the logical owner before resolve
                             # changes an in-root symlink/junction's basename.
                             for name in ('project.sqlite3', 'state.sqlite3'):
@@ -244,7 +244,7 @@ def _preparation_finished(root, value, target):
             'Retained tool preparation record differs from its original receipt')
 
 
-def _retained_targets(root, db, inventory):
+def _retained_targets(root, db, inventory, *, workspace):
     if _table(db, 'events'):
         remaining = MAX_EVENTS - inventory.events
         rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind') IN "
@@ -271,6 +271,9 @@ def _retained_targets(root, db, inventory):
                       and value.get('request_sha256') == digest({'tool_validation': token}))
             if legacy:
                 target = target / '.rds' / 'exec' / 'tool-check'
+            target = target.resolve()
+            require(target.is_relative_to(workspace),
+                    'Retained campaign job escapes the selected workspace; bind a common ancestor')
             if value['kind'] == 'TOOL_PREPARATION_STARTED':
                 _preparation_finished(root, value, target)
             _retained_job(target)
@@ -616,12 +619,12 @@ def _quiescent(db, project, workspace=None):
         if root == project:
             _intent_quiescent(root, db, project, workspace)
             _ledger_quiescent(root, db, inventory, allow_pending_revision=True, canonical_project=True)
-            pending.extend(_retained_targets(root, db, inventory))
+            pending.extend(_retained_targets(root, db, inventory, workspace=workspace))
         else:
             with _database(root) as child:
                 _intent_quiescent(root, child, project, workspace)
                 _ledger_quiescent(root, child, inventory)
-                pending.extend(_retained_targets(root, child, inventory))
+                pending.extend(_retained_targets(root, child, inventory, workspace=workspace))
 
 
 def _publish(path, value):

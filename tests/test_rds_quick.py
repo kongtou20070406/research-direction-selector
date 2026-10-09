@@ -192,11 +192,16 @@ class QuickTests(unittest.TestCase):
         job_root = Path(json.loads(Path(json.loads(first.stdout)['record']).read_text())['job_root'])
         before = ProjectStore(self.ledger).snapshot()['budget']
         marker.unlink()
+        with ProjectStore(self.ledger)._db(True) as db:
+            checkpoints = [tuple(row) for row in db.execute('SELECT id,sha FROM checkpoints ORDER BY id')]
+        self.assertEqual(len(checkpoints), 2)
         second = self.job('success-renamed', True, *options)
         self.assertEqual(json.loads(second.stdout)['status'], 'EXISTING_JOB')
         self.assertFalse(marker.exists())
         self.assertFalse((self.root / '.rds/exec/success-renamed').exists())
         self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
+        with ProjectStore(self.ledger)._db(True) as db:
+            self.assertEqual([tuple(row) for row in db.execute('SELECT id,sha FROM checkpoints ORDER BY id')], checkpoints)
         (job_root / 'outputs/result').unlink()
         rejected = self.job('missing-output-reuse', False, *options)
         self.assertNotEqual(rejected.returncode, 0)

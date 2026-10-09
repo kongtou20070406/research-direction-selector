@@ -277,6 +277,19 @@ class CampaignBindingTests(unittest.TestCase):
             campaign.bind(self.store, self.workspace)
         self.assertEqual(self.events(), [])
 
+    def test_retained_job_cannot_escape_the_selected_campaign_workspace(self):
+        for pointer in (str(self.helper.root), str(Path('..') / '..' / self.helper.root.name)):
+            with self.subTest(pointer=pointer):
+                self.native_update("DELETE FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE'")
+                self.native_update('INSERT INTO events(body) VALUES (?)',
+                    (canonical({'kind': 'EXTERNAL_RUN_ALLOWANCE', 'job_root': pointer}),))
+                before = self.store.snapshot()
+                with self.assertRaisesRegex(ValueError, 'escapes the selected workspace'):
+                    campaign.bind(self.store, self.workspace)
+                self.assertEqual(self.store.snapshot(), before)
+                self.assertEqual(self.events(), [])
+                self.assertFalse(self.marker.exists())
+
     def test_active_retained_external_job_blocks_and_terminal_receipt_allows_binding(self):
         child_root = self.workspace / 'retained-job'
         shutil.copytree(self.helper.root, child_root)

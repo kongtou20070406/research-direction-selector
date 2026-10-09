@@ -55,6 +55,32 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
         helper.output('project', 'init', '--contract', str(helper.contract_path), '--mode', 'quick')
         self.fixture.ledger = helper.root
 
+    def test_failed_choice_publication_rolls_back_allowance_without_materialization(self):
+        args, reviewed, workspace = self.reviewed_job('choice-rollback')
+        parent = ProjectStore(self.fixture.ledger)
+        before = parent.snapshot()
+        with parent._db(True) as db:
+            events = [tuple(row) for row in db.execute('SELECT id,body FROM events ORDER BY id')]
+        observed = {}
+        original_charge = rds_quick._charge_ledger
+
+        def charge_in_original_transaction(*positional, **keywords):
+            result = original_charge(*positional, **keywords)
+            db = keywords['_parent_db']
+            self.assertTrue(db.in_transaction)
+            observed['charged'] = db.execute("SELECT charged FROM budget WHERE resource='wall_seconds'").fetchone()[0]
+            return result
+
+        with mock.patch.object(rds_quick, '_charge_ledger', side_effect=charge_in_original_transaction), \
+                mock.patch.object(rds_quick, 'record_choice', side_effect=ValueError('synthetic checkpoint conflict')):
+            with self.assertRaisesRegex(ValueError, 'synthetic checkpoint conflict'):
+                rds_quick.execute(args, review=reviewed)
+        self.assertEqual(observed['charged'], before['budget']['wall_seconds']['charged_estimate'] + 5)
+        self.assertEqual(parent.snapshot(), before)
+        self.assertFalse(workspace.exists())
+        with parent._db(True) as db:
+            self.assertEqual([tuple(row) for row in db.execute('SELECT id,body FROM events ORDER BY id')], events)
+
     def assert_held_child_and_original_accounting(self, workspace, before, at_admission):
         child = ProjectStore(workspace).snapshot()
         self.assertEqual(len(child['runs']), 1)
@@ -442,9 +468,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
 
         def charge_then_writer(*positional, **keywords):
             result = original_charge(*positional, **keywords)
-            observed['charged'] = source.snapshot()
-            charged.set()
-            self.assertTrue(held.wait(5), 'Pause writer did not obtain its real transaction')
+            observed['allowance_pending'] = True
             return result
 
         def current_then_hold(db):
@@ -468,6 +492,12 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
             # Production takes this shared gate before any parent DB lock.
             with original_mutation():
                 yield
+            # The allowance and choice now commit together before this gate
+            # releases. Start the competing writer only after that commit.
+            if observed.get('allowance_pending') and not charged.is_set():
+                observed['charged'] = source.snapshot()
+                charged.set()
+                self.assertTrue(held.wait(5), 'Pause writer did not obtain its real transaction')
 
         with ThreadPoolExecutor(max_workers=2) as pool, \
                 mock.patch.object(rds_quick, '_charge_ledger', new=charge_then_writer), \

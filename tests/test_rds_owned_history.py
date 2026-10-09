@@ -56,7 +56,7 @@ class OwnedHistoryTests(unittest.TestCase):
             db.execute('BEGIN IMMEDIATE')
             db.execute('UPDATE budget SET reserved=1 WHERE resource="wall_seconds"')
             snap = history.snapshot(self.store, db)
-            append_checkpoint(db, self.root, 'rollback', snap, kind='project', decision=decision)
+            append_checkpoint(db, self.root, 'rollback', snap, kind='project')
             self.assertTrue(db.in_transaction)
             db.rollback()
         live = self.store.snapshot()
@@ -206,8 +206,11 @@ class OwnedHistoryTests(unittest.TestCase):
         decision['outcome'] = 'deferred'
         with self.store._db() as db:
             db.execute('BEGIN IMMEDIATE')
+            with self.assertRaisesRegex(ValueError, 'Program-owned Advisor'):
+                append_checkpoint(db, self.root, 'forged-late-choice', history.snapshot(self.store, db),
+                                  kind='project', decision=decision)
             append_checkpoint(db, self.root, 'late-choice', history.snapshot(self.store, db),
-                              kind='project', decision=decision)
+                              kind='project')
         before = self.store.snapshot()
         with patch('rds_owned_advisor.prepare_admission', return_value=token):
             with self.assertRaisesRegex(ValueError, 'state changed after Advisor selection'):

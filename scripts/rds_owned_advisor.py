@@ -81,6 +81,9 @@ def validate_policy(store, contract):
                 history = contract_history(db)
                 retained = {r['id']: r for r in store._runs(db)}
     require(isinstance(routes, list) and 1 <= len(routes) <= 64, 'Owned routes must contain 1..64 manifests')
+    if 'max_candidates' in context:
+        require(type(context['max_candidates']) is int and 1 <= context['max_candidates'] <= 64,
+                'Owned max_candidates must be an integer within the 1..64 candidate limit')
     ids, candidates, output_owners = {}, set(), set()
     manifest_fields = {'schema', 'id', 'arm', 'control_id', 'protocol', 'argv', 'outpaths',
                        'resource_estimates', 'timeout_seconds', 'description'}
@@ -148,7 +151,8 @@ def validate_policy(store, contract):
     require(all(g['fact'] in fact_ids | lifecycle for g in goals), 'Goal predicates must refer to owned observations or lifecycle facts')
     # Existing graph validation and method checks remain authoritative.
     from rds_advisor_search import search_directions
-    search_directions(graph, {**deepcopy(context), 'facts': {}})
+    search_directions(graph, {**deepcopy(context), 'facts': {}},
+                      max_candidates=context.get('max_candidates', max(12, len(routes))))
     from rds_feasibility import validate
     validate(store, contract, policy)
     if 'tool_bindings' in policy:
@@ -560,6 +564,7 @@ def review(store, persist=True):
     result.update(record_topology(spec))
     if policy:
         context = deepcopy(policy['context'])
+        context.setdefault('max_candidates', max(12, len(policy['routes'])))
         if 'confirmation' in policy:
             context['decision']['goal_conditions'] = effective_goals
         context['facts'] = _facts(spec)

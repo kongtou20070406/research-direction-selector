@@ -90,6 +90,35 @@ class ChoiceActivationTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT count(*) FROM checkpoints').fetchone()[0], 1)
         self.assertEqual(self.f.starts(), [])
 
+    def test_activation_preview_is_invalidated_by_actual_dependency_publication(self):
+        from rds_tms_store import save
+        preview = enable_advisor(self.store, self.f.policy)
+        save(self.f.root, {'schema': 1, 'nodes': [],
+            'hyperedges': [], 'goals': []}, expected=None, source_base=self.f.root)
+        before = self.store.snapshot()
+        with self.assertRaisesRegex(ValueError, 'changed since preview'):
+            enable_advisor(self.store, self.f.policy, apply=True,
+                           expected_snapshot=preview['snapshot_sha256'])
+        self.assertEqual(self.store.snapshot(), before)
+        fresh = enable_advisor(self.store, self.f.policy)
+        self.assertNotEqual(fresh['snapshot_sha256'], preview['snapshot_sha256'])
+        enabled = enable_advisor(self.store, self.f.policy, apply=True,
+                                  expected_snapshot=fresh['snapshot_sha256'])
+        self.assertEqual(enabled['status'], 'ADVISOR_ENABLED')
+        self.assertEqual(self.f.starts(), [])
+
+    def test_activation_accepts_native_saved_deep_revision_metadata(self):
+        from rds_tms_store import save, current
+        revision = {'value': 'native retained annotation'}
+        for _ in range(40):
+            revision = {'nested': revision}
+        save(self.f.root, {'schema': 1, 'nodes': [], 'hyperedges': [], 'goals': []},
+             expected=None, revision=revision, source_base=self.f.root)
+        self.assertEqual(current(self.f.root)['revision'], revision)
+        preview = enable_advisor(self.store, self.f.policy)
+        self.assertEqual(preview['status'], 'ADVISOR_ACTIVATION_PREVIEW')
+        self.assertEqual(self.f.starts(), [])
+
 
 if __name__ == '__main__':
     unittest.main()

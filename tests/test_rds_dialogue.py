@@ -128,6 +128,81 @@ class DialogueCLITests(unittest.TestCase):
                 self.assertEqual(self.snapshot()['runs'], [])
                 self.assertEqual(self.starts(), [])
 
+    def test_paused_legacy_reservation_has_actual_run_provenance(self):
+        self.initialize(include_policy=False)
+        self.create()
+        received = self.steer(self.request('pause'))
+        before, count = self.snapshot(), self.event_count()
+        result = self.dialogue()
+        interaction = result['interaction']
+        self.assertEqual(interaction['continuation'], 'NEW_DISPATCH_PAUSED')
+        affected = interaction['affected_routes']
+        self.assertEqual(affected['items'], ['baseline'])
+        self.assertEqual(affected['locator'], '/runs')
+        self.assertEqual(affected['original'], {'command': 'project status',
+                                               'contract_sha256': before['contract_sha256']})
+        self.assertEqual(interaction['instruction_source']['request_artifact'], received['request_artifact'])
+        self.assertEqual(interaction['active_work']['items'][0]['disposition'], 'UNSTARTED_RESERVATION_HELD')
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.event_count(), count)
+        self.assertNotEqual(self.execute(ok=False).returncode, 0)
+        self.assertEqual(self.snapshot()['budget'], before['budget'])
+        self.assertEqual(self.starts(), [])
+
+    def assert_plan_keeps_snapshot(self, *, with_advice):
+        self.initialize()
+        if with_advice:
+            self.output('project', 'next')
+        from pathlib import Path
+        from rds_checkpoints import read_checkpoint
+        from rds_source_documents import strict_json
+        from rds_steering import plan, view
+        store = ProjectStore(self.root)
+        before = store.snapshot()
+        snapshot = store.snapshot
+
+        def snapshot_then_change(*args, **kwargs):
+            saved = snapshot(*args, **kwargs)
+            # Commit real run, steering and accounting changes at precisely the
+            # plan/dialogue boundary; the returned draft must keep one read.
+            self.create()
+            self.steer(self.request('pause'))
+            with store._db() as db:
+                db.execute("UPDATE budget SET charged=charged+0.5 WHERE resource='wall_seconds'")
+            return saved
+
+        with patch.object(store, 'snapshot', side_effect=snapshot_then_change):
+            result = plan(store, dialogue=True, save_as='coherent-plan')
+        current = snapshot()
+        self.assertTrue(current['steering']['paused'])
+        self.assertNotEqual(current['budget'], before['budget'])
+        self.assertEqual(len(current['runs']), 1)
+        self.assertEqual(result['steering'], before.get('steering', view(None)))
+        self.assertEqual(result['budget'], before['budget'])
+        self.assertEqual(result['active_work'], [])
+        dialogue = result['dialogue']
+        self.assertEqual(dialogue['budget'], result['budget'])
+        self.assertEqual(dialogue['interaction']['instruction'], result['steering'])
+        self.assertIsNone(dialogue['interaction']['instruction_source']['request_artifact'])
+        self.assertEqual(dialogue['interaction']['active_work']['items'], [])
+        self.assertEqual(dialogue['interaction']['continuation'], 'CONTINUE_WITH_NORMAL_ADMISSION')
+        self.assertEqual(dialogue['status'], 'STALE_OR_UNAVAILABLE' if with_advice else 'NO_CURRENT_ADVICE')
+        retained = strict_json(Path(result['artifact']['path']).read_text(encoding='utf-8'))
+        self.assertEqual(retained['dialogue'], dialogue)
+        self.assertEqual(retained['budget'], before['budget'])
+        self.assertEqual(retained['snapshot_sha256'], result['snapshot_sha256'])
+        with store._db(True) as db:
+            checkpoint = read_checkpoint(db, 'coherent-plan', root=self.root)['record']
+        self.assertEqual(checkpoint['snapshot'], before)
+        self.assertEqual(checkpoint['decision']['plan_draft'], result['artifact'])
+        self.assertEqual(self.starts(), [])
+
+    def test_plan_dialogue_keeps_snapshot_without_owned_advice(self):
+        self.assert_plan_keeps_snapshot(with_advice=False)
+
+    def test_plan_dialogue_keeps_snapshot_with_stale_owned_advice(self):
+        self.assert_plan_keeps_snapshot(with_advice=True)
+
     def test_inherited_redirect_effects_use_current_revision_not_latest_request(self):
         self.initialize(mutate_policy=steering_fixture.SteeringCLITests.independent_routes)
         self.steer(self.request('redirect', ident='initial-routes', withdraw=['baseline'], prefer=['repair']))
@@ -279,6 +354,28 @@ class DialogueCLITests(unittest.TestCase):
         self.assertEqual(replay['received_revision'], received['received_revision'])
         self.assertEqual(self.event_count(), count)
         self.assertTrue(self.output('project', 'steering')['steering']['paused'])
+
+    def test_optional_owned_context_failure_preserves_legacy_plan_snapshot(self):
+        self.initialize(include_policy=False)
+        self.create()
+        self.steer(self.request('pause', ident='legacy-pause'))
+        from rds_steering import plan
+        store = ProjectStore(self.root)
+        before, count = self.snapshot(), self.event_count()
+        ordinary = plan(store)
+        with patch('rds_owned_advisor._state', side_effect=ValueError('Owned history exceeds 128-run coverage')):
+            displayed = plan(store, dialogue=True)
+        self.assertEqual({k: v for k, v in displayed.items() if k != 'dialogue'}, ordinary)
+        view = displayed['dialogue']
+        self.assertEqual(view['status'], 'STALE_OR_UNAVAILABLE')
+        self.assertIn('128-run', view['reason'])
+        self.assertEqual(view['budget'], ordinary['budget'])
+        self.assertEqual(view['interaction']['instruction'], ordinary['steering'])
+        self.assertEqual(view['interaction']['affected_routes']['items'], ['baseline'])
+        self.assertEqual(view['interaction']['affected_routes']['locator'], '/runs')
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.event_count(), count)
+        self.assertEqual(self.starts(), [])
 
     def test_budget_and_dependency_snapshot_changes_invalidate_old_advice(self):
         self.initialize()

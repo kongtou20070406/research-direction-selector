@@ -1338,7 +1338,8 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             coverage['reasons'].append('Invalid declared primary action for ' + rid + ': ' + reason)
         fallback_actions = []
         for fallback_rid, fallback, chain in fallbacks:
-            fallback_valid, fallback_reason = _action_valid(fallback, current_choice)
+            fallback_valid, fallback_reason = _action_valid(
+                fallback, current_choice, _check_current_choice=matches_decision)
             fallback_actions.append({'rule_id': fallback_rid, 'action': deepcopy(fallback),
                                      'action_validation': {'valid': fallback_valid, 'reason': fallback_reason},
                                      'discrimination': _discrimination(fallback, facts)

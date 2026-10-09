@@ -4,7 +4,7 @@ Completion supplies file identities and operational fields, never scientific fac
 """
 import ast
 from collections import Counter
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager, ExitStack, nullcontext
 from copy import deepcopy
 import hashlib
 import json
@@ -162,13 +162,21 @@ def choice(advice, context, candidate_id=None):
 
 
 def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
-                  _expected_contract_sha256=None):
-    from rds_checkpoints import save_checkpoint
+                  _expected_contract_sha256=None, _parent_db=None):
+    from rds_checkpoints import save_checkpoint, append_checkpoint
     from rds_advisor_coverage import project_context
     # QUICK contracts remain frozen; native activation changes ownership.
     # Reject caller choices in owned ledgers, and pin the checked QUICK
     # contract through the original checkpoint publication transaction.
-    snapshot = ProjectStore(root).snapshot(check_bindings=True)
+    store = ProjectStore(root)
+    if _parent_db is None:
+        snapshot = store.snapshot(check_bindings=True)
+    else:
+        require(_parent_db.in_transaction
+                and Path(_parent_db.execute('PRAGMA database_list').fetchone()[2]).resolve() == store.path,
+                'Choice publication requires its owning parent transaction')
+        from rds_owned_history import snapshot as transaction_snapshot
+        snapshot = transaction_snapshot(store, _parent_db)
     require('advisor_policy' not in snapshot['contract'],
             'Program-owned Advisor owns route choices; use project next/advance')
     require(_expected_contract_sha256 is None or
@@ -178,13 +186,22 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
                          else _expected_contract_sha256)
     context = project_context(root, context)
     record = choice(advice, context, candidate_id)
+    if _parent_db is not None:
+        head = None
+        if _parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+            head = _parent_db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+        require((head['sha256'] if head else None) == context.get('dependency_snapshot_sha256'),
+                'Dependency snapshot changed before checkpoint publication; reanalyze the current map')
     # Analysis stays outside the gate; its original snapshot guards are checked
     # again while publishing the CAS and checkpoint as one bounded operation.
     with mutation():
         record['advice'] = cas_json(root, advice)
-        saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
-                                _expected_contract_sha256=expected_contract,
-                                _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
+        if _parent_db is None:
+            saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
+                                    _expected_contract_sha256=expected_contract,
+                                    _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
+        else:
+            saved = append_checkpoint(_parent_db, root, checkpoint_id, snapshot, kind='project', decision=record)
     saved['candidate_id'] = record['candidate']['id']
     return saved
 
@@ -247,15 +264,19 @@ def _policy_route(request, route):
             'native_executable_sha256': guard.get('native_binding', {}).get('sha256')}
 
 
-def _charge_ledger(root, workspace, request, seconds, route=None, source_root=None, dispatch=True, executor_sha256=None, existing_only=False):
+def _charge_ledger(root, workspace, request, seconds, route=None, source_root=None, dispatch=True, executor_sha256=None, existing_only=False, *, _parent_db=None):
     """Conservatively charge external controller work to the existing budget.
 
     This decreases allowance; it never extends the contract or grants execution
     authority. The child still has its own frozen command and run admission.
     """
     store = ProjectStore(root)
-    with store._db() as db:
-        db.execute('BEGIN IMMEDIATE')
+    with (store._db() if _parent_db is None else nullcontext(_parent_db)) as db:
+        if _parent_db is None:
+            db.execute('BEGIN IMMEDIATE')
+        else:
+            require(db.in_transaction and Path(db.execute('PRAGMA database_list').fetchone()[2]).resolve() == store.path,
+                    'Allowance publication requires its owning parent transaction')
         if dispatch:
             from rds_campaign import detached_admission
             detached_admission(root, db)
@@ -781,20 +802,21 @@ def execute(args, review=None, *, _native_preparation_root=None):
             result['regression_review'] = read(report_path)[0]
         _complete_prospective(workspace, request, receipt, result.get('regression_review'), ref)
         return result
-    if owner is not None:
-        if review is not None:
-            from rds_advisor_coverage import project_context
-            choice(review[0], project_context(args.ledger, review[1]), args.choose)
-        from rds_advisor import _loop_route
-        observation = _charge_ledger(owner, workspace, request, timeout,
-            route=_loop_route(selected['candidate']) if review is not None else None, source_root=root,
-            executor_sha256=executor_sha256)
-        if observation is not None:
-            return observation
-    if review is not None:
-        require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
-        record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
-                      _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
+    if owner is not None or review is not None:
+        with admission_context():
+            check_quick_parents()
+            if owner is not None:
+                from rds_advisor import _loop_route
+                observation = _charge_ledger(owner, workspace, request, timeout,
+                    route=_loop_route(selected['candidate']) if review is not None else None, source_root=root,
+                    executor_sha256=executor_sha256, _parent_db=locked_parents[owner])
+                if observation is not None:
+                    return observation
+            if review is not None:
+                require(args.ledger and owner == Path(args.ledger).resolve(),
+                        'Prospective choice and allowance must share the original owning ledger')
+                record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
+                              _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner])
     if goal_raw is not None:
         bind_objective(root, goal_raw)
     with admission_context():
