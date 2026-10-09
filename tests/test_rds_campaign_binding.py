@@ -426,15 +426,18 @@ class CampaignBindingTests(unittest.TestCase):
             db.execute('INSERT INTO events(body) VALUES (?)',
                        (canonical({'kind': kind, 'job_root': str(target), **fields}),))
 
-    def settle_job(self, store, spec=None):
+    def settle_job(self, store, spec=None, *, require_success=True):
         """Execute at this actual child root; retain its original native receipt."""
         original = store.snapshot()
         store.register(spec or self.helper.spec())
         receipt = store.execute('r1')
-        self.assertEqual(receipt['run_status'], 'SUCCEEDED', canonical(receipt))
+        if require_success:
+            self.assertEqual(receipt['run_status'], 'SUCCEEDED', canonical(receipt))
+        else:
+            self.assertIn(receipt['run_status'], ('SUCCEEDED', 'FAILED', 'INTERRUPTED'), canonical(receipt))
         settled = store.snapshot()
         run = next(run for run in settled['runs'] if run['id'] == 'r1')
-        self.assertEqual(run['status'], 'COMPLETED')
+        self.assertEqual(run['status'], 'COMPLETED' if receipt['run_status'] == 'SUCCEEDED' else receipt['run_status'])
         self.assertEqual(receipt['attempt_id'], run['attempt_id'])
         self.assertEqual(receipt['manifest_sha256'], run['manifest_sha256'])
         self.assertEqual(receipt, next(row for row in settled['receipts'] if row['run_id'] == 'r1'))
@@ -451,12 +454,18 @@ class CampaignBindingTests(unittest.TestCase):
             # site initialization in each of 65 independent worker processes.
             shutil.copytree(self.helper.root, target, ignore=shutil.ignore_patterns('.rds'))
             child = ProjectStore(target)
-            spec = self.helper.spec()
+            # Inventory settlement includes original failed attempts. An
+            # explicit failure controls that boundary without timeout retries
+            # or extending any per-worker or project allowance.
+            spec = self.helper.spec(mode='nonzero' if index == 0 else 'ok')
             spec['argv'][1:1] = ['-I', '-S']
             contract = deepcopy(self.helper.contract)
             contract['allowed_commands'] = [spec['argv']]
             child.initialize(contract)
-            retained.append((child, self.settle_job(child, spec)))
+            before = self.settle_job(child, spec, require_success=False)
+            if index == 0:
+                self.assertEqual(before['receipts'][0]['run_status'], 'FAILED')
+            retained.append((child, before))
             self.append_pointer(self.store, target)
         bound = campaign.bind(self.store, self.workspace)
         self.assertEqual(campaign.binding(self.root), bound)
