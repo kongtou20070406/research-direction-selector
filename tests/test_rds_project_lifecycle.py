@@ -602,8 +602,11 @@ class ProjectLifecycleTests(unittest.TestCase):
             return result
 
         def child_writer():
+            # The real writer enters the global mutation gate before opening
+            # its DB. Signal this attempt before either global or child lock;
+            # signalling inside _db would wait for activation to finish first.
+            writing.set()
             with child._db() as db:
-                writing.set()
                 db.execute('BEGIN IMMEDIATE')
                 # This assertion runs only after the original root commit has
                 # released its held child lock, never on an injected snapshot.
@@ -626,6 +629,9 @@ class ProjectLifecycleTests(unittest.TestCase):
             writer.result(timeout=10)
         self.assertTrue(committed.is_set())
         self.assertEqual(len(self.activations()), 1)
+        with child._db(True) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM events WHERE "
+                "json_extract(body,'$.kind')='AFTER_ACTIVATION'").fetchone()[0], 1)
 
     def test_contended_child_lock_fails_closed_without_activation(self):
         self.init_quick()
