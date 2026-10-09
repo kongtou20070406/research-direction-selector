@@ -108,14 +108,16 @@ def review(policy, rows, evidence, usable, eligible):
                          key=lambda t: max(positions[i] for i in t['proposal_ids']))
         stagnant = set()
         for trial in current:
-            if trial['outcome'] != 'STAGNANT':
+            if trial['outcome'] == 'GAIN':
                 stagnant.clear()
-            else:
+            elif trial['outcome'] == 'STAGNANT':
                 run = rows[trial['proposal_ids'][-1]]['proposal']['experiment']['runs'][0]
                 # Renaming a hypothesis cannot mint a distinct computation.
                 stagnant.add(digest({'argv': ['<output:' + str(run['outpaths'].index(a)) + '>'
                                              if a in run['outpaths'] else a for a in run['argv']],
                                      'protocol': run['protocol']}))
+            # An unresolved trial supplies no useful gain that could reopen
+            # this anchor; retain earlier repeatedly stagnant interventions.
         if len(stagnant) >= policy['stagnation_trials']:
             paused.append(parent_key)
     qualified = [q for q in qualified if keys[q[2]] not in paused]

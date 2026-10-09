@@ -151,6 +151,55 @@ class NeighborhoodTests(unittest.TestCase):
                 self.assertNotIn(plan['selected_parent'], ('p2', 'p3'))
                 self.assertEqual(plan['neighborhood']['paused_parents'], [])
 
+    def test_mixed_threshold_unknown_keeps_pause_until_certain_gain(self):
+        self.incumbent()
+        self.execute('p3', 'overshoot', 'refine')
+        self.execute('p4', 'overshoot', 'evidence')
+        self.execute('alternative', 'near-linear', 'refine')
+        self.execute('alias', 'near-linear', 'evidence')
+        self.assertIsNone(self.request()['search_allocation']['selected_parent'])
+        rows, feedback, state = self.inputs()
+        # Declared pure-function inputs for a third computation's two numeric
+        # repeats. These are not newly dispatched runs or verified receipts.
+        for ident, parent, kind in (('mixed', 'p2', 'explore'), ('mixed-repeat', 'mixed', 'evidence')):
+            rows[ident] = deepcopy(rows['alias'])
+            rows[ident]['id'] = ident
+            runs = rows[ident]['proposal']['experiment']['runs']
+            runs[0]['id'] = ident
+            runs[0]['argv'][3] = 'quadratic'
+            runs[1]['argv'][3] = ident
+            rows[ident]['search_allocation'] = {'kind': kind, 'parent_proposal_id': parent}
+            if kind == 'explore':
+                rows[ident]['search_allocation']['comparison_parent_proposal_id'] = parent
+            feedback.append(deepcopy(feedback[-1]))
+            feedback[-1]['id'] = ident
+        for direction in ('min', 'max'):
+            observed = deepcopy(feedback)
+            for item in observed:
+                if item['id'] in ('mixed', 'mixed-repeat'):
+                    item['discrimination']['measured']['value'] = 1 if item['id'] == 'mixed' else 3
+                if direction == 'max':
+                    item['discrimination']['measured']['value'] = 100 - item['discrimination']['measured']['value']
+            policy = {**self.policy, 'metric': {**self.policy['metric'], 'direction': direction}}
+            with self.subTest(direction=direction):
+                before = allocation.build(policy, rows, observed[:-2], state)
+                paused = before['neighborhood']['paused_parents']
+                self.assertEqual(len(paused), 1)
+                unknown = allocation.build(policy, rows, observed, state)
+                self.assertEqual(unknown['neighborhood']['trials'][-1]['outcome'], 'UNKNOWN')
+                self.assertEqual(unknown['neighborhood']['paused_parents'], paused)
+                self.assertIsNone(unknown['selected_parent'])
+                self.assertEqual(len(unknown['slots']), sum(self.policy['slots'].values()))
+                self.assertEqual(len([s for s in unknown['slots'] if s.get('redirected_from') == 'refine']), 2)
+                # Only a settled useful direction may reopen this anchor.
+                for item in observed[-2:]:
+                    item['discrimination']['measured']['value'] = 0 if direction == 'min' else 100
+                gain = allocation.build(policy, rows, observed, state)
+                self.assertEqual(gain['neighborhood']['trials'][-1]['outcome'], 'GAIN')
+                self.assertEqual(gain['neighborhood']['paused_parents'], [])
+                self.assertEqual(gain['selected_parent'], 'mixed-repeat')
+                self.assertEqual(len(gain['slots']), sum(self.policy['slots'].values()))
+
     def test_explore_trigger_is_not_an_implicit_neighborhood(self):
         self.execute()
         self.execute('p1', 'linear')
