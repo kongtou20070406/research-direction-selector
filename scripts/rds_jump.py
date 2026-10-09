@@ -291,6 +291,8 @@ def _python_script_operand(argv):
             return None  # Stdin has no script-file operand.
         if option == '--check-hash-based-pycs':
             index += 2
+        elif option in {'--help', '--help-env', '--help-xoptions', '--help-all', '--version'}:
+            return None  # Known CPython stopping options do not execute a file.
         elif option.startswith('-'):
             flags = option[1:]
             for offset, flag in enumerate(flags):
@@ -301,12 +303,36 @@ def _python_script_operand(argv):
                     index += 1 if offset + 1 < len(flags) else 2
                     break
                 # CPython accepts -t as a compatibility no-op; keep scanning.
-                if flag not in 'bBdEiIOPqRsStuvx':
-                    return None  # Unknown/stopping options cannot execute a file.
+                if flag in 'h?V':
+                    return None
+                require(flag in 'bBdEiIOPqRsStuvx',
+                        'Unsupported Python option before frozen main script')
             else:
                 index += 1
         else:
             return index
+    return None
+
+
+def _rscript_script_operand(argv):
+    """Require R's startup isolation before the literal main or inline code.
+
+    Rscript's default no-restore/no-save flags still read site/user profiles
+    and environment files. Only an effective pre-main --vanilla freezes that
+    startup boundary here; this does not claim arbitrary package closure.
+    """
+    vanilla = False
+    switches = {'--vanilla', '--verbose', '--no-echo', '--no-save', '--no-restore',
+                '--no-site-file', '--no-init-file', '--no-environ'}
+    for index in range(1, len(argv)):
+        option = argv[index]
+        if len(argv) == 2 and option in {'--help', '--version'}:
+            return None
+        if option == '-' or not option.startswith('--'):
+            require(vanilla, 'Rscript startup requires effective pre-main --vanilla for frozen Jump code')
+            return None if option in {'-', '-e'} else index
+        require(option in switches, 'Unsupported Rscript startup option before frozen main script')
+        vanilla = vanilla or option == '--vanilla'
     return None
 
 
@@ -459,6 +485,8 @@ def _interpreter_script_operand(argv):
         return file_at(_ruby_script_operand(argv))
     if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', name):
         return file_at(_perl_script_operand(argv))
+    if name == 'rscript':
+        return file_at(_rscript_script_operand(argv))
     if name in {'node', 'nodejs'}:
         return _node_arguments(argv)[0]
     if re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', name):

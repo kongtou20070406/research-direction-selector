@@ -231,6 +231,12 @@ def check_output(claim, inputs, labels, payload, inputs_sha256):
         return {'status': 'UNKNOWN', 'reason': 'Candidate abstained', 'row_count': len(ids), 'metrics': None}
     replay = evaluate(payload['expression'], inputs)
     measured = metrics(targets, replay['predictions'])
-    verdict = 'PASS' if measured['nrmse'] <= claim['max_nrmse'] and measured['r2'] >= claim['min_r2'] else 'FAIL'
+    # Comparing 1 - nrmse**2 to a near-one threshold loses small residuals.
+    # At the strict endpoint also compare the original finite row values so
+    # normalization rounding cannot turn a differing prediction into exact fit.
+    r2_pass = measured['nrmse'] <= math.sqrt(1 - claim['min_r2'])
+    if claim['min_r2'] == 1:
+        r2_pass = all(_number(a) == b for a, b in zip(targets, replay['predictions']))
+    verdict = 'PASS' if measured['nrmse'] <= claim['max_nrmse'] and r2_pass else 'FAIL'
     return {'status': verdict, 'metrics': measured, 'row_count': len(ids),
             'feature_count': len(inputs['variables']), 'ast_nodes': replay['ast_nodes']}

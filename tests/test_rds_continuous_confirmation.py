@@ -168,6 +168,35 @@ class ContinuousArithmeticTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'underflow'):
             metrics([-1e150, 1e-200], [-1e150, 0.])
 
+    def test_strict_r2_one_refuses_rounded_perfect_fit_with_nonzero_residual(self):
+        inputs = {'schema': 1, 'variables': ['x0'], 'rows': [
+            {'id': 'r0', 'values': [-1.]}, {'id': 'r1', 'values': [0.]}]}
+        candidate = {**output('x0'), 'row_ids': ['r0', 'r1']}
+        claim = {**CLAIM, 'max_nrmse': 1e-7, 'min_r2': 1.}
+        for residual in (1e-9, 1e-200):
+            labels = {'schema': 1, 'rows': [
+                {'id': 'r0', 'target': -1.}, {'id': 'r1', 'target': residual}]}
+            result = check_output(claim, inputs, labels, candidate, SHA)
+            self.assertEqual(result['metrics']['r2'], 1.)  # Display can round; admission cannot.
+            self.assertGreater(result['metrics']['nrmse'], 0.)
+            self.assertEqual(result['status'], 'FAIL')
+            relaxed = {**claim, 'min_r2': .9999999999999999}
+            self.assertEqual(check_output(relaxed, inputs, labels, candidate, SHA)['status'], 'PASS')
+        exact_labels = {'schema': 1, 'rows': [
+            {'id': row['id'], 'target': row['values'][0]} for row in inputs['rows']]}
+        self.assertEqual(check_output(claim, inputs, exact_labels, candidate, SHA)['status'], 'PASS')
+
+    def test_r2_gate_preserves_zero_and_negative_threshold_boundaries(self):
+        labels = {'schema': 1, 'rows': [
+            {'id': row['id'], 'target': row['values'][0]} for row in INPUTS['rows']]}
+        candidate = output('0')
+        # This target has a nonzero mean, so predicting zero yields negative R2.
+        measured = check_output({**CLAIM, 'max_nrmse': 2, 'min_r2': -1}, INPUTS, labels, candidate, SHA)
+        self.assertEqual(measured['status'], 'PASS')
+        self.assertLess(measured['metrics']['r2'], 0)
+        self.assertEqual(check_output({**CLAIM, 'max_nrmse': 2, 'min_r2': 0},
+                                     INPUTS, labels, candidate, SHA)['status'], 'FAIL')
+
     def test_size_and_ast_complexity_limits(self):
         for expression in ('1' * 4097, '-(' * 20 + '1' + ')' * 20,
                            '+'.join('x0' for _ in range(80))):

@@ -131,6 +131,34 @@ class PythonModuleBoundaryTests(unittest.TestCase):
         self.assertIsNone(jump._python_script_operand(['python', '-c', 'print(1)', '-m']))
         self.assertIsNone(jump._python_script_operand(['python', '-', '-m']))
 
+    def test_unknown_options_fail_closed_in_frozen_explicit_and_legacy_plans(self):
+        for legacy in (False, True):
+            for options in (['-J', 'worker.py'], ['-BU', 'worker.py'],
+                            ['--future-option', 'worker.py']):
+                with self.subTest(options=options, legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                    root, store = self.build(directory, options, legacy=legacy)
+                    before = store.snapshot()
+                    plan = fixtures.json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+                    with patch.object(fixtures.ProjectStore, 'execute', side_effect=AssertionError('dispatch forbidden')), \
+                            patch.object(fixtures.ProjectStore, 'register', side_effect=AssertionError('registration forbidden')):
+                        with self.assertRaisesRegex(ValueError, 'Unsupported Python option'):
+                            jump.load_plan(store, before)
+                        result = jump.prepare_owned(store, plan['stages'][0]['run'])
+                    self.assertEqual(result['status'], 'JUMP_UNAVAILABLE')
+                    self.assertFalse(result['changed'])
+                    self.assertFalse(result['execution_started'])
+                    self.assertFalse(result['retry_authorized'])
+                    self.assertEqual(store.snapshot(), before)
+
+    def test_known_stopping_options_and_consumed_unknown_looking_values(self):
+        for option in ('-h', '-?', '-V', '-VV', '--help', '--help-env',
+                       '--help-xoptions', '--help-all', '--version'):
+            self.assertIsNone(jump._python_script_operand(['python', option, 'worker.py']))
+        for options, index in ((['-W', '-J', 'worker.py'], 3), (['-X', '--future-option', 'worker.py'], 3),
+                               (['-BW-J', 'worker.py'], 2), (['--', '-J'], 2),
+                               (['worker.py', '--future-option'], 1)):
+            self.assertEqual(jump._python_script_operand(['python', *options]), index)
+
 
 if __name__ == '__main__':
     unittest.main()
