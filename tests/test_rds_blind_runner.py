@@ -132,6 +132,10 @@ class ProjectionTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     def setUp(self):
+        # Unit boundary checks mock the probe/capture; this is not live isolation.
+        account = patch.object(blind.os, 'geteuid', return_value=1000, create=True)
+        account.start()
+        self.addCleanup(account.stop)
         self.temp = tempfile.TemporaryDirectory(prefix='rds-blind-unit-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

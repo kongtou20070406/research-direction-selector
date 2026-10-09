@@ -206,9 +206,10 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
   function rawTerm(e,i){const semantic=index.data.semantics[e[2]],type=index.data.edge_types[e[3]];return {source:e[0],target:e[1],semantic,type,family:ArchiveCore.family(semantic,type),membership:/snapshot_contains|membership|归属/i.test(semantic+' '+type),count:1,index:i};}
   function forceTerms(e){return (e.forceTerms||(!e.mixedRelation?[{semantic:e.semantic,type:e.type,membership:e.membership,count:e.count}]:[])).map(t=>({...t,family:ArchiveCore.family(t.semantic,t.type),source:e.a,target:e.b,index:e.index,bundleCount:e.count})).filter(active);}
   function cohesionGroup(point){return Object.hasOwn(point,'cohesion_group')?point.cohesion_group:point.group;}
+  function cohesionIdentity(point){const group=cohesionGroup(point);return point.source_id?['source',point.source_id]:group?['group',group]:null;}
   function clusterProvenance(ci){
     const identities=new Map(),stack=[ci];
-    while(stack.length){const p=index.data.clusters[stack.pop()];for(const ni of p.nodes||[]){const n=index.data.nodes[ni],group=cohesionGroup(n),identity=n.source_id?['source',n.source_id]:group?['group',group]:null;identities.set(JSON.stringify(identity),identity);}for(const child of p.children||[])stack.push(child);}
+    while(stack.length){const p=index.data.clusters[stack.pop()];for(const ni of p.nodes||[]){const identity=cohesionIdentity(index.data.nodes[ni]);identities.set(JSON.stringify(identity),identity);}for(const child of p.children||[])stack.push(child);}
     const identity=identities.size===1?[...identities.values()][0]:null;
     return identity?.[0]==='source'?{source_id:identity[1],cohesion_group:null}:{cohesion_group:identity?.[0]==='group'?identity[1]:null};
   }
@@ -222,7 +223,7 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
     sim.force('links',d3.forceLink(physicsLinks).id(p=>p.id).distance(desired).strength(e=>{const r=relation(e);return active(e)&&r.mode==='attract'?options.linkStrength*r.strength*contribution(e)*(coarse?.025:.12):0;}));
     sim.force('x',d3.forceX(p=>p.ax).strength(options.centerStrength)).force('y',d3.forceY(p=>p.ay).strength(options.centerStrength));
     const nodes=sim.nodes(),groups=new Map(),members=new Map(),ownMembers=new Map(),localIds=new Set(nodes.map(p=>p.id)),incidence=e=>/premise|conclusion|共同前提|结论/i.test(e.type||'');
-    for(const p of nodes){const group=p.source_id||cohesionGroup(p);if(group){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(p);}if(/hyperedge|junction|and.rule/i.test(p.type||'')){members.set(p.id,new Set());const own=new Set();if(!coarse)for(let j=index.counts[p.id];j<index.counts[p.id+1];j++){const ei=index.adjacency[j],e=rawTerm(index.data.edges[ei],ei),other=e.source===p.id?e.target:e.source;if(incidence(e)&&localIds.has(other))own.add(other);}ownMembers.set(p.id,own);}}
+    for(const p of nodes){const identity=cohesionIdentity(p),group=identity&&JSON.stringify(identity);if(group){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(p);}if(/hyperedge|junction|and.rule/i.test(p.type||'')){members.set(p.id,new Set());const own=new Set();if(!coarse)for(let j=index.counts[p.id];j<index.counts[p.id+1];j++){const ei=index.adjacency[j],e=rawTerm(index.data.edges[ei],ei),other=e.source===p.id?e.target:e.source;if(incidence(e)&&localIds.has(other))own.add(other);}ownMembers.set(p.id,own);}}
     for(const e of physicsLinks)if(incidence(e)){members.get(e.source.id)?.add(e.target.id);members.get(e.target.id)?.add(e.source.id);}
     sim.force('archive-controls',alpha=>{
       for(const e of physicsLinks){if(!active(e))continue;const r=relation(e),a=e.source,b=e.target,dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy));if(r.mode==='repel'&&d<desired(e)){const f=Math.min(20*scale,(desired(e)-d)*options.linkStrength*r.strength*contribution(e)*.06*alpha);a.vx-=dx/d*f;a.vy-=dy/d*f;b.vx+=dx/d*f;b.vy+=dy/d*f;}if(e.family==='dependency'&&options.flowStrength){const f=Math.min(10*scale,Math.max(0,options.linkDistance*scale-dx)*options.flowStrength*alpha)*contribution(e);a.vx-=f;b.vx+=f;}}

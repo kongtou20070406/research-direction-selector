@@ -426,12 +426,12 @@ class CampaignBindingTests(unittest.TestCase):
             db.execute('INSERT INTO events(body) VALUES (?)',
                        (canonical({'kind': kind, 'job_root': str(target), **fields}),))
 
-    def settle_job(self, store):
+    def settle_job(self, store, spec=None):
         """Execute at this actual child root; retain its original native receipt."""
         original = store.snapshot()
-        store.register(self.helper.spec())
+        store.register(spec or self.helper.spec())
         receipt = store.execute('r1')
-        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED', canonical(receipt))
         settled = store.snapshot()
         run = next(run for run in settled['runs'] if run['id'] == 'r1')
         self.assertEqual(run['status'], 'COMPLETED')
@@ -447,9 +447,16 @@ class CampaignBindingTests(unittest.TestCase):
         retained = []
         for index in range(65):
             target = self.root / '.rds/exec' / ('settled-' + str(index))
-            shutil.copytree(self.helper.root, target)
+            # This inventory test needs stdlib-only native receipts, not host
+            # site initialization in each of 65 independent worker processes.
+            shutil.copytree(self.helper.root, target, ignore=shutil.ignore_patterns('.rds'))
             child = ProjectStore(target)
-            retained.append((child, self.settle_job(child)))
+            spec = self.helper.spec()
+            spec['argv'][1:1] = ['-I', '-S']
+            contract = deepcopy(self.helper.contract)
+            contract['allowed_commands'] = [spec['argv']]
+            child.initialize(contract)
+            retained.append((child, self.settle_job(child, spec)))
             self.append_pointer(self.store, target)
         bound = campaign.bind(self.store, self.workspace)
         self.assertEqual(campaign.binding(self.root), bound)
@@ -516,7 +523,7 @@ class CampaignBindingTests(unittest.TestCase):
         token = 'a' * 32
         source = self.root / '.rds/rsi/tool-checks' / token
         target = source / '.rds/exec/tool-check'
-        shutil.copytree(self.root, target)
+        shutil.copytree(self.helper.root, target)
         child = ProjectStore(target)
         before = self.settle_job(child)
         self.append_pointer(self.store, source, kind='EXTERNAL_RUN_ALLOWANCE',
