@@ -13,6 +13,7 @@ import tempfile
 
 from rds_hypergraph import ASSURANCE, _validate, analyze_hypergraph
 from rds_hypergraph_input import load_input, prepare_input
+from rds_hypergraph_readable import graph_digest
 
 MAX_INPUT_BYTES = 8 * 1024 * 1024
 VIEW_LIMITS = {"nodes": 4096, "hyperedges": 8192, "incidences": 32768}
@@ -39,6 +40,7 @@ def graph_view(value, source, *, snapshot_sha256=None, demo=False):
     if any(counts[key] > cap for key, cap in VIEW_LIMITS.items()):
         return {**result, "status": "DISPLAY_LIMIT", "graph": None, "analysis_status": "NOT_RUN"}
     result["graph"] = spec
+    result["graph_sha256"] = graph_digest(spec)
     if any(counts[key] > cap for key, cap in ANALYSIS_LIMITS.items()):
         return {**result, "analysis_status": "NOT_RUN_LARGE_GRAPH"}
     bounded = deepcopy(spec)
@@ -253,7 +255,12 @@ function startGraph(){
  const hubs=ranked.filter(i=>items[i].kind==='node'&&items[i].degree>=12).slice(0,48),hubSet=new Set(hubs),groupCounts=new Map(hubs.map(i=>[i,0]));
  hubs.forEach((i,rank)=>{const angle=rank*2.39996323,r=130*Math.sqrt(rank);positions[i*2]=Math.cos(angle)*r;positions[i*2+1]=Math.sin(angle)*r});
  for(const item of items){if(item.kind!=='node'||hubSet.has(item.index))continue;const candidates=new Set();for(const e of neighbors[item.index])for(const i of neighbors[e])if(hubSet.has(i))candidates.add(i);if(!candidates.size)continue;const hub=[...candidates].sort((a,b)=>items[b].degree-items[a].degree||a-b)[0],rank=groupCounts.get(hub)+1;groupCounts.set(hub,rank);const angle=rank*2.39996323,r=22*Math.sqrt(rank);positions[item.index*2]=positions[hub*2]+Math.cos(angle)*r;positions[item.index*2+1]=positions[hub*2+1]+Math.sin(angle)*r}
- function placeJunctions(){for(const item of items){if(item.kind!=='edge'||!neighbors[item.index].length)continue;if(!item.record.premises.length){const target=byKey.get('n:'+item.record.conclusion).index,angle=(item.index+1)*2.39996323;positions[item.index*2]=positions[target*2]+45*Math.cos(angle);positions[item.index*2+1]=positions[target*2+1]+45*Math.sin(angle);}else for(let axis=0;axis<2;axis++)positions[item.index*2+axis]=neighbors[item.index].reduce((sum,i)=>sum+positions[i*2+axis],0)/neighbors[item.index].length;}}
+ // Distinct OR routes remain separate display junctions, including after
+ // worker updates. Group by endpoints, then offset by stable edge identity.
+ const parallelGroups=new Map(),junctionOffsets=new Map();
+ for(const item of items){if(item.kind!=='edge'||!item.record.premises.length)continue;const key=JSON.stringify([[...item.record.premises].sort(),item.record.conclusion]);if(!parallelGroups.has(key))parallelGroups.set(key,[]);parallelGroups.get(key).push(item);}
+ for(const group of parallelGroups.values()){if(group.length<2)continue;group.sort((a,b)=>a.key<b.key?-1:a.key>b.key?1:0);group.forEach((item,rank)=>{const angle=rank*2.39996323,r=24*Math.sqrt(rank+1);junctionOffsets.set(item.index,[r*Math.cos(angle),r*Math.sin(angle)]);});}
+ function placeJunctions(){for(const item of items){if(item.kind!=='edge'||!neighbors[item.index].length)continue;if(!item.record.premises.length){const target=byKey.get('n:'+item.record.conclusion).index,angle=(item.index+1)*2.39996323;positions[item.index*2]=positions[target*2]+45*Math.cos(angle);positions[item.index*2+1]=positions[target*2+1]+45*Math.sin(angle);}else for(let axis=0;axis<2;axis++)positions[item.index*2+axis]=neighbors[item.index].reduce((sum,i)=>sum+positions[i*2+axis],0)/neighbors[item.index].length+(junctionOffsets.get(item.index)?.[axis]||0);}}
  placeJunctions();
  let selected=null,hovered=null,focus=false,colors=false,light=false,view={x:0,y:0,k:.8},width=1,height=1,ratio=1;
  let edgeMode='relation',framePending=false,worker=null,workerURL=null,layoutRunning=false,userMoved=false,drag=null,query='',matches=new Set(),visibleSet=null,dynamic=true,pausedByVisibility=false;
@@ -1254,7 +1261,7 @@ function activeDependencyLevels(ids,links,relations) {
  const baseLinks=view.links;
  if(view.scope){view.nodes.scope=view.scope.node;if(data.readable?.graph?.title?.trim())view.nodes.scope.label=data.readable.graph.title.trim();view.links=[...baseLinks,...view.scope.links];}
  const g=new GraphRenderer($('graph'),SIM_WORKER_MAIN), recordById=new Map(data.graph.nodes.map(n=>[n.id,n]));
- const key='rds-replica-v2:'+ (data.snapshot_sha256 || data.source);
+ const key='rds-replica-v2:'+ (data.snapshot_sha256 || data.graph_sha256);
  const defaults={search:'',colors:true,orphans:true,scope:true,sizeMode:'goal',goal:data.graph.goals[0]||'',nodeStyles:{},arrows:true,nodeSize:1,lineSize:1,textFade:0,damping:.4,growth:true,growthSeconds:12,flowStrength:.025,groupStrength:.035,edgeRepulsion:.25,edgeClearance:45,centerStrength:.055,repelStrength:1000,linkStrength:1,linkDistance:180,relations:{}};
  let opts={...defaults}; try{opts={...defaults,...JSON.parse(localStorage.getItem(key)||'null')};}catch{}
  if(!data.graph.goals.includes(opts.goal))opts.goal=defaults.goal;
@@ -1355,7 +1362,7 @@ def main(argv=None):
         root, output = Path(args.root).resolve(), Path(args.output).resolve()
         if args.export_agent_input and args.readable_json:
             raise ValueError("Export fresh agent input or consume --readable-json, not both")
-        if not args.export_agent_input and (output.suffix.lower() != ".html" or output.is_relative_to(root / ".rds")):
+        if not args.export_agent_input and (output.suffix.lower() != ".html" or output.is_relative_to((root / ".rds").resolve())):
             raise ValueError("Output must be an .html file outside the .rds ledger")
         if args.demo and args.hypergraph or args.large and not args.demo:
             raise ValueError("Use --large only with --demo, and --demo without --hypergraph")

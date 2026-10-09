@@ -255,6 +255,51 @@ class HypergraphViewTests(unittest.TestCase):
                 self.assertEqual(self.payload(output.read_text(encoding="utf-8"))["graph"], example())
                 self.assertFalse(list(self.root.glob(".rds-hypergraph-*.tmp")))
 
+    def test_linked_ledger_rejects_both_output_aliases_before_writing(self):
+        project, ledger = self.root / "project", self.root / "storage/.rds"
+        project.mkdir()
+        ledger.parent.mkdir()
+        save(ledger.parent, example(), expected=None)
+        link = project / ".rds"
+        if os.name == "nt":
+            created = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(ledger)],
+                                     capture_output=True, text=True)
+            self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        else:
+            link.symlink_to(ledger, target_is_directory=True)
+        self.root = project
+        (ledger / "existing.html").write_bytes(b"original ledger-side file")
+        originals = {p.relative_to(ledger): p.read_bytes() for p in ledger.rglob("*") if p.is_file()}
+        for directory in (link, ledger):
+            for suffix in ("existing.html", "new/subdir/view.html"):
+                with self.subTest(directory=directory, suffix=suffix):
+                    result = self.export("--output", directory / suffix)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("outside the .rds ledger", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual({p.relative_to(ledger): p.read_bytes()
+                                      for p in ledger.rglob("*") if p.is_file()}, originals)
+                    self.assertFalse((ledger / "new").exists())
+                    self.assertFalse(list(ledger.rglob(".rds-hypergraph-*.tmp")))
+
+    def test_explicit_graph_identity_tracks_contents_without_mutating_raw(self):
+        from rds_hypergraph_readable import graph_digest
+        source = self.root / "graph.json"
+        spec = example()
+        source.write_text(json.dumps(spec), encoding="utf-8")
+        first = read_graph(self.root, source)
+        self.assertIsNone(first["snapshot_sha256"])
+        self.assertEqual(first["graph_sha256"], graph_digest(spec))
+        self.assertEqual(read_graph(self.root, source)["graph_sha256"], first["graph_sha256"])
+        replacement = deepcopy(spec)
+        replacement["nodes"][0]["label"] = "Replacement graph"
+        source.write_text(json.dumps(replacement), encoding="utf-8")
+        changed = read_graph(self.root, source)
+        self.assertNotEqual(changed["graph_sha256"], first["graph_sha256"])
+        self.assertEqual(changed["graph"], replacement)
+        self.assertEqual(json.loads(source.read_text(encoding="utf-8")), replacement)
+        self.assertFalse((self.root / ".rds").exists())
+
     def test_atomic_export_failure_preserves_output_and_cleans_temporary(self):
         output = self.root / "existing.html"
         output.write_bytes(b"original")
@@ -1258,6 +1303,16 @@ function browser(payload,blocked=false){
 
 @unittest.skipUnless(shutil.which("node"), "Node required for actual Canvas interaction boundaries")
 class CanvasBoundaryTests(_JSBoundaryTests):
+    def test_parallel_or_routes_remain_pointer_selectable_after_layout_update(self):
+        self.run_js(JS, r'''
+const graph={nodes:[{id:'p',label:'Premise',status:'UNKNOWN'},{id:'g',label:'Goal',status:'UNKNOWN'}],hyperedges:[{id:'a',label:'Route A',premises:['p'],conclusion:'g',relation:'R',status:'SUPPORTED',weight:1},{id:'b',label:'Route B',premises:['p'],conclusion:'g',relation:'R',status:'PROPOSED',weight:2}],goals:['g']};
+const original=JSON.stringify(graph),b=browser({status:'AVAILABLE',source:'synthetic',graph});vm.runInContext(production,b.scope,{timeout:5000});
+const c=b.ids['hg-canvas'],draws=[],stroke=c.ctx.stroke;c.ctx.stroke=function(){draws.push(this.path.slice());stroke.call(this);};
+function verify(){b.flush();const path=draws[0];assert.equal(path.length,8,'two OR routes retain all four incidence links');const junctions=[path[1],path[5]];assert.ok(Math.hypot(junctions[0][0]-junctions[1][0],junctions[0][1]-junctions[1][1])>12,'OR junctions must have distinct hit targets');for(let i=0;i<2;i++){c.events.pointerdown({button:0,clientX:junctions[i][0],clientY:junctions[i][1],pointerId:1});c.events.pointerup();assert.match(b.text(b.ids['hg-detail']),/超边详情/);assert.ok(b.text(b.ids['hg-detail']).includes('Route '+(i?'B':'A')),'pointer opens its own route');}assert.equal(JSON.stringify(graph),original);}
+verify();c.events.keydown({key:'Escape'});b.flush();draws.length=0;b.workers[0].onmessage({data:{positions:new Float32Array([-160,0,200,0]),ticks:180,ms:10,ready:true,done:true}});verify();
+console.log('Canvas: parallel OR routes independently selected before/after actual worker update; raw records unchanged PASS');
+''')
+
     def test_short_labels_status_strokes_hover_and_raw_id_search(self):
         spec = {"schema": 1, "nodes": [
             {"id": "run.good.succeeded", "status": "SUPPORTED", "source": "synthetic",
@@ -1327,6 +1382,17 @@ console.log('Canvas: 8192 relation editors bounded on first/last page and tail r
 
 @unittest.skipUnless(shutil.which("node"), "Node required for actual Replica interaction boundaries")
 class ReplicaBoundaryTests(_JSBoundaryTests):
+    def test_preferences_are_isolated_by_explicit_graph_and_saved_snapshot(self):
+        self.run_js(REPLICA_APP, r'''
+const graph={nodes:[{id:'fact',label:'Current fact',status:'UNKNOWN',source:'fixture'}],hyperedges:[],goals:[]},base={status:'AVAILABLE',source:'/same/graph.json',snapshot_sha256:null,graph_sha256:'graph-one',counts:{nodes:1,hyperedges:0},graph,replica_view:{nodes:{f:{label:'Current fact',type:'claim',rds:{record:'fact',kind:'声明',size:1}}},links:[],relations:[],provenance_count:0}};
+const storage=new Map([['rds-replica-v2:/same/graph.json',JSON.stringify({search:'stale pathname',growth:false})]]),reads=[];
+function run(identity,snapshot=null){const payload={...base,graph_sha256:identity,snapshot_sha256:snapshot},b=browser(payload);b.scope.localStorage={getItem:k=>{reads.push(k);return storage.get(k)||null;},setItem:(k,v)=>storage.set(k,v)};b.scope.SIM_WORKER_MAIN='';b.scope.PIXI={Texture:{WHITE:{}}};b.scope.GraphRenderer=class{constructor(){b.renderer=this;this.nodes=[];this.links=[];this.nodeLookup=new Map();this.width=1000;this.height=700;this.worker={onmessage(){},postMessage(){},terminate(){}};}setData({nodes,links}){this.nodes=Object.entries(nodes).map(([id,n])=>({...n,id,x:0,y:0,getSize(){return 10;}}));this.nodeLookup=new Map(this.nodes.map(n=>[n.id,n]));this.links=links;}setForces(){}setOptions(){}changed(){}resetPan(){}zoomTo(){}setScale(){}setPan(){}};vm.runInContext(production,b.scope,{timeout:5000});return b;}
+let b=run('graph-one');assert.ok(b.renderer.nodeLookup.has('f'),'old pathname preferences must not hide fresh graph');storage.set('rds-replica-v2:graph-one',JSON.stringify({search:'missing old term',growth:false}));
+b=run('graph-one');assert.equal(b.renderer.nodes.length,0,'same contents reloads its preferences');b=run('graph-two');assert.ok(b.renderer.nodeLookup.has('f'),'replacement contents resets the filter');
+storage.set('rds-replica-v2:saved-one',JSON.stringify({search:'missing saved term',growth:false}));assert.equal(run('graph-two','saved-one').renderer.nodes.length,0);assert.ok(run('graph-two','saved-two').renderer.nodeLookup.has('f'),'saved snapshots retain separate identities');assert.deepEqual(reads,['rds-replica-v2:graph-one','rds-replica-v2:graph-one','rds-replica-v2:graph-two','rds-replica-v2:saved-one','rds-replica-v2:saved-two']);
+console.log('Replica: content identity ignores legacy pathname, reuses same graph, isolates replacement and saved snapshots PASS');
+''')
+
     def test_large_analysis_notice_persists_in_actual_both_renderers(self):
         result = graph_view(large_demo(), "synthetic:large")
         payload = HypergraphViewTests.payload(render_html(result))
