@@ -76,37 +76,40 @@ const ArchiveCore = (() => {
     function find(query,page=0,size=20){const q=query.toLocaleLowerCase().trim(),matches=[];for(let i=0;i<search.length;i++)if(search[i].includes(q))matches.push(i);return {total:matches.length,page,size,entries:matches.slice(page*size,(page+1)*size).map(i=>({...presentation(nodes[i]),index:i,record:nodes[i].id,x:nodes[i].x,y:nodes[i].y}))};}
     function viewport(level,rect,edgeBudget=3500,nodeBudget=3500,filters={}) {
       nodeBudget=Math.max(16,Math.min(3500,Math.floor(Number(nodeBudget)||3500)));
+      edgeBudget=Math.max(4,Math.min(3500,Math.floor(Number(edgeBudget)||3500)));
       const stage=levels[level],found=ensureSpatial(level).query(rect),q=String(filters.query||'').trim().toLocaleLowerCase();
       const keep=i=>{const p=stage.points[i];return (filters.showOrphans!==false||!p.raw||degree[p.index]>0)&&(!q||[p.label,p.summary,p.record,p.group].join(' ').toLocaleLowerCase().includes(q));};
       const indexedCrossingEdges=found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),indexedVisibleNodes=found.nodes.length;
       if(filters.membership===false||filters.showOrphans===false||q){found.nodes=found.nodes.filter(keep);found.edges=found.edges.filter(i=>{const e=stage.edges[i];return (filters.membership!==false||!e.membership)&&(!q||(keep(e.a)&&keep(e.b)));});found.counters.visibleNodes=found.nodes.length;found.counters.crossingEdges=found.edges.length;}
-      const nodeSet=new Set(found.nodes);let edges=found.edges.map(i=>stage.edges[i]),points;
-      for(const e of edges){nodeSet.add(e.a);nodeSet.add(e.b);}
-      // Connection bundles add drawing points of their own. Budget their finite
-      // maximum before deciding whether to retain all individual visible nodes.
-      const extraBundlePoints=edges.length>edgeBudget?Math.min(24*24,2*edges.length):0;
-      const nodeAggregation=nodeSet.size>nodeBudget||found.nodes.length+extraBundlePoints>nodeBudget;
+      // Screen-external connection endpoints are geometry, not visible records.
+      // They must never replace an affordable set of original record glyphs.
+      const nodeAggregation=found.nodes.length>nodeBudget,display=new Map();let points;
       if(nodeAggregation){
-        // Display bins account for all visible records, including isolated ones.
-        // Offscreen crossing endpoints remain represented but add no visible count.
-        const bins=new Map(),bundle=new Map();let divisions=Math.min(32,Math.floor(Math.sqrt(nodeBudget)));
-        do{bins.clear();bundle.clear();const size=Math.max(1,Math.max(rect[2]-rect[0],rect[3]-rect[1])/divisions);
-          const bin=i=>{const p=stage.points[i],x=Math.max(rect[0],Math.min(rect[2],p.x)),y=Math.max(rect[1],Math.min(rect[3],p.y)),bx=Math.min(divisions-1,Math.floor((x-rect[0])/size)),by=Math.min(divisions-1,Math.floor((y-rect[1])/size)),key=bx+','+by;if(!bins.has(key))bins.set(key,{id:'v'+level+':'+key,index:p.index,raw:false,type:'density',zoomOnly:true,label:level===3?'记录聚合':'分组汇总',count:0,x:Math.min(rect[2],rect[0]+(bx+.5)*size),y:Math.min(rect[3],rect[1]+(by+.5)*size)});return bins.get(key);};
-          for(const i of found.nodes)bin(i).count++;
-          for(const e of edges){const a=bin(e.a),b=bin(e.b),key=a.id+'>'+b.id+':'+e.family;if(bundle.has(key))bundle.get(key).count+=e.count;else bundle.set(key,{source:a.id,target:b.id,family:e.family,count:e.count,index:e.index});}
-          if(bundle.size<=Math.max(4,edgeBudget)||divisions<=1)break;divisions=Math.max(1,Math.floor(divisions/2));
-        }while(true);
-        edges=[...bundle.values()];points=[...bins.values()];
-      }else if(edges.length>edgeBudget) {
-        // A view-only density representation retains the sum of every intersecting edge.
-        const bins=new Map(),bundle=new Map();let divisions=24,s=Math.max(1,Math.max(rect[2]-rect[0],rect[3]-rect[1])/divisions);
-        const bin=(p)=>{const px=Math.max(rect[0],Math.min(rect[2],p.x)),py=Math.max(rect[1],Math.min(rect[3],p.y)),bx=Math.min(divisions-1,Math.floor((px-rect[0])/s)),by=Math.min(divisions-1,Math.floor((py-rect[1])/s)),key=bx+','+by;if(!bins.has(key))bins.set(key,{id:'b'+level+':'+key,index:p.index,raw:false,type:'density',zoomOnly:true,label:'连接汇总',count:0,x:rect[0]+(bx+.5)*s,y:rect[1]+(by+.5)*s});bins.get(key).count++;return bins.get(key);};
-        do{bins.clear();bundle.clear();s=Math.max(1,Math.max(rect[2]-rect[0],rect[3]-rect[1])/divisions);for(const e of edges){const a=bin(stage.points[e.a]),b=bin(stage.points[e.b]),key=a.id+'>'+b.id+':'+e.family;if(bundle.has(key))bundle.get(key).count+=e.count;else bundle.set(key,{source:a.id,target:b.id,family:e.family,count:e.count,index:e.index});}if(bundle.size<=Math.max(4,edgeBudget)||divisions<=1)break;divisions=Math.max(1,Math.floor(divisions/2));}while(true);
-        edges=[...bundle.values()];points=[...bins.values(),...found.nodes.map(i=>stage.points[i])];
-      }else{for(const e of edges){nodeSet.add(e.a);nodeSet.add(e.b);}points=[...nodeSet].map(i=>stage.points[i]);edges=edges.map(e=>({...e,source:stage.points[e.a].id,target:stage.points[e.b].id}));}
+        const bins=new Map(),divisions=Math.min(32,Math.floor(Math.sqrt(nodeBudget))),size=Math.max(1,Math.max(rect[2]-rect[0],rect[3]-rect[1])/divisions);
+        for(const i of found.nodes){const p=stage.points[i],bx=Math.min(divisions-1,Math.floor((p.x-rect[0])/size)),by=Math.min(divisions-1,Math.floor((p.y-rect[1])/size)),key=bx+','+by;if(!bins.has(key))bins.set(key,{id:'v'+level+':'+key,index:p.index,raw:false,type:'density',zoomOnly:true,label:level===3?'记录聚合':'分组汇总',count:0,x:0,y:0});const bin=bins.get(key);bin.count++;bin.x+=p.x;bin.y+=p.y;display.set(i,bin);}
+        points=[...bins.values()];for(const p of points){p.x/=p.count;p.y/=p.count;}
+      }else{points=found.nodes.map(i=>stage.points[i]);for(const i of found.nodes)display.set(i,stage.points[i]);}
+      const exact=new Map(),context=[];
+      const merge=(to,e)=>{to.count+=e.count;if(to.relationKey!==e.relationKey){to.relationKey=null;to.semantic=to.type=undefined;to.membership=undefined;to.mixedRelation=true;}};
+      for(const i of found.edges){const e=stage.edges[i],a=display.get(e.a),b=display.get(e.b);
+        if(a&&b){const key=a.id+'>'+b.id+':'+e.family+':'+e.relationKey;if(exact.has(key))merge(exact.get(key),e);else exact.set(key,{...e,source:a.id,target:b.id});}
+        else context.push(e);
+      }
+      const candidates=[...exact.values()],reserve=context.length||candidates.length>edgeBudget?4:0,kept=candidates.slice(0,Math.max(0,edgeBudget-reserve));
+      for(let i=kept.length;i<candidates.length;i++)context.push(candidates[i]);
+      // Summary geometry is a deterministic representative ORIGINAL segment.
+      // Counts describe the whole partition; it is not a new causal relation.
+      const clip=e=>{const a=display.get(e.a)||stage.points[e.a],b=display.get(e.b)||stage.points[e.b],dx=b.x-a.x,dy=b.y-a.y;let lo=0,hi=1;for(const [p,q] of [[-dx,a.x-rect[0]],[dx,rect[2]-a.x],[-dy,a.y-rect[1]],[dy,rect[3]-a.y]]){if(p===0)continue;const t=q/p;if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);}return [{x:a.x+dx*lo,y:a.y+dy*lo},{x:a.x+dx*hi,y:a.y+dy*hi}];};
+      const geometry=context.map(e=>({e,line:clip(e)})),bundle=new Map(),summaryBudget=Math.min(128,edgeBudget-kept.length);let divisions=8;
+      if(geometry.length)do{bundle.clear();const cell=p=>Math.min(divisions-1,Math.max(0,Math.floor((p.x-rect[0])/Math.max(1,rect[2]-rect[0])*divisions)))+','+Math.min(divisions-1,Math.max(0,Math.floor((p.y-rect[1])/Math.max(1,rect[3]-rect[1])*divisions)));
+        for(const item of geometry){const {e,line}=item,key=e.family+':'+cell(line[0])+'>'+cell(line[1]);if(bundle.has(key))merge(bundle.get(key),e);else bundle.set(key,{...e,line,summary:true});}
+        if(bundle.size<=summaryBudget||divisions===1)break;divisions=Math.max(1,Math.floor(divisions/2));
+      }while(true);
+      const anchors=[],summaries=[];for(const e of bundle.values()){const ids=e.line.map((p,j)=>{const id='a'+level+':'+summaries.length+':'+j;anchors.push({id,x:p.x,y:p.y,anchor:true});return id;});const {line,...fields}=e;summaries.push({...fields,source:ids[0],target:ids[1]});}
+      const edges=[...kept,...summaries];
       let representativeCount=0,representativeCandidates=0;
       if(level===0){const records=[];for(const p of points){if(p.type!=='cluster')continue;const selected=representatives.get(p.index)||[];representativeCandidates+=selected.length;for(const i of selected){const n=levels[3].points[i];if(n.x<rect[0]||n.x>rect[2]||n.y<rect[1]||n.y>rect[3]||(filters.showOrphans===false&&degree[i]===0)||(q&&![n.label,n.summary,n.record,n.group].join(' ').toLocaleLowerCase().includes(q)))continue;records.push({...n,representative:true});}}const room=Math.max(0,nodeBudget-points.length),count=Math.min(room,records.length);for(let j=0;j<count;j++)points.push(records[Math.floor((j+.5)*records.length/count)]);representativeCount=count;}
-      return {level,points,edges,counters:{...found.counters,...indexStats,totalNodes:nodes.length,totalEdges:rawEdges.length,indexedCrossingEdges,indexedVisibleNodes,displayFiltered:filters.membership===false||filters.showOrphans===false||!!q,stagePoints:stage.points.length,stageEdges:stage.edges.length,internalEdges:stage.internal,renderedPoints:points.length,renderedEdges:edges.length,nodeBudget,nodeAggregation,aggregatedNodes:nodeAggregation?nodeSet.size:0,representedVisibleNodes:found.nodes.length,representatives:representativeCount,representativeCandidates,densityStars:0,representedCrossingEdges:found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),densityBundles:nodeAggregation||found.edges.length>edgeBudget}};
+      return {level,points,anchors,edges,counters:{...found.counters,...indexStats,totalNodes:nodes.length,totalEdges:rawEdges.length,indexedCrossingEdges,indexedVisibleNodes,displayFiltered:filters.membership===false||filters.showOrphans===false||!!q,stagePoints:stage.points.length,stageEdges:stage.edges.length,internalEdges:stage.internal,renderedPoints:points.length,renderedAnchors:anchors.length,exactEdges:kept.length,summaryEdges:summaries.length,renderedEdges:edges.length,nodeBudget,nodeAggregation,aggregatedNodes:nodeAggregation?found.nodes.length:0,representedVisibleNodes:found.nodes.length,representatives:representativeCount,representativeCandidates,densityStars:0,representedCrossingEdges:found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),densityBundles:nodeAggregation||summaries.length>0}};
     }
     return {data,levels,degree,counts,adjacency,byId,neighbors,find,viewport,indexStats,ensureSpatial,rebuildSpatial};
   }

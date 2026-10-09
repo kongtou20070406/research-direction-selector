@@ -36,12 +36,19 @@ controls are available in settings; reset view returns to the overview without
 changing the archived records. Labels retain a fixed screen font size through
 zoom and node-size changes, avoid collisions and do not duplicate hover text.
 
-Dense views progressively coarsen connection bundles until they fit the display
-budget of 3,500 lines. Every bundle retains its represented relation count; node
+Dense views retain nearby exact relations first and summarize remaining crossing
+relations within the display budget of 3,500 lines. At most 128 summaries use
+clipped representative original segments, without arrows or grid-centre nodes.
+Each summary retains its represented relation count; node
 details and agent queries still access the complete relations. Lines crossing
 the visible area remain queryable even when both endpoints are outside it.
 
-Raw record views also aggregate when their drawing points exceed 3,500. Their
+Raw record views aggregate only when the visible records exceed 3,500. Screen-external
+endpoints do not consume that record budget. At most 256 separate geometry anchors
+support connection summaries; they have no glyph, label, interaction or physics.
+Visible record identity, position, appearance and status are retained when they fit.
+Aggregated points use their members' actual centroid and always have a positive
+visible count. Their
 counts account for every visible original record, including isolated records.
 Search and paginated details still use the full identities and relationships.
 Only coarse spatial indexes are built at startup; the raw spatial index is built
