@@ -143,6 +143,23 @@ truth group are an observation, not a causal shortcut explanation. Missing
 harmful support makes its acceptance rate null with `UNKNOWN`, never zero.
 An observed zero rate with support still does not prove safety or generalization.
 
+`evaluate_decision_requirements(raw_text, identity, semantics, requirements)`
+recomputes the diagnostic from original rows and checks an explicit `head`
+(`gate`, `regression` or `classifier`), positive integer `min_benefit_support`
+and `min_harm_support`, and finite rates `min_benefit_acceptance` and
+`max_harm_acceptance` in [0,1]. All five fields are required; unsupported fields
+are not silently accepted. Malformed/nonfinite/oversized inputs follow the
+strict parser's error contract. Incomplete bounded declarations return UNKNOWN.
+Unresolved diagnostics or insufficient class support return `met=null` and
+UNKNOWN. With sufficient support, a rate violation returns FAIL/`met=false`;
+meeting all declared requirements returns PASS/`met=true`. Decimal thresholds
+are compared by exact rational cross multiplication, without rounding a rate
+across the threshold. The assurance is `FINITE_SAMPLE_REQUIREMENTS`; a caller
+chooses the requirements and this supplies no statistical safety guarantee.
+Imported PASS or rate fields cannot substitute for recomputation. The owned
+example consumes an unfavorable FAIL as a returned observation, separately from
+the qualification driver's PASS.
+
 Run [the owned methods example](../examples/result-methods/README.md) to reach
 qualification, application, actual numeric goal consumption and recovery. The
 consumer reconciles call values/IDs and original diagnostic text to bound source

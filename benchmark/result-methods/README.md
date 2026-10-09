@@ -86,3 +86,43 @@ Git newline normalization from changing those original data/artifact hashes.
 No SQLite contention or end-to-end CLI latency benchmark is claimed by these
 in-process tool timings. The operational wrapper's UNKNOWN protocol fields are
 preserved; the actual neural protocol is the separately frozen `protocol.json`.
+
+## Saved-output replay and declared requirements
+
+After inspecting the above negative result, the strengthening increment declares
+development requirements: at least 20 benefit and 20 harm examples, benefit
+acceptance >=0.8 and harmful acceptance <=0.1. This is an engineering example
+selected after viewing the original outputs, not a prospective confirmation
+protocol or a calibrated population safety bound. The gate returns **FAIL**:
+29/48 harmful acceptances exceed 0.1. The replay's software reconciliation PASS
+and the gate requirement FAIL have different meanings and are both retained.
+
+The stdlib-only replay reads the 16 saved files, checks executed source and
+receipt/output hashes, split separation/order, probability/label/loss/row
+consistency, original costs, independent counts and recomputed tool results.
+No scikit-learn install, fitting, extra seed or training retry is needed:
+
+```powershell
+python -B benchmark/result-methods/replay.py --records benchmark/result-methods/results/20261010 --output ../digits-replay/result.json
+```
+
+Choose a new output outside the original records. To record a native execution,
+use `rds_cli.py exec` with this script, the current tool source and all 16 files
+explicitly bound, a 20-second timeout and a fresh declared output path. Original
+training wall/costs remain in the returned result; incremental replay wall and
+30 requirement-call timings are separate. These are in-process tool timings,
+not WAL concurrency or an end-to-end performance guarantee.
+
+Replay found that the original Windows evaluator file contains CRLF but its
+caller identity hashed LF. It reports `NEWLINE_HASH_MISMATCH`, validates the
+unchanged original text/claim and rebinds current method identities to actual
+bytes. Future benchmark writes now use exact UTF-8 bytes. This repairs future
+provenance without editing old evidence or erasing the original defect.
+
+The [recorded strengthening replay](results/20261010-strengthened/replay.json)
+used a native 20-second cap and succeeded once: worker wall 0.558294 seconds,
+internal replay wall 0.185836 seconds, no training execution. Thirty requirement
+calls on the 360 frozen rows had median 5.121 ms (5.014–6.820 ms).
+Original worker wall remains 9.732614 seconds. Exact executed source copies and
+extracted replay receipt fields accompany the result. The owned four-method
+consumer records `applicable/used/consumed=4`, including the unfavorable boolean.

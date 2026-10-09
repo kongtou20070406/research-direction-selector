@@ -1,0 +1,266 @@
+{
+  "schema": 1,
+  "run_id": "digits-saved-replay-20261010",
+  "attempt_id": "0b446fd4d9974ded94167027195c804e",
+  "run_status": "SUCCEEDED",
+  "process_status": "COMPLETED",
+  "manifest_sha256": "6028d16e20df48c39f905ab0ff48d1bc6a49432c24f595f1f0d08b636984e57f",
+  "bindings_before": [
+    {
+      "path": "benchmark/result-methods/replay.py",
+      "role": "code",
+      "sha256": "035a8aa50d7b18198b9aa3a5357fcce1c90af61389b03a6fc80075fda0245e61"
+    },
+    {
+      "path": "scripts/rds_result_tools.py",
+      "role": "code",
+      "sha256": "e6774cf7c29e161b7e70a6fd259b3dfc1b43d46530a89b6b824136348d26f5f3"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/summary.json",
+      "role": "data",
+      "sha256": "a8e5de4a17fdf24d31a80437f2df901dba70e82a997dd9a45070d8712b6278f8"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/protocol.json",
+      "role": "data",
+      "sha256": "1c884afd567dd2b5dca82e1033ffd82e19325ad108b8ede61a2398f001181d57"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/splits.json",
+      "role": "data",
+      "sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/versions.json",
+      "role": "data",
+      "sha256": "c3aa61d0371d9cd1e9c3f8f606c75f5ed83b18f9661df38581b272b0e62ea8f9"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/model-costs.json",
+      "role": "data",
+      "sha256": "3c87bb9955084dba1d89f7f4afe310ec798993292ee6229e7883e55104cd0ffc"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/original-predictions.json",
+      "role": "data",
+      "sha256": "e6b3f7fe0e85088354bc2dc4233acce3b80b53917e42e7b20699aff5003137d6"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/decision-rows.json",
+      "role": "data",
+      "sha256": "528ca70f096e0f91c52ad529d89336542e1255d4b3a0e25f0be988918b674ae3"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/independent-oracle.json",
+      "role": "data",
+      "sha256": "8e40858246ccb3a9f9625737222a1ea767f67bbc1d1ff1cb00d8a01b8926b871"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/tool-results.json",
+      "role": "data",
+      "sha256": "3e04d6773eb4e6bc60ebab333a9ab721413e2fd3403380cb7f4010bde7b697b0"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/baseline.json",
+      "role": "data",
+      "sha256": "913abe8f999d4db37836f7adccec5fd321a3edea06a69fdfcd33d1faba61906c"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/candidate.json",
+      "role": "data",
+      "sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/scalar-reference.json",
+      "role": "data",
+      "sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/evaluator.txt",
+      "role": "data",
+      "sha256": "a537146246918a27e644aaf51e9137efabeddb7ded1d9897fce77d14d46fd382"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/receipt-fields.json",
+      "role": "data",
+      "sha256": "695d77d1224ffe41111271cddd92fa0a6144d711a367ef6fd56e08c2db1b2cd3"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/source-rds_result_tools.py.txt",
+      "role": "data",
+      "sha256": "3f5c81271994b460a4e2dd890a9edfa2e51eab6cdbe05cbd28257ab62a206ef6"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/source-benchmark-run.py.txt",
+      "role": "data",
+      "sha256": "ace5ae0934c86b813bbd519345fee292844bee6a89e4beaf9ca801ad15556194"
+    },
+    {
+      "path": "rds-exec-request.json",
+      "role": "config",
+      "sha256": "babc03c0ee384e842e61ee512d144c87c56881c3624716b93e628774cf613949"
+    },
+    {
+      "path": "rds-exec-metadata.json",
+      "role": "evaluator",
+      "sha256": "668c100f162cd2eda865a37c22b890174c334acf132c0cd7a621190881442db6"
+    },
+    {
+      "path": "rds-exec-protocol.json",
+      "role": "protocol",
+      "sha256": "da939e1570d099bf14c67d4fa801a8a8a9690b09a3f4ecae133bee827518be1e"
+    }
+  ],
+  "bindings_after": [
+    {
+      "path": "benchmark/result-methods/replay.py",
+      "role": "code",
+      "sha256": "035a8aa50d7b18198b9aa3a5357fcce1c90af61389b03a6fc80075fda0245e61"
+    },
+    {
+      "path": "scripts/rds_result_tools.py",
+      "role": "code",
+      "sha256": "e6774cf7c29e161b7e70a6fd259b3dfc1b43d46530a89b6b824136348d26f5f3"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/summary.json",
+      "role": "data",
+      "sha256": "a8e5de4a17fdf24d31a80437f2df901dba70e82a997dd9a45070d8712b6278f8"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/protocol.json",
+      "role": "data",
+      "sha256": "1c884afd567dd2b5dca82e1033ffd82e19325ad108b8ede61a2398f001181d57"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/splits.json",
+      "role": "data",
+      "sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/versions.json",
+      "role": "data",
+      "sha256": "c3aa61d0371d9cd1e9c3f8f606c75f5ed83b18f9661df38581b272b0e62ea8f9"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/model-costs.json",
+      "role": "data",
+      "sha256": "3c87bb9955084dba1d89f7f4afe310ec798993292ee6229e7883e55104cd0ffc"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/original-predictions.json",
+      "role": "data",
+      "sha256": "e6b3f7fe0e85088354bc2dc4233acce3b80b53917e42e7b20699aff5003137d6"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/decision-rows.json",
+      "role": "data",
+      "sha256": "528ca70f096e0f91c52ad529d89336542e1255d4b3a0e25f0be988918b674ae3"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/independent-oracle.json",
+      "role": "data",
+      "sha256": "8e40858246ccb3a9f9625737222a1ea767f67bbc1d1ff1cb00d8a01b8926b871"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/tool-results.json",
+      "role": "data",
+      "sha256": "3e04d6773eb4e6bc60ebab333a9ab721413e2fd3403380cb7f4010bde7b697b0"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/baseline.json",
+      "role": "data",
+      "sha256": "913abe8f999d4db37836f7adccec5fd321a3edea06a69fdfcd33d1faba61906c"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/candidate.json",
+      "role": "data",
+      "sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/scalar-reference.json",
+      "role": "data",
+      "sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/evaluator.txt",
+      "role": "data",
+      "sha256": "a537146246918a27e644aaf51e9137efabeddb7ded1d9897fce77d14d46fd382"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/receipt-fields.json",
+      "role": "data",
+      "sha256": "695d77d1224ffe41111271cddd92fa0a6144d711a367ef6fd56e08c2db1b2cd3"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/source-rds_result_tools.py.txt",
+      "role": "data",
+      "sha256": "3f5c81271994b460a4e2dd890a9edfa2e51eab6cdbe05cbd28257ab62a206ef6"
+    },
+    {
+      "path": "benchmark/result-methods/results/20261010/source-benchmark-run.py.txt",
+      "role": "data",
+      "sha256": "ace5ae0934c86b813bbd519345fee292844bee6a89e4beaf9ca801ad15556194"
+    },
+    {
+      "path": "rds-exec-request.json",
+      "role": "config",
+      "sha256": "babc03c0ee384e842e61ee512d144c87c56881c3624716b93e628774cf613949"
+    },
+    {
+      "path": "rds-exec-metadata.json",
+      "role": "evaluator",
+      "sha256": "668c100f162cd2eda865a37c22b890174c334acf132c0cd7a621190881442db6"
+    },
+    {
+      "path": "rds-exec-protocol.json",
+      "role": "protocol",
+      "sha256": "da939e1570d099bf14c67d4fa801a8a8a9690b09a3f4ecae133bee827518be1e"
+    }
+  ],
+  "executor_sha256": "388fe2cffda8a134e7d7dc4e978f7c478857ece6b69694daecbed25e51ec633a",
+  "started_at": 1791566158.6928751,
+  "ended_at": 1791566159.279416,
+  "exit_code": 0,
+  "timeout": false,
+  "resources": {
+    "wall_seconds": {
+      "unit": "seconds",
+      "measured": 0.558293699999922,
+      "unknown": false,
+      "charged_estimate": 0.0
+    }
+  },
+  "artifacts": [
+    {
+      "path": ".rds/project-artifacts/digits-saved-replay-20261010/manifest.json",
+      "sha256": "6028d16e20df48c39f905ab0ff48d1bc6a49432c24f595f1f0d08b636984e57f",
+      "size": 529,
+      "kind": "manifest.json"
+    },
+    {
+      "path": ".rds/project-artifacts/digits-saved-replay-20261010/stdout.bin",
+      "sha256": "093134e8edcb2a1b9b15e372a866ec21e0082e6a172ab3604fa1e621a9f6989c",
+      "size": 26312,
+      "kind": "stdout.bin"
+    },
+    {
+      "path": ".rds/project-artifacts/digits-saved-replay-20261010/stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0,
+      "kind": "stderr.bin"
+    },
+    {
+      "path": "outputs/replay/result.json",
+      "sha256": "8714379af57c7102f94a5468677a5c0718908ff0bd79ff79a042daa848927220",
+      "size": 26310,
+      "kind": "project_output"
+    }
+  ],
+  "assessment": {
+    "task_gain": "UNKNOWN",
+    "mechanism": "UNKNOWN"
+  },
+  "sha256": "ea1af7a33622d52bf27be6793a9964e8dbfc26ed6347321e059f3e7d00f9c6c3"
+}

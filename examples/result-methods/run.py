@@ -28,7 +28,7 @@ def check_original_inputs(spec, source_map):
             if any(identity[k] not in {hashlib.sha256(value).hexdigest() for value in source_map.values()}
                    for k in ('data_sha256', 'evaluator_sha256')):
                 raise ValueError('Point data/evaluator bytes are missing from bound sources')
-    elif entry == 'diagnose_decisions':
+    elif entry in {'diagnose_decisions', 'evaluate_decision_requirements'}:
         raw_text, identity = args[:2]
         original = source_map.get(identity['source_path'])
         if (original is None or raw_text.encode('utf-8') != original
@@ -102,7 +102,8 @@ def run(workspace, specs_path):
     for spec in specs:
         name, entry, args = spec['name'], spec['entry'], spec['args']
         if (not isinstance(name, str) or not name.isascii() or not name.isidentifier()
-                or entry not in {'compare_paired_metrics', 'check_residuals', 'diagnose_decisions'}):
+                or entry not in {'compare_paired_metrics', 'check_residuals', 'diagnose_decisions',
+                                 'evaluate_decision_requirements'}):
             raise ValueError('Supply a safe method name and supported entry')
         cases = [{'args': args, 'expected': spec['expected']}]
         write(name + '/cases.json', cases)

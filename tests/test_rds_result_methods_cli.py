@@ -36,7 +36,7 @@ class ResultMethodsConsumerTests(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             modules.append(module)
-        for index in (0, 2):
+        for index in (0, 2, 3):
             specifications = modules[0].specifications()
             selected = specifications[index]
             if index == 0:
@@ -62,14 +62,18 @@ class ResultMethodsConsumerTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             summary = json.loads(proc.stdout)
             counts = summary['tool_utilization']['counts']
-            self.assertEqual(counts['applicable'], 3)
-            self.assertEqual(counts['applicable_used'], 3)
-            self.assertEqual(counts['applicable_consumed'], 3)
+            self.assertEqual(counts['applicable'], 4)
+            self.assertEqual(counts['applicable_used'], 4)
+            self.assertEqual(counts['applicable_consumed'], 4)
             self.assertTrue(summary['recovery_preserved_runs_and_budget'])
             final = json.loads((parent / 'owned/reports/after.json').read_text(encoding='utf-8'))
             self.assertIsNone(final['selected_run'])
             output = json.loads((parent / 'owned/outputs/diagnostic.json').read_text(encoding='utf-8'))
             self.assertEqual(output['cases'][0]['value']['heads']['gate']['acceptance']['harm']['rate'], 0)
+            requirement = json.loads((parent / 'owned/outputs/requirements.json').read_text(encoding='utf-8'))
+            self.assertEqual(requirement['status'], 'PASS')  # Driver qualification, distinct from returned observation.
+            self.assertEqual(requirement['cases'][0]['value']['status'], 'FAIL')
+            self.assertIs(requirement['cases'][0]['value']['met'], False)
             self.assertEqual(summary['scientific_gain'], 'UNKNOWN')
 
 

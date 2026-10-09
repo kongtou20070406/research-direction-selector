@@ -79,6 +79,23 @@ def specifications():
                      'rejection_reason': 'accepted' if i == 0 else 'both', 'reasons': []}
                     for i, (pair, truth) in enumerate([('a', 'benefit'), ('b', 'harm')])],
         'row_count': 2, 'valid_row_count': 2, 'unknown_count': 0, 'omitted_rows': 0, 'reasons': [], **common}
+    # Separate unfavorable original case: both heads accept the harmful row.
+    unsafe_upstream = source('sources/unsafe-predictions.json', [[-1, -1, 0.9], [1, -1, 0.9]])
+    unsafe_rows = [dict(row, predicted_gain=-1, p_better=0.9, source_sha256=unsafe_upstream) for row in rows]
+    unsafe_sha = source('sources/unsafe-decisions.json', {'rows': unsafe_rows, 'parents': []})
+    unsafe_raw = sources[-1]['text']
+    unsafe_identity = dict(identity, run_id='unsafe-decisions', source_path='sources/unsafe-decisions.json',
+                           source_sha256=unsafe_sha)
+    requirements = {'head': 'gate', 'min_benefit_support': 1, 'min_harm_support': 1,
+                    'min_benefit_acceptance': 1, 'max_harm_acceptance': 0}
+    requirements_expected = {'operation': 'evaluate_decision_requirements', 'status': 'FAIL', 'met': False,
+        'reason': 'REQUIREMENTS_NOT_MET', 'identity': unsafe_identity, 'requirements': requirements,
+        'checks': {'min_benefit_support': {'status': 'PASS', 'observed': 1, 'required': 1},
+                   'min_harm_support': {'status': 'PASS', 'observed': 1, 'required': 1},
+                   'min_benefit_acceptance': {'status': 'PASS', 'observed': 1.0, 'required': 1},
+                   'max_harm_acceptance': {'status': 'FAIL', 'observed': 1.0, 'required': 0}},
+        'diagnostic_status': 'OBSERVED', 'diagnostic_reasons': [],
+        'assurance': 'FINITE_SAMPLE_REQUIREMENTS', **common}
     specs = [
         {'name': 'paired', 'entry': 'compare_paired_metrics', 'args': [candidate, baseline, sampling],
          'expected': paired_expected, 'predicates': [{'field': 'status', 'op': 'eq', 'value': 'COMPARABLE'},
@@ -88,7 +105,11 @@ def specifications():
                                                      {'field': 'within_tolerance', 'op': 'eq', 'value': True}]},
         {'name': 'diagnostic', 'entry': 'diagnose_decisions', 'args': [raw, identity, semantics],
          'expected': diagnostic_expected, 'predicates': [{'field': 'status', 'op': 'eq', 'value': 'OBSERVED'},
-             {'field': 'heads/gate/acceptance/harm/rate', 'fact': 'harm_acceptance', 'op': 'eq', 'value': 0}]}]
+             {'field': 'heads/gate/acceptance/harm/rate', 'fact': 'harm_acceptance', 'op': 'eq', 'value': 0}]},
+        {'name': 'requirements', 'entry': 'evaluate_decision_requirements',
+         'args': [unsafe_raw, unsafe_identity, semantics, requirements], 'expected': requirements_expected,
+         'predicates': [{'field': 'status', 'op': 'eq', 'value': 'FAIL'},
+                        {'field': 'met', 'op': 'eq', 'value': False}]}]
     for spec in specs:
         spec['sources'] = sources
     return specs

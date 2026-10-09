@@ -8,10 +8,12 @@ python -B examples/result-methods/specs.py | Out-File -Encoding utf8 ../method-s
 python -B examples/result-methods/run.py --workspace ../owned-methods-example --specs ../method-specs.json
 ```
 
-The public fixture has three explicit oracles: paired loss improvement `2.0`,
+The public fixture has four explicit oracles: paired loss improvement `2.0`,
 zero residual against two independently specified finite values, and a two-row
 gate with one beneficial acceptance and zero harmful acceptances out of one
-harmful example. These are development cases, not safety or research-gain evidence.
+harmful example, and a separate unsafe gate which accepts its harmful row and
+returns `FAIL`/`met=false` against the explicit zero harmful acceptance requirement.
+These are development cases, not safety or research-gain evidence.
 `specs.py` never calls the candidate to construct an expected result.
 
 Each specification names its method, exact args, full independent expected
@@ -23,9 +25,10 @@ semantics, reference independence or original parent claims are true.
 
 The existing native entries extract, validate, register and prepare each method;
 `project init --recipe` compiles the existing owned contract. A 90-second wall
-budget includes native preparation and the three 10-second application
+budget includes native preparation and the four 10-second application
 reservations. Goal predicates consume the returned improvement, tolerance boolean
-and `/heads/gate/acceptance/harm/rate`; they do not use qualification PASS as the
+and `/heads/gate/acceptance/harm/rate`, plus the requirement's FAIL and false boolean;
+they do not use qualification PASS as the
 useful observation. Repeated advance preserves original runs and spent budget.
 
 `cli-transcript.json`, `reports/`, `outputs/`, source bytes, summary and the

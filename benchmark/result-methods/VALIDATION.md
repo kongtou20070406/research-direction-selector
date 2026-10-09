@@ -2,7 +2,9 @@
 
 Scope: one author/work key `issue-292`, base
 `cc071e1aaf3ba5d8beb40b4998d4e40f3c2d254e`, a finite task-family slice of
-#250/#253. **Human hold: submit as draft; do not merge.** No release/version,
+#250/#253. The initial human draft/no-merge hold was superseded by the direct
+2026-10-10 instruction "继续加强然后合并". Merge still requires independent
+substantive review, final-head CI, and subsequent main verification. No release/version,
 formal kernel, SQLite implementation or third-party active branch was changed.
 
 Original checks were executed before the neural benchmark. The RDS self-development
@@ -41,7 +43,7 @@ conjunction 1/4 and 0/4. Missing harmful class, unknown stage, duplicates,
 incompatible split/evaluator, stale/missing parents, mixed natural/artificial
 origins and excessive/hostile/nonfinite inputs retain failure or UNKNOWN.
 
-The public consumer fixture has exactly three methods with full independent
+The original public consumer fixture had three methods with full independent
 returns, original byte bindings and actual numeric goal consumption. Its reused
 cases establish software wiring and recovery, not unseen-input qualification.
 No paid-model benchmark arms, token savings, GPU training campaign, mathematical
@@ -57,5 +59,32 @@ wall includes startup; internal timing does not. CPU-seconds remain unknown.
 SQLite WAL concurrency and formal-engine performance were not measured by this
 finite result-method benchmark.
 
-Neither #250's broader independent model-arm acceptance nor #253's final main
-acceptance is claimed. Related Issues remain open while the PR is held.
+The strengthening increment adds explicit finite acceptance requirements and a
+fourth owned consumer which returns and consumes FAIL/`met=false`. Fifteen
+independent requirement tests and eight saved-output reconciliation tests cover
+class support, decimal boundaries, UNKNOWN/error separation, forged results,
+original value/hash mismatches, split overlap, cost preservation and overwrite
+prevention. A real replay uses the same saved probabilities, never model fitting.
+
+The replay exposed an original Windows evaluator defect: `write_text` wrote
+CRLF bytes while the original metadata hashed LF text. The original record is
+unchanged and the mismatch is explicitly reported. Future benchmark evaluator
+writes use exact UTF-8 bytes. The replay verifies the original evaluator text
+and normalized claim, then binds all current calls to the actual file hash.
+It distinguishes old caller metadata from the checked current byte identity.
+
+The strengthening native development iteration `...-03` exhausted its existing
+90-second worker allowance after 25 passing cases while the complete consumer
+case was still running; it has no final test-results document and remains FAILED
+with timeout=true and 91.609802 seconds spent. It is not a passing suite. The
+bounded follow-up `...-04` ran the 24 fast affected checks successfully, imported
+their original observations and received the native review-next-change advice.
+The complete four-method consumer passed separately in author and independent
+reviewer runs (about109/106 seconds), and a fresh persistent owned workspace
+retains its actual runs, goal consumption and recovery/cost records. No original
+attempt was overwritten or cost refunded. The replay was run only after fixes
+and these relevant checks passed, without another model training execution.
+
+Neither #250's broader independent model-arm acceptance nor complete #253
+acceptance is claimed. Main acceptance and Issue closure are separate from
+local checks and PR CI.

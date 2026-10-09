@@ -70,7 +70,7 @@ def run(workspace):
     np.savez(root / 'original-digits.npz', x=digits.data, y=y)
     dataset_sha = hashlib.sha256((root / 'original-digits.npz').read_bytes()).hexdigest()
     evaluator_text = 'Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.\n'
-    (root / 'evaluator.txt').write_text(evaluator_text, encoding='utf-8')
+    (root / 'evaluator.txt').write_bytes(evaluator_text.encode('utf-8'))
     evaluator_sha = hashlib.sha256(evaluator_text.encode()).hexdigest()
     model_costs = []
     with threadpool_limits(limits=1):
