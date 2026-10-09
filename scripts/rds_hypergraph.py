@@ -572,8 +572,14 @@ def record_topology(spec, *, source_base=None):
                                 'issues': sorted(issues, key=lambda row: (row['node_id'] or '', row['field'], row['reason']))}}
 
 
-def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
-    """Least declared closure and complete minimal missing-evidence sets, or UNKNOWN."""
+def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None, *, analysis_targets="goals"):
+    """Analyze declared goals, or every node under the same shared work limits.
+
+    ``all`` expands blocker analysis, not the declared research goals or their
+    ready obligations. ``all_ready_obligations`` exposes the separate full-map
+    diagnostic. Coverage describes computation, never evidence verification.
+    """
+    _require(analysis_targets in ("goals", "all"), "analysis_targets must be goals or all")
     nodes, edges, goals, limits = _validate(spec)
     grounded, receipt_audit = frozenset(), None
     if audit_receipts_enabled:
@@ -585,7 +591,11 @@ def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
                      and edge.get("evidence") is not None
                      and (edge["evidence"]["receipt"]["project_root"],
                           edge["evidence"]["receipt"]["sha256"]) not in grounded}
-    relevant_nodes, relevant_edges = _goal_relevance(edges, goals)
+    targets = list(nodes) if analysis_targets == "all" else goals
+    goal_nodes, goal_edges = _goal_relevance(edges, goals)
+    relevant_nodes, relevant_edges = (set(nodes), {edge["id"] for edge in edges
+                                                  if edge["status"] != "CONTRADICTED"}) \
+        if analysis_targets == "all" else (goal_nodes, goal_edges)
 
     incoming = {edge["conclusion"] for edge in edges}
     direct = {ident for ident, node in nodes.items()
@@ -617,7 +627,7 @@ def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
                           "source": deepcopy(nodes[ident]["source"])})
 
     results = {}
-    for goal in goals:
+    for goal in targets:
         supported = goal in closure
         status = "DECLARED_SUPPORTED" if supported else nodes[goal]["status"]
         if status == "UNKNOWN" and not truncated and not families[goal]:
@@ -626,19 +636,64 @@ def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
             [sorted(v) for v in sorted(families[goal], key=lambda v: (len(v), sorted(v)))]
         results[goal] = {"status": status, "minimal_missing_evidence_sets": sets,
                          "blocker_sets_complete": supported or not truncated}
-    return {**record_topology(spec), "schema": 1, "assurance": ASSURANCE,
+    result = {**record_topology(spec), "schema": 1, "assurance": ASSURANCE,
             "declared_supported_closure": sorted(closure),
             "declared_derivation_rules": derivations,
             "active_contradicted_conclusion_rules": sorted(conflicts),
             "receipt_blocked_node_ids": sorted(receipt_block),
             "receipt_audit": receipt_audit,
-            "goals": results, "ready_obligations": ready,
+            "goals": {goal: deepcopy(results[goal]) for goal in goals}, "ready_obligations": ready,
             "truncated": truncated, "truncation_reason": reason,
             "combinations_examined": combinations, "limits": limits,
             "blocker_semantics": "UNKNOWN leaves default to direct evidence; derived nodes need explicit allow_direct_evidence=true. Proposed rule IDs remain separate proof obligations. No cost or probability is inferred.",
             "direct_evidence_node_ids": sorted(direct),
             "reported_nodes": deepcopy(spec["nodes"]),
             "reported_hyperedges": deepcopy(spec["hyperedges"])}
+    if analysis_targets == "all":
+        result["all_ready_obligations"] = deepcopy(ready)
+        # Preserve the existing goal-directed consumer API. Receipt repair was
+        # already global and stays so; only proof/direct-evidence obligations
+        # are filtered by the original goal relevance, with original ordering.
+        result["ready_obligations"] = [row for row in ready
+            if row["kind"] == "RECEIPT_REVALIDATION"
+            or row["kind"] == "PROPOSED_RULE_PROOF" and row["token"][5:] in goal_edges
+            or row["kind"] in {"DIRECT_PROOF_ALTERNATIVE", "LEAF_NODE_EVIDENCE"}
+                and row["token"][5:] in goal_nodes]
+        edge_analysis = {}
+        for edge in edges:
+            head = edge["conclusion"]
+            if edge["status"] == "CONTRADICTED":
+                disposition, explanation = "CONTRADICTED", "Contradicted rules cannot supply support or blocker alternatives"
+            elif edge["id"] in blocked_rules:
+                disposition, explanation = "RECEIPT_BLOCKED", "The declared support receipt is not grounded"
+            elif nodes[head]["status"] == "CONTRADICTED":
+                disposition, explanation = "CONCLUSION_CONTRADICTED", "The contradicted conclusion cannot receive support"
+            elif head in closure:
+                disposition, explanation = "CONCLUSION_SUPPORTED", "The conclusion is already in the declared closure; its empty blocker set dominates alternatives"
+            elif set(edge["premises"]) <= closure:
+                disposition, explanation = edge["status"] + "_PREMISES_READY", "All premises are in the declared closure; proposed rules still require evidence"
+            else:
+                disposition, explanation = "WAITING_FOR_PREMISES", "At least one premise is outside the declared closure"
+            excluded = edge["status"] == "CONTRADICTED" or nodes[head]["status"] == "CONTRADICTED" or head in closure
+            edge_analysis[edge["id"]] = {
+                "declared_status": edge["status"], "disposition": disposition, "reason": explanation,
+                "premise_states": {ident: results[ident]["status"] for ident in edge["premises"]},
+                "conclusion_state": results[head]["status"],
+                "blocker_analysis": "EXACTLY_EXCLUDED" if excluded else "INCOMPLETE" if truncated else "COMPLETE"}
+        result["node_analysis"] = results
+        result["coverage"] = {
+            "status": "INCOMPLETE" if truncated else "FULL", "full": not truncated,
+            "analysis_targets": "all", "scope": "SUPPLIED_DEPENDENCY_MAP",
+            "input_sha256": hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(",", ":"),
+                                                       ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest(),
+            "node_ids": sorted(nodes), "hyperedge_ids": sorted(edge_analysis),
+            "counts": {"nodes": len(nodes), "hyperedges": len(edges), "nodes_validated": len(nodes),
+                       "hyperedges_validated": len(edges), "node_analysis_reports": len(results),
+                       "nodes_blocker_complete": sum(row["blocker_sets_complete"] for row in results.values()),
+                       "hyperedges_classified": len(edge_analysis)},
+            "hyperedge_analysis": edge_analysis, "reasons": [reason] if truncated else [],
+            "assurance": ASSURANCE}
+    return result
 
 
 def trace_support_cone(spec, node_id, audit_receipts_enabled=False):

@@ -19,14 +19,6 @@ from rds_owned_advisor import review
 
 
 class ExecutionSemanticsTests(unittest.TestCase):
-    def setUp(self):
-        # Workspace-local fixtures also work in the restricted Windows sandbox.
-        directory = Path.cwd() / 'out' / 'execution-semantics-fixtures'
-        directory.mkdir(parents=True, exist_ok=True)
-        temporary = patch('tempfile.tempdir', str(directory))
-        temporary.start()
-        self.addCleanup(temporary.stop)
-
     def cli(self, root, *arguments):
         result = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'),
                                  '--root', str(root), *arguments], capture_output=True,

@@ -4,6 +4,7 @@ Completion supplies file identities and operational fields, never scientific fac
 """
 import ast
 from collections import Counter
+from contextlib import contextmanager, ExitStack
 from copy import deepcopy
 import hashlib
 import json
@@ -15,6 +16,7 @@ import sys
 import time
 
 from rds_project import ProjectStore, canonical, digest, execution_route, file_sha, number, require
+from rds_mutation import mutation
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_FILES = 128
@@ -92,6 +94,10 @@ def choice(advice, context, candidate_id=None):
             raise ValueError('No READY candidate; configured actions were discarded: ' + _discarded_choice_hint(discarded))
     if not matches and len(discarded_matches) == 1:
         raise ValueError('Selected candidate was discarded: ' + _discarded_choice_hint(discarded_matches))
+    from rds_advisor_coverage import require_complete
+    require_complete(searches)
+    require(all(search.get('context_sha256') == digest(context) for search in searches),
+            'Advisor context changed after complete graph analysis; review the current graph and facts again')
     require(len(matches) == 1, 'Choose one returned candidate ID; missing, pruned or ambiguous candidate')
     candidate = deepcopy(matches[0])
     from rds_methods import review_candidate
@@ -152,13 +158,27 @@ def choice(advice, context, candidate_id=None):
     return record
 
 
-def record_choice(root, advice, context, candidate_id, checkpoint_id):
+def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
+                  _expected_contract_sha256=None):
     from rds_checkpoints import save_checkpoint
-    record = choice(advice, context, candidate_id)
-    # Read the contract before writing advice, so a rejected record leaves no blob.
+    from rds_advisor_coverage import project_context
+    # QUICK contracts remain frozen; native activation changes ownership.
+    # Reject caller choices in owned ledgers, and pin the checked QUICK
+    # contract through the original checkpoint publication transaction.
     snapshot = ProjectStore(root).snapshot(check_bindings=True)
+    require('advisor_policy' not in snapshot['contract'],
+            'Program-owned Advisor owns route choices; use project next/advance')
+    require(_expected_contract_sha256 is None or
+            _expected_contract_sha256 == snapshot['contract_sha256'],
+            'Expected choice contract differs from the current QUICK contract; inspect the original decision')
+    expected_contract = (snapshot['contract_sha256'] if _expected_contract_sha256 is None
+                         else _expected_contract_sha256)
+    context = project_context(root, context)
+    record = choice(advice, context, candidate_id)
     record['advice'] = cas_json(root, advice)
-    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record)
+    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
+                            _expected_contract_sha256=expected_contract,
+                            _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
     saved['candidate_id'] = record['candidate']['id']
     return saved
 
@@ -237,6 +257,15 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         contract = store._contract(db)
+        if dispatch and request.get('research_context'):
+            # Bind allowance admission to the graph revision reviewed by the
+            # caller. The final launch path also rechecks the current snapshot.
+            reviewed = request['research_context'].get('dependency_snapshot_sha256')
+            snapshot = None
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+                snapshot = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+            require((snapshot['sha256'] if snapshot else None) == reviewed,
+                    'Dependency snapshot changed before execution allowance; review the complete graph again')
         require('advisor_policy' not in contract,
                 'Program-owned Advisor requires project advance/create/execute; quick child allowance cannot bypass it')
         require('stop_policy' not in contract and 'maintenance_allowance' not in contract,
@@ -388,25 +417,62 @@ def _inputs(root, argv, binds):
     return files, raw_by_path
 
 
-def execute(args, review=None):
+def _parent_controls(root, *, db=None):
+    """Read effective contract and steering together without creating a ledger."""
+    if db is not None:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                or not db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
+            return None, None
+        from rds_steering import current
+        return ProjectStore._contract(db), current(db)
+    parent = ProjectStore(root)
+    if not parent.path.is_file():
+        return None, None
+    with parent._db(True) as db:
+        db.execute('BEGIN')
+        return _parent_controls(root, db=db)
+
+
+def execute(args, review=None, *, _native_preparation_root=None):
     """Create one frozen normal ProjectStore per named job, without JSON boilerplate."""
     root = Path(args.root).resolve()
+    from rds_project_lifecycle import check_root
+    def check_source_root():
+        if _native_preparation_root is None:
+            check_root(root)
+            return
+        # Native qualification already belongs to its research project's
+        # preparation ledger. This private caller path is not a CLI escape.
+        parent = ProjectStore(_native_preparation_root)
+        check_root(parent.root)
+        token = root.name
+        require(re.fullmatch(r'[0-9a-f]{32}', token) and
+                root == parent.root / '.rds' / 'rsi' / 'tool-checks' / token and args.name == 'tool-check',
+                'Native preparation must use its original managed workspace')
+        from rds_tools import _preparation_contract
+        with parent._db(True) as parent_db:
+            if not _preparation_contract(parent, parent_db):
+                rows = parent_db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_STARTED' "
+                                         "AND json_extract(body,'$.request.token')=? LIMIT 2", (token,)).fetchall()
+                require(len(rows) == 1, 'Native preparation requires its original project intent')
+                intent = json.loads(rows[0]['body'])
+                require(intent['request_sha256'] == digest(intent['request']) and
+                        intent['request']['job_root'] == (root / '.rds/exec/tool-check').relative_to(parent.root).as_posix(),
+                        'Native preparation intent or workspace changed')
+    check_source_root()
     require(root.is_dir(), 'Source root must exist')
     owner = Path(args.ledger).resolve() if review is not None else None
-    source_store = ProjectStore(root)
-    if source_store.path.is_file():
-        with source_store._db(True) as db:
-            # Native research records can share this database before project init.
-            has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
-            source_contract = source_store._contract(db) if has_contract else {}
-            if source_contract:
-                from rds_steering import current
-                require(current(db) is None,
-                        'Human steering requires project create/execute; use the original child root to inspect or recover an existing quick job')
+    source_contract, source_steering = _parent_controls(root)
+    parent_contracts = {root: digest(source_contract) if source_contract is not None else None}
+    if source_contract is not None:
+        require(source_steering is None,
+                'Human steering requires project create/execute; use the original child root to inspect or recover an existing quick job')
         require('advisor_policy' not in source_contract,
                 'Program-owned Advisor requires project advance/create/execute; quick exec cannot bypass it')
         require('stop_policy' not in source_contract and 'maintenance_allowance' not in source_contract,
                 'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
+        require(_native_preparation_root is not None or 'execution_policy' in source_contract,
+                'Frozen source project requires project create/execute; QUICK needs its original execution_policy accounting')
         if 'execution_policy' in source_contract:
             require(owner is None or owner == root, 'Frozen source execution policy cannot be replaced by another ledger')
             owner = root
@@ -419,12 +485,11 @@ def execute(args, review=None):
     if argv[0].endswith('.py') and (root / argv[0]).is_file():
         argv = [sys.executable, '-B'] + argv
     if review is not None:
-        if review[1].get('require_goal_link'):
-            from rds_math import check_context
-            binding = check_context(args.ledger, review[1])
-            if binding is not None:
-                context = {**deepcopy(review[1]), 'objective_binding': binding}
-                review = (review[0], context)
+        from rds_math import check_context
+        binding = check_context(args.ledger, review[1])
+        if binding is not None:
+            context = {**deepcopy(review[1]), 'objective_binding': binding}
+            review = (review[0], context)
         selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
         args.choose = selected['candidate']['id']
     argv[0] = ProjectStore._command(argv)
@@ -448,23 +513,41 @@ def execute(args, review=None):
         require(all(row['candidate'] in args.output for row in policy.get('metrics', [])), 'Declare each guarded candidate using --output')
         binds += ['data=' + p.relative_to(root).as_posix() for p in dependencies]
     files, raw_by_path = _inputs(root, argv, binds)
+    # Check the complete frozen layout before writing a prospective checkpoint
+    # or charging an owning ledger. OS failures remain visible retained failures.
+    generated = ['rds-exec-request.json', 'rds-exec-metadata.json', 'rds-exec-protocol.json']
+    if goal_raw is not None:
+        generated.append('rds-exec-objective.json')
+    preflight = ProjectStore(root)
+    def layout_key(path):
+        return Path(preflight._output_key(path))
+    def overlaps(left, right):
+        return left == right or left in right.parents or right in left.parents
+    generated_paths = [layout_key(root / name) for name in generated]
+    bound_paths = [layout_key(p) for p in files]
+    for path, key in zip(files, bound_paths):
+        require(not path.name.startswith('rds-exec-'), 'Input uses a reserved rds-exec- filename')
+        require(not any(overlaps(key, generated_path) for generated_path in generated_paths),
+                'Input path overlaps a generated exec file')
     # Validate all output declarations before creating a child workspace or charging
     # an owning project ledger. A rejected binding must be safe to retry unchanged.
     if args.output:
-        preflight = ProjectStore(root)
         output_roots = sorted({Path(p).parts[0] for p in args.output if len(Path(p).parts) > 1}) or ['outputs']
         output_files = sorted({Path(p).as_posix() for p in args.output if len(Path(p).parts) == 1})
         preflight_contract = {'output_roots': output_roots, 'output_files': output_files,
                               'bindings': [{'path': p.relative_to(root).as_posix()} for p in files]}
         seen_outputs = set()
-        bound_paths = [(root / p.relative_to(root)).resolve() for p in files]
         for output in args.output:
             output_path = preflight._path(output, output=True, contract=preflight_contract)
             output_key = preflight._output_key(output_path)
             require(output_key not in seen_outputs, 'Output paths must be unique')
+            key = layout_key(output_path)
+            require(not any(overlaps(key, Path(previous)) for previous in seen_outputs),
+                    'Output paths overlap each other')
             seen_outputs.add(output_key)
-            require(not any(output_path == bound or output_path in bound.parents or bound in output_path.parents
-                            for bound in bound_paths), 'Output path overlaps a bound input')
+            require(not any(overlaps(key, bound) for bound in bound_paths), 'Output path overlaps a bound input')
+            require(not any(overlaps(key, generated_path) for generated_path in generated_paths),
+                    'Output path overlaps a generated exec file')
     request = {'argv': argv, 'timeout': timeout, 'outputs': args.output,
                'inputs': [{'path': p.relative_to(root).as_posix(), 'roles': sorted(roles),
                            'sha256': hashlib.sha256(raw_by_path[p]).hexdigest()} for p, roles in sorted(files.items())]}
@@ -487,11 +570,16 @@ def execute(args, review=None):
     if review is not None:
         request['research_context'] = {'sha256': digest(review[1]), 'candidate': args.choose,
                                        'ledger': str(Path(args.ledger).resolve())}
+        request['research_context']['dependency_snapshot_sha256'] = review[1].get('dependency_snapshot_sha256')
     execution_policy, executor_sha256 = None, None
     if owner is not None:
         parent = ProjectStore(owner)
         with parent._db(True) as db:
             parent_contract = parent._contract(db)
+            parent_sha = digest(parent_contract)
+            require(owner not in parent_contracts or parent_contracts[owner] == parent_sha,
+                    'Quick parent contract changed during preparation; use the original project')
+            parent_contracts[owner] = parent_sha
             execution_policy = parent_contract.get('execution_policy')
             if execution_policy is not None:
                 _, errors = parent._bindings(parent_contract)
@@ -502,6 +590,50 @@ def execute(args, review=None):
                 'policy_sha256': digest(execution_policy), 'route_sha256': execution_route(request['argv'], request['inputs'],
                     request['outputs'], root, parent_contract.get('objective_sha256', request.get('objective_sha256')),
                     route=_policy_route(request, None), arm='tool', executor_sha256=executor_sha256)}
+    locked_parents = {}
+
+    @contextmanager
+    def admission_context():
+        # The original allowance path acquires parent before child. Keep that
+        # order during preparation and through the child's attempt commit.
+        with mutation(), ExitStack() as locks:
+            try:
+                for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
+                    parent = ProjectStore(parent_root)
+                    create_anchor = not parent.path.is_file()
+                    parent.state_dir.mkdir(exist_ok=True)
+                    parent_db = locks.enter_context(parent._db())
+                    if create_anchor:
+                        # No contract/budget/event is created. The same SQLite
+                        # file serializes a concurrent first project init.
+                        parent_db.execute('PRAGMA journal_mode=WAL')
+                    parent_db.execute('BEGIN IMMEDIATE')
+                    locked_parents[parent_root] = parent_db
+                yield
+            finally:
+                locked_parents.clear()
+
+    def check_quick_parents():
+        # Both materialization and attempt admission require these live checks.
+        check_source_root()
+        for parent_root, prepared_sha in parent_contracts.items():
+            current_contract, steering = _parent_controls(parent_root, db=locked_parents[parent_root])
+            current_sha = digest(current_contract) if current_contract is not None else None
+            require(current_sha == prepared_sha,
+                    'Quick parent contract changed before admission; review the original project')
+            if current_contract is not None:
+                require('advisor_policy' not in current_contract,
+                        'Program-owned Advisor was enabled before quick admission; use the original project')
+                require('stop_policy' not in current_contract and 'maintenance_allowance' not in current_contract,
+                        'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
+                require(steering is None,
+                        'Human steering changed before quick admission; use project create/execute')
+        if review is not None:
+            from rds_advisor_coverage import project_context
+            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+    def admit_quick(_db, _run):
+        check_quick_parents()
+
     args.name = args.name or 'exec-' + digest(request)[:20]
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args.name), 'Job name must contain 1–64 safe identifier characters')
     workspace = root / '.rds' / 'exec' / args.name
@@ -530,72 +662,83 @@ def execute(args, review=None):
             result['regression_review'] = read(report_path)[0]
         return result
     if owner is not None:
+        if review is not None:
+            from rds_advisor_coverage import project_context
+            choice(review[0], project_context(args.ledger, review[1]), args.choose)
         from rds_advisor import _loop_route
         observation = _charge_ledger(owner, workspace, request, timeout,
             route=_loop_route(selected['candidate']) if review is not None else None, source_root=root,
             executor_sha256=executor_sha256)
         if observation is not None:
             return observation
-    workspace.mkdir(parents=True)
-    bindings = []
-    if goal_raw is not None:
-        bind_objective(root, goal_raw)
-        bind_objective(workspace, goal_raw)
-        (workspace / 'rds-exec-objective.json').write_bytes(goal_raw)
-        bindings.append({'path': 'rds-exec-objective.json', 'sha256': request['objective_sha256'], 'role': 'config'})
-    for p, roles in files.items():
-        target = workspace / p.relative_to(root)
-        require(not target.name.startswith('rds-exec-'), 'Input uses a reserved rds-exec- filename')
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(raw_by_path[p])
-        for role in roles:
-            bindings.append({'path': target.relative_to(workspace).as_posix(), 'sha256': file_sha(target), 'role': role})
-    metadata = {'kind': 'OPERATIONAL_COMMAND_WRAPPER', 'request': request,
-                'input_discovery': 'ARGV_FILES_AND_STATIC_LOCAL_PYTHON_IMPORTS',
-                'hidden_inputs': 'UNKNOWN', 'evaluator': 'EXIT_CODE_AND_DECLARED_OUTPUT_EXISTENCE_ONLY',
-                'scientific_support': 'UNKNOWN'}
-    for name, value in [('rds-exec-request.json', request), ('rds-exec-metadata.json', metadata)]:
-        (workspace / name).write_text(canonical(value), encoding='utf-8')
-    bindings.append({'path': 'rds-exec-request.json', 'sha256': file_sha(workspace / 'rds-exec-request.json'), 'role': 'config'})
-    for role in ('config', 'data', 'evaluator'):
-        if not any(b['role'] == role for b in bindings):
-            bindings.append({'path': 'rds-exec-metadata.json', 'sha256': file_sha(workspace / 'rds-exec-metadata.json'), 'role': role})
-    # Missing scientific identity is explicit UNKNOWN, not guessed from filenames.
-    protocol = {k: 'UNKNOWN' for k in ('data_split', 'init', 'seed', 'checkpoint', 'schedule', 'sample_work', 'numeric_protocol')}
-    protocol.update({role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role) for role in ('code', 'config', 'data')})
-    protocol['purpose'] = 'OPERATIONAL_COMMAND_WRAPPER'
-    (workspace / 'rds-exec-protocol.json').write_text(canonical(protocol), encoding='utf-8')
-    bindings.append({'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json'), 'role': 'protocol'})
-    # Absolute source-file arguments must refer to their frozen copies.
-    frozen_argv = [argv[0]] + [str(Path(v).resolve().relative_to(root)) if Path(v).is_absolute() and Path(v).resolve() in files else v for v in argv[1:]]
-    store = ProjectStore(workspace)
-    # Multi-component paths authorize a directory root (strict containment). A
-    # single-component path is a root-level file: it cannot sit strictly below any
-    # root, so authorize that exact file instead of conflating it with a directory.
-    output_roots = sorted({Path(p).parts[0] for p in args.output if len(Path(p).parts) > 1}) or ['outputs']
-    output_files = sorted({Path(p).as_posix() for p in args.output if len(Path(p).parts) == 1})
-    contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': [frozen_argv],
-                'output_roots': output_roots, 'budget': {'wall_seconds': timeout}, 'description': 'Explicitly invoked frozen tool command; not an OS sandbox or science verdict'}
-    if output_files:
-        contract['output_files'] = output_files
-    if goal_raw is not None:
-        contract['objective_sha256'] = request['objective_sha256']
-    if execution_policy is not None:
-        contract['execution_policy'] = deepcopy(execution_policy)
-    store.initialize(contract)
     if review is not None:
         require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
-        record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name))
-    manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
-                'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
-                'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
-                'resource_estimates': {'wall_seconds': timeout - guard_seconds}, 'description': 'Frozen quick exec'}
-    store.register(manifest, executor_sha256=executor_sha256)
-    for output in args.output:
-        store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
+        record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
+                      _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
+    if goal_raw is not None:
+        bind_objective(root, goal_raw)
+    with admission_context():
+        check_quick_parents()
+        workspace.mkdir(parents=True)
+        bindings = []
+        if goal_raw is not None:
+            bind_objective(workspace, goal_raw)
+            (workspace / 'rds-exec-objective.json').write_bytes(goal_raw)
+            bindings.append({'path': 'rds-exec-objective.json', 'sha256': request['objective_sha256'], 'role': 'config'})
+        for p, roles in files.items():
+            target = workspace / p.relative_to(root)
+            require(not target.name.startswith('rds-exec-'), 'Input uses a reserved rds-exec- filename')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw_by_path[p])
+            for role in roles:
+                bindings.append({'path': target.relative_to(workspace).as_posix(), 'sha256': file_sha(target), 'role': role})
+        metadata = {'kind': 'OPERATIONAL_COMMAND_WRAPPER', 'request': request,
+                    'input_discovery': 'ARGV_FILES_AND_STATIC_LOCAL_PYTHON_IMPORTS',
+                    'hidden_inputs': 'UNKNOWN', 'evaluator': 'EXIT_CODE_AND_DECLARED_OUTPUT_EXISTENCE_ONLY',
+                    'scientific_support': 'UNKNOWN'}
+        for name, value in [('rds-exec-request.json', request), ('rds-exec-metadata.json', metadata)]:
+            (workspace / name).write_text(canonical(value), encoding='utf-8')
+        bindings.append({'path': 'rds-exec-request.json', 'sha256': file_sha(workspace / 'rds-exec-request.json'), 'role': 'config'})
+        for role in ('config', 'data', 'evaluator'):
+            if not any(b['role'] == role for b in bindings):
+                bindings.append({'path': 'rds-exec-metadata.json', 'sha256': file_sha(workspace / 'rds-exec-metadata.json'), 'role': role})
+        # Missing scientific identity is explicit UNKNOWN, not guessed from filenames.
+        protocol = {k: 'UNKNOWN' for k in ('data_split', 'init', 'seed', 'checkpoint', 'schedule', 'sample_work', 'numeric_protocol')}
+        protocol.update({role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role) for role in ('code', 'config', 'data')})
+        protocol['purpose'] = 'OPERATIONAL_COMMAND_WRAPPER'
+        (workspace / 'rds-exec-protocol.json').write_text(canonical(protocol), encoding='utf-8')
+        bindings.append({'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json'), 'role': 'protocol'})
+        # Absolute source-file arguments must refer to their frozen copies.
+        frozen_argv = [argv[0]] + [str(Path(v).resolve().relative_to(root)) if Path(v).is_absolute() and Path(v).resolve() in files else v for v in argv[1:]]
+        store = ProjectStore(workspace)
+        # Multi-component paths authorize a directory root (strict containment). A
+        # single-component path is a root-level file: it cannot sit strictly below any
+        # root, so authorize that exact file instead of conflating it with a directory.
+        output_roots = sorted({Path(p).parts[0] for p in args.output if len(Path(p).parts) > 1}) or ['outputs']
+        output_files = sorted({Path(p).as_posix() for p in args.output if len(Path(p).parts) == 1})
+        contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': [frozen_argv],
+                    'output_roots': output_roots, 'budget': {'wall_seconds': timeout}, 'description': 'Explicitly invoked frozen tool command; not an OS sandbox or science verdict'}
+        if output_files:
+            contract['output_files'] = output_files
+        if goal_raw is not None:
+            contract['objective_sha256'] = request['objective_sha256']
+        if execution_policy is not None:
+            contract['execution_policy'] = deepcopy(execution_policy)
+        store.initialize(contract)
+        manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
+                    'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
+                    'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
+                    'resource_estimates': {'wall_seconds': timeout - guard_seconds}, 'description': 'Frozen quick exec'}
+        store.register(manifest, executor_sha256=executor_sha256)
+        for output in args.output:
+            store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
-    receipt = store.execute(args.name, background=args.background)
+    if review is not None:
+        from rds_advisor_coverage import project_context
+        choice(review[0], project_context(args.ledger, review[1]), args.choose)
+    receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,
+                            admission_context=admission_context)
     regression = None
     if guard_path is not None:
         from rds_guard import evaluate
@@ -616,7 +759,9 @@ def execute(args, review=None):
                     'pending_evidence': ['Assess the original output; completion alone does not reject or prove a hypothesis']}
         if regression is not None:
             decision['regression_review'] = {'status': regression['status'], 'report': ref, 'scientific_support': 'UNKNOWN'}
-        save_checkpoint(args.ledger, _checkpoint_name('after', args.name), ProjectStore(args.ledger).snapshot(), kind='project', decision=decision)
+        save_checkpoint(args.ledger, _checkpoint_name('after', args.name), ProjectStore(args.ledger).snapshot(),
+                        kind='project', decision=decision,
+                        _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
     result = {'status': receipt.get('run_status', 'UNKNOWN'), 'job_root': str(workspace),
             'ledger_root': str(Path(args.ledger).resolve()) if review is not None else str(workspace),
             'receipt': receipt, 'execution_started': True, 'scientific_support': 'UNKNOWN'}
@@ -716,6 +861,20 @@ def brief(root, value, version, formal=False):
         flags = relevant + [kind for kind in flags if kind not in advisory_moves]
         summary['flags'] = list(dict.fromkeys(flags))[:3]
     owned = value.get('advisor') or value
+    graph_reviews = [r['search'].get('analysis_coverage') for r in owned.get('recommendations', [])
+                     if 'search' in r]
+    analysis = owned.get('analysis_coverage') or next((r for r in graph_reviews if r), None)
+    if analysis:
+        # Per-graph identities and diagnostics remain in the hashed full record.
+        # Keep coverage visible without repeating hashes alongside decision detail.
+        summary['analysis_coverage'] = {key: analysis[key] for key in ('status', 'full')}
+        summary['analysis_coverage']['graph_count'] = len(analysis['graphs'])
+        for key in ('node_count', 'edge_count'):
+            counts = [graph.get(key) for graph in analysis['graphs']]
+            summary['analysis_coverage'][key] = sum(counts) if all(type(n) is int for n in counts) else None
+        if analysis['reasons']:
+            summary['analysis_coverage']['reasons'] = analysis['reasons'][:3]
+            summary['analysis_coverage']['omitted_reasons'] = max(0, len(analysis['reasons']) - 3)
     if 'steering' in owned:
         state = owned['steering']
         summary['steering'] = {key: state.get(key) for key in ('revision', 'paused', 'kind', 'instruction_id')}

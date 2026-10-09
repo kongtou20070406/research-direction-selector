@@ -14,6 +14,17 @@ This workflow addresses [#119](https://github.com/kongtou20070406/research-direc
 
 The researcher establishes the goal, permitted commands, result readers and budget in the frozen project contract. After initialization, RDS receives run results, builds the current evidence graph, derives Advisor inputs and selects the next executable route. The agent can request a bounded next step and inspect its reasons. It cannot replace the inputs to this workflow with another context or a handwritten success summary.
 
+New `project init` defaults to FULL with a valid explicit `advisor_policy` or
+finite recipe. FULL means this owned research workflow; optional autonomy,
+confirmation, rankers and tool bindings require their own declarations. An
+intentionally non-policy contract needs `--mode quick`. Exact retries of existing
+legacy projects retain their previous QUICK behavior. The Agent runs
+`project discover` before every experiment and reuses the returned project root
+and cumulative ledger; new experiments become runs there. Discovery checks only
+the requested root and ancestors. A deliberately independent nested project
+requires `--separate-project "<reason>"`; child quick execution cannot bypass the
+ancestor project. See [project lifecycle](project-lifecycle.md).
+
 This is the program-owned form of the [five-component research workflow](research-workflow.md): Skill supplies the research procedure and reviewed proposals; the kernel binds execution and checks admission; state and memory preserve evidence; Advisor connects that state to the next decision; RSI evaluates proposed changes to the tool or its policies. Advisor is the decision interface, not a general scientific oracle.
 
 ## Results return to the decision
@@ -94,6 +105,15 @@ Completed routes retain their evidence and dependency nodes but no longer consum
 
 ## Collection, graph and admission
 
+Before selection, RDS computes all nodes and edges of the declared active
+direction graphs and current persistent TMS. This completeness gate applies in
+both FULL and QUICK. `analysis_coverage` records its registered scope, graph
+identities, counts, completeness and reasons; brief output keeps a bounded
+summary and original report locator. Incomplete computation returns
+`INCOMPLETE_ANALYSIS` in the owned workflow with no selected run and prevents
+dispatch. A complete computation can still leave missing or conflicting facts
+UNKNOWN. It does not claim to inspect arbitrary files or unregistered graphs.
+
 An optional frozen `autonomy` declaration connects repeated owned selection,
 bounded model repair, validated method adoption and continuation through
 `project drive`. Optional `confirmation` adds the program-replayed domain task
@@ -132,7 +152,30 @@ An invalid or unusable reported `record_source_base_dir` produces a graph-level 
 
 When original output bytes pass size/hash verification but JSON parsing, selection or scalar validation fails, the observation retains their exact path, digest and receipt identity with a byte-level locator. Its value remains absent, reliability false and status UNKNOWN; existing coverage errors/gaps and dispatch restrictions remain. Successful extraction retains its actual selector locator. Missing or changed output does not acquire a verified observation source from receipt metadata alone. The existing oversized-original branch remains unknown without parsing or repeated execution.
 
-Existing projects without `advisor_policy` retain their previous behavior. Their project receipts already preserve outputs, but the program-owned graph-to-Advisor loop and admission restrictions are not silently claimed for them. Start a new controlled project with the original relevant evidence when changing that boundary.
+Existing projects without `advisor_policy` retain their QUICK behavior. Their
+receipts already preserve outputs, but the owned graph-to-Advisor loop is not
+silently claimed for them. Enable it explicitly in the same ledger as below.
+
+## Enable Advisor in an existing QUICK project
+
+The Agent prepares an explicit policy using only the basic five fields `schema`,
+`context`, `graph`, `routes` and `observations`, bound to the existing commands,
+outputs and original run manifests. Preview does not execute or activate work:
+
+```powershell
+python -B scripts/rds_cli.py --root <existing-project> project enable-advisor --policy <policy.json>
+python -B scripts/rds_cli.py --root <existing-project> project enable-advisor --policy <policy.json> --apply --expected-snapshot <snapshot_sha256>
+```
+
+Inspect the preview and use its exact `snapshot_sha256` for apply. The atomic
+apply appends `ADVISOR_POLICY_ENABLED` lineage while retaining the genesis
+contract, old runs, original receipts, checkpoints, exposures and cumulative
+budget in the same ledger. Historical outputs are collected under their original
+identity; missing measurements remain UNKNOWN. Activation grants no additional
+commands, budget or autonomy. Live attempts/reservations, stale snapshots,
+conflicting policy retries and changed original manifests are rejected. An exact
+apply retry is idempotent. Do not overwrite the frozen contract or launch the old
+work again to enable this workflow.
 
 ## Actual coverage and evidence limits
 

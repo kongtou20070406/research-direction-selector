@@ -71,6 +71,26 @@ class QuickTests(unittest.TestCase):
         contract['execution_policy'] = {'schema': 1, 'max_attempts': max_attempts}
         ProjectStore(self.ledger).initialize(contract)
 
+    def test_prospective_exec_binds_native_goal_without_manual_goal_link_flag(self):
+        from rds_math import bind_objective
+        from test_rds_native_research import GOAL
+        bind_objective(self.root, json.dumps(GOAL).encode('utf-8'))
+        self.initialize_ledger()
+        self.context['decision']['scope'] = copy.deepcopy(GOAL['scope'])
+        self.context_path.write_text(json.dumps(self.context), encoding='utf-8')
+        original = self.context_path.read_bytes()
+        self.assertNotIn('objective_binding', self.context)
+        self.assertNotIn('require_goal_link', self.context)
+        self.script('print("bounded local check")\n')
+        result = json.loads(self.job('native-local', True, *self.policy_options()).stdout)
+        full = json.loads(Path(result['record']).read_text(encoding='utf-8'))
+        self.assertEqual(full['receipt']['run_status'], 'SUCCEEDED')
+        self.assertEqual(self.context_path.read_bytes(), original)
+        before = ProjectStore(self.ledger).snapshot()['budget']
+        retried = json.loads(self.job('native-local', True, *self.policy_options()).stdout)
+        self.assertFalse(json.loads(Path(retried['record']).read_text(encoding='utf-8'))['execution_started'])
+        self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
+
     def policy_options(self):
         return ['--context', str(self.context_path), '--graph', str(self.graph_path), '--ledger', str(self.ledger)]
 

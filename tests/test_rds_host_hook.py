@@ -60,7 +60,7 @@ class HostHookTests(unittest.TestCase):
     def init_project(self):
         (self.root / "contract.json").write_text(json.dumps(self.contract), encoding="utf-8")
         (self.root / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
-        self.assertEqual(self.invoke("project", "init", "--contract", str(self.root / "contract.json")).returncode, 0)
+        self.assertEqual(self.invoke("project", "init", "--mode", "quick", "--contract", str(self.root / "contract.json")).returncode, 0)
         self.assertEqual(self.invoke("project", "create", "--manifest", str(self.root / "manifest.json")).returncode, 0)
 
     def request(self, attempt_id=None, argv=None, executor_sha256=None, host="windows-task-scheduler"):

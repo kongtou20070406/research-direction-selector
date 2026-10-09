@@ -51,7 +51,7 @@ def executed_project(root, sleep_seconds=None):
         manifest['protocol']['sha256'] = file_sha(root / 'protocol.json')
         manifest.update(argv=argv, timeout_seconds=1, resource_estimates={'wall_seconds': 2, 'cpu_seconds': 2})
         (root / 'control.json').write_text(json.dumps(manifest), encoding='utf-8')
-    for args in (('init', '--contract', str(root / 'contract.json')),
+    for args in (('init', '--contract', str(root / 'contract.json'), '--mode', 'quick'),
                  ('create', '--manifest', str(root / 'control.json'))):
         proc = cli(root, 'project', *args)
         assert proc.returncode == 0, proc.stderr

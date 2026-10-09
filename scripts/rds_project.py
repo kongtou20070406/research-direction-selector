@@ -7,7 +7,7 @@ own writes and declared artifacts, not every write performed by that code.
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import ctypes
 import hashlib
 import json
@@ -22,6 +22,8 @@ import subprocess
 import sys
 import time
 import uuid
+
+from rds_mutation import mutation
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -623,7 +625,8 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
-    def initialize(self, contract, supersedes=None):
+    @mutation()
+    def initialize(self, contract, supersedes=None, *, scope_declaration=None):
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
@@ -766,8 +769,10 @@ class ProjectStore:
             db.execute("BEGIN IMMEDIATE")
             old = db.execute("SELECT sha256 FROM contract WHERE id=1").fetchone()
             if old:
-                require(old["sha256"] == digest(contract), "Contract is frozen; use a new project root"
-                        f" (project init --supersedes {_shell_argument(str(self.root))} links it to this root's ledger)")
+                require(old["sha256"] == digest(contract), "Contract is frozen; reuse this project for additional runs. "
+                        "Use project enable-advisor for same-ledger activation, or project revise for authorized method changes. "
+                        "A genuinely changed research contract needs an explicit successor "
+                        f"(project init --supersedes {_shell_argument(str(self.root))})")
                 if predecessor is not None:
                     recorded = self._link_record(db)[0] or {}
                     require(recorded.get("root_path") == predecessor["root_path"]
@@ -786,6 +791,14 @@ class ProjectStore:
                         db.execute(f"CREATE TRIGGER predecessor_no_{action.lower()} BEFORE {action} ON predecessor "
                                    "BEGIN SELECT RAISE(ABORT,'predecessor is append-only'); END")
                     db.execute("INSERT INTO predecessor VALUES (1,?,?)", (digest(predecessor), canonical(predecessor)))
+            if scope_declaration is not None:
+                row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='PROJECT_SCOPE_DECLARED' LIMIT 1").fetchone()
+                require(not old or row is not None,
+                        'Independent project scope must be declared with the original contract; it cannot be added after initialization')
+                require(row is None or json.loads(row['body']) == scope_declaration,
+                        'Independent project declaration is already recorded')
+                if row is None:
+                    db.execute('INSERT INTO events(body) VALUES (?)', (canonical(scope_declaration),))
         return self.snapshot()
 
     @staticmethod
@@ -1093,15 +1106,18 @@ class ProjectStore:
         run["run_status"] = "SUCCEEDED" if run["status"] == "COMPLETED" else run["status"]
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
-    def execute(self, run_id, background=False, *, admission_guard=None):
+    def execute(self, run_id, background=False, *, admission_guard=None, admission_context=None):
         # An internal caller may restrict admission after all ordinary checks.
         # This callback grants no authority and is never supplied by the CLI.
         require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
+        require(admission_context is None or callable(admission_context), "Invalid admission context")
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
         advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
-        with self._db() as db:
+        # Parents must be acquired before this child write transaction. Exit
+        # order commits the attempt before releasing the admission context.
+        with (admission_context() if admission_context is not None else nullcontext()), self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
             self._runs(db)
@@ -1459,9 +1475,10 @@ class ProjectStore:
             steering = current(db)
             if steering is not None:
                 snapshot['steering'] = view(steering)
-            if 'method_evolution' in contract:
-                from rds_method_revision import contract_history, pending_revision
-                snapshot['contract_history'] = contract_history(db)
+            from rds_method_revision import contract_history, pending_revision
+            history = contract_history(db)
+            if 'method_evolution' in contract or len(history) > 1:
+                snapshot['contract_history'] = history
                 pending = pending_revision(db)
                 snapshot['method_revision_pending'] = ({'id': pending['id'], 'sha256': pending['sha256']}
                                                        if pending else None)

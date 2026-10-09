@@ -269,7 +269,7 @@ def validate(root, name, case_file, timeout=10, ledger=None, *, comparison=None)
     args = SimpleNamespace(root=str(workspace), name='tool-check', timeout=timeout, argv=['driver.py'],
                            bind=['data=cases.json'], output=['outputs/result.json'], background=False,
                            ledger=None, choose=None)
-    run = execute(args)
+    run = execute(args, _native_preparation_root=store.root)
     receipt = run.get('receipt')
     if receipt is None:
         # A retained RESERVED/RUNNING native job has no final evidence yet.

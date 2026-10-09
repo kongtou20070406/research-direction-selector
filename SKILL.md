@@ -45,6 +45,14 @@ ON applicable research request:
         KEEP graph display read-only; do not run research or change evidence status
         END this display route without initiating a research execution plan
 
+    BEFORE every experiment, including continuation from a child directory:
+        RUN project discover FROM the requested root; inspect requested root and ancestors only
+        IF EXISTING_PROJECT: REBIND CLI TO returned project_root; reuse its ledger and budget
+        ADD this experiment as a run in that project; do not initialize a project per experiment
+        IF no project exists: prepare explicit research declarations before project init
+        USE --separate-project <reason> only for a deliberately independent nested project
+        NEVER use a child directory or exec TO bypass an existing parent project
+
     INPUT := user request + current project evidence + authorized resources
     INFER goal, acceptance, evidence, budget FROM INPUT; NEVER invent them
     ON a new task, fresh Agent, or changed direction:
@@ -73,12 +81,26 @@ ON applicable research request:
         USE only the capability needed for this task; DO NOT run the whole catalog
 
     IF new goal-driven campaign:
+        DEFAULT project init TO FULL; require a valid explicit advisor_policy or recipe
         USE project init --recipe <recipe.json> FOR explicit finite routes and qualified tool consumers
             TO assemble hashes/protocol/route associations; see docs/project-assembly.md
         RETAIN project init --contract FOR advanced policies; a prose plan is not a recipe
         FREEZE the actual objective, permitted routes, result readers and budget
                in advisor_policy; see docs/program-owned-advisor.md
         RETAIN serious alternatives/explanations and their distinguishing observations
+        USE project init --mode quick --contract <contract.json> only for a deliberately limited workflow
+        READ workflow.mode, advisor and capabilities plus the stderr mode banner
+        FULL owns collection/selection; optional autonomy, confirmation and tools need their own declarations
+    IF reusing an existing QUICK project that now needs owned Advisor:
+        PREVIEW project enable-advisor --policy <policy.json>
+        APPLY only the reviewed policy with --apply --expected-snapshot <snapshot_sha256>
+        KEEP genesis contract, old runs/receipts/checkpoints and cumulative budget in the same ledger
+        NEVER replace the frozen contract or infer extra execution authority from activation
+    BEFORE any direction selection in FULL or QUICK:
+        REQUIRE analysis_coverage.full FOR all declared active direction graphs and current saved TMS
+        READ coverage hashes/counts/reasons; incomplete computation blocks selection
+        UPDATE the persistent dependency map before using changed dependencies; do not substitute a private graph
+        KEEP computational coverage distinct FROM evidence truth or coverage of arbitrary disk files
     IF project has advisor_policy:
         RUN advise --working-set --brief FROM the current ledger and owned dependency graph
         READ working_set goals, final selection, unresolved hypotheses and scoped feedback
@@ -176,8 +198,10 @@ All commands below use `CLI` above. Links load detail on demand.
 | --- | --- | --- |
 | First plain-language request | Follow [quick start](docs/quickstart.md): copyable prompts, first project, `[RDS-REJECT]` recovery | [Project runner](examples/project-runner/README.md) |
 | First inspectable plan | `project plan [--intent <intent.json>] [--save-as <checkpoint-id>]` | [Planning and steering](docs/planning-and-steering.md) |
+| Every experiment or continuation | `project discover`; reuse returned `project_root` and register runs there | [Project lifecycle](docs/project-lifecycle.md) |
 | Current user's new direction | `project steering`, then `project steer --request <request.json> --user-directed --source <current-message-locator>` | [Planning and steering](docs/planning-and-steering.md) |
-| Start locked campaign | `project init --contract <contract.json>`; freeze `advisor_policy` for program-owned selection | [Contract template](docs/project-contract.md), [owned Advisor](docs/program-owned-advisor.md) |
+| Start locked campaign | `project init --contract <contract.json>` defaults to FULL with explicit `advisor_policy`; deliberate limited contracts use `--mode quick` | [Contract template](docs/project-contract.md), [owned Advisor](docs/program-owned-advisor.md) |
+| Enable owned Advisor in a legacy project | `project enable-advisor --policy <policy.json>`, then `--apply --expected-snapshot <sha>` after reviewing the preview | [Project lifecycle](docs/project-lifecycle.md), [owned Advisor](docs/program-owned-advisor.md) |
 | Assemble finite research routes | `project init --recipe <recipe.json>`; declare semantics once, generate mechanical bindings | [Project assembly](docs/project-assembly.md) |
 | Advance campaign | `project next` to inspect; `project advance --brief` executes one selected step in a policy-bound project | [Owned Advisor](docs/program-owned-advisor.md), [development loop](docs/development-loop.md) |
 | Drive bounded research loop | `project drive --max-steps <n>`; frozen `autonomy`, ordinary repair routes, persistent costs and optional domain confirmation | [Research drive](docs/autonomy-loop.md), [domain confirmation](docs/domain-confirmation.md) |

@@ -354,7 +354,8 @@ class Wheel:
                     self.directory = final
                 # The native kernel validates all bindings and is idempotent for
                 # the same genesis contract; retry never resets its actual ledger.
-                self.project("init", "--contract", str(project_contract_path))
+                mode = "full" if "advisor_policy" in contract else "quick"
+                self.project("init", "--contract", str(project_contract_path), "--mode", mode)
                 snapshot = self.project("status")
                 require(snapshot.get("contract") == contract
                         and snapshot.get("contract_sha256") == digest(contract),

@@ -156,7 +156,7 @@ def main():
         if completed.returncode and not allow_failure:
             raise RuntimeError(completed.stderr or completed.stdout)
         return json.loads(completed.stdout)
-    run("01-init", "project", "init", "--contract", "contract.json")
+    run("01-init", "project", "init", "--mode", "quick", "--contract", "contract.json")
     run("02-register", "project", "create", "--manifest", "run.json")
     run("03-checkpoint", "checkpoint", "save", "--id", "before-check", "--decision", "decision.json")
     receipt = run("04-execution", "project", "execute", "--id", "development-check", allow_failure=True)

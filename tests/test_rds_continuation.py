@@ -34,7 +34,8 @@ class ContinuationTests(unittest.TestCase):
 
     def test_real_cli_continues_ordinary_routes_and_retains_false_goal(self):
         self.f.initialize()
-        out = self.drive()
+        original = self.f.snapshot()
+        out = self.continue_ordinary_routes(original)
         self.assertEqual(self.f.starts(), ['baseline', 'repair'])
         self.assertEqual(out['status'], 'JUDGMENT_REQUIRED')
         handoff = out['handoff']
@@ -48,10 +49,111 @@ class ContinuationTests(unittest.TestCase):
         self.assertAlmostEqual(handoff['resources']['wall_seconds']['reserved'], 0)
         self.assertGreater(out['controller_wall_seconds'], 0)
         receipts = [r['sha256'] for r in state['receipts']]
+        attempts = [r['attempt_id'] for r in state['runs']]
         again = self.drive()
         self.assertEqual(again['status'], 'JUDGMENT_REQUIRED')
         self.assertEqual(self.f.starts(), ['baseline', 'repair'])
-        self.assertEqual([r['sha256'] for r in self.f.snapshot()['receipts']], receipts)
+        repeated = self.f.snapshot()
+        self.assertEqual([r['sha256'] for r in repeated['receipts']], receipts)
+        self.assertEqual([r['attempt_id'] for r in repeated['runs']], attempts)
+        self.assert_controller_accounting(original, repeated)
+
+    def assert_controller_accounting(self, original, state):
+        with ProjectStore(self.f.root)._db(True) as db:
+            events = autonomy._events(db, ('AUTONOMY_DRIVE_CLAIMED', 'AUTONOMY_DRIVE_RELEASED'))
+        claims = {event['owner']: event['controller_reservation'] for event in events
+                  if event['kind'] == 'AUTONOMY_DRIVE_CLAIMED'}
+        releases = [event for event in events if event['kind'] == 'AUTONOMY_DRIVE_RELEASED']
+        self.assertEqual(len(claims), len(releases), events)
+        self.assertEqual(set(claims), {event['owner'] for event in releases}, events)
+        spent = sum(receipt['resources']['wall_seconds']['measured'] or 0 for receipt in state['receipts'])
+        charged = sum(receipt['resources']['wall_seconds']['charged_estimate'] for receipt in state['receipts'])
+        for release in releases:
+            allowance = claims[release['owner']]
+            self.assertGreater(allowance, 0)
+            self.assertLessEqual(allowance, 8)
+            spent += min(release['controller_wall_seconds'], allowance)
+            charged += max(0, release['controller_wall_seconds'] - allowance)
+        self.assertAlmostEqual(state['budget']['wall_seconds']['spent_measured'],
+                               original['budget']['wall_seconds']['spent_measured'] + spent)
+        self.assertAlmostEqual(state['budget']['wall_seconds']['charged_estimate'],
+                               original['budget']['wall_seconds']['charged_estimate'] + charged)
+        for resource, budget in state['budget'].items():
+            self.assertEqual(budget['cap'], original['budget'][resource]['cap'])
+            worker_reserved = sum(run['resource_estimates'].get(resource, 0) for run in state['runs']
+                                  if run['status'] in {'RESERVED', 'RUNNING'})
+            self.assertAlmostEqual(budget['reserved'], worker_reserved)
+        return claims, releases
+
+    def continue_ordinary_routes(self, original, driver=None):
+        """Only a verified controller-limit stop permits a same-ledger pass."""
+        driver = driver or self.drive
+        retained_receipts, retained_attempts = {}, {}
+        for _ in range(3):
+            out = driver()
+            state = self.f.snapshot()
+            diagnostic = {'out': out, 'original': original, 'state': state}
+            self.assertEqual(state['contract_sha256'], original['contract_sha256'], diagnostic)
+            for receipt in state['receipts']:
+                if receipt['run_id'] in retained_receipts:
+                    self.assertEqual(receipt, retained_receipts[receipt['run_id']], diagnostic)
+                retained_receipts[receipt['run_id']] = receipt
+            for run in state['runs']:
+                if run['id'] in retained_attempts:
+                    self.assertEqual(run['attempt_id'], retained_attempts[run['id']], diagnostic)
+                if run['attempt_id'] is not None:
+                    retained_attempts[run['id']] = run['attempt_id']
+            claims, releases = self.assert_controller_accounting(original, state)
+            self.assertEqual(releases[-1]['reason'], out['status'], diagnostic)
+            self.assertEqual(releases[-1]['controller_wall_seconds'], out['controller_wall_seconds'], diagnostic)
+            if out['status'] == 'JUDGMENT_REQUIRED':
+                break
+            self.assertEqual(out['status'], 'HANDOFF_REQUIRED', diagnostic)
+            self.assertEqual(out.get('reason'), 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', diagnostic)
+            self.assertGreaterEqual(out['controller_wall_seconds'], claims[releases[-1]['owner']], diagnostic)
+            self.assertEqual(out['handoff']['resource_cut'], 'CONTROLLER_RELEASE_TRANSACTION', diagnostic)
+            self.assertEqual(out['handoff']['resources'], state['budget'], diagnostic)
+            # A fresh controller claim must come from this original remainder;
+            # exhausted admission is a failure, never permission to reset it.
+            self.assertGreater(state['budget']['wall_seconds']['remaining'], 0, diagnostic)
+        self.assertEqual(out['status'], 'JUDGMENT_REQUIRED', diagnostic)
+        self.assertEqual(self.f.starts(), ['baseline', 'repair'], diagnostic)
+        self.assertEqual(len(state['receipts']), 2, diagnostic)
+        self.assertEqual(len({receipt['attempt_id'] for receipt in state['receipts']}), 2, diagnostic)
+        return out
+
+    def test_controller_limit_after_original_receipt_continues_same_ledger(self):
+        self.f.initialize()
+        original = self.f.snapshot()
+        store = ProjectStore(self.f.root)
+        ticks, passes = [0.], []
+        real_execute = ProjectStore.execute
+
+        def expire_after_baseline(current, run_id, *args, **kwargs):
+            receipt = real_execute(current, run_id, *args, **kwargs)
+            self.assertEqual(run_id, 'baseline')
+            ticks[0] = 9.
+            return receipt
+
+        def controlled_driver():
+            clock = SimpleNamespace(monotonic=lambda: ticks[0], time=autonomy.time.time)
+            with patch.object(autonomy, 'time', clock):
+                if not passes:
+                    with patch.object(ProjectStore, 'execute', expire_after_baseline):
+                        out = autonomy.drive(store, until_judgment=True, controller_wall_seconds=8)
+                else:
+                    out = autonomy.drive(store, until_judgment=True, controller_wall_seconds=8)
+            passes.append(out)
+            ticks[0] = 0.
+            return out
+
+        out = self.continue_ordinary_routes(original, controlled_driver)
+        self.assertEqual([result['status'] for result in passes], ['HANDOFF_REQUIRED', 'JUDGMENT_REQUIRED'])
+        self.assertEqual(passes[0]['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
+        self.assertEqual([run['run_id'] for run in passes[0]['executed']], ['baseline'])
+        self.assertEqual([run['run_id'] for run in passes[1]['executed']], ['repair'])
+        self.assertEqual(out['handoff']['goal_status'], 'FALSE')
+        self.assertAlmostEqual(self.f.snapshot()['budget']['wall_seconds']['reserved'], 0)
 
     def test_explicit_allowance_validation_and_default_drive_compatibility(self):
         self.f.initialize()
