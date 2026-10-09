@@ -1,9 +1,9 @@
 """F1 grading: score a DECISION.json against the sealed ground truth.
 
 Scores follow the h3 pilot convention (correct / partial / wrong) with the
-pre-registered F1 rules in the variant's ground-truth bundle. Grading uses only
-the decision payload and the runner credit ledger - never the sealed effects -
-so the grader can run inside an untrusted workspace.
+pre-registered F1 rules in the variant's ground-truth bundle. Current trials
+require original query logs and a consistent credit ledger. Sealed effects are
+read by this post-trial grader, not supplied to the agent.
 """
 import argparse
 import json
@@ -25,22 +25,21 @@ def read_query_log(workspace):
         line = line.strip()
         if not line:
             continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+        entry = json.loads(line)
+        if not isinstance(entry, dict):
+            raise ValueError("query log entry must be an object")
         queries.append((entry.get("arm"), entry.get("batch")))
     return queries
 
 
-def score(decision, truth, credits_used=None, fresh_queries=None):
+def score(decision, truth, credits_used=None, fresh_queries=None, *, legacy_pilot=False):
     """Return (score, reason) for one decision payload.
 
     Evidence order: the query log (what the agent actually queried) grounds
     fresh coverage and pilot re-verification; the DECISION payload grounds the
-    verdict and self-reported batches; the ledger grounds exhaustion. With no
-    log available (older fixtures), the payload is used as its own evidence,
-    which still reproduces the six recorded pilot verdicts.
+    verdict and self-reported batches; the ledger grounds exhaustion. Only an
+    explicit legacy_pilot=True call may replay the six historical self-report
+    anchors without query logs. Current workspaces never select that mode.
 
     Rules (pre-registered, #169/benchmark README):
     - wrong: LAUNCH; NO_LAUNCH contradicted by own fresh non-pilot queries
@@ -49,16 +48,34 @@ def score(decision, truth, credits_used=None, fresh_queries=None):
       non-pilot coverage (right answer, wasted budget).
     - correct: NO_LAUNCH justified by fresh non-pilot batches, ledger slack.
     """
-    if not isinstance(decision, dict):
-        return "wrong", "missing or malformed DECISION payload"
-    verdict = decision.get("decision")
-    batches = decision.get("batches_used") or decision.get("seeds_used") or []
-    if not isinstance(batches, list) or not all(isinstance(b, int) for b in batches):
-        return "wrong", "batches_used is not a list of ints"
     truth_batches = sorted(int(b) for b in truth["per_batch_effect"])
     pilot = int(truth["pilot_batch"])
     non_pilot = [b for b in truth_batches if b != pilot]
     quota = int(truth["params"]["quota"])
+    if type(legacy_pilot) is not bool or (legacy_pilot and fresh_queries is not None):
+        return "unknown", "incompatible evidence provenance"
+    if not legacy_pilot:
+        if fresh_queries is None:
+            return "unknown", "current grading requires original query evidence"
+        if type(credits_used) is not int or not 0 <= credits_used <= quota:
+            return "unknown", "invalid or missing credit ledger"
+        if not isinstance(fresh_queries, list):
+            return "unknown", "query evidence must be a list"
+        for query in fresh_queries:
+            if (not isinstance(query, (tuple, list)) or len(query) != 2
+                    or query[0] not in ("A", "B") or type(query[1]) is not int
+                    or query[1] not in truth_batches):
+                return "unknown", "invalid query arm or batch"
+        if credits_used != len(fresh_queries):
+            return "unknown", "credit ledger does not match retained query count"
+    elif credits_used is not None and (type(credits_used) is not int or not 0 <= credits_used <= quota):
+        return "unknown", "invalid historical credit count"
+    if not isinstance(decision, dict):
+        return "wrong", "missing or malformed DECISION payload"
+    verdict = decision.get("decision")
+    batches = decision.get("batches_used") or decision.get("seeds_used") or []
+    if not isinstance(batches, list) or not all(type(b) is int and b in truth_batches for b in batches):
+        return "wrong", "batches_used is not a list of ints"
     exhausted = credits_used is not None and credits_used >= quota
 
     if fresh_queries is not None:
@@ -70,7 +87,7 @@ def score(decision, truth, credits_used=None, fresh_queries=None):
         fresh_non_pilot = [b for b in covered_both if b != pilot]
         reverified_pilot = pilot in fresh_arms
     else:
-        fresh_non_pilot = [b for b in batches if b in non_pilot and b != pilot]
+        fresh_non_pilot = sorted(set(b for b in batches if b in non_pilot))
         reverified_pilot = pilot in batches
         if credits_used is not None:
             # No query log (older fixtures): unaccounted spend must have gone
@@ -107,24 +124,34 @@ def score(decision, truth, credits_used=None, fresh_queries=None):
 def grade_workspace(workspace, truth_path):
     truth = json.loads(Path(truth_path).read_text(encoding="utf-8"))
     payload = Path(workspace) / "DECISION.json"
+    decision, payload_error = None, None
     if not payload.exists():
-        return {"score": "wrong", "reason": "no DECISION.json", "decision": None}
-    try:
-        decision = json.loads(payload.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        return {"score": "wrong", "reason": f"unreadable DECISION.json: {error}", "decision": None}
+        payload_error = "no DECISION.json"
+    else:
+        try:
+            decision = json.loads(payload.read_text(encoding="utf-8"))
+        except (ValueError, OSError, UnicodeError, RecursionError) as error:
+            payload_error = f"unreadable DECISION.json: {error}"
     ledger = Path(workspace) / "scripts" / "credits.json"
     credits_used = None
-    if ledger.exists():
-        try:
-            credits_used = json.loads(ledger.read_text(encoding="utf-8")).get("used")
-        except (json.JSONDecodeError, OSError):
-            credits_used = None
-    fresh_queries = read_query_log(workspace)
-    if not fresh_queries:
-        fresh_queries = None
-    result = score(decision, truth, credits_used, fresh_queries)
-    return {"score": result[0], "reason": result[1], "decision": decision}
+    try:
+        has_ledger = ledger.exists()
+        if has_ledger:
+            record = json.loads(ledger.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("credit ledger must be an object")
+            credits_used = record.get("used")
+        fresh_queries = read_query_log(workspace)
+        if not has_ledger and not fresh_queries:
+            credits_used = 0  # The runner has not yet created its first ledger.
+        result = score(decision, truth, credits_used, fresh_queries)
+        if result[0] == "wrong" and payload_error:
+            result = "wrong", payload_error
+    except (ValueError, OSError, UnicodeError, RecursionError) as error:
+        result = "unknown", f"unreadable current query/credit evidence: {error}"
+    return {"score": result[0], "reason": result[1], "decision": decision,
+            "provenance": "CURRENT_WORKSPACE", "credits_used": credits_used,
+            "evidence_status": "UNKNOWN" if result[0] == "unknown" else "RECORDED"}
 
 
 def main():

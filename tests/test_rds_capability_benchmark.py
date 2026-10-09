@@ -129,7 +129,7 @@ class GraderAnchors(unittest.TestCase):
     def test_pilot_decisions_reproduce_exactly(self):
         for name, decision, credits, expected in self.ANCHORS:
             with self.subTest(trial=name):
-                got, reason = score(decision, PILOT_TRUTH, credits)
+                got, reason = score(decision, PILOT_TRUTH, credits, legacy_pilot=True)
                 self.assertEqual(got, expected, reason)
 
     def test_unjustified_no_launch_is_wrong(self):
@@ -140,14 +140,122 @@ class GraderAnchors(unittest.TestCase):
         truth = {"per_batch_effect": {"1": 10.7, "2": 3.5, "3": -1.5, "4": 0.9},
                  "pooled_effect": 3.4, "pilot_batch": 1, "threshold": 2.0,
                  "params": {"quota": 6}}
-        got, _ = score({"decision": "NO_LAUNCH", "batches_used": [2]}, truth, None)
+        got, _ = score({"decision": "NO_LAUNCH", "batches_used": [2]}, truth, None,
+                       legacy_pilot=True)
         self.assertEqual(got, "wrong")
 
     def test_pilot_only_no_launch_is_partial(self):
         # Pilot re-verified (it is in batches_used), zero non-pilot coverage:
         # right answer, wasted budget - partial per the pre-registered key.
-        got, _ = score({"decision": "NO_LAUNCH", "batches_used": [1]}, PILOT_TRUTH, None)
+        got, _ = score({"decision": "NO_LAUNCH", "batches_used": [1]}, PILOT_TRUTH, None,
+                       legacy_pilot=True)
         self.assertEqual(got, "partial")
+
+
+class CurrentWorkspaceEvidence(unittest.TestCase):
+    def workspace(self, tmp, *, used=None, log=None, decision=None):
+        root = Path(tmp)
+        (root / 'scripts').mkdir(exist_ok=True)
+        (root / 'truth.json').write_text(json.dumps(PILOT_TRUTH), encoding='utf-8')
+        (root / 'DECISION.json').write_text(json.dumps(decision or {
+            'decision': 'NO_LAUNCH', 'batches_used': [2]}), encoding='utf-8')
+        if used is not None:
+            (root / 'scripts/credits.json').write_text(json.dumps(used), encoding='utf-8')
+        if log is not None:
+            (root / 'scripts/query_log.jsonl').write_bytes(log)
+        return root
+
+    def test_current_cli_never_falls_back_to_self_report(self):
+        for log, expected in [(None, 'partial'), (b'', 'partial'), (b'{broken', 'unknown')]:
+            with self.subTest(log=log), tempfile.TemporaryDirectory(prefix='f1-evidence-') as tmp:
+                root = self.workspace(tmp, log=log)
+                result = subprocess.run([sys.executable, '-B', str(FAMILY / 'run.py'),
+                                         '--grade-only', str(root)], capture_output=True,
+                                        text=True, encoding='utf-8', timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                out = json.loads(result.stdout)
+                self.assertEqual(out['score'], expected)
+                self.assertEqual(out['provenance'], 'CURRENT_WORKSPACE')
+
+    def test_invalid_logs_and_credits_keep_unknown(self):
+        pair = b'{"arm":"A","batch":2}\n{"arm":"B","batch":2}\n'
+        cases = [(None, pair), ({'used': 0}, pair), ({'used': 3}, pair),
+                 ({'used': True}, pair), ({'used': -1}, pair), ({'used': 7}, pair),
+                 ({'used': 2.0}, pair), ({}, pair), ([], pair),
+                 ({'used': 2}, pair + b'{broken'), ({'used': 2}, b'[]\n'),
+                 ({'used': 2}, b'\xff'), ({'used': 1}, b'{"arm":"C","batch":2}\n'),
+                 ({'used': 1}, b'{"arm":"A","batch":true}\n'),
+                 ({'used': 1}, b'{"arm":"A","batch":99}\n'),
+                 ({'used': 2}, b''), ({'used': True}, b'')]
+        for used, log in cases:
+            with self.subTest(used=used, log=log), tempfile.TemporaryDirectory(prefix='f1-invalid-') as tmp:
+                root = self.workspace(tmp, used=used, log=log, decision={'decision': 'LAUNCH'})
+                result = grade_workspace(root, root / 'truth.json')
+                self.assertEqual(result['score'], 'unknown', result)
+                self.assertEqual(result['evidence_status'], 'UNKNOWN')
+                if isinstance(used, dict):
+                    self.assertEqual(result['credits_used'], used.get('used'))
+
+    def test_unreadable_evidence_is_not_a_model_failure(self):
+        for name in ('credits.json', 'query_log.jsonl'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory(prefix='f1-unreadable-') as tmp:
+                root = self.workspace(tmp)
+                (root / 'DECISION.json').unlink()
+                (root / 'scripts' / name).mkdir()
+                self.assertEqual(grade_workspace(root, root / 'truth.json')['score'], 'unknown')
+
+    def test_direct_score_requires_explicit_legacy_provenance(self):
+        decision = {'decision': 'NO_LAUNCH', 'batches_used': [2]}
+        self.assertEqual(score(decision, PILOT_TRUTH, 0)[0], 'unknown')
+        self.assertEqual(score(decision, PILOT_TRUTH, 0, [])[0], 'partial')
+        self.assertEqual(score(decision, PILOT_TRUTH, 2, [('A', 2), ('B', 2)])[0], 'correct')
+        self.assertEqual(score(decision, PILOT_TRUTH, 3, [('A', 2), ('A', 2), ('B', 2)])[0], 'correct')
+        for queries in [[('A', True)], [('A', 99)], [('C', 2)], ['A'], {}]:
+            self.assertEqual(score(decision, PILOT_TRUTH, 1, queries)[0], 'unknown')
+        self.assertEqual(score(decision, PILOT_TRUTH, 2, legacy_pilot=True)[0], 'correct')
+
+    def test_real_paired_queries_remain_correct(self):
+        # A new generated deterministic control; committed 20-second pilot
+        # queries and historical model trials are not modified or repeated.
+        params, arms, extras = generate('evidence', 7, latency=0, population=200)
+        with tempfile.TemporaryDirectory(prefix='f1-pair-') as tmp:
+            truth = write_data_and_truth('evidence', 7, tmp, params, arms, extras)
+            root = Path(tmp)
+            truth_path = root / 'truth.json'
+            truth_path.write_text(json.dumps(truth), encoding='utf-8')
+            batch = next(int(b) for b, effect in truth['per_batch_effect'].items()
+                         if int(b) != truth['pilot_batch'] and effect < truth['threshold'])
+            for arm in ('A', 'B'):
+                query = subprocess.run([sys.executable, '-B', str(root / 'scripts/query_db.py'),
+                                        '--arm', arm, '--batch', str(batch)], capture_output=True,
+                                       text=True, encoding='utf-8', timeout=10)
+                self.assertEqual(query.returncode, 0, query.stderr)
+            (root / 'DECISION.json').write_text(json.dumps({
+                'decision': 'NO_LAUNCH', 'batches_used': [batch]}), encoding='utf-8')
+            result = subprocess.run([sys.executable, '-B', str(FAMILY / 'grade.py'),
+                                     '--workspace', str(root), '--truth', str(truth_path), '--json'],
+                                    capture_output=True, text=True, encoding='utf-8', timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            out = json.loads(result.stdout)
+            self.assertEqual(out['score'], 'correct', out)
+            self.assertEqual(out['credits_used'], 2)
+            self.assertEqual(out['evidence_status'], 'RECORDED')
+
+    def test_unknown_prevents_round_gate_even_with_wrong_trial(self):
+        with tempfile.TemporaryDirectory(prefix='f1-summary-') as tmp:
+            base = Path(tmp)
+            for name, used, decision in [('ws-wrong', {'used': 0}, 'LAUNCH'),
+                                         ('ws-unknown', {'used': 2}, 'NO_LAUNCH')]:
+                (base / name).mkdir()
+                self.workspace(base / name, used=used, decision={'decision': decision})
+            result = subprocess.run([sys.executable, '-B', str(FAMILY / 'run.py'),
+                                     '--skip-exec', '--base-dir', str(base)], capture_output=True,
+                                    text=True, encoding='utf-8', timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            summary = json.loads((base / 'summary.json').read_text(encoding='utf-8'))['summary']
+            self.assertEqual(summary['wrong'], 1)
+            self.assertEqual(summary['unknown'], 1)
+            self.assertTrue(summary['gate'].startswith('UNKNOWN'), summary)
 
 
 class WorkspaceLifecycle(unittest.TestCase):

@@ -60,6 +60,13 @@ def run_trial(codex, workspace, model, effort, log_path):
     return completed.returncode
 
 
+def gate_for(scores):
+    # Missing execution evidence cannot count as an observed model failure.
+    if "unknown" in scores:
+        return "UNKNOWN (incomplete query/credit evidence)"
+    return "PASS (>=1 wrong)" if "wrong" in scores else "FAIL (fixture does not discriminate)"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", default="b1v1")
@@ -110,7 +117,8 @@ def main():
         "scores": {row["workspace"]: row["score"] for row in rows},
         "wrong": scores.count("wrong"), "correct": scores.count("correct"),
         "partial": scores.count("partial"),
-        "gate": "PASS (>=1 wrong)" if scores.count("wrong") >= 1 else "FAIL (fixture does not discriminate)",
+        "unknown": scores.count("unknown"),
+        "gate": gate_for(scores),
         "note": "engineering-round signal only; not a capability claim (#166)",
     }
     output = base / "summary.json"

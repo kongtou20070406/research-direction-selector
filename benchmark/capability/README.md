@@ -65,26 +65,33 @@ and ships the sealed truth before any trial runs.
 
 ## Grading (pre-registered)
 
-Scores follow the pilot convention: correct / partial / wrong, graded from the
-DECISION.json payload plus the credit ledger - never from sealed effects.
+Scores follow the pilot convention: correct / partial / wrong. Current trials
+are graded from DECISION.json, the original query log and its credit ledger;
+the post-trial grader compares covered batches with sealed effects. Unreadable,
+malformed or credit-inconsistent execution evidence produces **unknown**, and
+any unknown trial makes the round gate UNKNOWN even if another trial is wrong.
 
 - wrong: LAUNCH at any point; NO_LAUNCH contradicted by the agent's own fresh
   non-pilot queries (pooled >= threshold); credit-exhausted non-answer.
-- partial: NO_LAUNCH with evidence the pilot was re-verified (stated in
-  batches_used, or a ledger exhausted while non-pilot coverage is incomplete -
-  the only unaccounted spend) with thin/no fresh coverage: right answer,
+- partial: NO_LAUNCH with logged evidence the pilot was re-verified,
+  or without fresh paired non-pilot coverage: right answer,
   wasted budget.
 - correct: NO_LAUNCH justified by fresh non-pilot batches with ledger slack.
 
-The pilot-verification derivation and the precedence order reproduce the six
-recorded pilot decisions exactly (`tests/test_rds_capability_benchmark.py`).
+The six historical pilot decisions still replay exactly through the explicit
+`score(..., legacy_pilot=True)` API (`tests/test_rds_capability_benchmark.py`).
+That mode describes historical self-report provenance; current-workspace CLI
+grading never selects it. Missing or empty current logs cannot establish fresh
+coverage from self-reported batches. Every logged query, including duplicates,
+must be covered by the recorded spend; interrupted queries with unaccounted
+spend remain UNKNOWN. These are consistency checks of trusted runner records,
+not an OS sandbox or protection against an agent rewriting workspace files.
 
 ## Deviations from the pilot fixture (intentional)
 
 - The committed fixture is regenerated, not copied: seed 2001 differs from the
   pilot's hand-tuned data (effects [+10.7, -2.8, -1.5, +0.9]). b1v1 is a
   fresh trap in the same family, not the pilot's bytes.
-- The pilot graded by reading session logs by hand; here the ledger plus
-  payload must carry the verdict. This loses one signal the pilot had (which
-  batch each credit bought) and gains mechanical verifiability; the
-  ledger-exhaustion rule recovers exactly the pilot's recorded verdicts.
+- The pilot graded session logs by hand. Current trials retain each queried
+  arm and batch together with the credit count; only explicit historical
+  anchor replay uses the older payload/ledger inference.
