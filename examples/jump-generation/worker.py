@@ -71,6 +71,7 @@ def proposal(req, result, template):
     candidate, rival = result['candidate'], result['rival']
     identity = {'request': req, 'candidate': candidate}
     name = 'generated-' + hashlib.sha256(canonical(identity).encode('utf-8')).hexdigest()[:16]
+    hypothesis = 'generated-' + hashlib.sha256(canonical(candidate).encode('utf-8')).hexdigest()[:16]
     explanation = 'Exact finite integer relation: ' + canonical(candidate)
     node = {'id': name, 'kind': 'model', 'label': explanation,
             'source': {'locator': 'out/synthesize.json#/result/search/candidate'}}
@@ -81,7 +82,7 @@ def proposal(req, result, template):
                         'if_rival': str(evaluate(rival, result['probe']))},
          'test': {'protocol': 'Precommit separating input; independent frozen finite evaluator',
                   'measurement': 'independent-probe-value', 'stop_condition': 'One candidate run and one verifier'},
-         'discriminator': {'schema': 1, 'hypothesis_id': name, 'conditions': template['conditions'],
+         'discriminator': {'schema': 1, 'hypothesis_id': hypothesis, 'conditions': template['conditions'],
              'measurement': {'name': 'independent-probe-value', 'path': 'out/verdict.json', 'pointer': '/probe_value'},
              'proposal': {'op': 'eq', 'value': evaluate(candidate, result['probe'])},
              'rival': {'op': 'eq', 'value': evaluate(rival, result['probe'])}},

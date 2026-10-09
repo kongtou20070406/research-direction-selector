@@ -149,7 +149,7 @@ class JumpOriginalBoundaryTests(unittest.TestCase):
             competed = []
             def execute(caller, ident, **kwargs):
                 if not competed:
-                    competed.append(original(ProjectStore(root), ident, **kwargs))
+                    competed.append(original(ProjectStore(root), ident))
                 return original(caller, ident, **kwargs)
             with patch.object(ProjectStore, 'execute', execute):
                 self.assertEqual(rds_jump.generate(root)['status'], 'JUMP_STEP_LIMIT')
@@ -333,10 +333,53 @@ class JumpOriginalBoundaryTests(unittest.TestCase):
                 repeated = worker.proposal(req, result, deepcopy(template))
             self.assertEqual(proposal['id'], repeated['id'])
             self.assertNotEqual(proposal['id'], first['id'])
+            from rds_discrimination import hypothesis_key
+            self.assertEqual(hypothesis_key(proposal['discriminator']), hypothesis_key(first['discriminator']))
             retained = structure.propose(root, proposal)
             self.assertEqual(retained['id'], proposal['id'])
             self.assertIsNotNone(structure._find(store, 'PROPOSAL', first['id']))
             self.assertEqual(len({first['id'], retained['id']}), 2)
+
+    def test_fresh_request_cannot_reintroduce_an_actually_refuted_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original_write = example.write
+            def additive_oracle(path, value):
+                if path.name == 'oracle.json':
+                    value = [{'inputs': row['inputs'],
+                              'value': row['inputs']['x'] + row['inputs']['y']}
+                             for row in value]
+                return original_write(path, value)
+            # Freeze a real independent counterexample before any execution.
+            with patch.object(example, 'write', additive_oracle):
+                root, store = example.build(Path(directory) / 'project')
+            generated = rds_jump.generate(root, 3)
+            first = structure._find(store, 'PROPOSAL', generated['proposal_ids'][0])
+            observed = structure.advance(root, first['id'])
+            self.assertEqual(observed['observation'], 'REFUTE')
+            req = structure.request(root, 1)['tasks'][0]
+            self.assertNotEqual(req['id'], first['request_id'])
+            result = json.loads((root / 'out/synthesize.json').read_text())['result']['search']
+            template = json.loads((root / 'template.json').read_text())
+            for run in template['experiment']['runs']:
+                run['id'] += '-after-refutation'
+            worker_spec = importlib.util.spec_from_file_location('review_refuted_worker', root / 'worker.py')
+            worker = importlib.util.module_from_spec(worker_spec)
+            with patch.object(sys, 'path', [str(root), *sys.path]):
+                worker_spec.loader.exec_module(worker)
+            with patch.object(worker, 'read', side_effect=lambda path: json.loads((root / path).read_text())):
+                proposal = worker.proposal(req, result, template)
+            self.assertNotEqual(proposal['id'], first['id'])
+            from rds_discrimination import hypothesis_key
+            self.assertEqual(hypothesis_key(proposal['discriminator']), hypothesis_key(first['discriminator']))
+            before = store.snapshot()
+            with self.assertRaisesRegex(ValueError, 'HYPOTHESIS_REFUTED'):
+                structure.propose(root, proposal)
+            after = store.snapshot()
+            self.assertEqual(after['runs'], before['runs'])
+            self.assertEqual(after['receipts'], before['receipts'])
+            self.assertGreater(after['budget']['wall_seconds']['spent_measured'],
+                               before['budget']['wall_seconds']['spent_measured'])
+            self.assertIsNone(structure._find(store, 'PROPOSAL', proposal['id']))
 
 
 if __name__ == '__main__':

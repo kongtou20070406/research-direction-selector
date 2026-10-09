@@ -5,6 +5,7 @@ Domain workers generate explanations; structure retains and tests them.
 """
 from copy import deepcopy
 import hashlib
+import math
 import os
 from pathlib import Path
 import re
@@ -414,9 +415,17 @@ def _execute_stage(store, stage, req, control):
         run = _owned_stage(store, stage, req)
     if run['status'] in TERMINAL or run.get('attempt_id') is not None:
         return store.recover(run['id'])
+    admitted = False
+    def fresh_admission(db, owned):
+        nonlocal admitted
+        require(owned['manifest_sha256'] == digest(stage['run'])
+                and owned['manifest'] == stage['run']
+                and owned.get('effective_contract_sha256') == req['scope']['contract_sha256'],
+                'Jump admission identity changed')
+        admitted = True  # The kernel invokes this only before this fresh claim.
+    started = structure.time.monotonic()
     try:
-        with control.suspend():
-            receipt = store.execute(run['id'])
+        receipt = store.execute(run['id'], admission_guard=fresh_admission)
     except ValueError as exc:
         if str(exc) != 'Run already dispatched or started; recover never reruns it':
             raise
@@ -424,6 +433,30 @@ def _execute_stage(store, stage, req, control):
         require(raced is not None and (raced['status'] in TERMINAL or raced.get('attempt_id') is not None),
                 'Competing jump attempt is missing')
         return store.recover(run['id'])
+    elapsed = structure.time.monotonic() - started
+    if admitted:
+        # Discount only this call's freshly settled native worker measurement.
+        # Admission, observation and final collection stay on the controller bill.
+        with store._db(True) as db:
+            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
+            require(row is not None, 'Fresh jump attempt has no settled original receipt')
+            original = store._receipt(row)
+            require(original == receipt and original['sha256'] == row['sha256']
+                    == digest({k: v for k, v in original.items() if k != 'sha256'}),
+                    'Fresh jump receipt identity changed')
+            owned = store._run(db, run['id'])
+            require(owned['attempt_id'] == original['attempt_id']
+                    and owned['manifest_sha256'] == original['manifest_sha256']
+                    and db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                                   "AND json_extract(body,'$.run_id')=? AND json_extract(body,'$.sha256')=?",
+                                   (run['id'], original['sha256'])).fetchone() is not None,
+                    'Fresh jump receipt has no owned settlement')
+        paid = original['resources']['wall_seconds']['measured']
+        if paid is not None:
+            require(type(paid) in (int, float) and math.isfinite(paid) and 0 <= paid <= elapsed,
+                    'Invalid fresh jump paid worker interval')
+            structure._reservation_check(store, structure._events(store), control, 0)
+            control.suspended += paid
     if receipt.get('run_status') not in {'SUCCEEDED', 'FAILED', 'INTERRUPTED'}:
         # Policy-enabled execute may return an observation instead of raising.
         # Recover observes this attempt; it never launches another process.

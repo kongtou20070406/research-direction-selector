@@ -57,8 +57,10 @@ worker is admitted: two seconds for probe/refresh consumption and fourteen for
 the largest synthesis adoption (consume, fresh request, up to four proposals,
 and finish). These are reservations within the original project budget, not new
 budget or provider authority. Controller phases borrow the parent reservation;
-only the outer controller scope charges elapsed control. Synchronous worker
-execution is paid by its original receipt, separately from controller time.
+only the outer controller scope charges elapsed control. Only the freshly
+claimed worker interval settled by this invocation's original receipt is
+excluded from controller time. Admission, observation, recovery and final
+collection stay billed; an old receipt cannot offset current control overhead.
 An interrupted direct reservation requires `structure recover`; it conservatively
 charges the parent cap once with UNKNOWN final control cost. An active competing
 controller returns `JUMP_BUSY`. Registration/execution races reconcile only an
