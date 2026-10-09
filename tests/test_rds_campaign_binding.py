@@ -338,6 +338,16 @@ class CampaignBindingTests(unittest.TestCase):
     def test_real_quick_refused_during_publication_keeps_recovery_and_zero_reservation(self):
         from types import SimpleNamespace
         import rds_quick
+        # Declare the legitimate QUICK accounting authority at a new genesis;
+        # never replace the already frozen plain fixture contract or its budget.
+        self.root = self.workspace / 'accounted-project'
+        shutil.copytree(self.helper.root, self.root, ignore=shutil.ignore_patterns('.rds'))
+        contract = deepcopy(self.helper.contract)
+        contract['budget'] = {'wall_seconds': contract['budget']['wall_seconds']}
+        contract['execution_policy'] = {'schema': 1, 'max_attempts': 1}
+        self.store = ProjectStore(self.root)
+        self.store.initialize(contract)
+        before = self.store.snapshot()
         script = self.root / 'publication-probe.py'
         script.write_text("print('must never launch')", encoding='utf-8')
         args = SimpleNamespace(root=str(self.root), name='publication-probe', timeout=5,
@@ -353,10 +363,18 @@ class CampaignBindingTests(unittest.TestCase):
                 campaign.bind(self.store, self.workspace)
             launch.assert_not_called()
         original = self.events()[0]
-        child = ProjectStore(self.root / '.rds/exec/publication-probe').snapshot()
-        self.assertEqual(child['runs'], [])
-        self.assertEqual(child['budget']['wall_seconds']['reserved'], 0)
+        # The owner's committed intent rejects before charging or creating the
+        # child, so there can be no child attempt or resource reservation.
+        self.assertFalse((self.root / '.rds/exec/publication-probe').exists())
+        self.assertFalse(self.marker.exists())
+        after = self.store.snapshot()
+        self.assertEqual(after['budget'], before['budget'])
+        self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
+        for key in ('contract', 'contract_sha256', 'runs', 'receipts'):
+            self.assertEqual(after[key], before[key])
         self.assertEqual(campaign.bind(self.store, self.workspace)['binding_id'], original['binding_id'])
+        self.assertEqual(self.events(), [original])
+        self.assertEqual(self.store.snapshot()['budget'], before['budget'])
 
     def test_admission_parent_mutex_makes_binding_see_committed_quick_job(self):
         child = self.quick_child()
