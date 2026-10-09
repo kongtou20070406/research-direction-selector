@@ -1938,9 +1938,9 @@ def _main():
         else:
             result = cmd_status(args, rds)
         workflow = None
-        if args.command in {'project', 'exec', 'advise', 'init'}:
+        if args.command in {'project', 'exec', 'advise'}:
             from rds_project_lifecycle import describe
-            workflow = result.get('workflow') or describe(args.root, quick=args.command in {'exec', 'init'})
+            workflow = result.get('workflow') or describe(args.root, quick=args.command == 'exec')
             print('[RDS] mode=' + workflow['mode'] + ' advisor=' + workflow['advisor'] +
                   ' root=' + workflow['project_root'], file=sys.stderr)
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json

@@ -640,6 +640,69 @@ class ProjectLifecycleTests(unittest.TestCase):
         self.assertEqual(self.activations(), [])
         self.assertEqual(child.snapshot()['runs'][0]['status'], 'COMPLETED')
 
+    def native_scope(self, child, kind):
+        child.mkdir(parents=True, exist_ok=True)
+        if kind == 'tms':
+            spec = {'schema': 1, 'nodes': [], 'hyperedges': [], 'goals': []}
+            path = self.write_json('map.json', spec, root=child)
+            self.output('hypergraph', '--input', str(path), '--json', root=child)
+            return child / '.rds/project.sqlite3'
+        shutil.copytree(ROOT / 'examples/reference-run', child, dirs_exist_ok=True)
+        self.output('init', '--contract', str(child / 'contract.json'), root=child)
+        return child / '.rds/state.sqlite3'
+
+    def test_native_child_without_project_contract_cannot_hide_initialized_ancestor(self):
+        self.init_quick()
+        before = self.originals()
+        for kind in ('tms', 'reference'):
+            with self.subTest(kind=kind):
+                child = self.root / kind
+                native = self.native_scope(child, kind)
+                native_sha = hashlib.sha256(native.read_bytes()).hexdigest()
+                for binding in self.contract['bindings']:
+                    shutil.copyfile(self.root / binding['path'], child / binding['path'])
+                path = self.write_json('execution-contract.json', self.contract, root=child)
+                found = self.output('project', 'discover', root=child)
+                self.assertEqual(found['relation'], 'ANCESTOR')
+                self.assertEqual(found['project_root'], str(self.root))
+                rejected = self.call('project', 'init', '--contract', str(path), '--mode', 'quick',
+                                     root=child, ok=False)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn('--separate-project', rejected.stderr)
+                self.assertEqual(hashlib.sha256(native.read_bytes()).hexdigest(), native_sha)
+                independent = self.output('project', 'init', '--contract', str(path), '--mode', 'quick',
+                                          '--separate-project', 'Separate declared ' + kind + ' fixture', root=child)
+                self.assertEqual(independent['workflow']['mode'], 'QUICK')
+                with ProjectStore(child)._db(True) as db:
+                    declaration = json.loads(db.execute("SELECT body FROM events WHERE "
+                        "json_extract(body,'$.kind')='PROJECT_SCOPE_DECLARED'").fetchone()['body'])
+                self.assertEqual(declaration['ancestor_root'], str(self.root))
+        self.assertEqual(self.originals(), before)
+
+    def test_native_scope_without_initialized_ancestor_retains_original_discovery(self):
+        for kind in ('tms', 'reference'):
+            with self.subTest(kind=kind):
+                child = self.root / kind
+                native = self.native_scope(child, kind)
+                before = hashlib.sha256(native.read_bytes()).hexdigest()
+                found = self.output('project', 'discover', root=child)
+                self.assertEqual(found['relation'], 'CURRENT')
+                self.assertEqual(found['project_root'], str(child))
+                self.assertEqual(found['workflow']['mode'], 'UNINITIALIZED')
+                self.assertEqual(hashlib.sha256(native.read_bytes()).hexdigest(), before)
+
+    def test_corrupt_native_child_is_rejected_instead_of_hidden_by_ancestor(self):
+        self.init_quick()
+        for kind in ('tms', 'reference'):
+            with self.subTest(kind=kind):
+                child = self.root / ('corrupt-' + kind)
+                (child / '.rds').mkdir(parents=True)
+                path = child / '.rds' / ('project.sqlite3' if kind == 'tms' else 'state.sqlite3')
+                path.write_bytes(b'not a sqlite database')
+                rejected = self.call('project', 'discover', root=child, ok=False)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertEqual(path.read_bytes(), b'not a sqlite database')
+
 
 if __name__ == '__main__':
     unittest.main()

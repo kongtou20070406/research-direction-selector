@@ -1262,7 +1262,7 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             reports.append(report)
             if report["truth"] == UNKNOWN:
                 pending.append(query(rule_id, condition, report["reason"]))
-            elif report["truth"] == FALSE and isinstance(condition.get("on_false"), dict):
+            elif report["truth"] == FALSE and "on_false" in condition:
                 fallbacks.append((rule_id, condition["on_false"], deepcopy(derivation)))
         return _all(reports)
 
@@ -1321,16 +1321,26 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
         completion = []
         satisfaction = UNKNOWN
         if isinstance(cfg, dict):
-            satisfaction = conditions(rid, cfg, 'satisfied_when', completion, [], [])
+            satisfaction = conditions(rid, cfg, 'satisfied_when', completion, [], fallbacks)
             if not completion:
                 satisfaction = UNKNOWN
         action = cfg.get('action') if isinstance(cfg, dict) else None
         valid, reason = _action_valid(action, current_choice)
+        fallback_actions = []
+        for fallback_rid, fallback, chain in fallbacks:
+            fallback_valid, fallback_reason = _action_valid(fallback, current_choice)
+            fallback_actions.append({'rule_id': fallback_rid, 'action': deepcopy(fallback),
+                                     'action_validation': {'valid': fallback_valid, 'reason': fallback_reason},
+                                     'discrimination': _discrimination(fallback, facts)
+                                         if fallback_valid and 'discrimination' in fallback else None})
+            if not fallback_valid:
+                coverage['reasons'].append('Invalid active fallback for ' + fallback_rid + ': ' + fallback_reason)
         coverage['analyzed_nodes'].append({'id': rid, 'action_readiness': truth, 'satisfaction': satisfaction,
                                           'disposition': 'EVALUATED' if isinstance(nodes[rid].get('executable'), dict)
                                                          else 'UNCONFIGURED_UNKNOWN',
                                           'derivation': derivation, 'completion_conditions': completion,
                                           'action_validation': {'valid': valid, 'reason': reason},
+                                          'fallback_actions': fallback_actions,
                                           'discrimination': _discrimination(action, facts) if valid
                                               and 'discrimination' in action else None})
     for index, edge in enumerate(raw_edges):

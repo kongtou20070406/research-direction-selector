@@ -19,8 +19,8 @@ recorded in the new ledger. A declared successor uses the existing `--supersedes
 lineage. A nested successor may omit the separation declaration only when its
 predecessor resolves to the discovered ancestor; an unrelated predecessor does
 not authorize splitting the ancestor's research history. These are cooperative
-CLI guards, not an OS sandbox or a global project
-registry.
+CLI guards, not an OS sandbox or a global project registry. Local native state
+without a project contract does not hide an ancestor's project contract.
 
 Managed tool-qualification workspaces remain internal jobs of their original
 project. Their internal caller verifies the original preparation ledger and
@@ -47,6 +47,11 @@ An intentionally limited execution workflow is explicit:
 python -B scripts/rds_cli.py --root <project> project init --mode quick --contract <contract.json>
 ```
 
+Add work to an initialized QUICK project with `project create` and `project
+execute`. A plain QUICK contract cannot use `exec` to open an uncharged child
+ledger. A declared execution-policy owner can retain its existing charged QUICK
+path; an alternative `--ledger` cannot replace the source contract's authority.
+
 The CLI prints `mode` and actual Advisor ownership on stderr. Unhashed operation
 responses include `workflow`; brief responses include a compact mode/Advisor/
 next-command summary. Original hashed receipts remain unchanged. Full responses
@@ -54,6 +59,8 @@ also list applicable existing capabilities. FULL means program-owned collection
 and route selection; it does not enable optional autonomy, tools, confirmation,
 formal solvers or model execution without their declarations. `exec` is visibly
 QUICK. Existing exact initialization retries keep working.
+The legacy top-level `init` creates a reference-state ledger and does not label
+that ledger as a QUICK project.
 
 ## Enable Advisor without starting over
 

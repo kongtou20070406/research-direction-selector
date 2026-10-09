@@ -29,9 +29,10 @@ def _command(root, suffix):
 
 
 def discover(root):
-    """Inspect only the requested root and its ancestors, without creating state."""
+    """Prefer the nearest project contract; otherwise retain the nearest native scope."""
     requested = Path(root).resolve()
     require(requested.is_dir(), 'Project root must exist')
+    native_scope = None
     for candidate in (requested, *requested.parents):
         state = candidate / '.rds'
         # A native objective/CAS is also an existing research workspace, even
@@ -41,6 +42,17 @@ def discover(root):
         require(state.resolve().is_relative_to(candidate), 'State directory escapes project root')
         if not any((state / name).exists() for name in ('project.sqlite3', 'state.sqlite3')):
             continue
+        reference = state / 'state.sqlite3'
+        if reference.exists():
+            require(reference.is_file() and reference.resolve().is_relative_to(candidate),
+                    'Reference ledger escapes project root')
+            # A native reference ledger is a legitimate local scope, but not
+            # an external-execution project contract. Verify it before looking
+            # farther up; damaged data must not disappear behind an ancestor.
+            from rds_cli import RDSState
+            with RDSState(candidate).snapshot() as (reference_db, reference_state):
+                if reference_state:
+                    RDSState.invariants(reference_state)
         if (state / 'project.sqlite3').exists() and not (state / 'state.sqlite3').exists():
             # QUICK may create an empty same-DB lock anchor for admission. It
             # has no research records; malformed/nonempty databases still fail
@@ -49,10 +61,16 @@ def discover(root):
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").fetchone() is None:
                     continue
         info = describe(candidate)
-        return {'status': 'EXISTING_PROJECT', 'requested_root': str(requested),
+        found = {'status': 'EXISTING_PROJECT', 'requested_root': str(requested),
                 'project_root': str(candidate), 'relation': 'CURRENT' if candidate == requested else 'ANCESTOR',
                 'workflow': info, 'next_action': info['next_action'], 'execution_started': False,
                 'search_scope': 'REQUESTED_ROOT_AND_ANCESTORS', 'sibling_projects_searched': False}
+        if info['mode'] != 'UNINITIALIZED':
+            return found
+        if native_scope is None:
+            native_scope = found
+    if native_scope is not None:
+        return native_scope
     return {'status': 'NO_PROJECT_FOUND', 'requested_root': str(requested), 'project_root': None,
             'workflow': describe(requested), 'next_action': _command(requested, 'project plan'),
             'execution_started': False, 'search_scope': 'REQUESTED_ROOT_AND_ANCESTORS',

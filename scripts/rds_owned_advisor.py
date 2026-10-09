@@ -572,7 +572,7 @@ def review(store, persist=True):
             tool_reports = applicable(store, state['contract'], context['facts'])
             graph = gate_graph(graph, tool_reports, context['facts'])
         recommendations = RDSAdvisor(store.root)._recommend_next_directions(
-            state_for_advisor, graph, priority_action_ids=priority)
+            state_for_advisor, graph, priority_action_ids=priority, _collected_context=not persist)
         advice = {'advisor_type': 'STRATEGIC_RESEARCH_ADVICE', 'recommendations': recommendations,
                   'recommendations_count': len(recommendations)}
         result.update(advice=advice, recommendations=recommendations, context=context)

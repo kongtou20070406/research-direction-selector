@@ -516,11 +516,11 @@ class RDSAdvisor:
         return self._recommend_next_directions(state, judgment_graph, priority_action_ids=priority_action_ids)
 
     def _recommend_next_directions(self, state: Dict[str, Any], judgment_graph: Dict[str, Any],
-                                   *, priority_action_ids=()) -> List[Dict[str, Any]]:
+                                   *, priority_action_ids=(), _collected_context=False) -> List[Dict[str, Any]]:
         """Read real state and supplied graph; recommend a review, never a causal ranking."""
         recommendations = []
         context = state.get("advisor_context", {})
-        if isinstance(context, dict):
+        if isinstance(context, dict) and not _collected_context:
             from rds_advisor_coverage import project_context
             context = project_context(self.root_dir, context)
             state = {**state, 'advisor_context': context}

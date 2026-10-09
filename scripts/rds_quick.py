@@ -165,7 +165,8 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
     snapshot = ProjectStore(root).snapshot(check_bindings=True)
     record['advice'] = cas_json(root, advice)
     saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
-                            _expected_contract_sha256=_expected_contract_sha256)
+                            _expected_contract_sha256=_expected_contract_sha256,
+                            _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
     saved['candidate_id'] = record['candidate']['id']
     return saved
 
@@ -458,6 +459,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 'Program-owned Advisor requires project advance/create/execute; quick exec cannot bypass it')
         require('stop_policy' not in source_contract and 'maintenance_allowance' not in source_contract,
                 'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
+        require(_native_preparation_root is not None or 'execution_policy' in source_contract,
+                'Frozen source project requires project create/execute; QUICK needs its original execution_policy accounting')
         if 'execution_policy' in source_contract:
             require(owner is None or owner == root, 'Frozen source execution policy cannot be replaced by another ledger')
             owner = root
@@ -557,6 +560,50 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 'policy_sha256': digest(execution_policy), 'route_sha256': execution_route(request['argv'], request['inputs'],
                     request['outputs'], root, parent_contract.get('objective_sha256', request.get('objective_sha256')),
                     route=_policy_route(request, None), arm='tool', executor_sha256=executor_sha256)}
+    locked_parents = {}
+
+    @contextmanager
+    def admission_context():
+        # The original allowance path acquires parent before child. Keep that
+        # order during preparation and through the child's attempt commit.
+        with ExitStack() as locks:
+            try:
+                for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
+                    parent = ProjectStore(parent_root)
+                    create_anchor = not parent.path.is_file()
+                    parent.state_dir.mkdir(exist_ok=True)
+                    parent_db = locks.enter_context(parent._db())
+                    if create_anchor:
+                        # No contract/budget/event is created. The same SQLite
+                        # file serializes a concurrent first project init.
+                        parent_db.execute('PRAGMA journal_mode=WAL')
+                    parent_db.execute('BEGIN IMMEDIATE')
+                    locked_parents[parent_root] = parent_db
+                yield
+            finally:
+                locked_parents.clear()
+
+    def check_quick_parents():
+        # Both materialization and attempt admission require these live checks.
+        check_source_root()
+        for parent_root, prepared_sha in parent_contracts.items():
+            current_contract, steering = _parent_controls(parent_root, db=locked_parents[parent_root])
+            current_sha = digest(current_contract) if current_contract is not None else None
+            require(current_sha == prepared_sha,
+                    'Quick parent contract changed before admission; review the original project')
+            if current_contract is not None:
+                require('advisor_policy' not in current_contract,
+                        'Program-owned Advisor was enabled before quick admission; use the original project')
+                require('stop_policy' not in current_contract and 'maintenance_allowance' not in current_contract,
+                        'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
+                require(steering is None,
+                        'Human steering changed before quick admission; use project create/execute')
+        if review is not None:
+            from rds_advisor_coverage import project_context
+            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+    def admit_quick(_db, _run):
+        check_quick_parents()
+
     args.name = args.name or 'exec-' + digest(request)[:20]
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args.name), 'Job name must contain 1–64 safe identifier characters')
     workspace = root / '.rds' / 'exec' / args.name
@@ -594,111 +641,72 @@ def execute(args, review=None, *, _native_preparation_root=None):
             executor_sha256=executor_sha256)
         if observation is not None:
             return observation
-    workspace.mkdir(parents=True)
-    bindings = []
-    if goal_raw is not None:
-        bind_objective(root, goal_raw)
-        bind_objective(workspace, goal_raw)
-        (workspace / 'rds-exec-objective.json').write_bytes(goal_raw)
-        bindings.append({'path': 'rds-exec-objective.json', 'sha256': request['objective_sha256'], 'role': 'config'})
-    for p, roles in files.items():
-        target = workspace / p.relative_to(root)
-        require(not target.name.startswith('rds-exec-'), 'Input uses a reserved rds-exec- filename')
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(raw_by_path[p])
-        for role in roles:
-            bindings.append({'path': target.relative_to(workspace).as_posix(), 'sha256': file_sha(target), 'role': role})
-    metadata = {'kind': 'OPERATIONAL_COMMAND_WRAPPER', 'request': request,
-                'input_discovery': 'ARGV_FILES_AND_STATIC_LOCAL_PYTHON_IMPORTS',
-                'hidden_inputs': 'UNKNOWN', 'evaluator': 'EXIT_CODE_AND_DECLARED_OUTPUT_EXISTENCE_ONLY',
-                'scientific_support': 'UNKNOWN'}
-    for name, value in [('rds-exec-request.json', request), ('rds-exec-metadata.json', metadata)]:
-        (workspace / name).write_text(canonical(value), encoding='utf-8')
-    bindings.append({'path': 'rds-exec-request.json', 'sha256': file_sha(workspace / 'rds-exec-request.json'), 'role': 'config'})
-    for role in ('config', 'data', 'evaluator'):
-        if not any(b['role'] == role for b in bindings):
-            bindings.append({'path': 'rds-exec-metadata.json', 'sha256': file_sha(workspace / 'rds-exec-metadata.json'), 'role': role})
-    # Missing scientific identity is explicit UNKNOWN, not guessed from filenames.
-    protocol = {k: 'UNKNOWN' for k in ('data_split', 'init', 'seed', 'checkpoint', 'schedule', 'sample_work', 'numeric_protocol')}
-    protocol.update({role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role) for role in ('code', 'config', 'data')})
-    protocol['purpose'] = 'OPERATIONAL_COMMAND_WRAPPER'
-    (workspace / 'rds-exec-protocol.json').write_text(canonical(protocol), encoding='utf-8')
-    bindings.append({'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json'), 'role': 'protocol'})
-    # Absolute source-file arguments must refer to their frozen copies.
-    frozen_argv = [argv[0]] + [str(Path(v).resolve().relative_to(root)) if Path(v).is_absolute() and Path(v).resolve() in files else v for v in argv[1:]]
-    store = ProjectStore(workspace)
-    # Multi-component paths authorize a directory root (strict containment). A
-    # single-component path is a root-level file: it cannot sit strictly below any
-    # root, so authorize that exact file instead of conflating it with a directory.
-    output_roots = sorted({Path(p).parts[0] for p in args.output if len(Path(p).parts) > 1}) or ['outputs']
-    output_files = sorted({Path(p).as_posix() for p in args.output if len(Path(p).parts) == 1})
-    contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': [frozen_argv],
-                'output_roots': output_roots, 'budget': {'wall_seconds': timeout}, 'description': 'Explicitly invoked frozen tool command; not an OS sandbox or science verdict'}
-    if output_files:
-        contract['output_files'] = output_files
-    if goal_raw is not None:
-        contract['objective_sha256'] = request['objective_sha256']
-    if execution_policy is not None:
-        contract['execution_policy'] = deepcopy(execution_policy)
-    store.initialize(contract)
     if review is not None:
         require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
         record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
                       _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
-    manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
-                'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
-                'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
-                'resource_estimates': {'wall_seconds': timeout - guard_seconds}, 'description': 'Frozen quick exec'}
-    store.register(manifest, executor_sha256=executor_sha256)
-    for output in args.output:
-        store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
+    if goal_raw is not None:
+        bind_objective(root, goal_raw)
+    with admission_context():
+        check_quick_parents()
+        workspace.mkdir(parents=True)
+        bindings = []
+        if goal_raw is not None:
+            bind_objective(workspace, goal_raw)
+            (workspace / 'rds-exec-objective.json').write_bytes(goal_raw)
+            bindings.append({'path': 'rds-exec-objective.json', 'sha256': request['objective_sha256'], 'role': 'config'})
+        for p, roles in files.items():
+            target = workspace / p.relative_to(root)
+            require(not target.name.startswith('rds-exec-'), 'Input uses a reserved rds-exec- filename')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw_by_path[p])
+            for role in roles:
+                bindings.append({'path': target.relative_to(workspace).as_posix(), 'sha256': file_sha(target), 'role': role})
+        metadata = {'kind': 'OPERATIONAL_COMMAND_WRAPPER', 'request': request,
+                    'input_discovery': 'ARGV_FILES_AND_STATIC_LOCAL_PYTHON_IMPORTS',
+                    'hidden_inputs': 'UNKNOWN', 'evaluator': 'EXIT_CODE_AND_DECLARED_OUTPUT_EXISTENCE_ONLY',
+                    'scientific_support': 'UNKNOWN'}
+        for name, value in [('rds-exec-request.json', request), ('rds-exec-metadata.json', metadata)]:
+            (workspace / name).write_text(canonical(value), encoding='utf-8')
+        bindings.append({'path': 'rds-exec-request.json', 'sha256': file_sha(workspace / 'rds-exec-request.json'), 'role': 'config'})
+        for role in ('config', 'data', 'evaluator'):
+            if not any(b['role'] == role for b in bindings):
+                bindings.append({'path': 'rds-exec-metadata.json', 'sha256': file_sha(workspace / 'rds-exec-metadata.json'), 'role': role})
+        # Missing scientific identity is explicit UNKNOWN, not guessed from filenames.
+        protocol = {k: 'UNKNOWN' for k in ('data_split', 'init', 'seed', 'checkpoint', 'schedule', 'sample_work', 'numeric_protocol')}
+        protocol.update({role + '_sha256': ProjectStore._role_sha({'bindings': bindings}, role) for role in ('code', 'config', 'data')})
+        protocol['purpose'] = 'OPERATIONAL_COMMAND_WRAPPER'
+        (workspace / 'rds-exec-protocol.json').write_text(canonical(protocol), encoding='utf-8')
+        bindings.append({'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json'), 'role': 'protocol'})
+        # Absolute source-file arguments must refer to their frozen copies.
+        frozen_argv = [argv[0]] + [str(Path(v).resolve().relative_to(root)) if Path(v).is_absolute() and Path(v).resolve() in files else v for v in argv[1:]]
+        store = ProjectStore(workspace)
+        # Multi-component paths authorize a directory root (strict containment). A
+        # single-component path is a root-level file: it cannot sit strictly below any
+        # root, so authorize that exact file instead of conflating it with a directory.
+        output_roots = sorted({Path(p).parts[0] for p in args.output if len(Path(p).parts) > 1}) or ['outputs']
+        output_files = sorted({Path(p).as_posix() for p in args.output if len(Path(p).parts) == 1})
+        contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': [frozen_argv],
+                    'output_roots': output_roots, 'budget': {'wall_seconds': timeout}, 'description': 'Explicitly invoked frozen tool command; not an OS sandbox or science verdict'}
+        if output_files:
+            contract['output_files'] = output_files
+        if goal_raw is not None:
+            contract['objective_sha256'] = request['objective_sha256']
+        if execution_policy is not None:
+            contract['execution_policy'] = deepcopy(execution_policy)
+        store.initialize(contract)
+        manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
+                    'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
+                    'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
+                    'resource_estimates': {'wall_seconds': timeout - guard_seconds}, 'description': 'Frozen quick exec'}
+        store.register(manifest, executor_sha256=executor_sha256)
+        for output in args.output:
+            store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
     if review is not None:
         from rds_advisor_coverage import project_context
         choice(review[0], project_context(args.ledger, review[1]), args.choose)
-    locked_parents = {}
-
-    @contextmanager
-    def admission_context():
-        # The original allowance path acquires parent before child. Keep that
-        # order and hold every parent through the child's attempt commit.
-        with ExitStack() as locks:
-            try:
-                for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
-                    parent = ProjectStore(parent_root)
-                    create_anchor = not parent.path.is_file()
-                    parent.state_dir.mkdir(exist_ok=True)
-                    parent_db = locks.enter_context(parent._db())
-                    if create_anchor:
-                        # No contract/budget/event is created. The same SQLite
-                        # file serializes a concurrent first project init.
-                        parent_db.execute('PRAGMA journal_mode=WAL')
-                    parent_db.execute('BEGIN IMMEDIATE')
-                    locked_parents[parent_root] = parent_db
-                yield
-            finally:
-                locked_parents.clear()
-
-    def admit_quick(_db, _run):
-        # Recheck at the existing transactional attempt-admission boundary,
-        # after registration and any pause before the execute call.
-        check_source_root()
-        for parent_root, prepared_sha in parent_contracts.items():
-            current_contract, steering = _parent_controls(parent_root, db=locked_parents[parent_root])
-            current_sha = digest(current_contract) if current_contract is not None else None
-            require(current_sha == prepared_sha,
-                    'Quick parent contract changed before admission; review the original project')
-            if current_contract is not None:
-                require('advisor_policy' not in current_contract,
-                        'Program-owned Advisor was enabled before quick admission; use the original project')
-                require('stop_policy' not in current_contract and 'maintenance_allowance' not in current_contract,
-                        'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
-                require(steering is None,
-                        'Human steering changed before quick admission; use project create/execute')
-        if review is not None:
-            from rds_advisor_coverage import project_context
-            choice(review[0], project_context(args.ledger, review[1]), args.choose)
     receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,
                             admission_context=admission_context)
     regression = None

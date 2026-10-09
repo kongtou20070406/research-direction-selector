@@ -43,6 +43,8 @@ def _operation_frontier(context):
 
 def project_context(root, context):
     """Saved active dependencies cannot be omitted or replaced for one choice."""
+    if not isinstance(context, dict):
+        raise ValueError('Advisor context must be an object')
     from rds_tms_store import current, with_saved_dependencies
     saved = current(root)
     if saved is None:
