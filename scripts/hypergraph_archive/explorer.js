@@ -30,7 +30,7 @@ if(typeof document!=='undefined')(() => {
   const color=p=>parseInt(ArchivePresentation.nodeStyle(p).color.slice(1),16);
   let membershipSet=new Set(),membershipEdges=new Set();let g,worker,rawWorker,rawReady=null,ready=false,paused=false,fitScale=1,level=0,seq=0,lastQuery=0,lastSignature='',pendingQuery=false,queuedView=null,selected=null,view=new Map(),searchTimer,queryTimer,viewportVersion=0;
   let topology='',showNames=false,growthFrame=null,growthIds=[],lastFrameMeasure=0,currentScene=null,nodeSize=1,edgeWidth=1;
-  const relationStyles={dependency:{color:'#bebbc9',dash:'solid',width:.8,opacity:.35},source:{color:'#a9b9c8',dash:'dashed',width:.65,opacity:.23},history:{color:'#a49cb3',dash:'dotted',width:.55,opacity:.16},other:{color:'#7e838b',dash:'solid',width:.5,opacity:.18},mixed:{color:'#8e939b',dash:'solid',width:.6,opacity:.2}};
+  const relationStyles={dependency:{color:'#bebbc9',dash:'solid',width:.8,opacity:.35},source:{color:'#a9b9c8',dash:'dashed',width:.65,opacity:.16},history:{color:'#a49cb3',dash:'dotted',width:.55,opacity:.05},other:{color:'#7e838b',dash:'solid',width:.5,opacity:.08},mixed:{color:'#8e939b',dash:'solid',width:.6,opacity:.1}};
   const callbacks=new Map(),urls=[];
   const api={viewport:{},totals:{},physics:{},rawNode:async index=>{const n=await request('locate',{index});return n.raw_node_index===null?null:rawRequest('raw-node',n.raw_node_index??index);},rawEdge:async index=>{const e=await request('raw-locator',{index});return rawRequest('raw-edge',e.index);},rawHyperedge:id=>rawRequest('raw-hyperedge',id),locate:index=>locate(index)};
   window.RDSArchive=api;
@@ -50,7 +50,7 @@ if(typeof document!=='undefined')(() => {
   function currentLevel(){const ratio=g.scale/fitScale;return ratio<2?0:ratio<5?1:ratio<12?2:3;}
   function sendView(next){
     pendingQuery=true;lastSignature=next.signature;lastQuery=performance.now();const version=++viewportVersion;
-    request('viewport',{level:next.level,rect:next.rect,edgeBudget:next.level===1||next.level===2?1000:3500,nodeBudget:3500}).then(m=>{
+    request('viewport',{level:next.level,rect:next.rect,edgeBudget:next.level===0?3500:800,nodeBudget:3500}).then(m=>{
       pendingQuery=false;
       // Keep completed scenes visible during continuous panning, then query the
       // newest camera. Coalescing must bound work without starving the display.
