@@ -33,6 +33,7 @@ with pathlib.Path('provider-calls.jsonl').open('a',encoding='utf-8') as log:
     log.write(json.dumps({'run_id':rid,'parent':request['parent_sha256']})+'\\n')
 mode=MODES.get(rid,'good')
 if mode=='exit': raise SystemExit(9)
+if mode=='delayed': time.sleep(3)
 if mode=='timeout': time.sleep(5)
 if mode=='malformed': print('not JSON'); raise SystemExit(0)
 policy=request['policy']
