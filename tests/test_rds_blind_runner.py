@@ -161,6 +161,7 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue((self.root / 'out' / 'result.json').is_file())
         self.assertFalse((self.root / 'out' / 'dispatch.json').exists())
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux directory durability preflight')
     def test_root_account_is_refused_before_probe_or_dispatch(self):
         with patch.object(blind.sys, 'platform', 'linux'), \
                 patch.object(blind.os, 'geteuid', return_value=0), \
@@ -168,7 +169,7 @@ class RunnerTests(unittest.TestCase):
                 patch.object(blind, '_probe') as probe, patch.object(blind, '_capture') as capture:
             result = self.run_worker()
         self.assertEqual(result['status'], 'refused')
-        self.assertIn('unprivileged host account required', result['reason'])
+        self.assertIn('an unprivileged host account is required', result['reason'])
         self.assertFalse(result['worker_dispatched'])
         probe.assert_not_called()
         capture.assert_not_called()
