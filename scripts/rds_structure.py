@@ -175,11 +175,10 @@ def _find(store, kind, ident):
     return value
 
 
-def _put(store, kind, ident, value, *, expected=None, check_snapshot=False):
+def _put(store, kind, ident, value, *, expected=None, check_snapshot=False, _db=None):
     require(len(canonical(value).encode('utf-8')) <= MAX_BYTES, 'Structure record exceeds 128 KiB')
     ref = cas_json(store.root, value)
-    with store._db() as db:
-        db.execute('BEGIN IMMEDIATE')
+    def commit(db):
         events = _events(store, db)
         old = next((e for e in events if e['kind'] == PREFIX + kind and e.get('id') == ident), None)
         if old:
@@ -199,6 +198,13 @@ def _put(store, kind, ident, value, *, expected=None, check_snapshot=False):
             search_allocation.claim(events, value, lambda ref: _read_ref(store, ref))
         db.execute('INSERT INTO events(body) VALUES (?)',
                    (canonical({'kind': PREFIX + kind, 'id': ident, 'sha256': ref['sha256'], 'record': ref}),))
+    if _db is None:
+        with store._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            commit(db)
+    else:
+        commit(_db)
+
     return value
 
 
@@ -418,7 +424,7 @@ def _live(store, req, allow_owned_updates=False):
     return state, saved
 
 
-def propose(root, proposal):
+def propose(root, proposal, *, _prepare_only=False):
     store = ProjectStore(root)
     require(isinstance(proposal, dict) and len(canonical(proposal).encode('utf-8')) <= MAX_BYTES, 'Invalid structure proposal')
     ident = proposal.get('id')
@@ -427,7 +433,7 @@ def propose(root, proposal):
     previous = _find(store, 'PROPOSAL', proposal['id'])
     if previous:
         require(previous['proposal_sha256'] == digest(proposal), 'Proposal ID reused with changed content')
-        return previous
+        return {'record': previous, 'expected': previous['snapshot_sha256']} if _prepare_only else previous
     with _meter(store, 'propose'):
         req = _find(store, 'REQUEST', proposal.get('request_id'))
         require(req is not None, 'Unknown exploration request')
@@ -499,6 +505,8 @@ def propose(root, proposal):
                         'Evidence slot must check the same scoped hypothesis')
         reason = _route_constraint(store, value)
         require(reason is None, 'Evidence route constraint: ' + str(reason))
+        if _prepare_only:
+            return {'record': value, 'expected': saved['sha256']}
         return _put(store, 'PROPOSAL', value['id'], value, expected=saved['sha256'], check_snapshot=True)
 
 
@@ -855,9 +863,12 @@ def drive(root, steps=1):
         decision = next_step(root)
         if decision['selected'] is None:
             if decision['status'] == 'REQUEST_OPEN_EXPLORATION':
-                from rds_jump import generate
+                from rds_jump import generate, _origin
+                store = ProjectStore(root)
+                origin = _origin(store, store.snapshot())
+                completed = origin is not None and _find(store, 'JUMP_FINISHED', origin[0]['id']) is not None
                 generated = generate(root)
-                if generated['status'] != 'JUMP_NOT_CONFIGURED':
+                if generated['status'] != 'JUMP_NOT_CONFIGURED' and not completed:
                     return {'status': generated['status'], 'decisions': history + [decision],
                             'generation': generated, 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}
             return {'status': decision['status'], 'decisions': history + [decision],

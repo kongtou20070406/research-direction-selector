@@ -632,7 +632,10 @@ def _finish_generated(store, root, ident, req, result, prior):
     proposals = result.get('proposals')
     require(isinstance(proposals, list) and len(proposals) <= 4 and
             bool(proposals) == (result['status'] == 'PROPOSED'), 'Invalid generated proposal count')
-    retained = []
+    proposal_ids = [p.get('id') if isinstance(p, dict) else None for p in proposals]
+    require(all(isinstance(p, str) for p in proposal_ids) and len(set(proposal_ids)) == len(proposal_ids),
+            'Generated proposal IDs must be distinct')
+    prepared = []
     admission = req
     if proposals:
         # Generation adds receipts. Bind adoption to a fresh allocation over
@@ -655,11 +658,18 @@ def _finish_generated(store, root, ident, req, result, prior):
         require(isinstance(sources, list), 'Generated explanation must declare its sources')
         for ref in prior:
             sources.append({'kind': 'local_observation', 'source': deepcopy(ref)})
-        retained.append(structure.propose(root, proposal)['id'])
+        prepared.append(structure.propose(root, proposal, _prepare_only=True))
+    retained = [p['record']['id'] for p in prepared]
     with structure._meter(store, 'jump-finish'):
-        finished = structure._put(store, 'JUMP_FINISHED', ident,
-            {'id': ident, 'status': 'JUMP_PROPOSED' if retained else 'NO_CANDIDATE', 'proposal_ids': retained,
-             'sources': prior, 'reason': result.get('reason'), 'scientific_support': 'UNKNOWN',
-             'next_move': 'structure next' if retained else 'Inspect retained evidence and revise the bounded plan',
-             'execution_authorized': False})
+        with store._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for item in prepared:
+                value = item['record']
+                structure._put(store, 'PROPOSAL', value['id'], value, expected=item['expected'],
+                               check_snapshot=True, _db=db)
+            finished = structure._put(store, 'JUMP_FINISHED', ident,
+                {'id': ident, 'status': 'JUMP_PROPOSED' if retained else 'NO_CANDIDATE', 'proposal_ids': retained,
+                 'sources': prior, 'reason': result.get('reason'), 'scientific_support': 'UNKNOWN',
+                 'next_move': 'structure next' if retained else 'Inspect retained evidence and revise the bounded plan',
+                 'execution_authorized': False}, _db=db)
     return {**finished, 'agent_context': packet(store)}

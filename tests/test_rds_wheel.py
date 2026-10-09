@@ -1,6 +1,7 @@
 """Offline wheel tests. Fake project responses are unit fixtures; real CLI tests verify kernel behavior."""
 from copy import deepcopy
 import importlib.util
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -578,6 +579,191 @@ class WheelTests(unittest.TestCase):
 
 
 class RealWheelTests(unittest.TestCase):
+    def crash_legacy_partial_manifest(self, wheel):
+        # Preserve the legacy interruption boundary in a separate process; the
+        # current writer must also recover old, already retained partial files.
+        code = '''
+import os, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+import rds_wheel as w
+wheel = w.Wheel(sys.argv[2])
+write = wheel.write
+def interrupted(name, value, **kwargs):
+    if kwargs.get('once') and name.startswith(('manifests/', 'screen/')):
+        raw = (w.canonical(value) + '\\n').encode('utf-8')
+        target = wheel.state_path(name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open('xb') as stream:
+            stream.write(raw[:len(raw) // 2])
+            stream.flush()
+            os.fsync(stream.fileno())
+        os._exit(73)
+    return write(name, value, **kwargs)
+wheel.write = interrupted
+wheel.tick()
+raise AssertionError('legacy partial boundary was not reached')
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(wheel.root)],
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+        state = read_json(wheel.state_path('state.json'))
+        pending = state['pending']
+        relative = ('screen/' if pending['kind'] == 'screen' else 'manifests/') + pending['manifest']['id'] + '.json'
+        return pending, relative, wheel.state_path(relative).read_bytes()
+
+    def test_once_publication_never_exposes_partial_or_overwrites_existing_state(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-once-') as directory:
+            wheel = fixture.prepare(Path(directory) / 'project')
+            code = '''
+import os, pathlib, subprocess, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+import rds_wheel as w
+old = os.environ.get('RDS_WHEEL_TEST_SOURCE_COMMIT')
+if old:
+    source = subprocess.check_output(['git', 'show', old + ':scripts/rds_wheel.py'], cwd=sys.argv[1])
+    exec(compile(source, w.__file__, 'exec'), w.__dict__)
+wheel = w.Wheel(sys.argv[2])
+original = pathlib.Path.open
+class Interrupted:
+    def __init__(self, stream): self.stream = stream
+    def __enter__(self): self.stream.__enter__(); return self
+    def __exit__(self, *args): return self.stream.__exit__(*args)
+    def write(self, raw):
+        self.stream.write(raw[:len(raw) // 2])
+        self.stream.flush()
+        os.fsync(self.stream.fileno())
+        os._exit(73)
+def opened(path, mode='r', *args, **kwargs):
+    stream = original(path, mode, *args, **kwargs)
+    if 'x' in mode and (path.name == 'once-proof.json' or path.name.startswith('.once-proof.json.')):
+        return Interrupted(stream)
+    return stream
+pathlib.Path.open = opened
+wheel.write('once-proof.json', {'complete': 'payload'}, once=True)
+raise AssertionError('write interruption did not occur')
+'''
+            result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(wheel.root)],
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+            target = wheel.state_path('once-proof.json')
+            self.assertFalse(target.exists(), 'the incomplete temporary file must not become public')
+            wheel.write('once-proof.json', {'complete': 'payload'}, once=True)
+            before = target.read_bytes()
+            with self.assertRaises(FileExistsError):
+                wheel.write('once-proof.json', {'changed': True}, once=True)
+            self.assertEqual(target.read_bytes(), before)
+
+    def test_native_legacy_partial_main_and_screen_keep_originals_and_resume_once(self):
+        for kind in ('main', 'screen'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix='rds-wheel-partial-') as directory:
+                wheel = fixture.prepare(Path(directory) / 'project', factors=['flat'] if kind == 'main' else [])
+                fixture.bootstrap(wheel)
+                if kind == 'screen':
+                    wheel.append('inbox.jsonl', canonical({'proposal_id': str(uuid.uuid4()), 'proposer_id': 'researcher-a',
+                        'kind': 'factor', 'factor': 'screen_change', 'parent_contract_id': wheel.contract['contract_id'],
+                        'ts': '2026-10-08T00:00:00Z'}) + '\n')
+                    wheel.write('quota.json', {'researcher-a': 1})
+                bootstrap = wheel.project('status')
+                pending, relative, partial = self.crash_legacy_partial_manifest(wheel)
+                manifest = pending['manifest']
+                # MAIN covers native absence; SCREEN covers an independently
+                # registered, exact owned reservation with no execution attempt.
+                if kind == 'screen':
+                    original = wheel.root / 'original-screen-registration.json'
+                    original.write_text(canonical(manifest) + '\n', encoding='utf-8')
+                    wheel.project('create', '--manifest', str(original))
+                preserved = {name: wheel.state_path(name).read_bytes() for name in ('factors.txt', 'inbox.jsonl', 'quota.json')}
+                self.assertEqual(wheel.tick(), 0)
+                self.assertEqual(read_json(wheel.state_path(relative)), manifest)
+                evidence = wheel.directory / 'interrupted' / (manifest['id'] + '-' + hashlib.sha256(partial).hexdigest() + '.partial')
+                self.assertEqual(evidence.read_bytes(), partial)
+                after = wheel.project('status')
+                run = next(r for r in after['runs'] if r['id'] == manifest['id'])
+                receipt = next(r for r in after['receipts'] if r['run_id'] == manifest['id'])
+                self.assertEqual(run['status'], 'COMPLETED')
+                self.assertEqual(run['attempt_id'], receipt['attempt_id'])
+                self.assertEqual(run['resource_estimates'], manifest['resource_estimates'])
+                self.assertEqual({r['run_id']: canonical(r) for r in bootstrap['receipts']},
+                                 {r['run_id']: canonical(r) for r in after['receipts'] if r['run_id'] in {'control', 'treatment'}})
+                self.assertEqual(preserved, {name: wheel.state_path(name).read_bytes() for name in preserved})
+                from rds_project import ProjectStore
+                with ProjectStore(wheel.root)._db(True) as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                        "AND json_extract(body,'$.run_id')=?", (manifest['id'],)).fetchone()[0], 1)
+                self.assertEqual(wheel.tick(), 0)
+                self.assertEqual(wheel.project('status')['receipts'], after['receipts'])
+                self.assertEqual(wheel.project('status')['budget'], after['budget'])
+                self.assertEqual(evidence.read_bytes(), partial)
+                if kind == 'screen':
+                    self.assertEqual(read_json(wheel.state_path('quota.json')), {'researcher-a': 2})
+
+    def test_native_partial_manifest_cannot_replace_mismatch_or_attempt_evidence(self):
+        for fault in ('attempt', 'mismatched_partial', 'changed_manifest'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory(prefix='rds-wheel-partial-reject-') as directory:
+                wheel = fixture.prepare(Path(directory) / 'project', factors=['flat'])
+                fixture.bootstrap(wheel)
+                pending, relative, partial = self.crash_legacy_partial_manifest(wheel)
+                if fault == 'attempt':
+                    original = wheel.root / 'original-registration.json'
+                    original.write_text(canonical(pending['manifest']) + '\n', encoding='utf-8')
+                    wheel.project('create', '--manifest', str(original))
+                    code = '''
+import os, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+from rds_project import ProjectStore
+ProjectStore._execute_claim = lambda *args, **kwargs: os._exit(73)
+ProjectStore(sys.argv[2]).execute('flat')
+'''
+                    result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(wheel.root)],
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+                elif fault == 'mismatched_partial':
+                    wheel.state_path(relative).write_bytes(b'{"unrelated":')
+                else:
+                    changed = deepcopy(pending['manifest'])
+                    changed['description'] += ' changed'
+                    wheel.state_path(relative).write_text(canonical(changed), encoding='utf-8')
+                before = wheel.project('status')
+                files = {p: p.read_bytes() for p in wheel.directory.rglob('*') if p.is_file()}
+                with self.assertRaises(wheel_module.WheelError):
+                    wheel.tick()
+                self.assertEqual(wheel.project('status'), before)
+                self.assertEqual(files, {p: p.read_bytes() for p in files})
+                self.assertFalse((wheel.directory / 'interrupted').exists())
+
+    def test_native_hash_bound_deep_metric_is_unknown_without_followup_dispatch(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-deep-metric-') as directory:
+            root = Path(directory) / 'project'
+            def deep_output(setup):
+                evaluator = root / 'trusted/evaluator.py'
+                original = evaluator.read_text(encoding='utf-8')
+                marker = '    return row.get("exit_code", 0)'
+                self.assertEqual(original.count(marker), 1)
+                injected = "    if args.factor == 'seed':\n        output.write_text('{\\\"loss\\\":' + '[' * 20000 + '0' + ']' * 20000 + '}\\n', encoding='utf-8')\n"
+                evaluator.write_text(original.replace(marker, injected + marker), encoding='utf-8')
+                setup['wheel']['evaluator_sha256'] = sha(evaluator)
+                protocol_path = root / 'trusted/protocol.json'
+                protocol = read_json(protocol_path)
+                protocol.update(code_sha256=sha(evaluator), evaluator_sha256=sha(evaluator))
+                protocol_path.write_text(canonical(protocol), encoding='utf-8')
+            wheel = self.prepare_mapping(root, deep_output, factors=['flat'])
+            fixture.bootstrap(wheel)
+            before = wheel.project('status')
+            receipt = next(r for r in before['receipts'] if r['run_id'] == 'treatment')
+            artifact = next(a for a in receipt['artifacts'] if a['kind'] == 'project_output')
+            raw = wheel.path(artifact['path']).read_bytes()
+            self.assertEqual(sha(wheel.path(artifact['path'])), artifact['sha256'])
+            self.assertEqual(raw.count(b'['), 20000)
+            with self.assertRaises(RecursionError):
+                wheel_module.decode(raw.decode('utf-8'))
+            quota = wheel.state_path('quota.json').read_bytes()
+            self.assertEqual(wheel.tick(), 2)
+            self.assertEqual(read_json(wheel.state_path('cells/treatment.json'))['state'], 'UNKNOWN')
+            self.assertEqual(wheel.project('status'), before)
+            self.assertEqual(wheel.path(artifact['path']).read_bytes(), raw)
+            self.assertEqual(wheel.state_path('quota.json').read_bytes(), quota)
+            self.assertIsNone(read_json(wheel.state_path('state.json'))['pending'])
+
     def prepare_mapping(self, root, transform, *, factors=None):
         """Freeze a changed input mapping before the real native initialization."""
         initialize = Wheel.initialize

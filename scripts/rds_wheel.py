@@ -155,10 +155,7 @@ class Wheel:
         path.parent.mkdir(parents=True, exist_ok=True)
         raw = value if text else canonical(value) + "\n"
         if once:
-            with path.open("x", encoding="utf-8", newline="\n") as stream:
-                stream.write(raw)
-                stream.flush()
-                os.fsync(stream.fileno())
+            self._publish_once(path, raw.encode("utf-8"))
         else:
             temporary = path.with_name(path.name + ".tmp")
             with temporary.open("w", encoding="utf-8", newline="\n") as stream:
@@ -166,6 +163,23 @@ class Wheel:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
+
+    def _publish_once(self, path, raw):
+        # Publish a complete file without replacing an existing identity. The
+        # temporary and target are on the same filesystem; process interruption
+        # before linking leaves only an unpublished temporary, not a partial target.
+        temporary = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
+        created = False
+        try:
+            with temporary.open("xb") as stream:
+                created = True
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.link(temporary, path)
+        finally:
+            if created:
+                temporary.unlink(missing_ok=True)
 
     def append(self, relative, raw):
         with self.state_path(relative).open("a", encoding="utf-8", newline="\n") as stream:
@@ -430,7 +444,7 @@ class Wheel:
             output = decode(raw.decode("utf-8"))
             value = output.get(self.contract["metric"]) if isinstance(output, dict) else None
             return value if finite(value) else None
-        except (ValueError, OSError, KeyError, TypeError):
+        except (ValueError, OSError, KeyError, TypeError, RecursionError):
             return None
 
     def pause(self, reason):
@@ -502,6 +516,47 @@ class Wheel:
         self.project("execute", "--id", manifest["id"])
         return 0
 
+    def _pending_unstarted(self, run, manifest, snapshot):
+        effective = run.get("effective_contract_sha256")
+        require(run.get("manifest") == manifest and run.get("manifest_sha256") == digest(manifest)
+                and isinstance(effective, str) and HEX.fullmatch(effective)
+                and effective == snapshot.get("contract_sha256"),
+                "pending run belongs to another manifest or contract", 4)
+        require(run.get("status") == "RESERVED" and "attempt_id" in run and run["attempt_id"] is None
+                and all(run.get(k) is None for k in ("worker_pid", "pid", "started_at", "scheduler")),
+                "pending execution has an attempt or unknown state; inspect original project status", 4)
+
+    def _restore_pending_manifest(self, relative, manifest):
+        path = self.state_path(relative)
+        if not path.exists():
+            self.write(relative, manifest, once=True)
+            return
+        expected = (canonical(manifest) + "\n").encode("utf-8")
+        with path.open("rb") as stream:
+            raw = stream.read(len(expected) + 1)
+        require(len(raw) <= len(expected), "retained pending manifest exceeds its canonical payload", 3)
+        try:
+            retained = decode(raw.decode("utf-8"))
+        except (ValueError, UnicodeError, RecursionError):
+            require(len(raw) < len(expected) and expected.startswith(raw),
+                    "retained pending manifest is not its canonical partial prefix", 3)
+        else:
+            require(retained == manifest, "retained pending manifest changed", 3)
+            return
+        # Retain exact original bytes before restoring an attributable legacy
+        # partial. Caller has already checked the frozen pending and native state.
+        evidence = self.state_path("interrupted/" + manifest["id"] + "-"
+                                   + hashlib.sha256(raw).hexdigest() + ".partial")
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._publish_once(evidence, raw)
+        except FileExistsError:
+            with evidence.open("rb") as stream:
+                require(stream.read(len(raw) + 1) == raw, "retained partial evidence differs", 3)
+        with path.open("rb") as stream:
+            require(stream.read(len(raw) + 1) == raw, "pending manifest changed before restoration", 3)
+        self.write(relative, manifest)
+
     def resume_pending(self, state, snapshot):
         """Finish only a journaled manifest with no native execution attempt."""
         pending = state["pending"]
@@ -518,26 +573,21 @@ class Wheel:
             expected = self.manifest(pending["factor"], kind)
         require(manifest == expected, "pending manifest differs from frozen mapping", 3)
         relative = ("screen/" if kind == "screen" else "manifests/") + manifest["id"] + ".json"
-        if self.state_path(relative).exists():
-            require(read_json(self.state_path(relative)) == manifest, "retained pending manifest changed", 3)
-        else:
-            self.write(relative, manifest, once=True)
-        runs = [r for r in snapshot.get("runs", []) if r.get("id") == manifest["id"]]
+        require(isinstance(snapshot.get("runs"), list)
+                and snapshot.get("contract_sha256") == digest(self.project_contract),
+                "pending native registration or contract is unknown", 4)
+        runs = [r for r in snapshot["runs"] if r.get("id") == manifest["id"]]
         require(len(runs) <= 1, "ambiguous pending run identity", 4)
+        if runs:
+            self._pending_unstarted(runs[0], manifest, snapshot)
+        self._restore_pending_manifest(relative, manifest)
         if not runs:
             self.project("create", "--manifest", str(self.state_path(relative)))
             snapshot = self.project("status")
             runs = [r for r in snapshot.get("runs", []) if r.get("id") == manifest["id"]]
         require(len(runs) == 1, "pending run registration is unknown", 4)
         run = runs[0]
-        effective = run.get("effective_contract_sha256")
-        require(run.get("manifest") == manifest and run.get("manifest_sha256") == digest(manifest)
-                and isinstance(effective, str) and HEX.fullmatch(effective)
-                and effective == snapshot.get("contract_sha256"),
-                "pending run belongs to another manifest or contract", 4)
-        require(run.get("status") == "RESERVED" and "attempt_id" in run and run["attempt_id"] is None
-                and all(run.get(k) is None for k in ("worker_pid", "pid", "started_at", "scheduler")),
-                "pending execution has an attempt or unknown state; inspect original project status", 4)
+        self._pending_unstarted(run, manifest, snapshot)
         # The kernel claims the attempt atomically. A concurrent caller cannot
         # launch the same run again even if it passed the preceding read.
         pending["submitted"] = True

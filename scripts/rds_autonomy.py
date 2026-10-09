@@ -653,6 +653,9 @@ def drive(store, max_steps=8, prepare_only=False):
                              'run_status': receipt.get('run_status'), 'receipt_sha256': receipt.get('sha256')})
         else:
             result['status'] = 'CONTROL_TRANSITION_LIMIT'
+        if has_jump:
+            from rds_jump import packet
+            result['jump_packet'] = packet(store)
     except SteeringBlocked as exc:
         result.update(status='HUMAN_STEERING_REQUIRED', reason=str(exc), steering=steering_status(store)['steering'])
     except (ValueError, OSError, sqlite3.Error, KeyError, TypeError, UnicodeError) as exc:
@@ -666,7 +669,4 @@ def drive(store, max_steps=8, prepare_only=False):
             _append(db, {'kind': 'AUTONOMY_DRIVE_RELEASED', 'owner': owner, 'reason': result['status'],
                          'controller_wall_seconds': overhead, 'executed': deepcopy(executed)})
         result['controller_wall_seconds'] = overhead
-    if has_jump:
-        from rds_jump import packet
-        result['jump_packet'] = packet(store)
     return result
