@@ -1,7 +1,8 @@
 """Bounded domain checks over original owned evidence; no scientific self-certification.
 
 This module neither launches workers nor creates a second research ledger. It
-replays exact certificates, finite integer oracles, or CPU tensor inference.
+replays exact certificates, finite integer oracles, bounded numeric expressions,
+or CPU tensor inference.
 """
 from copy import deepcopy
 import math
@@ -13,7 +14,7 @@ from rds_project import ProjectStore, file_sha, require
 
 MAX_BYTES = 2 * 1024 * 1024
 DOMAINS = {'mathematics': 'exact_certificate', 'algorithms': 'integer_sum_squares',
-           'deep_learning': 'torch_linear_regression'}
+           'deep_learning': 'torch_linear_regression', 'continuous': 'numerical_expression_evaluation'}
 
 
 def goal_conditions(policy):
@@ -83,6 +84,13 @@ def validate_policy(store, contract, policy):
              'Unsupported domain confirmation rules')
     if rules['kind'] == 'polynomial_rational_evaluation':
         require(len(value['data']) == 1, 'Polynomial confirmation requires one frozen data file')
+    if rules['kind'] == 'numerical_expression_evaluation':
+        from rds_continuous_confirmation import validate_claim
+        require(len(value['data']) == 2, 'Continuous confirmation requires separate frozen features and labels')
+        require(_ref(store, contract, value['data'][0], 'data') !=
+                _ref(store, contract, value['data'][1], 'data'), 'Continuous features and labels must be distinct')
+        validate_claim(_json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256'],
+                             max_bytes=1024 * 1024))
     if rules['kind'] == 'torch_postcommit_mlp':
         from rds_postcommit_confirmation import validate_claim
         validate_claim(_json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256']))
@@ -202,7 +210,8 @@ def inspect_confirmation(store, contract, state=None):
                 'Domain input identity differs from the frozen contract')
         rules = value['rules']
         polynomial = rules['kind'] == 'polynomial_rational_evaluation'
-        bound = 1024 * 1024 if polynomial else MAX_BYTES
+        continuous = rules['kind'] == 'numerical_expression_evaluation'
+        bound = 1024 * 1024 if polynomial or continuous else MAX_BYTES
         payload, artifact = _output(store, candidate, rules['candidate_output'], max_bytes=bound)
         checked, checked_artifact = _output(store, confirmation, rules['confirmation_output'], max_bytes=bound)
         result['evidence'] = [{'run_id': candidate_id, 'receipt_sha256': candidate['sha256'], **artifact},
@@ -216,7 +225,26 @@ def inspect_confirmation(store, contract, state=None):
                 'Frozen evaluator changed')
         data = [_json(_ref(store, contract, ref, 'data'), ref['sha256'], max_bytes=bound) for ref in value['data']]
         verdict = 'UNKNOWN'
-        if polynomial:
+        if continuous:
+            from rds_continuous_confirmation import check_output
+            require(set(checked) == {'candidate_receipt_sha256', 'claim_sha256', 'evaluator_sha256',
+                                    'inputs_sha256', 'labels_sha256', 'verdict'} and
+                    checked['inputs_sha256'] == value['data'][0]['sha256'] and
+                    checked['labels_sha256'] == value['data'][1]['sha256'],
+                    'Continuous evaluator input identity or schema differs')
+            replay = check_output(claim, data[0], data[1], payload, value['data'][0]['sha256'])
+            # This gate checks finite fit only; PASS never establishes label blindness.
+            verdict = replay['status']
+            result.update(assurance='RECOMPUTED_FINITE_FLOAT_EXPRESSION', finite_evaluation=replay,
+                          declared_statement_only=True, symbolic_identity='UNKNOWN', causal_support='UNKNOWN',
+                          generalization='UNKNOWN', confirmation_independence='UNKNOWN')
+            exposed = {ref['sha256'] for exposure in state.get('exposures', [])
+                       if exposure.get('run_id') == candidate_id for ref in exposure.get('data', [])}
+            if value['data'][1]['sha256'] in exposed:
+                result['confirmation_independence'] = 'DECLARED_EXPOSED'
+            if replay.get('reason'):
+                result['reasons'].append(replay['reason'])
+        elif polynomial:
             from rds_polynomial_confirmation import check_output
             require(checked.get('inputs_sha256') == value['data'][0]['sha256'],
                     'Polynomial evaluator input identity differs')
@@ -308,7 +336,7 @@ def inspect_confirmation(store, contract, state=None):
         require(checked.get('verdict') == verdict or (value['domain'] == 'deep_learning' and
                 checked.get('verdict') == result.get('finite_evaluation')), 'Confirmation self-verdict contradicts replay')
         result['task_confirmation'] = verdict
-    except (ValueError, TypeError, KeyError, OSError, StopIteration, ImportError, OverflowError) as exc:
+    except (ValueError, TypeError, KeyError, OSError, StopIteration, ImportError, OverflowError, RecursionError) as exc:
         result['task_confirmation'] = 'UNKNOWN'
         result['reasons'].append(str(exc))
     return result
