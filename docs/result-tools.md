@@ -11,6 +11,9 @@ They do not open paths, execute log text, install packages or call a model.
 | `extract_json_result(raw_text, pointer, identity)` | Original JSON text, RFC6901 pointer and source identity | One scalar and its original pointer, or `UNKNOWN` with a reason. |
 | `compare_metrics(candidate, baseline)` | Two objects containing `value`, `identity` and optionally the extraction `status` | Descriptive `delta = candidate - baseline` and direction-normalized `improvement`, only when identities are compatible. |
 | `summarize_failures(raw_text, identity, limit=16)` | The existing self-development test result JSON | Full declared/observed counts and a bounded list of exact case IDs, trace/reason fields and original pointers. |
+| `compare_paired_metrics(candidate, baseline, sampling)` | Protocol-compatible `values`, ordered unique `sample_ids`, identities and sampling unit | Mean difference; standard error only under an explicit caller IID premise. |
+| `check_residuals(candidate, reference, domain)` | Paired finite values, reference identity, domain, precision and tolerances | Residual/tolerance counts, worst original pointer and a finite observation. |
+| `diagnose_decisions(raw_text, identity, semantics, limit=16)` | Original rows, benefit sign, neutral tolerance, fixed gate and provenance | Separate head/gate confusion, support, disagreements and group/origin/depth counts. |
 
 Source identity requires `run_id`, `source_path`, and lowercase `source_sha256`.
 It may also retain `code_sha256` and `config_sha256`. Comparison additionally
@@ -92,3 +95,77 @@ loads` (including a local alias). `import json`, `json.load`, other JSON APIs,
 star/relative imports, filesystem access and dynamic imports remain outside its
 conservative subset. This static admission is still `purity=NOT_PROVED` and
 ordinary trusted project execution, not an OS sandbox or general proof.
+
+## Checked method recipes
+
+The paired and residual recipes accept objects containing `values`, `sample_ids`
+and the existing full metric `identity`. They support 1–2,048 finite numeric
+points. Both arms must declare the same ordered unique IDs and compatible
+data/split/evaluator/metric/reduction/unit/direction. A missing or conflicting
+identity, unresolved input or duplicate/misaligned IDs remains `UNKNOWN`.
+
+Pair sampling explicitly declares `unit`, `pairing="matched_sample_ids"` and
+boolean `independent`. The mean difference is descriptive. With `independent=false`
+the standard error is null; with `true`, at least two units are required and the
+estimate is labelled `ESTIMATED_UNDER_CALLER_IID_PREMISE`. The function does not
+verify independence, infer repeated runs from logs, fit a test or return a
+significance verdict. Its scaled centered norm avoids mistaking squared-value
+underflow for zero uncertainty. Unrepresentable arithmetic remains unknown.
+
+Residual `domain` declares nonempty `domain`/`precision` text, nonnegative finite
+`atol`/`rtol` and `independent_reference=true`. Each point checks
+`abs(candidate-reference) <= atol + rtol*abs(reference)`, retaining the worst
+`/values/<index>` pointer. Reference independence and precision remain caller
+premises: this is `FINITE_NUMERICAL_OBSERVATION`, not a universal theorem.
+
+Decision semantics declares `benefit_sign` (`negative` or `positive`),
+`neutral_tolerance`, a permutation `class_order` of benefit/neutral/harm,
+`p_better_threshold`, `protocol_id`, `data_split`, `evaluator_sha256` and `stage`
+(`development`, `evaluation` or `heldout`). The classifier is explicitly a
+benefit-versus-rest threshold, not multiclass argmax or calibrated probability.
+The gate requires regression benefit **and** `p_better >= threshold`. A missing
+class probability is never invented. No threshold is fitted by this function.
+
+Original JSON declares `rows` and `parents`. Each row contains `pair_id`,
+`group_id`, numeric `gain`/`predicted_gain`/`p_better`, stage, origin
+(`natural`/`artificial`), nonnegative depth, upstream `source_sha256`, `parent_id`
+and `parent_sha256`. Natural depth-zero rows explicitly declare null parents.
+Other rows also declare `parent_origin` and reference a parent with matching
+hash/origin/depth/stage. Current document identity and upstream hashes have
+different meanings; neither caller claim verifies the original bytes.
+
+The diagnostic checks every row even when the 0–64 display limit omits it.
+Strict JSON uses the same 2 MiB/32-level/20,000-node bounds. Duplicate pairs,
+missing/stale parents, incompatible stage/split/evaluator or mixed origins
+invalidate pooled rates while retaining descriptive counts and original row
+pointers. Group summaries say `VALID_ROWS_ONLY`; constant predictions in a mixed
+truth group are an observation, not a causal shortcut explanation. Missing
+harmful support makes its acceptance rate null with `UNKNOWN`, never zero.
+An observed zero rate with support still does not prove safety or generalization.
+
+`evaluate_decision_requirements(raw_text, identity, semantics, requirements)`
+recomputes the diagnostic from original rows and checks an explicit `head`
+(`gate`, `regression` or `classifier`), positive integer `min_benefit_support`
+and `min_harm_support`, and finite rates `min_benefit_acceptance` and
+`max_harm_acceptance` in [0,1]. All five fields are required; unsupported fields
+are not silently accepted. Malformed/nonfinite/oversized inputs follow the
+strict parser's error contract. Incomplete bounded declarations return UNKNOWN.
+Unresolved diagnostics or insufficient class support return `met=null` and
+UNKNOWN. With sufficient support, a rate violation returns FAIL/`met=false`;
+meeting all declared requirements returns PASS/`met=true`. Decimal thresholds
+are compared by exact rational cross multiplication, without rounding a rate
+across the threshold. The assurance is `FINITE_SAMPLE_REQUIREMENTS`; a caller
+chooses the requirements and this supplies no statistical safety guarantee.
+Imported PASS or rate fields cannot substitute for recomputation. The owned
+example consumes an unfavorable FAIL as a returned observation, separately from
+the qualification driver's PASS.
+
+Run [the owned methods example](../examples/result-methods/README.md) to reach
+qualification, application, actual numeric goal consumption and recovery. The
+consumer reconciles call values/IDs and original diagnostic text to bound source
+bytes before qualification. This is one finite task-family slice of
+[#250](https://github.com/kongtou20070406/research-direction-selector/issues/250)
+and [#253](https://github.com/kongtou20070406/research-direction-selector/issues/253).
+The [Digits MLP benchmark](../benchmark/result-methods/README.md) supplies a real
+neural workload and original model outputs; broader research/model-arm benefit
+remains unmeasured.

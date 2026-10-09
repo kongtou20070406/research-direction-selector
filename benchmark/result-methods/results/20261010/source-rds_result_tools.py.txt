@@ -7,7 +7,6 @@ support. Extract the selected function with the existing ``rsi extract`` entry.
 """
 from json import loads
 from math import isfinite
-from fractions import Fraction
 
 MAX_BYTES = 2097152
 MAX_NODES = 20000
@@ -582,49 +581,4 @@ def check_residuals(candidate, reference, domain):
     violations = sum(v > t for v, t in zip(residuals, tolerances))
     result.update(status='OBSERVED', reason=None, max_abs_residual=maximum, violations=violations,
                   within_tolerance=violations == 0, worst_pointer='/values/' + str(residuals.index(maximum)))
-    return result
-
-
-def evaluate_decision_requirements(raw_text, identity, semantics, requirements):
-    """Check declared finite acceptance requirements, never population safety.
-
-    Recompute the diagnostic from original rows rather than trusting an imported
-    status/rate. Thresholds refer to observed sample counts; support requirements
-    are explicit and do not establish independence or calibrated uncertainty.
-    """
-    _require(isinstance(requirements, dict), 'Decision requirements must be an object')
-    _tree(requirements)
-    names = ('min_benefit_support', 'min_harm_support', 'min_benefit_acceptance', 'max_harm_acceptance')
-    result = {'operation': 'evaluate_decision_requirements', 'status': 'UNKNOWN', 'met': None,
-              'reason': 'DECLARE_DECISION_REQUIREMENTS', 'identity': _identity(identity),
-              'requirements': requirements.copy(), 'checks': {name: {'status': 'UNKNOWN', 'observed': None,
-              'required': requirements.get(name)} for name in names}, 'diagnostic_status': None,
-              'diagnostic_reasons': [], 'identity_assurance': 'CALLER_METADATA',
-              'assurance': 'FINITE_SAMPLE_REQUIREMENTS', 'scientific_support': 'UNKNOWN'}
-    if (set(requirements) != set(names) | {'head'} or requirements.get('head') not in ('gate', 'regression', 'classifier')
-            or not all(_count(requirements.get(k)) and 1 <= requirements[k] <= MAX_NODES for k in names[:2])
-            or not all(_numeric(requirements.get(k)) and 0 <= requirements[k] <= 1 for k in names[2:])):
-        return result
-    diagnostic = diagnose_decisions(raw_text, identity, semantics, 0)
-    result.update(diagnostic_status=diagnostic['status'], diagnostic_reasons=diagnostic['reasons'])
-    if diagnostic['status'] != 'OBSERVED':
-        result['reason'] = 'UNRESOLVED_DIAGNOSTIC'
-        return result
-    acceptance = diagnostic['heads'][requirements['head']]['acceptance']
-    for label in ('benefit', 'harm'):
-        key = 'min_' + label + '_support'
-        support = acceptance[label]['support']
-        result['checks'][key].update(observed=support,
-                                    status='PASS' if support >= requirements[key] else 'FAIL')
-    if any(result['checks'][k]['status'] != 'PASS' for k in names[:2]):
-        result['reason'] = 'INSUFFICIENT_CLASS_SUPPORT'
-        return result
-    for label, key in (('benefit', names[2]), ('harm', names[3])):
-        fraction = Fraction(str(requirements[key]))
-        count, support = acceptance[label]['accepted'], acceptance[label]['support']
-        left, right = count * fraction.denominator, support * fraction.numerator
-        passed = left >= right if label == 'benefit' else left <= right
-        result['checks'][key].update(observed=acceptance[label]['rate'], status='PASS' if passed else 'FAIL')
-    met = all(check['status'] == 'PASS' for check in result['checks'].values())
-    result.update(status='PASS' if met else 'FAIL', met=met, reason=None if met else 'REQUIREMENTS_NOT_MET')
     return result

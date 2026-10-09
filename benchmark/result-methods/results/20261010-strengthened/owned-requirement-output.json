@@ -1,0 +1,62 @@
+{
+  "assurance": "EXACT_TASK_CASES_ONLY",
+  "case_count": 1,
+  "cases": [
+    {
+      "case": 0,
+      "passed": true,
+      "value": {
+        "assurance": "FINITE_SAMPLE_REQUIREMENTS",
+        "checks": {
+          "max_harm_acceptance": {
+            "observed": 1.0,
+            "required": 0,
+            "status": "FAIL"
+          },
+          "min_benefit_acceptance": {
+            "observed": 1.0,
+            "required": 1,
+            "status": "PASS"
+          },
+          "min_benefit_support": {
+            "observed": 1,
+            "required": 1,
+            "status": "PASS"
+          },
+          "min_harm_support": {
+            "observed": 1,
+            "required": 1,
+            "status": "PASS"
+          }
+        },
+        "diagnostic_reasons": [],
+        "diagnostic_status": "OBSERVED",
+        "identity": {
+          "data_split": "finite-development",
+          "evaluator_sha256": "c59611d389632b1426a8e502b84541e6ef71cc422cfbd92dc88d686533302a22",
+          "run_id": "unsafe-decisions",
+          "source_path": "sources/unsafe-decisions.json",
+          "source_sha256": "0da3df05f8423ca4ed42f88aaddddee3a061288456db58b5e5c710dc56516251"
+        },
+        "identity_assurance": "CALLER_METADATA",
+        "met": false,
+        "operation": "evaluate_decision_requirements",
+        "reason": "REQUIREMENTS_NOT_MET",
+        "requirements": {
+          "head": "gate",
+          "max_harm_acceptance": 0,
+          "min_benefit_acceptance": 1,
+          "min_benefit_support": 1,
+          "min_harm_support": 1
+        },
+        "scientific_support": "UNKNOWN",
+        "status": "FAIL"
+      }
+    }
+  ],
+  "cases_sha256": "116f23b3a49e70325a099cc9034547330db71b7524afbc2998299c9e53715ab0",
+  "inputs_sha256": "63e32ec604d090a2b6a2f85b044db6aa57bfc024ba9d75d9e8eff24e98ac8c95",
+  "scientific_support": "UNKNOWN",
+  "status": "PASS",
+  "tool_sha256": "de56f167481ae81464372eadebaee1091dacc4c9ffa22b593c6679b653f18c36"
+}

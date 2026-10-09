@@ -1,0 +1,38 @@
+{
+  "dataset": "scikit-learn load_digits: UCI handwritten digits test subset",
+  "seed": 0,
+  "split": "stratified 60% task-train / 20% head-fit / 20% heldout",
+  "task_models": [
+    [
+      16,
+      8
+    ],
+    [
+      32,
+      16
+    ]
+  ],
+  "task_epochs": 40,
+  "head_models": [
+    [
+      16,
+      8
+    ],
+    [
+      16,
+      8
+    ]
+  ],
+  "head_epochs": 80,
+  "optimizer": "Adam",
+  "batch_size": 64,
+  "learning_rate_init": 0.001,
+  "numeric_protocol": "float64; X/16; crossentropy clip[1e-15,1]",
+  "gate": "predicted_gain<0 AND p_better>=0.5",
+  "neutral_tolerance": 0,
+  "threshold_selection": "FROZEN_NO_TUNING",
+  "single_seed": true,
+  "blas_threads": 1,
+  "wall_cap_seconds": 120,
+  "model_agent_arms": "NOT_RUN"
+}

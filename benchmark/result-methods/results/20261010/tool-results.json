@@ -1,0 +1,658 @@
+{
+  "baseline_scalar_comparison": {
+    "operation": "compare_metrics",
+    "status": "COMPARABLE",
+    "delta": -0.17388210661297637,
+    "improvement": 0.17388210661297637,
+    "candidate": {
+      "value": 0.14784014519202504,
+      "value_omitted": false,
+      "identity": {
+        "run_id": "candidate",
+        "source_path": "candidate.json",
+        "source_sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f",
+        "data_sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab",
+        "data_split": "heldout",
+        "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f",
+        "metric": "crossentropy",
+        "metric_definition": "Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.",
+        "reduction": "mean",
+        "unit": "nats",
+        "direction": "minimize"
+      }
+    },
+    "baseline": {
+      "value": 0.3217222518050014,
+      "value_omitted": false,
+      "identity": {
+        "run_id": "baseline",
+        "source_path": "baseline.json",
+        "source_sha256": "913abe8f999d4db37836f7adccec5fd321a3edea06a69fdfcd33d1faba61906c",
+        "data_sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab",
+        "data_split": "heldout",
+        "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f",
+        "metric": "crossentropy",
+        "metric_definition": "Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.",
+        "reduction": "mean",
+        "unit": "nats",
+        "direction": "minimize"
+      }
+    },
+    "matched_fields": [
+      "data_sha256",
+      "data_split",
+      "evaluator_sha256",
+      "metric",
+      "metric_definition",
+      "reduction",
+      "unit",
+      "direction"
+    ],
+    "missing_fields": [],
+    "conflicting_fields": [],
+    "reason": null,
+    "identity_assurance": "CALLER_METADATA",
+    "scientific_support": "UNKNOWN"
+  },
+  "paired_comparison": {
+    "operation": "compare_paired_metrics",
+    "status": "COMPARABLE",
+    "reason": null,
+    "identity": {
+      "candidate": {
+        "run_id": "candidate",
+        "source_path": "candidate.json",
+        "source_sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f",
+        "data_sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab",
+        "data_split": "heldout",
+        "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f",
+        "metric": "crossentropy",
+        "metric_definition": "Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.",
+        "reduction": "none",
+        "unit": "nats",
+        "direction": "minimize"
+      },
+      "baseline": {
+        "run_id": "baseline",
+        "source_path": "baseline.json",
+        "source_sha256": "913abe8f999d4db37836f7adccec5fd321a3edea06a69fdfcd33d1faba61906c",
+        "data_sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab",
+        "data_split": "heldout",
+        "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f",
+        "metric": "crossentropy",
+        "metric_definition": "Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.",
+        "reduction": "none",
+        "unit": "nats",
+        "direction": "minimize"
+      }
+    },
+    "count": 360,
+    "sampling": {
+      "unit": "heldout example (writer correlation unknown)",
+      "independent": false,
+      "pairing": "matched_sample_ids"
+    },
+    "mean_delta": -0.17388210661297637,
+    "mean_improvement": 0.17388210661297637,
+    "standard_error": null,
+    "uncertainty_status": "UNKNOWN",
+    "uncertainty_reason": "INDEPENDENCE_NOT_ESTABLISHED",
+    "missing_fields": [],
+    "conflicting_fields": [],
+    "identity_assurance": "CALLER_METADATA",
+    "scientific_support": "UNKNOWN"
+  },
+  "decision_diagnostics": {
+    "operation": "diagnose_decisions",
+    "status": "OBSERVED",
+    "observation_status": "OBSERVED",
+    "support_status": "OBSERVED",
+    "identity": {
+      "run_id": "heldout-decision-heads",
+      "source_path": "decision-rows.json",
+      "source_sha256": "528ca70f096e0f91c52ad529d89336542e1255d4b3a0e25f0be988918b674ae3",
+      "data_split": "heldout",
+      "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f"
+    },
+    "semantics": {
+      "benefit_sign": "negative",
+      "neutral_tolerance": 0,
+      "class_order": [
+        "benefit",
+        "neutral",
+        "harm"
+      ],
+      "p_better_threshold": 0.5,
+      "protocol_id": "1c884afd567dd2b5dca82e1033ffd82e19325ad108b8ede61a2398f001181d57",
+      "data_split": "heldout",
+      "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f",
+      "stage": "heldout"
+    },
+    "classifier_mode": "benefit_vs_rest_threshold",
+    "gate_rule": "regression_benefit_and_p_better_at_least_threshold",
+    "class_support": {
+      "benefit": 312,
+      "neutral": 0,
+      "harm": 48
+    },
+    "heads": {
+      "regression": {
+        "confusion": {
+          "benefit": {
+            "accepted": 278,
+            "rejected": 34
+          },
+          "neutral": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "harm": {
+            "accepted": 29,
+            "rejected": 19
+          }
+        },
+        "acceptance": {
+          "benefit": {
+            "accepted": 278,
+            "support": 312,
+            "rate": 0.8910256410256411,
+            "status": "OBSERVED"
+          },
+          "neutral": {
+            "accepted": 0,
+            "support": 0,
+            "rate": null,
+            "status": "UNKNOWN"
+          },
+          "harm": {
+            "accepted": 29,
+            "support": 48,
+            "rate": 0.6041666666666666,
+            "status": "OBSERVED"
+          }
+        }
+      },
+      "classifier": {
+        "confusion": {
+          "benefit": {
+            "accepted": 312,
+            "rejected": 0
+          },
+          "neutral": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "harm": {
+            "accepted": 48,
+            "rejected": 0
+          }
+        },
+        "acceptance": {
+          "benefit": {
+            "accepted": 312,
+            "support": 312,
+            "rate": 1.0,
+            "status": "OBSERVED"
+          },
+          "neutral": {
+            "accepted": 0,
+            "support": 0,
+            "rate": null,
+            "status": "UNKNOWN"
+          },
+          "harm": {
+            "accepted": 48,
+            "support": 48,
+            "rate": 1.0,
+            "status": "OBSERVED"
+          }
+        }
+      },
+      "gate": {
+        "confusion": {
+          "benefit": {
+            "accepted": 278,
+            "rejected": 34
+          },
+          "neutral": {
+            "accepted": 0,
+            "rejected": 0
+          },
+          "harm": {
+            "accepted": 29,
+            "rejected": 19
+          }
+        },
+        "acceptance": {
+          "benefit": {
+            "accepted": 278,
+            "support": 312,
+            "rate": 0.8910256410256411,
+            "status": "OBSERVED"
+          },
+          "neutral": {
+            "accepted": 0,
+            "support": 0,
+            "rate": null,
+            "status": "UNKNOWN"
+          },
+          "harm": {
+            "accepted": 29,
+            "support": 48,
+            "rate": 0.6041666666666666,
+            "status": "OBSERVED"
+          }
+        }
+      }
+    },
+    "head_disagreements": {
+      "regression_classifier": 53
+    },
+    "rejection_reasons": {
+      "regression_only": 53,
+      "classifier_only": 0,
+      "both": 0,
+      "accepted": 307
+    },
+    "groups": {
+      "status": "OBSERVED",
+      "scope": "VALID_ROWS_ONLY",
+      "group_count": 10,
+      "constant_classifier_mixed_truth_count": 9,
+      "entries": [
+        {
+          "group_id": "true-digit-8",
+          "row_count": 35,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-6",
+          "row_count": 36,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-3",
+          "row_count": 37,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-2",
+          "row_count": 35,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-5",
+          "row_count": 37,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-0",
+          "row_count": 35,
+          "classifier_constant": true,
+          "truth_mixed": false,
+          "truth_classes": [
+            "benefit"
+          ]
+        },
+        {
+          "group_id": "true-digit-9",
+          "row_count": 36,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-7",
+          "row_count": 36,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-4",
+          "row_count": 36,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        },
+        {
+          "group_id": "true-digit-1",
+          "row_count": 37,
+          "classifier_constant": true,
+          "truth_mixed": true,
+          "truth_classes": [
+            "benefit",
+            "harm"
+          ]
+        }
+      ],
+      "omitted_groups": 0
+    },
+    "depth_counts": {
+      "0": 360
+    },
+    "origin_counts": {
+      "natural": 360
+    },
+    "stage_counts": {
+      "heldout": 360
+    },
+    "entries": [
+      {
+        "pointer": "/rows/0",
+        "pair_id": "digit-1511",
+        "group_id": "true-digit-8",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/1",
+        "pair_id": "digit-945",
+        "group_id": "true-digit-8",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/2",
+        "pair_id": "digit-1773",
+        "group_id": "true-digit-6",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": false,
+          "classifier": true,
+          "gate": false
+        },
+        "rejection_reason": "regression_only",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/3",
+        "pair_id": "digit-1558",
+        "group_id": "true-digit-3",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/4",
+        "pair_id": "digit-985",
+        "group_id": "true-digit-3",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/5",
+        "pair_id": "digit-860",
+        "group_id": "true-digit-2",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/6",
+        "pair_id": "digit-243",
+        "group_id": "true-digit-2",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/7",
+        "pair_id": "digit-953",
+        "group_id": "true-digit-2",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/8",
+        "pair_id": "digit-1292",
+        "group_id": "true-digit-5",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": false,
+          "classifier": true,
+          "gate": false
+        },
+        "rejection_reason": "regression_only",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/9",
+        "pair_id": "digit-288",
+        "group_id": "true-digit-5",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/10",
+        "pair_id": "digit-1162",
+        "group_id": "true-digit-5",
+        "status": "OBSERVED",
+        "truth": "harm",
+        "predictions": {
+          "regression": false,
+          "classifier": true,
+          "gate": false
+        },
+        "rejection_reason": "regression_only",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/11",
+        "pair_id": "digit-1787",
+        "group_id": "true-digit-5",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/12",
+        "pair_id": "digit-1606",
+        "group_id": "true-digit-3",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/13",
+        "pair_id": "digit-1415",
+        "group_id": "true-digit-0",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/14",
+        "pair_id": "digit-522",
+        "group_id": "true-digit-6",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": false,
+          "classifier": true,
+          "gate": false
+        },
+        "rejection_reason": "regression_only",
+        "reasons": []
+      },
+      {
+        "pointer": "/rows/15",
+        "pair_id": "digit-1024",
+        "group_id": "true-digit-9",
+        "status": "OBSERVED",
+        "truth": "benefit",
+        "predictions": {
+          "regression": true,
+          "classifier": true,
+          "gate": true
+        },
+        "rejection_reason": "accepted",
+        "reasons": []
+      }
+    ],
+    "row_count": 360,
+    "valid_row_count": 360,
+    "unknown_count": 0,
+    "omitted_rows": 344,
+    "reasons": [],
+    "identity_assurance": "CALLER_METADATA",
+    "scientific_support": "UNKNOWN"
+  },
+  "residual_check": {
+    "operation": "check_residuals",
+    "status": "OBSERVED",
+    "reason": null,
+    "identity": {
+      "candidate": {
+        "run_id": "candidate",
+        "source_path": "candidate.json",
+        "source_sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f",
+        "data_sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab",
+        "data_split": "heldout",
+        "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f",
+        "metric": "crossentropy",
+        "metric_definition": "Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.",
+        "reduction": "none",
+        "unit": "nats",
+        "direction": "minimize"
+      },
+      "reference": {
+        "run_id": "scalar-math-reference",
+        "source_path": "scalar-reference.json",
+        "source_sha256": "58705d44e5ce11ec4b1530b69026f92ecbcd07b71eef970084a8bf1393e5ac5f",
+        "data_sha256": "141590843a4e08fa761324c442d9b550407b63f460ad4f12993af363481e72ab",
+        "data_split": "heldout",
+        "evaluator_sha256": "b2764b8ed3e044295140e131e16474006d3ddc7f0d5d2a060b6b0609ef73d54f",
+        "metric": "crossentropy",
+        "metric_definition": "Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.",
+        "reduction": "none",
+        "unit": "nats",
+        "direction": "minimize"
+      }
+    },
+    "domain": {
+      "domain": "360 frozen heldout probability/label pairs",
+      "precision": "float64 numpy.log versus scalar math.log",
+      "atol": 1e-12,
+      "rtol": 1e-12,
+      "independent_reference": true
+    },
+    "count": 360,
+    "max_abs_residual": 0.0,
+    "violations": 0,
+    "within_tolerance": true,
+    "worst_pointer": "/values/0",
+    "missing_fields": [],
+    "conflicting_fields": [],
+    "identity_assurance": "CALLER_METADATA",
+    "assurance": "FINITE_NUMERICAL_OBSERVATION",
+    "scientific_support": "UNKNOWN"
+  }
+}
