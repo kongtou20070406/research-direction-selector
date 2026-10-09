@@ -1,7 +1,7 @@
 """Publication ordering and OS error controls; no simulated power-loss claim."""
 from pathlib import Path
-import os
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -91,8 +91,7 @@ class CampaignDurabilityTests(unittest.TestCase):
 
     def test_unsupported_platform_refuses_before_publication(self):
         with patch.object(campaign, 'WINDOWS', False), \
-                patch.object(campaign.os, 'O_DIRECTORY', create=True):
-            del campaign.os.O_DIRECTORY
+                patch.object(campaign, 'os', SimpleNamespace()):
             with self.assertRaisesRegex(ValueError, 'unsupported on this platform'):
                 campaign._publish(self.marker, {})
         self.assertFalse(self.marker.exists())
