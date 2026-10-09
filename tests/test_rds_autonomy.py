@@ -216,21 +216,56 @@ class AutonomyTests(unittest.TestCase):
 
     def test_registration_and_execute_review_cannot_bypass_admission_allowance(self):
         import time
+        from types import SimpleNamespace
+        real_monotonic = time.monotonic
+        original_clock = autonomy.time
         for slow_boundary in ('register', '_advisor_prepare_run'):
             with self.subTest(boundary=slow_boundary):
-                # The real review/registration remains intact; only its elapsed
-                # work is delayed, so no verdict or worker result is mocked.
                 root = self.root / slow_boundary
                 root.mkdir()
                 self.root, self.store = root, ProjectStore(root)
                 self.build(baseline=True, control_wall=1.)
+                before = self.store.snapshot()['budget']['wall_seconds']
                 original = getattr(self.store, slow_boundary)
+                ticks = [0.]
+                phase = {'entries': 0, 'returned': False}
+                clock = SimpleNamespace(monotonic=lambda: ticks[0], time=time.time)
                 def delayed(*args, **kwargs):
-                    result = original(*args, **kwargs)
-                    time.sleep(1.05)
-                    return result
-                with patch.object(self.store, slow_boundary, side_effect=delayed):
-                    result = autonomy.drive(self.store, max_steps=1)
+                    phase['entries'] += 1
+                    phase['entry_tick'] = ticks[0]
+                    self.assertEqual(phase['entries'], 1)
+                    self.assertEqual(ticks[0], 0.)
+                    started = real_monotonic()
+                    try:
+                        value = original(*args, **kwargs)
+                        time.sleep(1.05)
+                        phase['returned'] = True
+                        return value
+                    finally:
+                        phase['real_wall_seconds'] = real_monotonic() - started
+                        ticks[0] += phase['real_wall_seconds']
+                # Reach this specific admission boundary before charging its real
+                # work. Earlier deadline stops have separate regression coverage.
+                # Replace only the controller module reference, never worker or
+                # shared time functions, and preserve real review/registration.
+                started = real_monotonic()
+                try:
+                    with patch.object(autonomy, 'time', clock), patch.object(
+                            self.store, slow_boundary, side_effect=delayed):
+                        result = autonomy.drive(self.store, max_steps=1)
+                finally:
+                    phase['drive_real_wall_seconds'] = real_monotonic() - started
+                    self.trace.append({'stage': 'admission_phase', 'boundary': slow_boundary,
+                                       'phase': dict(phase), 'controller_tick': ticks[0]})
+                self.assertIs(autonomy.time, original_clock)
+                self.assertIs(time.monotonic, real_monotonic)
+                self.assertEqual(phase['entries'], 1)
+                self.assertEqual(phase['entry_tick'], 0.)
+                self.assertTrue(phase['returned'])
+                self.assertGreaterEqual(phase['real_wall_seconds'], 1.05)
+                self.assertEqual(result['controller_wall_seconds'], phase['real_wall_seconds'])
+                self.assertEqual(result['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
+                self.assertEqual(result['executed'], [])
                 state = self.store.snapshot()
                 self.assertEqual(result['status'], 'HANDOFF_REQUIRED', result)
                 self.assertIn('CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', result['reason'])
@@ -240,6 +275,21 @@ class AutonomyTests(unittest.TestCase):
                 self.assertEqual(state['receipts'], [])
                 self.assertGreaterEqual(result['controller_wall_seconds'], 1.05)
                 self.assertEqual(self.calls(), [])
+                self.assertEqual(state['runs'][0]['id'], 'baseline')
+                events = self.events()
+                claims = [e for e in events if e['kind'] == 'AUTONOMY_DRIVE_CLAIMED']
+                releases = [e for e in events if e['kind'] == 'AUTONOMY_DRIVE_RELEASED']
+                self.assertEqual(len(claims), 1)
+                self.assertEqual(len(releases), 1)
+                self.assertEqual(claims[0]['owner'], releases[0]['owner'])
+                self.assertEqual(claims[0]['controller_reservation'], 1.)
+                self.assertEqual(releases[0]['controller_wall_seconds'], phase['real_wall_seconds'])
+                self.assertEqual(releases[0]['executed'], [])
+                after = state['budget']['wall_seconds']
+                self.assertEqual(after['reserved'], 2.)  # Only the unstarted baseline holds budget.
+                self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], 1.)
+                self.assertAlmostEqual(after['charged_estimate'] - before['charged_estimate'],
+                                       phase['real_wall_seconds'] - 1.)
 
     def test_oversize_provider_originals_stay_unknown_without_a_second_paid_slot(self):
         for mode, reason in (('envelope_bound', 'MODEL_RESPONSE_ENVELOPE_BYTE_LIMIT'),
@@ -555,24 +605,75 @@ class AutonomyTests(unittest.TestCase):
         self.assertGreater(before['budget']['wall_seconds']['spent_measured'], 0)
 
     def test_adopted_then_controller_crash_resumes_exact_proposal(self):
+        from types import SimpleNamespace
+
         self.build()
+        request, receipt = self.run_repair()
+        paid = self.store.snapshot()
+        self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(paid['receipts'], [receipt])
+        self.assertEqual(receipt['autonomy_request'], request['request'])
+        self.assertEqual(paid['runs'][0]['attempt_id'], receipt['attempt_id'])
+        self.assertEqual(len(paid['contract_history']), 1)
+        self.assertEqual(self.events('METHOD_REVISION_ADOPTED'), [])
+        self.assertEqual(self.events(autonomy.PROCESSED), [])
+        self.trace.append({'stage': 'paid_before_adoption', 'state': paid, 'request': request})
+
+        # Isolate the intended adoption fault after a real successful worker.
+        # Only this controller clock is synthetic; provider/worker/CLI caps stay real.
+        ticks, faults = [0.], []
+        clock = SimpleNamespace(monotonic=lambda: ticks[0], time=autonomy.time.time)
         original = autonomy._append
         def crash(db, event):
             if event['kind'] == autonomy.PROCESSED and event.get('outcome') == 'ADOPTED':
+                cut = {'stage': 'after_adoption_before_processed',
+                       'state': self.store.snapshot(), 'event': deepcopy(event), 'events': self.events()}
+                faults.append(cut)
+                self.trace.append(cut)
+                ticks[0] = 1.
                 raise RuntimeError('synthetic crash after method adoption')
             return original(db, event)
-        with patch.object(autonomy, '_append', side_effect=crash):
+        with patch.object(autonomy, 'time', clock), patch.object(autonomy, '_append', side_effect=crash):
             with self.assertRaisesRegex(RuntimeError, 'after method adoption'):
-                autonomy.drive(self.store, 4)
+                returned = autonomy.drive(self.store, 4)
+                self.trace.append({'stage': 'unexpected_drive_return', 'result': returned})
         before = self.store.snapshot()
+        self.trace.append({'stage': 'crash_settled_before_cli', 'state': before, 'events': self.events()})
+        self.assertEqual(len(faults), 1)
+        self.assertEqual(len(faults[0]['state']['contract_history']), 2)
+        self.assertEqual(faults[0]['state']['receipts'], [receipt])
+        self.assertFalse(any(e['kind'] == autonomy.PROCESSED for e in faults[0]['events']))
+        self.assertEqual(faults[0]['event']['receipt_sha256'], receipt['sha256'])
         self.assertEqual(len(before['contract_history']), 2)
         self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual(before['receipts'], [receipt])
+        self.assertEqual(self.events(autonomy.PROCESSED), [])
+        proposal = self.events('AUTONOMY_PROPOSAL_VALIDATED')
+        adopted = self.events('METHOD_REVISION_ADOPTED')
+        self.assertEqual(len(proposal), 1)
+        self.assertEqual(len(adopted), 1)
+        claim, release = self.events('AUTONOMY_DRIVE_CLAIMED'), self.events('AUTONOMY_DRIVE_RELEASED')
+        self.assertEqual(len(claim), 1)
+        self.assertEqual(len(release), 1)
+        self.assertEqual(claim[0]['controller_reservation'], 30)
+        self.assertEqual(release[0]['owner'], claim[0]['owner'])
+        self.assertEqual(release[0]['executed'], [])
+        self.assertEqual(release[0]['controller_wall_seconds'], 1.)
+        self.assertAlmostEqual(before['budget']['wall_seconds']['reserved'], 0)
+        self.assertAlmostEqual(before['budget']['wall_seconds']['spent_measured'],
+                               paid['budget']['wall_seconds']['spent_measured'] + 1.)
+        self.assertEqual(before['budget']['wall_seconds']['charged_estimate'],
+                         paid['budget']['wall_seconds']['charged_estimate'])
         self.cli('project', 'drive', '--prepare-only', '--max-steps', '4')
         after = self.store.snapshot()
+        self.trace.append({'stage': 'recovered_via_real_cli', 'state': after, 'events': self.events()})
         self.assertEqual(len(after['contract_history']), 2)
         self.assertEqual(self.calls(), ['repair1'])
         self.assertEqual(next(r for r in after['receipts'] if r['run_id']=='repair1'), before['receipts'][0])
         self.assertEqual(len(self.events(autonomy.PROCESSED)), 1)
+        self.assertEqual(self.events('AUTONOMY_PROPOSAL_VALIDATED'), proposal)
+        self.assertEqual(self.events('METHOD_REVISION_ADOPTED'), adopted)
+        self.assertEqual(self.events(autonomy.REQUESTED), [request])
         self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
 
     def test_prepared_partial_copy_resumes_without_another_model_call(self):
@@ -597,15 +698,50 @@ class AutonomyTests(unittest.TestCase):
 
     def test_total_step_cap_survives_multiple_drive_invocations(self):
         self.build(max_steps=1)
-        self.cli('project', 'drive', '--max-steps', '1')
+        first = self.cli('project', 'drive', '--max-steps', '1')
         before = self.store.snapshot()
         start = self.events('CAMPAIGN_STARTED')[0]
         result = self.cli('project', 'drive', '--max-steps', '4')
-        self.assertIn('TOTAL_STEP_LIMIT', result.get('reason', ''))
+        # A paid provider may stop before the next admission gate. Retain its
+        # actual outcome on failure; an earlier safe stop does not satisfy this
+        # successful repair/adoption trajectory or replace its original checks.
+        self.assertIn('TOTAL_STEP_LIMIT', result.get('reason', ''),
+                      json.dumps({'first': first, 'second': result, 'before': before,
+                                  'after': self.store.snapshot(), 'cli': self.trace,
+                                  'events': self.events()}, ensure_ascii=False))
         self.assertEqual(len(self.store.snapshot()['runs']), 1)
         self.assertEqual(self.calls(), ['repair1'])
         self.assert_single_model_cost(before)
         self.assertEqual(self.events('CAMPAIGN_STARTED'), [start])
+        self.assertFalse((self.root / 'outputs/solve.json').exists())
+
+    def test_total_step_cap_counts_original_reservation_across_store_instances(self):
+        # Deterministic admission invariant, separate from the real CLI/provider
+        # trajectory above. No worker or synthetic receipt is needed to count
+        # an existing reservation against the frozen cumulative limit.
+        self.build(max_steps=1)
+        event = self.request()
+        route = next(r['manifest'] for r in self.contract['advisor_policy']['routes']
+                     if r['manifest']['id'] == event['run_id'])
+        self.store.register(route)
+        before = self.store.snapshot()
+        events = self.events()
+        self.assertEqual(len(before['runs']), 1)
+        self.assertEqual(before['runs'][0]['status'], 'RESERVED')
+        self.assertIsNone(before['runs'][0]['attempt_id'])
+        self.assertEqual(before['receipts'], [])
+        for _ in range(2):
+            reopened = ProjectStore(self.root)
+            with reopened._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                contract = reopened._contract(db)
+                self.assertEqual(contract, self.contract)
+                with self.assertRaisesRegex(ValueError, '^AUTONOMY_TOTAL_STEP_LIMIT$'):
+                    autonomy.bind_run(reopened, db, contract, {'id': 'solve'})
+            self.assertEqual(reopened.snapshot(), before)
+            self.assertEqual(self.events(), events)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
         self.assertFalse((self.root / 'outputs/solve.json').exists())
 
     def test_short_drive_passes_preserve_budget_deadline_and_receipts(self):
