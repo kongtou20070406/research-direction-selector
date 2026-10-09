@@ -65,6 +65,7 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `project compare` | Compare recorded control/treatment arms | Eligible completed arms and precommitted primary metric/useful-delta declaration | [Project comparison](../tests/test_rds_project_next.py) |
 | `project status` | Inspect current runs, budget and receipts | Existing project; `--brief` gives bounded state plus a saved-record locator | [Output](agent-entry.md) |
 | `project costs` | Inspect measured costs and charged estimates | Existing project records; failed attempts and unknown resource values remain visible | [Cost accounting](development-loop.md) |
+| `project trajectory` | Reconcile supplied provider/tool costs and evaluator-reported outcomes | `--manifest`; hash-bound original exports; no execution or independent scientific certification | [Trajectory accounting](trajectory-accounting.md) |
 | `project control-check` | Check whether a completed control is reusable | `--candidate` receipt and `--current` expected operation/protocol; source and output identity must match | [Control reuse](../examples/project-runner/README.md) |
 
 ## Native mathematical assets and local tools

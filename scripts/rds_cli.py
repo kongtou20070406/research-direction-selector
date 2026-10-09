@@ -1122,6 +1122,9 @@ def cmd_project(args):
     if args.action == 'compose-tools':
         from rds_tool_calls import compose
         return compose(args.root, args.request)
+    if args.action == 'trajectory':
+        from rds_trajectory import report
+        return report(args.root, args.manifest)
     from rds_project import ProjectStore
     store = ProjectStore(args.root)
     if args.action == 'plan':
@@ -1562,6 +1565,8 @@ def parser():
     pr_actions.add_parser("costs")
     pr_compose = pr_actions.add_parser('compose-tools', help='Compose existing qualified tool routes with original admission and recovery')
     pr_compose.add_argument('--request', required=True)
+    pr_trajectory = pr_actions.add_parser('trajectory', help='Read original provider/tool/evaluator records; no execution or new ledger')
+    pr_trajectory.add_argument('--manifest', required=True, help='Project-relative rds-trajectory-manifest-v1 JSON')
     pr_control = pr_actions.add_parser("control-check")
     pr_control.add_argument("--candidate", required=True)
     pr_control.add_argument("--current", required=True)
