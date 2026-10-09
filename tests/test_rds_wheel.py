@@ -350,18 +350,20 @@ class WheelTests(unittest.TestCase):
     def test_metric_parses_the_same_original_bytes_it_hashes(self):
         self.prepare()
         receipt = self.project.receipts['treatment']
-        target = self.root / receipt['artifacts'][0]['path']
+        # Temp directory short names on Windows can resolve to another spelling.
+        # Exercise an equivalent spelling on every platform and match file identity.
+        target = (self.root / 'outputs' / '..' / receipt['artifacts'][0]['path']).resolve()
         original = target.read_bytes()
         reads = []
         read_bytes = Path.read_bytes
         read_text = Path.read_text
         def changing_read(path):
-            if path == target:
+            if path.resolve() == target:
                 reads.append(path)
                 return original if len(reads) == 1 else b'{"loss":-1000}'
             return read_bytes(path)
         def changed_text(path, *args, **kwargs):
-            return '{"loss":-1000}' if path == target else read_text(path, *args, **kwargs)
+            return '{"loss":-1000}' if path.resolve() == target else read_text(path, *args, **kwargs)
         with patch.object(Path, 'read_bytes', autospec=True, side_effect=changing_read), \
                 patch.object(Path, 'read_text', autospec=True, side_effect=changed_text):
             value = self.wheel.metric(receipt, self.wheel.manifest('seed', 'initial'))
