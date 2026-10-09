@@ -1157,7 +1157,8 @@ def cmd_project(args):
         return _project_result(store, store.recover(args.id))
     if args.action == "drive":
         from rds_autonomy import drive
-        return drive(store, args.max_steps, prepare_only=args.prepare_only)
+        return drive(store, args.max_steps, prepare_only=args.prepare_only,
+                     until_judgment=args.until_judgment, controller_wall_seconds=args.controller_wall_seconds)
     if args.action == "advance":
         require(_owned_project(args.root) is not None,
                 'project advance requires a frozen advisor_policy; legacy projects use project next')
@@ -1558,6 +1559,8 @@ def parser():
     pr_drive = pr_actions.add_parser("drive", help="Drive a bounded owned research loop, including authorized model repair")
     pr_drive.add_argument("--max-steps", type=int, default=8, help="Foreground executions this pass; cumulative frozen cap remains authoritative")
     pr_drive.add_argument("--prepare-only", action="store_true", help="Retain a reviewable model request and pause before its repair worker; ordinary work and recovery continue")
+    pr_drive.add_argument("--until-judgment", action="store_true", help="Continue frozen owned routes and reconcile paid work, stopping before new model reasoning with an evidence-bound handoff")
+    pr_drive.add_argument("--controller-wall-seconds", type=float, help="Explicit control allowance for an ordinary owned --until-judgment pass, taken from the existing wall budget; frozen autonomy allowance cannot be overridden")
     pr_actions.add_parser("recover").add_argument("--id", required=True)
     pr_actions.add_parser("next", help="Print the single next actionable project step and its command").add_argument("--brief", "--digest", action="store_true")
     pr_actions.add_parser("compare", help="Compare recorded arms against the precommitted min_useful_delta")

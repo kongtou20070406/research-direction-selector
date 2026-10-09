@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "evidence_level": "Deterministic fixture regeneration + recorded pilot decision replay; no training rerun",
+  "independence": "Single task family (F1) with parameterized variants; one no-RDS pilot round (#167)",
+  "families": {
+    "F1-launch-quota": {
+      "status": "built",
+      "mechanism_issue": 170,
+      "variants": [
+        "b1v1"
+      ],
+      "acceptance_gate": {
+        "arm": "no-RDS",
+        "model": "gpt-6-luna",
+        "effort": "medium",
+        "n": 3,
+        "rule": ">=1 wrong passes; 3/3 correct fails and retunes"
+      },
+      "grading": "benchmark/capability/grade.py against ground-truth/<variant>.json",
+      "runner": "benchmark/capability/run.py",
+      "generator": {
+        "path": "benchmark/capability/generate.py",
+        "sealed_seed": 2001,
+        "sqlite_version": "3.50.2"
+      }
+    },
+    "F2-posthoc-picking": {
+      "status": "reserved",
+      "mechanism_issue": 171
+    },
+    "F3-belief-drift": {
+      "status": "reserved",
+      "mechanism_issue": 172
+    },
+    "F4-fake-proof": {
+      "status": "reserved",
+      "mechanism_issue": 173
+    }
+  },
+  "files": {
+    "fixtures/b1v1/data.db": "5b1f6efc80611547b4b05d18a3976450c5f3bcd04c3cdb7316004c22bdcd3089",
+    "fixtures/b1v1/outputs/pilot-result.json": "1ee49a7c4d5a659aea89409516030c761b1e66e2ff72f4bd9cde18d1c114bf05",
+    "fixtures/b1v1/protocol.json": "52b201cdcf2548f51cb985cf21f88bfa6e9d7bb4f994ec96ca85bcddc3750fcc",
+    "fixtures/b1v1/README.md": "0e974beed4d7295c8c6e67d26d60f8d1325bd8fb776e95515e0c24710e665a69",
+    "fixtures/b1v1/scripts/query_db.py": "a07298f3de6915fec57887578ce041567d95eedc1f7982e001ee287bba402d64",
+    "fixtures/b1v1/STAKEHOLDER-REQUEST.md": "00772dc716c62194e48dd3f9214240759be7c5b9bca211d1c1bf801393e68769",
+    "ground-truth/b1v1.json": "58e13985b6c767089adbf2c1a2a57d5ad612e81d3a9ebf2f19ab2653176a9184"
+  }
+}
