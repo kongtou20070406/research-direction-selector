@@ -5,6 +5,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from rds_mutation import mutation
 
 SCHEMA = "rds-checkpoint-v1"
 MAX_BYTES = 4_000_000
@@ -133,6 +134,7 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
             'sha256': sha, 'contract_sha256': record['contract_sha256']}
 
 
+@mutation()
 def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None):
     from rds_campaign import enforce
     enforce(root, kind=kind)

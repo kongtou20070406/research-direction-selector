@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from rds_math import blob, get, put, read_bytes, records
 from rds_project import ProjectStore, canonical, digest, file_sha, number, require
 from rds_quick import cas_bytes, execute, _charge_ledger
+from rds_mutation import mutation
 
 BUILTINS = set('abs all any bool dict enumerate filter float frozenset int isinstance len list map max min next range reversed round set sorted str sum tuple zip ArithmeticError AssertionError IndexError KeyError TypeError ValueError ZeroDivisionError RecursionError UnicodeError'.split())
 METHODS = set('append extend insert pop remove clear copy count index reverse sort get items keys values update union intersection difference is_integer as_integer_ratio bit_length conjugate limit_denominator encode split replace isascii isdigit startswith endswith strip upper add'.split())
@@ -103,6 +104,7 @@ def extract_function(raw, entry):
     return code, sorted(selected)
 
 
+@mutation()
 def extract(root, source, entry, name):
     from rds_campaign import enforce
     enforce(root)
@@ -270,14 +272,17 @@ def validate(root, name, case_file, timeout=10, ledger=None, *, comparison=None)
                              'ledger': str(Path(ledger).resolve()) if ledger else None,
                              'job_root': (workspace / '.rds/exec/tool-check').relative_to(store.root).as_posix(),
                              'validation_id': 'validation:' + token})
-    workspace.mkdir(parents=True, exist_ok=True)
-    for filename, raw in [('candidate.py', code), ('cases.json', cases), ('driver.py', driver)]:
-        path = workspace / filename
-        if path.exists():
-            require(read_bytes(path) == raw, 'Frozen validation input changed')
-        else:
-            with path.open('xb') as stream:
-                stream.write(raw)
+    from rds_mutation import mutation
+    with mutation():
+        _qualification_root(root)
+        workspace.mkdir(parents=True, exist_ok=True)
+        for filename, raw in [('candidate.py', code), ('cases.json', cases), ('driver.py', driver)]:
+            path = workspace / filename
+            if path.exists():
+                require(read_bytes(path) == raw, 'Frozen validation input changed')
+            else:
+                with path.open('xb') as stream:
+                    stream.write(raw)
     if ledger:
         _charge_validation(ledger, workspace, token, timeout)
     args = SimpleNamespace(root=str(workspace), name='tool-check', timeout=timeout, argv=['driver.py'],
@@ -343,6 +348,7 @@ def _check_validation(root, value, candidate):
     return receipt
 
 
+@mutation()
 def register(root, name, validation_id=None):
     from rds_campaign import enforce
     enforce(root)
@@ -391,18 +397,19 @@ def command(args):
         require(value is not None, 'Tool is not registered for local reuse')
         result = register(args.root, args.name, value['data']['validation'])
         if getattr(args, 'output', None):
-            from rds_campaign import enforce
-            enforce(args.root)
-            path = ProjectStore(args.root)._path(args.output)
-            require(path.suffix == '.py', 'Export the tool as a project-relative .py module')
-            code = blob(args.root, value['asset'])
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if path.exists():
-                require(read_bytes(path) == code, 'Tool export would overwrite different content')
-            else:
-                with path.open('xb') as stream:
-                    stream.write(code)
-            result['module'] = str(path)
+            with mutation():
+                from rds_campaign import enforce
+                enforce(args.root)
+                path = ProjectStore(args.root)._path(args.output)
+                require(path.suffix == '.py', 'Export the tool as a project-relative .py module')
+                code = blob(args.root, value['asset'])
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.exists():
+                    require(read_bytes(path) == code, 'Tool export would overwrite different content')
+                else:
+                    with path.open('xb') as stream:
+                        stream.write(code)
+                result['module'] = str(path)
         return result
     name = _name(args.name) if getattr(args, 'name', None) is not None else None
     return {'status': 'LOCAL_CATALOG', 'tools': [{'id': v['id'], 'kind': v['kind'], 'data': v['data']}

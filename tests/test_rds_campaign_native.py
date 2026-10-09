@@ -109,7 +109,17 @@ class CampaignNativeTests(unittest.TestCase):
         spec['protocol']['sha256'] = file_sha(self.child / 'protocol.json')
         return spec
 
-    def test_running_sibling_process_settles_after_ancestor_binding_without_new_admission(self):
+    def publish_legacy_binding(self):
+        """Rebuild the 750-era marker, retaining all original ledger checks."""
+        with self.assertRaisesRegex(ValueError, 'no active runs or reserved resources'):
+            bind(self.store, self.root)
+        self.assertFalse((self.root / '.rds-campaign.json').exists())
+        # Only the newly introduced workspace inventory is absent in this
+        # legacy fixture. Canonical and known-job reconciliation remain real.
+        with patch('rds_campaign._workspace_roots', return_value=iter(())):
+            return bind(self.store, self.root)
+
+    def test_legacy_binding_running_sibling_settles_without_new_admission(self):
         child = self.sibling(wait_for_release=True)
         child.register(self.sibling_spec(timeout=10))
         parent_before = self.store.snapshot()['budget']
@@ -126,7 +136,7 @@ class CampaignNativeTests(unittest.TestCase):
                 self.assertEqual(running['status'], 'RUNNING')
                 self.assertIsNotNone(running['pid'])
                 self.assertIsNotNone(running['attempt_id'])
-                bind(self.store, self.root)
+                self.publish_legacy_binding()
                 with self.assertRaisesRegex(ValueError, 'canonical project ledger'):
                     child.register(self.sibling_spec('r2'))
             finally:
@@ -143,7 +153,7 @@ class CampaignNativeTests(unittest.TestCase):
         self.assertGreater(after['budget']['wall_seconds']['spent_measured'], 0)
         self.assertEqual(self.store.snapshot()['budget'], parent_before)
 
-    def test_binding_after_admission_before_claim_settles_failed_without_popen(self):
+    def test_legacy_binding_after_admission_before_claim_settles_failed_without_popen(self):
         child = self.sibling()
         child.register(self.sibling_spec())
         reserved = child.snapshot()['budget']
@@ -152,7 +162,7 @@ class CampaignNativeTests(unittest.TestCase):
             admitted = child.snapshot()['runs'][0]
             self.assertEqual(admitted['status'], 'RESERVED')
             self.assertEqual(admitted['attempt_id'], attempt_id)
-            bind(self.store, self.root)
+            self.publish_legacy_binding()
             return claim(run_id, attempt_id)
         with patch.object(child, '_execute_claim', side_effect=bind_before_claim), \
                 patch('rds_project.subprocess.Popen') as launch:
@@ -170,7 +180,7 @@ class CampaignNativeTests(unittest.TestCase):
             self.assertEqual(budget['spent_measured'], reserved[name]['spent_measured'])
             self.assertEqual(budget['charged_estimate'], reserved[name]['charged_estimate'] + reserved[name]['reserved'])
 
-    def test_owned_running_sibling_settles_original_receipt_and_completion_checkpoint(self):
+    def test_legacy_binding_owned_running_sibling_settles_original_receipt_and_checkpoint(self):
         helper = owned_fixture.ProjectLifecycleTests(methodName='runTest')
         helper.setUp()
         self.addCleanup(helper.doCleanups)
@@ -208,7 +218,7 @@ class CampaignNativeTests(unittest.TestCase):
                 running = child.snapshot()['runs'][0]
                 self.assertEqual(running['status'], 'RUNNING')
                 self.assertIsNotNone(running['pid'])
-                bind(self.store, self.root)
+                self.publish_legacy_binding()
             finally:
                 release.write_text('finish owned original attempt', encoding='utf-8')
             receipt = future.result(timeout=15)
@@ -239,7 +249,7 @@ class CampaignNativeTests(unittest.TestCase):
             child.register(helper.manifests['repair'])
         self.assertEqual(child.snapshot(), state)
 
-    def test_orphan_attempt_real_cli_recovery_preserves_charge_and_refuses_other_writers(self):
+    def test_legacy_binding_orphan_real_cli_recovery_preserves_charge_and_refuses_writers(self):
         child = self.sibling()
         child.register(self.sibling_spec())
         with patch.object(child, '_execute_claim', return_value={'status': 'PAUSED_BEFORE_CLAIM'}):
@@ -252,7 +262,7 @@ class CampaignNativeTests(unittest.TestCase):
                        observed_wall_seconds=0.3)
             child._save(db, run)
         before = child.snapshot()
-        bind(self.store, self.root)
+        self.publish_legacy_binding()
         env = {**os.environ, 'RDS_USAGE_LOG': '0', 'PYTHONIOENCODING': 'utf-8'}
         env.pop('RDS_CAMPAIGN_BINDING', None)
         completed = subprocess.run([sys.executable, '-B',
@@ -284,12 +294,12 @@ class CampaignNativeTests(unittest.TestCase):
             cas_bytes(self.child, b'new unrelated research state')
         self.assertEqual(child.snapshot(), after)
 
-    def test_wrong_or_missing_attempt_settlement_refuses_without_creating_database(self):
+    def test_legacy_binding_wrong_or_missing_attempt_settlement_refuses_without_database(self):
         child = self.sibling()
         child.register(self.sibling_spec())
         with patch.object(child, '_execute_claim', return_value={'status': 'PAUSED_BEFORE_CLAIM'}):
             child.execute('r1')
-        bind(self.store, self.root)
+        self.publish_legacy_binding()
         before = child.snapshot()
         for identity in (('r1', 'wrong-attempt'), ('r1', None), ('missing', 'wrong-attempt')):
             with self.subTest(identity=identity), self.assertRaises(ValueError):

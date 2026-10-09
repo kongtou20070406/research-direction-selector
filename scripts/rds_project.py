@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import uuid
+from rds_mutation import mutation
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -431,6 +432,13 @@ class ProjectStore:
 
     @contextmanager
     def _db(self, readonly=False, *, settlement=None):
+        from rds_mutation import mutation
+        with (nullcontext() if readonly else mutation()):
+            with self._open_db(readonly, settlement=settlement) as db:
+                yield db
+
+    @contextmanager
+    def _open_db(self, readonly=False, *, settlement=None):
         if readonly:
             if not self.path.is_file():
                 raise FileNotFoundError("Project contract has not been initialized")
@@ -634,6 +642,7 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
+    @mutation()
     def initialize(self, contract, supersedes=None, *, scope_declaration=None):
         from rds_campaign import binding, enforce
         enforce(self.root)

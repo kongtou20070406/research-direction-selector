@@ -70,6 +70,18 @@ class CampaignCLITests(unittest.TestCase):
         self.assertEqual(self.fixture.rows('events'), self.bound_events)
         self.assertEqual(self.fixture.starts(), ['baseline'])
 
+    def test_explicit_bind_restores_required_marker_without_new_identity_or_budget(self):
+        original = self.marker.read_bytes()
+        self.marker.unlink()
+        rejected = self.call('project', 'status', ok=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('missing or unreadable', rejected.stderr)
+        repaired = json.loads(self.call('project', 'bind-workspace',
+                                       '--workspace-root', str(self.workspace)).stdout)
+        self.assertEqual(repaired['binding']['binding_id'], self.bound['binding']['binding_id'])
+        self.assertEqual(self.marker.read_bytes(), original)
+        self.assert_originals_retained()
+
     def test_sibling_discovery_reuses_canonical_and_continuation_retains_failure(self):
         sibling = self.workspace / 'sibling'
         sibling.mkdir()

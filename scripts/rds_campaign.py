@@ -5,6 +5,7 @@ protect against direct SQL, backup rollback, or same-user removal of markers.
 SQLite access here is deliberately raw to avoid recursion through store guards.
 """
 from contextlib import contextmanager
+from collections import deque
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,12 @@ KIND = 'CAMPAIGN_LEDGER_BOUND'
 QUICK_JOB_KIND = 'QUICK_JOB_ADMITTED'
 MAX_BYTES = 16384
 MAX_JOBS = 128
+MAX_RUNS = 4096
+MAX_THEORY_EVENTS = 2 * MAX_RUNS
+MAX_EVENTS = 512
+MAX_DIRECTORIES = 4096
+MAX_ENTRIES = 32768
+MAX_DEPTH = 32
 FIELDS = {'schema', 'kind', 'binding_id', 'workspace_root', 'project_root',
           'ledger_kind', 'genesis_sha256', 'event_sha256'}
 
@@ -162,59 +169,216 @@ def detached_admission(root, db):
             'Campaign binding intent refuses detached QUICK admission')
 
 
-def _terminal_child(root):
-    """Retained jobs must be settled before their future writers are restricted."""
+def _table(db, name):
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+class _Inventory:
+    def __init__(self):
+        self.directories = self.entries = self.events = self.runs = self.theory_events = 0
+
+    def directory(self, depth):
+        self.directories += 1
+        require(depth <= MAX_DEPTH and self.directories <= MAX_DIRECTORIES,
+                'Campaign workspace directory/depth bound exceeded; inventory is incomplete')
+
+    def entry(self):
+        self.entries += 1
+        require(self.entries <= MAX_ENTRIES, 'Campaign workspace entry bound exceeded; inventory is incomplete')
+
+
+def _workspace_roots(workspace, inventory):
+    """Inspect directories only, with explicit whole-operation bounds."""
+    pending, visited = deque([(workspace, 0)]), set()
+    while pending:
+        directory, depth = pending.popleft()
+        directory = directory.resolve()
+        require(directory.is_relative_to(workspace), 'Campaign workspace directory escapes its scope')
+        if directory in visited:
+            continue
+        visited.add(directory)
+        inventory.directory(depth)
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    inventory.entry()
+                    path = Path(entry.path)
+                    if entry.is_dir():
+                        if entry.name == '.rds':
+                            # Discover through the logical owner before resolve
+                            # changes an in-root symlink/junction's basename.
+                            for name in ('project.sqlite3', 'state.sqlite3'):
+                                ledger = path / name
+                                if ledger.exists() or ledger.is_symlink():
+                                    require(ledger.is_file() and ledger.resolve().is_relative_to(directory),
+                                            'Campaign native ledger is unavailable or escapes its owner')
+                                    yield directory, name
+                        pending.append((path, depth + 1))
+        except OSError as exc:
+            raise ValueError('Campaign workspace inventory is unreadable or incomplete') from exc
+
+
+def _preparation_finished(root, value, target):
+    """A terminal child alone does not settle the original preparation writer."""
+    from rds_math import get, blob
+    from rds_project import ProjectStore
+    request = value.get('request')
+    require(isinstance(request, dict) and value.get('request_sha256') == digest(request)
+            and isinstance(request.get('token'), str) and re.fullmatch('[0-9a-f]{32}', request['token'])
+            and request.get('validation_id') == 'validation:' + request['token'],
+            'Retained tool preparation identity is invalid')
+    record = get(root, request['validation_id'])
+    require(record is not None and record.get('kind') == 'tool-validation',
+            'Campaign binding requires resolved tool preparation')
+    data = record.get('data', {})
+    require(isinstance(data, dict) and isinstance(data.get('job_root'), str)
+            and (root / data['job_root']).resolve() == target and data.get('run_id') == 'tool-check',
+            'Retained tool preparation record points to another job')
+    with _database(target) as db:
+        row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', ('tool-check',)).fetchone()
+        require(row is not None, 'Campaign binding requires resolved tool preparation receipt')
+        receipt = ProjectStore._receipt(row)
+    require(data.get('receipt_sha256') == digest(receipt)
+            and strict_json(blob(root, record['asset']).decode('utf-8')) == {'receipt': receipt},
+            'Retained tool preparation record differs from its original receipt')
+
+
+def _retained_targets(root, db, inventory):
+    if _table(db, 'events'):
+        remaining = MAX_EVENTS - inventory.events
+        rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind') IN "
+                          "('EXTERNAL_RUN_ALLOWANCE','TOOL_PREPARATION_STARTED','QUICK_JOB_ADMITTED') LIMIT ?",
+                          (remaining + 1,)).fetchall()
+        inventory.events += len(rows)
+        require(inventory.events <= MAX_EVENTS, 'Campaign retained-event bound exceeded; inventory is incomplete')
+        for row in rows:
+            require(len(row['body'].encode('utf-8')) <= MAX_BYTES, 'Retained job event exceeds 16 KiB')
+            value = strict_json(row['body'])
+            require(isinstance(value, dict), 'Retained job event is invalid')
+            request = value.get('request', {})
+            require(isinstance(request, dict), 'Retained job request is invalid')
+            job = value.get('job_root') or request.get('job_root')
+            require(isinstance(job, str) and job, 'Retained child job pointer is missing')
+            target = (root / job).resolve()
+            # Only this old allowance shape names a source workspace. Native
+            # pointers and ordinary allowances already name the actual ledger.
+            token = target.name
+            legacy = (value['kind'] == 'EXTERNAL_RUN_ALLOWANCE'
+                      and re.fullmatch('[0-9a-f]{32}', token)
+                      and target.parent.name == 'tool-checks' and target.parent.parent.name == 'rsi'
+                      and target.parent.parent.parent.name == '.rds'
+                      and value.get('request_sha256') == digest({'tool_validation': token}))
+            if legacy:
+                target = target / '.rds' / 'exec' / 'tool-check'
+            if value['kind'] == 'TOOL_PREPARATION_STARTED':
+                _preparation_finished(root, value, target)
+            yield target
+    directory = root / '.rds' / 'exec'
+    if directory.exists() or directory.is_symlink():
+        require(directory.is_dir() and directory.resolve().is_relative_to(root),
+                'Retained QUICK directory escapes its original project')
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    inventory.entry()
+                    target = Path(entry.path).resolve()
+                    require(entry.is_dir() and target.is_relative_to(root),
+                            'Retained QUICK job is unavailable or escapes its original project')
+                    yield target
+        except OSError as exc:
+            raise ValueError('Campaign retained-job inventory is unreadable or incomplete') from exc
+
+
+def _theory_quiescent(db, inventory):
+    if not _table(db, 'events'):
+        return
+    names = ('attempt_id', 'run_id', 'manifest_sha256', 'request_sha256', 'accounting', 'allowance')
+    # Project only the original identity: outcomes may also retain large worker
+    # results, which are unnecessary to detect unfinished allowance writers.
+    fields = ','.join("json_extract(body,'$." + name + "') AS " + name for name in ('kind',) + names)
+    rows = db.execute('SELECT ' + fields + " FROM events WHERE json_extract(body,'$.kind') IN "
+                      "('THEORY_ALLOWANCE','THEORY_OUTCOME') LIMIT ?",
+                      (MAX_THEORY_EVENTS - inventory.theory_events + 1,)).fetchall()
+    inventory.theory_events += len(rows)
+    require(inventory.theory_events <= MAX_THEORY_EVENTS,
+            'Campaign theory-event bound exceeded; inventory is incomplete')
+    allowances, outcomes = {}, {}
+    for row in rows:
+        identity = {name: row[name] for name in names}
+        require(all(isinstance(identity[name], str) and 0 < len(identity[name]) <= MAX_BYTES for name in names),
+                'Theory allowance/outcome identity is invalid')
+        identity['allowance'] = strict_json(identity['allowance'])
+        target = allowances if row['kind'] == 'THEORY_ALLOWANCE' else outcomes
+        require(identity['attempt_id'] not in target, 'Theory allowance/outcome attempt is duplicated')
+        target[identity['attempt_id']] = identity
+    require(allowances == outcomes, 'Campaign binding requires resolved theory allowances with exact outcomes')
+
+
+def _ledger_quiescent(root, db, inventory):
     from rds_project import ProjectStore, TERMINAL
-    with _database(root) as db:
+    if _table(db, 'contract') and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
         _lineage(db)
+    _theory_quiescent(db, inventory)
+    if _table(db, 'runs'):
+        inventory.runs += db.execute('SELECT count(*) FROM runs').fetchone()[0]
+        require(inventory.runs <= MAX_RUNS,
+                'Campaign retained-run bound exceeded; inventory is incomplete')
         runs = ProjectStore._runs(db)
-        # A fully initialized but never reserved child is harmless retained
-        # preparation, including admission refused during marker publication.
         require(all(run['status'] in TERMINAL for run in runs),
-                'Campaign binding requires settled retained child jobs')
-        require(not db.execute('SELECT 1 FROM budget WHERE reserved!=0 LIMIT 1').fetchone(),
-                'Retained child has reserved resources')
+                'Campaign binding requires no active runs or reserved resources; settled retained child jobs required')
         for run in runs:
             row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
-            require(row is not None and ProjectStore._receipt(row)['run_id'] == run['id'],
+            receipt = ProjectStore._receipt(row) if row is not None else None
+            require(receipt is not None and receipt['run_id'] == run['id']
+                    and receipt['attempt_id'] == run['attempt_id']
+                    and receipt['manifest_sha256'] == run['manifest_sha256']
+                    and receipt['process_status'] == run['status'],
                     'Retained child has no verified terminal receipt')
+    if _table(db, 'budget'):
+        require(not db.execute('SELECT 1 FROM budget WHERE reserved!=0 LIMIT 1').fetchone(),
+                'Retained child has reserved resources')
 
 
-def _quiescent(db, project):
-    require(not db.execute("SELECT 1 FROM runs WHERE status IN ('RESERVED','RUNNING') LIMIT 1").fetchone()
-            and not db.execute('SELECT 1 FROM budget WHERE reserved!=0 LIMIT 1').fetchone(),
-            'Campaign binding requires no active runs or reserved resources')
-    jobs = []
-    rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind') IN "
-                      "('EXTERNAL_RUN_ALLOWANCE','TOOL_PREPARATION_STARTED','QUICK_JOB_ADMITTED') LIMIT ?",
-                      (MAX_JOBS + 1,)).fetchall()
-    require(len(rows) <= MAX_JOBS, 'Campaign retained-job bound exceeded')
-    for row in rows:
-        value = strict_json(row['body'])
-        job = value.get('job_root') or value.get('request', {}).get('job_root')
-        require(isinstance(job, str) and job, 'Retained child job pointer is missing')
-        target = (project / job).resolve()
-        # Legacy tool allowance names its source workspace, not its final job.
-        native = target / '.rds' / 'exec' / 'tool-check'
-        if native.is_dir():
-            target = native
-        jobs.append(target)
-    # Plain QUICK predates parent pointer events. Its retained native ledgers
-    # still own reservations/receipts, including a interrupted admission whose
-    # child committed before the parent's pointer transaction did.
-    directory = project / '.rds' / 'exec'
-    if directory.exists():
-        require(directory.is_dir() and directory.resolve().is_relative_to(project),
-                'Retained QUICK directory escapes its original project')
-        with os.scandir(directory) as entries:
-            for entry in entries:
-                require(len(jobs) < MAX_JOBS, 'Campaign retained-job bound exceeded')
-                target = Path(entry.path).resolve()
-                require(entry.is_dir() and target.is_relative_to(project),
-                        'Retained QUICK job is unavailable or escapes its original project')
-                jobs.append(target)
-    for job in set(jobs):
-        _terminal_child(job)
+def _reference_quiescent(root):
+    from rds_cli import RDSState
+    path = root / '.rds' / 'state.sqlite3'
+    db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=10)
+    try:
+        db.execute('PRAGMA query_only=ON')
+        row = db.execute('SELECT body FROM state WHERE id=1').fetchone()
+        require(row is not None and len(row[0].encode('utf-8')) <= 8 * 1024 * 1024,
+                'Campaign reference ledger state is missing or exceeds its bound')
+        state = RDSState.read_state(db)
+        require(isinstance(state, dict) and isinstance(state.get('plans'), dict), 'Campaign reference state is invalid')
+        RDSState.invariants(state)
+        require(all(amount == 0 for amount in state['budget']['reserved'].values()),
+                'Campaign reference ledger has reserved resources')
+        require(all(isinstance(plan, dict) and plan.get('run_status') not in {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
+                    for plan in state['plans'].values()), 'Campaign binding requires settled reference plans')
+    finally:
+        db.close()
+
+
+def _quiescent(db, project, workspace=None):
+    inventory, pending, visited = _Inventory(), deque([project]), set()
+    for root, name in _workspace_roots(workspace or project, inventory):
+        if name == 'project.sqlite3':
+            pending.append(root)
+        else:
+            _reference_quiescent(root)
+    while pending:
+        root = pending.popleft().resolve()
+        if root in visited:
+            continue
+        visited.add(root)
+        require(len(visited) <= MAX_JOBS + 1, 'Campaign retained-job bound exceeded; inventory is incomplete')
+        if root == project:
+            _ledger_quiescent(root, db, inventory)
+            pending.extend(_retained_targets(root, db, inventory))
+        else:
+            with _database(root) as child:
+                _ledger_quiescent(root, child, inventory)
+                pending.extend(_retained_targets(root, child, inventory))
 
 
 def _publish(path, value):
@@ -237,20 +401,37 @@ def _publish(path, value):
 
 def bind(store, workspace):
     """Commit an append-once native identity, then publish its exact marker."""
+    from rds_mutation import mutation
+    with mutation():
+        return _bind(store, workspace)
+
+
+def _bind(store, workspace):
     project, workspace = Path(store.root).resolve(), Path(workspace).resolve()
     require(workspace.is_dir() and project.is_dir() and project.is_relative_to(workspace),
             'Campaign workspace must be an existing ancestor of its project')
-    existing = binding(project)
+    path = workspace / MARKER
+    required = os.environ.get(ENVIRONMENT)
+    repair = False
+    if required is not None:
+        require(bool(required), 'Required campaign binding path is empty')
+        required_path = _path(required)
+        if not required_path.exists() and not required_path.is_symlink():
+            require(required_path == path, 'Missing required campaign marker differs from requested workspace')
+            repair = True
+    existing = _resolve(project, None) if repair else binding(project)
     if existing is not None:
         require(_path(existing['project_root']) == project and _path(existing['workspace_root']) == workspace,
                 'Project is already bound to another campaign workspace')
     with _database(project, write=True) as db:
         lineage = _lineage(db)
         value = _event(db)
+        require(not repair or value is not None,
+                'Required campaign marker is missing or unreadable; original binding event is required for repair')
         # A committed intent without its marker may have been interrupted.
         # Recheck pending work before recovering publication as well.
         if existing is None:
-            _quiescent(db, project)
+            _quiescent(db, project, workspace)
         if value is None:
             event = {'schema': 1, 'kind': KIND, 'binding_id': uuid.uuid4().hex,
                      'workspace_root': str(workspace), 'project_root': str(project),
@@ -262,6 +443,5 @@ def bind(store, workspace):
             require(_path(value['project_root']) == project and _path(value['workspace_root']) == workspace
                     and value['genesis_sha256'] == lineage[0]['sha256'],
                     'Native campaign event belongs to another identity')
-    path = workspace / MARKER
     _publish(path, value)
     return {**value, 'binding_path': str(path.resolve())}

@@ -18,6 +18,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from rds_artifacts import strict_json
+from rds_mutation import mutation
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_KNOWLEDGE_ROWS = 10000
@@ -466,29 +467,31 @@ class RDSAdvisor:
             entries.append(_knowledge_entry(rule, hashlib.sha256(key.encode("utf-8")).hexdigest(), document_sha))
         # Parsing and possible legacy loading finish before any writer lock.
         legacy = self._legacy_entries() if self._needs_legacy_migration() else []
-        self.knowledge_db.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.knowledge_db, timeout=15, isolation_level=None)
-        try:
-            _configure_wal(db)
-            db.execute("BEGIN IMMEDIATE")
-            db.execute("CREATE TABLE IF NOT EXISTS knowledge (entry_id TEXT PRIMARY KEY, document_sha TEXT NOT NULL, body TEXT NOT NULL)")
-            db.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            migrate = db.execute("SELECT 1 FROM metadata WHERE key='legacy_migrated'").fetchone() is None
-            existing_ids = {row[0] for row in db.execute("SELECT entry_id FROM knowledge")}
-            candidates = {entry[0]: entry for entry in ((legacy if migrate else []) + entries)}
-            added = [entry for entry_id, entry in candidates.items() if entry_id not in existing_ids]
-            if len(existing_ids) + len(added) > MAX_KNOWLEDGE_ROWS:
-                raise ValueError("Advisor knowledge exceeds the 10000-entry limit")
-            db.executemany("INSERT INTO knowledge VALUES (?,?,?)", added)
-            if migrate:
-                db.execute("INSERT INTO metadata VALUES ('legacy_migrated','1')")
-            total = len(existing_ids) + len(added)
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        with mutation():
+            enforce(self.root_dir)
+            self.knowledge_db.parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite3.connect(self.knowledge_db, timeout=15, isolation_level=None)
+            try:
+                _configure_wal(db)
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("CREATE TABLE IF NOT EXISTS knowledge (entry_id TEXT PRIMARY KEY, document_sha TEXT NOT NULL, body TEXT NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                migrate = db.execute("SELECT 1 FROM metadata WHERE key='legacy_migrated'").fetchone() is None
+                existing_ids = {row[0] for row in db.execute("SELECT entry_id FROM knowledge")}
+                candidates = {entry[0]: entry for entry in ((legacy if migrate else []) + entries)}
+                added = [entry for entry_id, entry in candidates.items() if entry_id not in existing_ids]
+                if len(existing_ids) + len(added) > MAX_KNOWLEDGE_ROWS:
+                    raise ValueError("Advisor knowledge exceeds the 10000-entry limit")
+                db.executemany("INSERT INTO knowledge VALUES (?,?,?)", added)
+                if migrate:
+                    db.execute("INSERT INTO metadata VALUES ('legacy_migrated','1')")
+                total = len(existing_ids) + len(added)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
         evidence = [json.loads(entry[2]) for entry in added]
         return _advice("DOCUMENT_EXCERPT_INGESTION", status="INGESTED", doc_path=str(doc_path),

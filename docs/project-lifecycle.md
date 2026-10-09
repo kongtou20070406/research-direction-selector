@@ -32,14 +32,23 @@ is an error to repair, not permission to initialize again. Continue declared wor
 with canonical `project create`, `project execute` or owned `project advance`;
 their original command, budget, evidence and recovery gates still apply.
 
-Binding waits for the canonical ledger's active reservations and retained QUICK
-jobs to settle. QUICK admission checks the original native binding intent while
-holding the parent transaction, including the marker publication window. An
-already admitted sibling attempt can still record progress and settle its exact
-original receipt and costs. `project recover --id <original-run>` remains
-available there without rerunning it or creating a brief artifact. This narrow
-settlement path cannot initialize, register, dispatch, change policy or grant a
-new budget; uncertain active attempts retain their reservations for recovery.
+Binding requires all native ledgers in the explicit workspace, including sibling
+projects, reference plans, preparation intents and recursively retained QUICK
+jobs, to settle first. An incomplete or over-limit inventory refuses publication.
+Native ledger, CAS, tool qualification and owned-dispatch writers share a
+cross-process mutation lock with binding publication,
+even before a marker exists. The lock covers short writes and admission; it is
+released during experiment execution. Finish or recover pending original work,
+then retry the same binding command. An older binding may already coexist with
+an admitted sibling attempt: its narrow progress/receipt/cost settlement and
+`project recover --id <original-run>` remain available without new admission,
+budget, policy changes or brief artifacts.
+
+If the marker was deleted while `RDS_CAMPAIGN_BINDING` still requires it, only
+the explicit `project bind-workspace` command can restore it. The requested
+workspace must match that exact required path and the original ledger's unique
+verified binding event. Restoration republishes the original nonce; a missing
+native event, conflicting marker or changed identity remains an error.
 
 Previously registered tools retain their existing read-only qualification and
 receipt checks. Public `rsi validate` and comparison cannot create new

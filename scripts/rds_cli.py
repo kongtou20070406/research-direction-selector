@@ -24,6 +24,7 @@ import uuid
 
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
+from rds_mutation import mutation
 
 VERSION = "5.9.0-rc.2"
 # Reading an explicitly supported ledger does not grant execution admission;
@@ -195,6 +196,12 @@ class RDSState:
         self.db_path = self.directory / "state.sqlite3"
 
     def connect(self, create=False, readonly=False):
+        if readonly:
+            return self._connect(create, readonly=True)
+        with mutation():
+            return self._connect(create)
+
+    def _connect(self, create=False, readonly=False):
         if not readonly:
             from rds_campaign import enforce
             enforce(self.root, kind='reference')
@@ -262,6 +269,12 @@ class RDSState:
 
     @contextmanager
     def transaction(self, create=False):
+        from rds_mutation import mutation
+        with mutation(), self._transaction(create) as pair:
+            yield pair
+
+    @contextmanager
+    def _transaction(self, create=False):
         db = self.connect(create)
         try:
             db.execute("BEGIN IMMEDIATE")
@@ -1764,7 +1777,7 @@ def _main():
         return 1
     try:
         from rds_campaign import enforce
-        if not (args.command == 'project' and args.action in {'discover', 'recover'}):
+        if not (args.command == 'project' and args.action in {'discover', 'recover', 'bind-workspace'}):
             enforce(args.root)
         if args.command == "history":
             from rds_obelisk import history_command

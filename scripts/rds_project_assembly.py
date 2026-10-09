@@ -10,6 +10,7 @@ from pathlib import Path
 
 from rds_artifacts import strict_json
 from rds_project import ROLES, canonical, digest, file_sha, number, require
+from rds_mutation import mutation
 
 MAX_BYTES = 2 * 1024 * 1024
 FILE_ROLES = ROLES - {'protocol'}
@@ -191,6 +192,7 @@ def compile_recipe(store, recipe):
         'execution_started': False, 'scientific_support': 'UNKNOWN', 'llm_tokens': 'NOT_MEASURED'}
 
 
+@mutation()
 def initialize(store, recipe_path, *, separate_reason=None):
     """Prepare an immutable protocol, then use the original initializer."""
     from rds_campaign import enforce

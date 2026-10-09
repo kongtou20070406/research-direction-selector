@@ -179,7 +179,7 @@ class CampaignBindingTests(unittest.TestCase):
         self.assertEqual(recovered['binding_id'], original['binding_id'])
         self.assertEqual(len(self.events()), 1)
 
-    def test_required_missing_marker_refuses_even_a_committed_recovery(self):
+    def test_required_missing_marker_repairs_only_existing_exact_event(self):
         os.environ[campaign.ENVIRONMENT] = str(self.marker)
         with self.assertRaisesRegex(ValueError, 'missing or unreadable'):
             campaign.bind(self.store, self.workspace)
@@ -191,10 +191,8 @@ class CampaignBindingTests(unittest.TestCase):
         os.environ[campaign.ENVIRONMENT] = str(self.marker)
         with self.assertRaises(ValueError):
             campaign.enforce(self.root)
-        with self.assertRaisesRegex(ValueError, 'missing or unreadable'):
-            campaign.bind(self.store, self.workspace)
-        os.environ.pop(campaign.ENVIRONMENT)
         self.assertEqual(campaign.bind(self.store, self.workspace)['binding_id'], self.events()[0]['binding_id'])
+        self.assertEqual(campaign.enforce(self.root)['binding_id'], self.events()[0]['binding_id'])
 
     def test_concurrent_same_identity_commits_once(self):
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -206,16 +204,14 @@ class CampaignBindingTests(unittest.TestCase):
         other_root = self.workspace / 'other'
         shutil.copytree(self.helper.root, other_root)
         other = ProjectStore(other_root)
-        synchronize, publish = Barrier(2), campaign._publish
-        def simultaneous(path, value):
-            synchronize.wait(timeout=10)
-            publish(path, value)
+        synchronize = Barrier(2)
         def attempt(store):
             try:
+                synchronize.wait(timeout=10)
                 return campaign.bind(store, self.workspace)
             except ValueError as exc:
                 return exc
-        with patch.object(campaign, '_publish', side_effect=simultaneous), ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(attempt, (self.store, other)))
         successes = [row for row in results if isinstance(row, dict)]
         self.assertEqual(len(successes), 1)
@@ -388,6 +384,197 @@ class CampaignBindingTests(unittest.TestCase):
                 campaign.detached_admission(self.root, db)
         finally:
             db.close()
+
+    def append_pointer(self, store, target, *, kind=campaign.QUICK_JOB_KIND, **fields):
+        with campaign._database(store.root, write=True) as db:
+            db.execute('INSERT INTO events(body) VALUES (?)',
+                       (canonical({'kind': kind, 'job_root': str(target), **fields}),))
+
+    def test_65_unique_jobs_are_not_counted_twice_by_events_and_directories(self):
+        for index in range(65):
+            target = self.root / '.rds/exec' / ('settled-' + str(index))
+            shutil.copytree(self.helper.root, target)
+            self.append_pointer(self.store, target)
+        bound = campaign.bind(self.store, self.workspace)
+        self.assertEqual(campaign.binding(self.root), bound)
+        self.assertEqual(len(self.events()), 1)
+
+    def test_actual_job_pointer_does_not_redirect_to_nested_tool_check(self):
+        outer = self.helper.root / 'external-job'
+        shutil.copytree(self.root, outer)
+        nested = outer / '.rds/exec/tool-check'
+        shutil.copytree(self.root, nested)
+        child = ProjectStore(outer)
+        child.register(self.helper.spec())
+        self.append_pointer(self.store, outer)
+        with self.assertRaisesRegex(ValueError, 'settled retained child'):
+            campaign.bind(self.store, self.workspace)
+        self.assertEqual(child.snapshot()['runs'][0]['status'], 'RESERVED')
+        self.assertFalse(self.marker.exists())
+
+    def test_recursive_external_retained_jobs_require_nested_settlement(self):
+        outer = self.helper.root / 'external-job'
+        shutil.copytree(self.root, outer)
+        nested = outer / '.rds/exec/nested'
+        shutil.copytree(self.root, nested)
+        child = ProjectStore(nested)
+        child.register(self.helper.spec())
+        self.append_pointer(ProjectStore(outer), nested)
+        self.append_pointer(self.store, outer)
+        with self.assertRaisesRegex(ValueError, 'settled retained child'):
+            campaign.bind(self.store, self.workspace)
+        self.assertEqual(child.execute('r1')['run_status'], 'SUCCEEDED')
+        campaign.bind(self.store, self.workspace)
+
+    def test_retained_self_reference_and_cycle_are_checked_once(self):
+        outer = self.helper.root / 'external-job'
+        shutil.copytree(self.root, outer)
+        child = ProjectStore(outer)
+        self.append_pointer(self.store, outer)
+        self.append_pointer(child, outer, kind='EXTERNAL_RUN_ALLOWANCE')
+        self.append_pointer(child, self.root)
+        campaign.bind(self.store, self.workspace)
+        self.assertEqual(len(self.events()), 1)
+
+    def test_legacy_tool_allowance_redirects_only_its_authenticated_workspace_shape(self):
+        token = 'a' * 32
+        source = self.helper.root / '.rds/rsi/tool-checks' / token
+        target = source / '.rds/exec/tool-check'
+        shutil.copytree(self.root, target)
+        self.append_pointer(self.store, source, kind='EXTERNAL_RUN_ALLOWANCE',
+                            request_sha256=digest({'tool_validation': token}))
+        campaign.bind(self.store, self.workspace)
+
+    def test_workspace_sibling_reservation_blocks_binding_without_mutation(self):
+        root = self.workspace / 'sibling'
+        shutil.copytree(self.helper.root, root)
+        child = ProjectStore(root)
+        child.register(self.helper.spec())
+        before = child.snapshot()
+        with self.assertRaisesRegex(ValueError, 'active runs or reserved'):
+            campaign.bind(self.store, self.workspace)
+        self.assertEqual(child.snapshot(), before)
+        self.assertEqual(self.events(), [])
+        self.assertFalse(self.marker.exists())
+
+    def test_workspace_inventory_bounds_refuse_incomplete_scan(self):
+        with patch.object(campaign, 'MAX_ENTRIES', 1):
+            with self.assertRaisesRegex(ValueError, 'inventory is incomplete'):
+                campaign.bind(self.store, self.workspace)
+        self.assertEqual(self.events(), [])
+        self.assertFalse(self.marker.exists())
+
+    def test_workspace_reference_reservation_blocks_then_native_release_allows_binding(self):
+        from rds_cli import RDSState, RESOURCES, VERSION
+        root = self.workspace / 'reference'
+        root.mkdir()
+        reference = RDSState(root)
+        resources = {name: 0 for name in RESOURCES}
+        resources[next(iter(RESOURCES))] = 1
+        with reference.transaction(create=True) as (_, state):
+            state.update(version=VERSION, contract={}, contract_sha256=digest({}),
+                         plans={'p1': {'run_status': 'RESERVED', 'spec': {'resources': resources}}},
+                         budget={'limits': {name: 10 for name in RESOURCES},
+                                 'spent': {name: 0 for name in RESOURCES}, 'reserved': resources})
+        with self.assertRaisesRegex(ValueError, 'reference.*reserved|settled reference plans'):
+            campaign.bind(self.store, self.workspace)
+        self.assertEqual(self.events(), [])
+        with reference.transaction() as (_, state):
+            state['plans']['p1']['run_status'] = 'CANCELLED'
+            state['budget']['reserved'] = {name: 0 for name in RESOURCES}
+        campaign.bind(self.store, self.workspace)
+
+    def test_unique_ledger_bound_is_global_across_workspace(self):
+        for name in ('sibling-a', 'sibling-b'):
+            shutil.copytree(self.helper.root, self.workspace / name)
+        with patch.object(campaign, 'MAX_JOBS', 1):
+            with self.assertRaisesRegex(ValueError, 'retained-job bound'):
+                campaign.bind(self.store, self.workspace)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.events(), [])
+
+    def test_required_repair_cannot_target_another_marker(self):
+        with patch.object(campaign, '_publish', side_effect=OSError('publication stopped')):
+            with self.assertRaises(OSError):
+                campaign.bind(self.store, self.workspace)
+        original = self.events()
+        os.environ[campaign.ENVIRONMENT] = str(self.workspace / 'other-marker.json')
+        with self.assertRaisesRegex(ValueError, 'differs from requested workspace'):
+            campaign.bind(self.store, self.workspace)
+        self.assertEqual(self.events(), original)
+        self.assertFalse(self.marker.exists())
+
+    def test_terminal_tool_job_without_validation_record_blocks_then_original_retry_binds(self):
+        import test_rds_tool_preparation as preparation
+        import rds_tools
+        helper = preparation.ToolPreparationTests('runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        root = self.workspace / 'tool-source'
+        shutil.copytree(helper.root, root)
+        helper.root, helper.store = root, ProjectStore(root)
+        with patch.object(rds_tools, 'put', side_effect=ValueError('interrupted before validation record')):
+            with self.assertRaisesRegex(ValueError, 'before validation record'):
+                helper.qualify()
+        receipt = helper.native_receipt()
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+        with self.assertRaisesRegex(ValueError, 'resolved tool preparation'):
+            campaign.bind(self.store, self.workspace)
+        self.assertEqual(self.events(), [])
+        result = helper.qualify()
+        self.assertEqual(result['status'], 'LOCAL_CASES_PASSED')
+        self.assertEqual(helper.native_receipt()['sha256'], receipt['sha256'])
+        campaign.bind(self.store, self.workspace)
+
+    def test_inflight_theory_allowance_blocks_binding_until_exact_outcome_and_overrun_charge(self):
+        from types import SimpleNamespace
+        import time
+        root = self.workspace / 'theory-sibling'
+        shutil.copytree(self.helper.root, root)
+        child = ProjectStore(root)
+        ticks = iter((100.0, 100.2))
+        clock = SimpleNamespace(monotonic=lambda: next(ticks), time=time.time)
+        with patch('rds_project.time', clock):
+            with child.theory_allowance(self.helper.spec(), {'fixture': 'bounded theory work'},
+                                       {'wall_seconds': .01, 'cpu_seconds': 0, 'gpu_seconds': 0}):
+                before = child.snapshot()
+                self.assertEqual(before['runs'], [])
+                self.assertEqual(before['budget']['wall_seconds']['reserved'], 0)
+                with self.assertRaisesRegex(ValueError, 'resolved theory allowances'):
+                    campaign.bind(self.store, self.workspace)
+                self.assertFalse(self.marker.exists())
+                self.assertEqual(self.events(), [])
+        after = child.snapshot()
+        self.assertAlmostEqual(after['budget']['wall_seconds']['charged_estimate'], .2)
+        with child._db(True) as db:
+            rows = [json.loads(row[0]) for row in db.execute(
+                "SELECT body FROM events WHERE json_extract(body,'$.kind') IN ('THEORY_ALLOWANCE','THEORY_OUTCOME')")]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['attempt_id'], rows[1]['attempt_id'])
+        self.assertAlmostEqual(rows[1]['wall_overrun_seconds'], .19)
+        campaign.bind(self.store, self.workspace)
+        self.assertEqual(child.snapshot()['budget'], after['budget'])
+
+    def test_logical_rds_alias_cannot_hide_sibling_reservation_from_inventory(self):
+        root = self.workspace / 'aliased-sibling'
+        shutil.copytree(self.helper.root, root)
+        alias = root / 'aliasstate'
+        (root / '.rds').rename(alias)
+        link = root / '.rds'
+        if os.name == 'nt':
+            import _winapi
+            _winapi.CreateJunction(str(alias), str(link))
+        else:
+            link.symlink_to(alias, target_is_directory=True)
+        child = ProjectStore(root)
+        child.register(self.helper.spec())
+        before = child.snapshot()
+        self.assertNotEqual(link.resolve().name, '.rds')
+        with self.assertRaisesRegex(ValueError, 'active runs or reserved'):
+            campaign.bind(self.store, self.workspace)
+        self.assertEqual(child.snapshot(), before)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.events(), [])
 
 
 if __name__ == '__main__':
