@@ -128,6 +128,60 @@ class SearchTests(unittest.TestCase):
         self.assertTrue(prioritized['truncation']['truncated'])
         self.assertEqual((graph, context), original)
 
+    def test_over_budget_preserves_method_and_evidence_gates(self):
+        from test_rds_methods import method, policy
+        for gate, status in (("conflict", "BLOCKED_METHOD"),
+                             ("description", "NEEDS_METHOD_DESCRIPTION"),
+                             ("clarification", "NEEDS_METHOD_CLARIFICATION"),
+                             ("evidence", "NEEDS_EVIDENCE")):
+            with self.subTest(gate=gate):
+                root = node("root")
+                root["executable"]["action"]["methods"] = method()
+                context = self.context(**policy(),
+                    costs={"root-test": fact(31, unit="seconds", comparison_group="host")},
+                    budget=fact(30, unit="seconds", comparison_group="host"))
+                if gate == "conflict":
+                    root["executable"]["action"]["methods"] = method(device="gpu")
+                elif gate == "description":
+                    del root["executable"]["action"]["methods"]
+                elif gate == "clarification":
+                    context["method_constraints"].append({"id": "unclear", "quote": "Use exact methods",
+                        "source": "user:fixture", "status": "UNRESOLVED", "question": "Which steps?"})
+                else:
+                    root["executable"]["preconditions"] = [{"fact": "matched", "value": True,
+                                                            "query": "Read paired arm manifests"}]
+                    context["costs"]["query:root:matched"] = fact(0, unit="seconds", comparison_group="host")
+                graph = {"nodes": [root], "edges": []}
+                original = copy.deepcopy((graph, context))
+                result = search_directions(graph, context)
+                candidates = result["blocked_candidates"] if gate == "conflict" else result["candidates"]
+                candidate = candidates[0]
+                self.assertEqual(candidate["status"], status)
+                self.assertEqual(candidate["budget_status"], "OVER_REPORTED_BUDGET")
+                self.assertEqual(candidate["incremental_cost"]["value"], 31)
+                self.assertEqual(candidate["method_review"]["status"],
+                                 "CONFLICT" if gate == "conflict" else "COMPATIBLE" if gate == "evidence" else "UNKNOWN")
+                if gate == "clarification":
+                    self.assertEqual(candidate["method_review"]["questions"], [{"constraint_id": "unclear",
+                        "quote": "Use exact methods", "source": "user:fixture", "question": "Which steps?"}])
+                if gate == "evidence":
+                    self.assertEqual(len(result["queries"]), 1)
+                    self.assertEqual(result["queries"][0]["query"], "Read paired arm manifests")
+                self.assertEqual((graph, context), original)
+
+    def test_method_blocked_over_budget_route_does_not_hide_compatible_route(self):
+        from test_rds_methods import method, policy
+        graph = {"nodes": [node("blocked"), node("safe")], "edges": []}
+        for rule, device in zip(graph["nodes"], ("gpu", "cpu")):
+            rule["executable"]["action"]["methods"] = method(device=device)
+        context = {"decision": "choose", **policy(),
+            "costs": {rid + "-test": fact(cost, unit="seconds", comparison_group="host")
+                      for rid, cost in (("blocked", 31), ("safe", 1))},
+            "budget": fact(30, unit="seconds", comparison_group="host")}
+        result = search_directions(graph, context)
+        self.assertEqual(result["blocked_candidates"][0]["status"], "BLOCKED_METHOD")
+        self.assertEqual([(c["action"]["id"], c["status"]) for c in result["candidates"]], [("safe-test", "READY")])
+
     def test_blocked_priority_action_cannot_evict_ready_candidate(self):
         for blocker in ('budget', 'method', 'unknown-premise'):
             with self.subTest(blocker=blocker):

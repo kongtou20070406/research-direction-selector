@@ -149,7 +149,7 @@ class PrintedProjectCommandTests(unittest.TestCase):
                     status = self.run_printed(self.emitted(store, brief=True), shell)
                     self.assertEqual([run['status'] for run in status['runs']], ['COMPLETED', 'COMPLETED'])
 
-    def test_printed_failed_recovery_does_not_rerun_or_spend(self):
+    def test_printed_settled_failure_review_does_not_rerun_or_spend(self):
         for shell in self.shells():
             with self.subTest(shell=shell), tempfile.TemporaryDirectory() as folder:
                 store, manifests = self.fixture(Path(folder) / "failed project ' $literal", mode='fail')
@@ -157,9 +157,12 @@ class PrintedProjectCommandTests(unittest.TestCase):
                 self.run_printed(self.emitted(store), shell, expect=1)
                 before = store.snapshot()
                 self.assertEqual(before['runs'][0]['status'], 'FAILED')
-                recover = self.emitted(store, brief=True)
-                self.assertIn('project recover', recover)
-                self.run_printed(recover, shell, expect=1)
+                review = self.emitted(store, brief=True)
+                self.assertIn('project status --brief', review)
+                status = self.run_printed(review, shell)
+                self.assertEqual(status['run_states']['FAILED'], 1)
+                self.assertEqual(status['next_move']['disposition'], 'REVIEW_EXECUTION_FAILURE')
+                self.assertEqual(status['next_move']['receipt_sha256'], before['receipts'][0]['sha256'])
                 self.assertEqual(store.snapshot(), before)
 
     def test_printed_running_status_is_read_only(self):

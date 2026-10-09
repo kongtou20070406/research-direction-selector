@@ -218,17 +218,39 @@ class SteeringCLITests(unittest.TestCase):
         self.assertIsNone(self.output('project', 'advance')['selected_run'])
 
     def test_running_work_finishes_under_original_receipt_and_no_next_launch(self):
-        self.initialize(mode='slownegative', timeout=6)
+        self.assert_running_work_finishes_under_original_receipt()
+
+    def test_running_work_finishes_after_delayed_pause_cli(self):
+        # Cross the original one-second completion window before the real CLI.
+        self.assert_running_work_finishes_under_original_receipt(steering_delay=1.25)
+
+    def assert_running_work_finishes_under_original_receipt(self, *, steering_delay=0):
+        release = self.root / 'outputs/steering-release'
+        script = fixture.SCRIPT.replace(
+            'if mode == "slownegative":\n    time.sleep(1)',
+            'if mode == "slownegative":\n    time.sleep(1)\n'
+            '    while not pathlib.Path("outputs/steering-release").exists():\n'
+            '        time.sleep(.02)')
+        # Only this fixture waits for pause receipt; the worker's timeout is unchanged.
+        with patch.object(fixture, 'SCRIPT', script):
+            self.initialize(mode='slownegative', timeout=6)
         self.create()
         with ThreadPoolExecutor(max_workers=1) as pool:
             running = pool.submit(self.call, 'project', 'execute', '--id', 'baseline')
-            deadline = time.monotonic() + 10
-            while not self.starts() and time.monotonic() < deadline:
-                time.sleep(.02)
-            self.assertEqual(self.starts(), ['baseline'])
-            accepted = self.steer(self.request('pause'))
-            self.assertIn(accepted['active_work'][0]['disposition'],
-                          {'FINISH_OR_RECOVER_ORIGINAL_ATTEMPT', 'DISPATCH_UNCERTAIN_RECONCILE_ONLY'})
+            try:
+                deadline = time.monotonic() + 10
+                while not self.starts() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertEqual(self.starts(), ['baseline'])
+                if steering_delay:
+                    time.sleep(steering_delay)
+                accepted = self.steer(self.request('pause'))
+                self.assertIn(accepted['active_work'][0]['disposition'],
+                              {'FINISH_OR_RECOVER_ORIGINAL_ATTEMPT', 'DISPATCH_UNCERTAIN_RECONCILE_ONLY'})
+            finally:
+                # Release even if a marker or pause assertion fails.
+                release.parent.mkdir(parents=True, exist_ok=True)
+                release.touch()
             running.result(timeout=15)
         snap = self.snapshot()
         original = snap['receipts'][0]['sha256']

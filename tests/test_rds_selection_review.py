@@ -60,10 +60,10 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertEqual(record['goal_conditions'], context['decision']['goal_conditions'])
         self.assertIn('GOAL_BRIDGE_OPEN', [f['kind'] for f in record['selection_review']['flags']])
         move = record['selection_review']['next_move']
-        self.assertEqual(move['kind'], 'REFORMULATE')
+        self.assertEqual(move['kind'], 'DIAGNOSE_GOAL_GAP')
         self.assertEqual(move['basis'], 'INPUT_REVIEW_HEURISTIC_NOT_SCIENTIFIC_PROOF')
-        self.assertIn('not a capacity lower bound', move['reason'])
-        self.assertIn('counterfactual difference', move['prompt'])
+        self.assertIn('capacity lower bound', move['reason'])
+        self.assertIn('smallest repair', move['prompt'])
         self.assertEqual(record['scope'], context['decision']['scope'])
         self.assertEqual(record['goal_revision'], context['decision']['goal_revision'])
 
@@ -342,7 +342,7 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertEqual(review['basis'], 'SCOPED_OBLIGATION')
         self.assertEqual(review['goal']['status'], 'FALSE')
         self.assertEqual([flag['kind'] for flag in review['flags']], ['GOAL_BRIDGE_OPEN'])
-        self.assertEqual(review['next_move']['kind'], 'REFORMULATE')
+        self.assertEqual(review['next_move']['kind'], 'DIAGNOSE_GOAL_GAP')
         self.assertEqual(review['next_move']['authorization'], 'UNCHANGED')
         self.assertEqual((graph, context), original)
 
@@ -353,7 +353,7 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertNotEqual(review['basis'], 'CONDITIONAL_COMPARISON')
         self.assertEqual(review['next_move']['kind'], 'RESOLVE_PREMISE')
 
-    def test_actual_recorded_repeat_and_oscillation_request_reformulation_without_authority(self):
+    def test_actual_rejection_and_oscillation_have_distinct_scoped_reviews(self):
         from test_rds_advisor import LedgerLoopTests
         helper = LedgerLoopTests()
         helper.setUp()
@@ -371,13 +371,13 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertEqual(repeated['selection_review']['next_move']['authorization'], 'UNCHANGED')
         self.assertEqual(helper.store.snapshot(), before)
 
-        for value, expected in ((None, 'RESOLVE_PREMISE'), (True, 'REFORMULATE')):
+        for value, expected in ((None, 'RESOLVE_PREMISE'), (True, None)):
             context = deepcopy(helper.context)
             context['decision']['goal_conditions'] = [{'fact': 'goal', 'value': True}]
             context['facts']['goal'] = {'value': value, 'source': 'reported-goal.json'}
             result = helper.search(context=context)['search']
             self.assertEqual(result['loop_review']['flags'][0]['kind'], 'REPEAT_REJECTED_ROUTE')
-            self.assertEqual(result['selection_review']['next_move']['kind'], expected)
+            self.assertEqual(result['selection_review'].get('next_move', {}).get('kind'), expected)
 
         changed = deepcopy(helper.graph)
         changed['nodes'][0]['executable']['action']['intervention']['value'] = False
@@ -392,7 +392,7 @@ class SelectionReviewTests(unittest.TestCase):
         result = helper.search()['search']
         self.assertEqual(result['loop_review']['flags'][0]['kind'], 'DECISION_OSCILLATION')
         self.assertEqual(result['loop_review']['flags'][0]['candidate_ids'], [candidate['id']])
-        self.assertEqual(result['selection_review']['next_move']['kind'], 'REFORMULATE')
+        self.assertEqual(result['selection_review']['next_move']['kind'], 'REVIEW_DECISION_HISTORY')
         self.assertEqual(len(result['candidates']), 1)
 
     def test_filtered_rejected_route_does_not_reformulate_a_distinct_ready_route(self):
@@ -423,7 +423,7 @@ class SelectionReviewTests(unittest.TestCase):
             'target': 'goal', 'path': ['Check the original claim'], 'source': 'proposal.json'}
         graph['nodes'][1]['executable']['action']['target'] = 'Check the original claim'
         review = helper.search(context=context, graph=graph)['search']['selection_review']
-        self.assertEqual(review['next_move']['kind'], 'REFORMULATE')
+        self.assertEqual(review['next_move']['kind'], 'DIAGNOSE_GOAL_GAP')
         self.assertIn('goal predicate failed', review['next_move']['reason'])
 
     def test_recorded_oscillation_does_not_reformulate_a_distinct_ready_route(self):

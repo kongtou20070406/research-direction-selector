@@ -1,22 +1,19 @@
 """Read-only, bounded artifact import. Observation never certifies a mechanism."""
 from copy import deepcopy
-import csv
-import io
-import json
 from pathlib import Path
 
 from rds_costs import COST_BINDING_FIELDS, finite, receipt_identity, receipt_issues, sha256, summarize_costs
 from rds_verify_types import digest, require
+from rds_source_documents import (SourceDocument, MAX_ROWS, BINDING_FIELDS, strict_json,
+                                  _finite_tree, _pointer, _parse, _metadata, _extract)
 
 SCHEMA = "rds-artifact-manifest-v1"
 REPORT_SCHEMA = "rds-artifact-report-v1"
 MAX_FILE_BYTES = 2 * 1024 * 1024
-MAX_ROWS = 10000
 MAX_SOURCES = 64
 MAX_FACTS = 256
 SELF_SIGNED = {"verified", "pass", "manipulation_verified", "falsifier_triggered",
                "primary_metric_gain", "final_run_authorized", "matched_recipe", "matched_compute"}
-BINDING_FIELDS = ("run_id",) + COST_BINDING_FIELDS + ("metric",)
 
 
 def _identity_string(value):
@@ -34,34 +31,6 @@ class ArtifactFact(dict):
         self.reading_identity = reading_identity
 
 
-def strict_json(raw):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            require(key not in result, "duplicate JSON key: " + key)
-            result[key] = value
-        return result
-
-    def invalid(value):
-        raise ValueError("non-finite JSON constant: " + value)
-
-    result = json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid)
-    _finite_tree(result)
-    return result
-
-
-def _finite_tree(value, depth=0):
-    require(depth <= 32, "JSON nesting exceeds 32")
-    if isinstance(value, float):
-        require(finite(value), "non-finite numeric value")
-    elif isinstance(value, dict):
-        for child in value.values():
-            _finite_tree(child, depth + 1)
-    elif isinstance(value, list):
-        for child in value:
-            _finite_tree(child, depth + 1)
-
-
 def _read(path, base):
     path = (base / path).resolve()
     path.relative_to(base)
@@ -69,122 +38,6 @@ def _read(path, base):
         raw = handle.read(MAX_FILE_BYTES + 1)
     require(len(raw) <= MAX_FILE_BYTES, "file exceeds 2 MiB limit")
     return raw
-
-
-def _pointer(document, pointer):
-    require(isinstance(pointer, str) and (pointer == "" or pointer.startswith("/")), "expected JSON pointer")
-    segments = pointer.split("/")[1:] if pointer else []
-    require(len(segments) <= 32, "pointer depth exceeds 32")
-    # RFC 6901: every '~' is followed by 0 or 1. Stripping escapes can rebuild one ('~~01' -> '~1'),
-    # so check each tilde directly; a malformed spelling would read a field under a second locator.
-    # Check the whole pointer before reading, so the reason does not depend on the document.
-    require(all(part[:1] in ("0", "1") for segment in segments for part in segment.split("~")[1:]),
-            "invalid JSON pointer escape")
-    result = document
-    for segment in segments:
-        key = segment.replace("~1", "/").replace("~0", "~")
-        if isinstance(result, list):
-            # RFC 6901 indexes are ASCII; Unicode digits would alias one element under a second locator.
-            require(key.isascii() and key.isdigit() and (key == "0" or not key.startswith("0")), "invalid array index")
-            result = result[int(key)]
-        else:
-            result = result[key]
-    return result
-
-
-def _parse(raw, kind, fmt):
-    text = raw.decode("utf-8-sig")
-    if fmt == "json":
-        return strict_json(text)
-    if fmt == "csv" and kind == "metric":
-        reader = csv.DictReader(io.StringIO(text))
-        require(reader.fieldnames and len(set(reader.fieldnames)) == len(reader.fieldnames), "CSV needs unique headers")
-        rows = []
-        for row in reader:
-            require(len(rows) < MAX_ROWS, "CSV row limit exceeded")
-            require(None not in row and None not in row.values(), "CSV row/header width mismatch")
-            rows.append(row)
-        return rows
-    if fmt in ("jsonl", "kv") and kind == "log":
-        rows = []
-        for number, line in enumerate(text.splitlines(), 1):
-            if not line.strip():
-                continue
-            require(number <= MAX_ROWS, "log row limit exceeded")
-            if fmt == "jsonl":
-                rows.append((number, strict_json(line)))
-            else:
-                require("=" in line, "log must contain explicit key=value records")
-                key, value = line.split("=", 1)
-                key = key.strip()
-                require(key and key not in {r[1] for r in rows}, "duplicate or empty log key")
-                try:
-                    parsed = strict_json(value.strip())
-                except json.JSONDecodeError:
-                    parsed = value.strip()
-                rows.append((number, key, parsed))
-        return rows
-    raise ValueError("unsupported source kind/format")
-
-
-def _metadata(document, fmt):
-    if fmt == "jsonl":
-        objects = [r[1] for r in document]
-    elif fmt == "kv":
-        objects = [{row[1]: row[2] for row in document}]
-    elif isinstance(document, list):
-        objects = document
-    else:
-        objects = [document]
-    result, conflicts = {}, []
-    for obj in objects:
-        if not isinstance(obj, dict):
-            continue
-        identity, collision = receipt_identity(obj)
-        conflicts.extend(collision)
-        origins = [obj] + [obj[k] for k in ("binding", "protocol") if isinstance(obj.get(k), dict)]
-        for origin in origins:
-            if "metric" in origin:
-                if "metric" in identity and identity["metric"] != origin["metric"]:
-                    conflicts.append("metric")
-                else:
-                    identity["metric"] = origin["metric"]
-        for key in BINDING_FIELDS:
-            if key not in identity:
-                continue
-            if key in result and result[key] != identity[key]:
-                conflicts.append(key)
-            else:
-                result[key] = identity[key]
-    return result, sorted(set(conflicts))
-
-
-def _extract(document, selector, fmt):
-    if fmt == "csv":
-        row, column = selector.get("row"), selector.get("column")
-        require(type(row) is int and 1 <= row <= len(document), "CSV row is 1-based and must exist")
-        value = document[row - 1][column]
-        if selector.get("type", "number") == "number":
-            value = strict_json(value)
-            require(finite(value), "CSV metric is not a finite number")
-        else:
-            require(selector["type"] == "string", "unsupported CSV value type")
-        return value, "row:" + str(row) + ":column:" + str(column), column
-    if fmt == "kv":
-        matching = [row for row in document if row[1] == selector.get("key")]
-        require(len(matching) == 1, "log key missing or ambiguous")
-        number, key, value = matching[0]
-        return value, "line:" + str(number) + ":key:" + key, key
-    if fmt == "jsonl":
-        number = selector.get("row")
-        # 1.0 and true equal 1 but would mint a second locator for the same physical line.
-        require(type(number) is int and number >= 1, "JSONL row is a 1-based physical line number")
-        matching = [row for row in document if row[0] == number]
-        require(len(matching) == 1, "JSONL physical line must exist")
-        pointer = selector.get("pointer")
-        return _pointer(matching[0][1], pointer), "line:" + str(number) + ":pointer:" + pointer, pointer.rsplit("/", 1)[-1]
-    pointer = selector.get("pointer")
-    return _pointer(document, pointer), "pointer:" + pointer, pointer.rsplit("/", 1)[-1]
 
 
 def _fact(fid, value, kind, source, binding, *, reading_identity=None, **extra):
@@ -221,7 +74,16 @@ def ingest_manifest(path, root=None, receipts=None):
     require(receipts is None or isinstance(receipts, (list, tuple)), "receipts must be a list")
     receipt_records, by_run, owners, source_ids = list(receipts or []), {}, {}, set()
     file_cache, source_runs, whole_json = {}, {}, {}
-    for spec in sources:
+    # Lifetime hints only: a failed resolution is still handled in its original
+    # source position below. This never admits a source or bypasses its checks.
+    last_uses = {}
+    for position, spec in enumerate(sources):
+        if isinstance(spec, dict) and isinstance(spec.get("path"), str):
+            try:
+                last_uses[str((base / spec["path"]).resolve())] = position
+            except (OSError, ValueError, RuntimeError):
+                pass
+    for position, spec in enumerate(sources):
         require(isinstance(spec, dict) and isinstance(spec.get("id"), str) and spec["id"], "source needs an id")
         require(spec["id"] not in source_ids, "duplicate source id")
         source_ids.add(spec["id"])
@@ -239,16 +101,17 @@ def ingest_manifest(path, root=None, receipts=None):
         require(isinstance(binding, dict), "source binding must be an object")
         source_runs[spec["id"]] = {binding["run_id"]} if _identity_string(binding.get("run_id")) else set()
         problems, document, actual_sha, single_json_line = [], None, None, False
+        cache_key, source_document = None, None
         try:
             cache_key = str((base / name).resolve())
             if cache_key not in file_cache:
                 raw = _read(name, base)
-                file_cache[cache_key] = (raw, digest(raw))
-            raw, actual_sha = file_cache[cache_key]
+                file_cache[cache_key] = (raw, digest(raw), SourceDocument(raw))
+            raw, actual_sha, source_document = file_cache[cache_key]
             inventory["sha256"] = actual_sha
             require(sha256(spec.get("expected_sha256")), "expected_sha256 is missing or invalid")
             require(actual_sha == spec["expected_sha256"], "source hash mismatch")
-            document = _parse(raw, kind, fmt)
+            document = source_document.document(kind, fmt)
             if fmt == "json":
                 whole_json[actual_sha] = True
             elif fmt == "jsonl" and len(document) == 1:
@@ -261,7 +124,7 @@ def ingest_manifest(path, root=None, receipts=None):
                     except (ValueError, UnicodeError, RecursionError):
                         whole_json[actual_sha] = False
                 single_json_line = whole_json[actual_sha]
-            observed, collisions = _metadata(document, fmt)
+            observed, collisions = source_document.metadata(kind, fmt)
             if _identity_string(observed.get("run_id")):
                 source_runs[spec["id"]].add(observed["run_id"])
             for key in BINDING_FIELDS:
@@ -308,7 +171,7 @@ def ingest_manifest(path, root=None, receipts=None):
             value, locator, selected, reason = None, "unresolved", "", "; ".join(problems)
             if document is not None and not problems:
                 try:
-                    value, locator, selected = _extract(document, selector, fmt)
+                    value, locator, selected = source_document.extract(selector, kind, fmt)
                     _finite_tree(value)
                     if selected in SELF_SIGNED or fid in SELF_SIGNED:
                         reason = "self-signed validation cannot be imported as evidence"
@@ -327,6 +190,8 @@ def ingest_manifest(path, root=None, receipts=None):
                 _unknown(report["facts"][fid], "duplicate fact identity")
             else:
                 report["facts"][fid], owners[fid] = fact, spec["id"]
+        if source_document is not None and position >= last_uses.get(cache_key, position):
+            source_document.clear()
     # Store receipts are also identity evidence; do not ignore a contradictory one.
     for receipt in list(receipts or []):
         if not isinstance(receipt, dict):

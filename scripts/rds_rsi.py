@@ -26,7 +26,8 @@ def program_version():
     """Bind the replay engines, including the optional artifact importer."""
     base = Path(__file__).resolve().parent
     names = ("rds_rsi.py", "rds_rsi_confirmation.py", "rds_experiments.py",
-             "rds_advisor_search.py", "rds_meta.py", "rds_artifacts.py")
+             "rds_advisor_search.py", "rds_meta.py", "rds_artifacts.py",
+             "rds_source_documents.py")
     files = {name: hashlib.sha256((base / name).read_bytes()).hexdigest()
              for name in names if (base / name).exists()}
     return {"version": VERSION, "files": files, "sha256": digest(files)}
