@@ -10,6 +10,7 @@ import re
 
 from rds_project import ProjectStore, canonical, digest, require
 from rds_quick import cas_bytes
+from rds_mutation import mutation
 
 MAX_BYTES = 8 * 1024 * 1024
 MAX_RECORDS = 2048
@@ -123,31 +124,34 @@ def put(root, record_id, kind, raw, *, dependencies=(), data=None):
         require(parent is not None, 'Missing research dependency: ' + record)
         bound.append({'id': record, 'sha256': digest(parent)})
     goal = objective(root) if kind != 'objective' else None
-    ref = cas_bytes(root, raw)
-    ref['path'] = Path(ref['path']).relative_to(Path(root).resolve()).as_posix()
-    value = {'schema': 'rds-research-record-v1', 'id': record_id, 'kind': kind, 'asset': ref,
-             'objective_sha256': goal['asset']['sha256'] if goal else None,
-             'dependencies': sorted(bound, key=lambda v: v['id']), 'data': data or {},
-             'mathematical_status': 'UNKNOWN', 'research_policy_gain_measured': False}
-    store = _store(root)
-    store.state_dir.mkdir(exist_ok=True)
-    with store._db() as db:
-        db.executescript("""
+    # One bounded publication: binding cannot intervene after the original
+    # asset bytes are visible and before their native record commits.
+    with mutation():
+        ref = cas_bytes(root, raw)
+        ref['path'] = Path(ref['path']).relative_to(Path(root).resolve()).as_posix()
+        value = {'schema': 'rds-research-record-v1', 'id': record_id, 'kind': kind, 'asset': ref,
+                 'objective_sha256': goal['asset']['sha256'] if goal else None,
+                 'dependencies': sorted(bound, key=lambda v: v['id']), 'data': data or {},
+                 'mathematical_status': 'UNKNOWN', 'research_policy_gain_measured': False}
+        store = _store(root)
+        store.state_dir.mkdir(exist_ok=True)
+        with store._db() as db:
+            db.executescript("""
             CREATE TABLE IF NOT EXISTS research_records(id TEXT PRIMARY KEY,sha256 TEXT NOT NULL,body TEXT NOT NULL);
             CREATE TRIGGER IF NOT EXISTS research_records_no_update BEFORE UPDATE ON research_records
             BEGIN SELECT RAISE(ABORT,'research_records are append-only'); END;
             CREATE TRIGGER IF NOT EXISTS research_records_no_delete BEFORE DELETE ON research_records
             BEGIN SELECT RAISE(ABORT,'research_records are append-only'); END;
         """)
-        db.execute('BEGIN IMMEDIATE')
-        existing = db.execute('SELECT sha256,body FROM research_records WHERE id=?', (record_id,)).fetchone()
-        if existing:
-            require(digest(json.loads(existing['body'])) == existing['sha256'], 'Research record integrity failure')
-            require(existing['sha256'] == digest(value), 'Record is immutable; use a new explicit identity or project')
-        else:
-            require(db.execute('SELECT COUNT(*) FROM research_records').fetchone()[0] < MAX_RECORDS,
-                    'Research ledger is full; preserve it and choose an explicit continuation')
-            db.execute('INSERT INTO research_records VALUES (?,?,?)', (record_id, digest(value), canonical(value)))
+            db.execute('BEGIN IMMEDIATE')
+            existing = db.execute('SELECT sha256,body FROM research_records WHERE id=?', (record_id,)).fetchone()
+            if existing:
+                require(digest(json.loads(existing['body'])) == existing['sha256'], 'Research record integrity failure')
+                require(existing['sha256'] == digest(value), 'Record is immutable; use a new explicit identity or project')
+            else:
+                require(db.execute('SELECT COUNT(*) FROM research_records').fetchone()[0] < MAX_RECORDS,
+                        'Research ledger is full; preserve it and choose an explicit continuation')
+                db.execute('INSERT INTO research_records VALUES (?,?,?)', (record_id, digest(value), canonical(value)))
     return value
 
 

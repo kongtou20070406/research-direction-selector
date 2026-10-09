@@ -45,8 +45,11 @@ its missing checkpoint without selecting again or launching another worker.
 
 Native ledger, CAS, tool qualification, application/workbench export and owned-dispatch writers share a
 cross-process mutation lock with binding publication,
-even before a marker exists. The lock covers short writes and admission; it is
-released during experiment execution. Finish or recover pending original work,
+even before a marker exists. Research records, recorded choices and declared
+counterexamples hold the same short lock from CAS publication through their
+native record or checkpoint commit. Analysis stays outside this publication
+scope. The lock covers short writes and admission; it is released during
+experiment execution. Finish or recover pending original work,
 then retry the same binding command. An older binding may already coexist with
 an admitted sibling attempt: its narrow progress/receipt/cost settlement and
 `project recover --id <original-run>` remain available without new admission,

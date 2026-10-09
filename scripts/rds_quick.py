@@ -178,10 +178,13 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
                          else _expected_contract_sha256)
     context = project_context(root, context)
     record = choice(advice, context, candidate_id)
-    record['advice'] = cas_json(root, advice)
-    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
-                            _expected_contract_sha256=expected_contract,
-                            _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
+    # Analysis stays outside the gate; its original snapshot guards are checked
+    # again while publishing the CAS and checkpoint as one bounded operation.
+    with mutation():
+        record['advice'] = cas_json(root, advice)
+        saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
+                                _expected_contract_sha256=expected_contract,
+                                _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
     saved['candidate_id'] = record['candidate']['id']
     return saved
 
@@ -207,23 +210,16 @@ def reject_route(args):
     require(len(raw) <= MAX_INPUT_BYTES, 'Evidence exceeds 2 MiB; supply a bounded witness or certificate')
     witness = {'source_path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(),
                'size': len(raw), 'assurance': 'RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION'}
-    directory = Path(args.root).resolve() / '.rds' / 'cas'
-    require(directory.resolve().is_relative_to(Path(args.root).resolve()), 'CAS escapes project root')
-    directory.mkdir(parents=True, exist_ok=True)
-    copy = directory / (witness['sha256'] + '.bin')
-    try:
-        with copy.open('xb') as handle:
-            handle.write(raw)
-    except FileExistsError:
-        require(file_sha(copy) == witness['sha256'], 'Witness CAS integrity failure')
-    witness['path'] = str(copy)
-    decision = {**decision, 'outcome': 'rejected', 'reason': args.reason,
-                'falsification': witness, 'previous_checkpoint': previous['id']}
-    if domain is not None:
-        decision['rejected_domain'] = domain
-    checkpoint_id = args.id or 'reject-' + str(time.time_ns())
-    saved = save_checkpoint(args.root, checkpoint_id, ProjectStore(args.root).snapshot(check_bindings=True),
-                            kind='project', decision=decision)
+    with mutation():
+        # Use the original guarded CAS producer, including binding-first checks.
+        witness['path'] = cas_bytes(args.root, raw)['path']
+        decision = {**decision, 'outcome': 'rejected', 'reason': args.reason,
+                    'falsification': witness, 'previous_checkpoint': previous['id']}
+        if domain is not None:
+            decision['rejected_domain'] = domain
+        checkpoint_id = args.id or 'reject-' + str(time.time_ns())
+        saved = save_checkpoint(args.root, checkpoint_id, ProjectStore(args.root).snapshot(check_bindings=True),
+                                kind='project', decision=decision)
     return {'status': 'RECORDED_REJECTION', 'route': route, 'checkpoint': saved,
             'evidence': witness, 'scientific_support': 'UNKNOWN', 'execution_started': False}
 
@@ -237,9 +233,10 @@ def record_falsification(root, *, witness, reason, route=None, domain=None):
         from rds_guard import validate_domain
         decision, _ = latest_decision(root)
         validate_domain(domain, decision['candidate'])
-    ref = cas_json(root, witness)
-    return reject_route(SimpleNamespace(root=root, route=route, reason=reason, evidence=ref['path'], id=None,
-                                       domain=cas_json(root, domain)['path'] if domain is not None else None))
+    with mutation():
+        ref = cas_json(root, witness)
+        return reject_route(SimpleNamespace(root=root, route=route, reason=reason, evidence=ref['path'], id=None,
+                                           domain=cas_json(root, domain)['path'] if domain is not None else None))
 
 
 def _policy_route(request, route):
