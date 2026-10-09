@@ -381,6 +381,9 @@ def register(root, name, validation_id=None):
 
 
 def command(args):
+    if args.action == 'discover':
+        from rds_tool_calls import discover
+        return discover(args.root, name=args.name, obligation=args.obligation, limit=args.limit)
     if args.action == 'extract':
         return extract(args.root, args.source, args.entry, args.name)
     if args.action == 'validate':

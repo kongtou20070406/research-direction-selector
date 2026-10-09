@@ -78,8 +78,11 @@ siblings or infer that two unrelated research topics are identical. Nested new
 projects are refused by the public entry points unless initialization explicitly
 supplies `--separate-project "<independent research scope>"`; that declaration is
 recorded with the original new contract. A declared successor uses the existing `--supersedes`
-lineage. These are cooperative CLI guards, not an OS sandbox or a global project
-registry.
+lineage. A nested successor may omit the separation declaration only when its
+predecessor resolves to the discovered ancestor; an unrelated predecessor does
+not authorize splitting the ancestor's research history. These are cooperative
+CLI guards, not an OS sandbox or a global project registry. Local native state
+without a project contract does not hide an ancestor's project contract.
 
 In unbound workspaces, managed tool-qualification workspaces remain internal jobs
 of their original project. Their internal caller verifies the original
@@ -107,6 +110,11 @@ An intentionally limited execution workflow is explicit:
 python -B scripts/rds_cli.py --root <project> project init --mode quick --contract <contract.json>
 ```
 
+Add work to an initialized QUICK project with `project create` and `project
+execute`. A plain QUICK contract cannot use `exec` to open an uncharged child
+ledger. A declared execution-policy owner can retain its existing charged QUICK
+path; an alternative `--ledger` cannot replace the source contract's authority.
+
 The CLI prints `mode` and actual Advisor ownership on stderr. Unhashed operation
 responses include `workflow`; brief responses include a compact mode/Advisor/
 next-command summary. Original hashed receipts remain unchanged. Full responses
@@ -114,6 +122,8 @@ also list applicable existing capabilities. FULL means program-owned collection
 and route selection; it does not enable optional autonomy, tools, confirmation,
 formal solvers or model execution without their declarations. `exec` is visibly
 QUICK. Existing exact initialization retries keep working.
+The legacy top-level `init` creates a reference-state ledger and does not label
+that ledger as a QUICK project.
 
 ## Enable Advisor without starting over
 
@@ -138,6 +148,12 @@ preserves genesis, original receipts, checkpoints, attempts, exposure and spent
 budget. It launches no command. A changed policy or project state requires a
 fresh preview; an exact apply retry is idempotent. Reserved/running work,
 outstanding reservations or a prepared method revision must be reconciled first.
+This includes retained QUICK children: activation checks their original ledger
+state and receipts, and refuses missing, incomplete or still-active child work.
+QUICK decision checkpoints also verify the contract they were prepared against
+inside their write transaction. If activation wins that race, the stale
+checkpoint is rejected; an already completed child's receipt and charged budget
+remain available for inspection without rerunning the experiment.
 Activation accepts only the basic `schema/context/graph/routes/observations`
 policy; it cannot add command authority, budget or optional controller privileges.
 Missing old outputs remain UNKNOWN when Advisor collects evidence.

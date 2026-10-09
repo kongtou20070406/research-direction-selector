@@ -14,15 +14,18 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from threading import Event
 import time
 import unittest
+from unittest.mock import patch
 
 import test_rds_project_assembly as fixture_module
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import rds_project_assembly as assembly
-from rds_project import ProjectStore, digest
+from rds_project import ProjectStore, canonical, digest
+import rds_project_lifecycle as lifecycle
 
 
 class ProjectLifecycleTests(unittest.TestCase):
@@ -435,6 +438,270 @@ class ProjectLifecycleTests(unittest.TestCase):
         wrong = self.call('project', 'init', '--contract', str(self.contract_path), '--mode', 'full', ok=False)
         self.assertNotEqual(wrong.returncode, 0)
         self.assertEqual(self.originals(), before)
+
+
+    def retained_child(self, root, *, register=True, finish=False):
+        root.mkdir(parents=True, exist_ok=True)
+        for binding in self.contract['bindings']:
+            path = root / binding['path']
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.root / binding['path'], path)
+        child = ProjectStore(root)
+        child.initialize(self.contract)
+        if register:
+            child.register(deepcopy(self.manifests['baseline']))
+        if finish:
+            child.execute('baseline')
+        return child
+
+    def retained_pointer(self, owner, child, *, kind='EXTERNAL_RUN_ALLOWANCE', request_sha=None):
+        event = {'kind': kind, 'job_root': str(child),
+                 'request_sha256': request_sha or digest({'fixture': str(child)}),
+                 'resource': 'wall_seconds', 'amount': 1,
+                 'accounting': 'CONSERVATIVE_ALLOWANCE', 'execution_authority': 'UNCHANGED'}
+        with owner._db() as db:
+            db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
+
+    def test_supersedes_must_name_the_discovered_parent_or_declare_separation(self):
+        self.init_quick()
+        unrelated = self.retained_child(self.root / 'unrelated', register=False)
+        child_root = self.root / 'experiment'
+        child_root.mkdir()
+        for binding in self.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], child_root / binding['path'])
+        path = self.write_json('contract.json', self.contract, root=child_root)
+        rejected = self.call('project', 'init', '--contract', str(path), '--mode', 'quick',
+                             '--supersedes', str(unrelated.root), root=child_root, ok=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('--separate-project', rejected.stderr)
+        self.assertFalse(ProjectStore(child_root).path.exists())
+        inherited = self.output('project', 'init', '--contract', str(path), '--mode', 'quick',
+                                '--supersedes', str(self.root), root=child_root)
+        self.assertEqual(inherited['workflow']['mode'], 'QUICK')
+        self.assertEqual(ProjectStore(child_root)._predecessor()['root_path'], '..')
+
+    def test_retained_reserved_child_blocks_preview_and_stale_apply_without_refund(self):
+        source = fixture_module.SCRIPT + "\nimport time\nwhile not pathlib.Path('outputs/release').exists(): time.sleep(0.01)\n"
+        self.init_quick(source=source)
+        preview = self.preview()
+        child = self.retained_child(self.root / '.rds/exec/pending')
+        self.retained_pointer(self.store, child.root, kind='QUICK_JOB_ADMITTED')
+        before = child.snapshot(), self.originals()
+        for apply in (False, True):
+            with self.assertRaisesRegex(ValueError, 'retained|Retained'):
+                lifecycle.enable_advisor(self.store, self.policy, apply=apply,
+                                         expected_snapshot=preview['snapshot_sha256'])
+        self.assertEqual((child.snapshot(), self.originals()), before)
+        self.assertEqual(self.activations(), [])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            execution = pool.submit(child.execute, 'baseline')
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    run = child.snapshot()['runs'][0]
+                    if run['status'] == 'RUNNING' and run['pid'] is not None:
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(run['status'], 'RUNNING')
+                self.assertIsNotNone(run['pid'])
+                with self.assertRaisesRegex(ValueError, 'reserved/running'):
+                    lifecycle.enable_advisor(self.store, self.policy, apply=True,
+                                             expected_snapshot=preview['snapshot_sha256'])
+                self.assertEqual(self.activations(), [])
+            finally:
+                (child.root / 'outputs/release').write_text('finish original run', encoding='utf-8')
+                execution.result(timeout=15)
+        self.assertEqual(child.snapshot()['budget']['wall_seconds']['reserved'], 0)
+        self.assertEqual(lifecycle.enable_advisor(self.store, self.policy)['status'], 'ADVISOR_ACTIVATION_PREVIEW')
+
+    def test_retained_missing_and_empty_preparation_are_not_terminal_evidence(self):
+        self.init_quick()
+        missing = self.root / '.rds/exec/preparing'
+        self.retained_pointer(self.store, missing)
+        with self.assertRaisesRegex(ValueError, 'retained|Retained'):
+            lifecycle.enable_advisor(self.store, self.policy)
+        child = self.retained_child(missing, register=False)
+        with self.assertRaisesRegex(ValueError, 'retained|Retained'):
+            lifecycle.enable_advisor(self.store, self.policy)
+        self.assertEqual(child.snapshot()['runs'], [])
+        self.assertEqual(self.activations(), [])
+
+    def test_recursive_retained_children_and_terminal_receipt_identity_are_checked(self):
+        self.init_quick()
+        child = self.retained_child(self.root / '.rds/exec/finished', finish=True)
+        grandchild = self.retained_child(child.root / '.rds/exec/nested')
+        self.retained_pointer(self.store, child.root)
+        self.retained_pointer(child, grandchild.root)
+        with self.assertRaisesRegex(ValueError, 'retained|Retained'):
+            lifecycle.enable_advisor(self.store, self.policy)
+        grandchild.execute('baseline')
+        preview = lifecycle.enable_advisor(self.store, self.policy)
+        with grandchild._db() as db:
+            receipt = grandchild._receipt(db.execute('SELECT run_id,sha256,body FROM receipts').fetchone())
+            receipt['attempt_id'] = 'different-original-attempt'
+            receipt['sha256'] = digest({k: v for k, v in receipt.items() if k != 'sha256'})
+            # Explicit retained-damage fixture; supported writes remain append-only.
+            db.execute('DROP TRIGGER receipts_no_update')
+            db.execute('UPDATE receipts SET body=?,sha256=?', (canonical(receipt), receipt['sha256']))
+        with self.assertRaisesRegex(ValueError, 'receipt|Receipt'):
+            lifecycle.enable_advisor(self.store, self.policy, apply=True,
+                                     expected_snapshot=preview['snapshot_sha256'])
+        self.assertEqual(self.activations(), [])
+
+    def test_completed_legacy_tool_allowance_is_redirected_only_by_original_identity(self):
+        self.init_quick()
+        token = 'a' * 32
+        workspace = self.root / '.rds/rsi/tool-checks' / token
+        child = self.retained_child(workspace / '.rds/exec/tool-check', finish=True)
+        self.retained_pointer(self.store, workspace, request_sha=digest({'tool_validation': token}))
+        # Duplicate original pointer must not count as another child operation.
+        self.retained_pointer(self.store, child.root, kind='QUICK_JOB_ADMITTED')
+        preview = lifecycle.enable_advisor(self.store, self.policy)
+        self.assertEqual(preview['status'], 'ADVISOR_ACTIVATION_PREVIEW')
+        self.retained_pointer(self.store, workspace, request_sha=digest({'tool_validation': 'b' * 32}))
+        with self.assertRaisesRegex(ValueError, 'retained|Retained'):
+            lifecycle.enable_advisor(self.store, self.policy)
+
+    def test_completed_child_snapshot_changes_invalidate_activation_preview(self):
+        self.init_quick()
+        child = self.retained_child(self.root / '.rds/exec/finished', finish=True)
+        self.retained_pointer(self.store, child.root)
+        preview = lifecycle.enable_advisor(self.store, self.policy)
+        with child._db() as db:
+            db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': 'RETAINED_OBSERVATION'}),))
+        with self.assertRaisesRegex(ValueError, 'changed since preview'):
+            lifecycle.enable_advisor(self.store, self.policy, apply=True,
+                                     expected_snapshot=preview['snapshot_sha256'])
+        self.assertEqual(self.activations(), [])
+
+    def test_retained_inventory_deduplicates_children_and_rejects_incomplete_bounds(self):
+        self.init_quick()
+        child = self.retained_child(self.root / '.rds/exec/finished', finish=True)
+        for kind in ('EXTERNAL_RUN_ALLOWANCE', 'QUICK_JOB_ADMITTED'):
+            self.retained_pointer(self.store, child.root, kind=kind)
+        with patch.object(lifecycle, 'MAX_RETAINED_JOBS', 1):
+            self.assertEqual(lifecycle.enable_advisor(self.store, self.policy)['status'], 'ADVISOR_ACTIVATION_PREVIEW')
+        with patch.object(lifecycle, 'MAX_RETAINED_EVENTS', 1):
+            with self.assertRaisesRegex(ValueError, 'bound exceeded'):
+                lifecycle.enable_advisor(self.store, self.policy)
+        self.assertEqual(self.activations(), [])
+
+    def test_activation_holds_checked_child_writer_lock_until_parent_commit(self):
+        self.init_quick()
+        child = self.retained_child(self.root / '.rds/exec/finished', finish=True)
+        self.retained_pointer(self.store, child.root)
+        preview = lifecycle.enable_advisor(self.store, self.policy)
+        checked, release, writing, committed = Event(), Event(), Event(), Event()
+        original = lifecycle._activation_children
+
+        def pause_after_check(*args, **kwargs):
+            result = original(*args, **kwargs)
+            checked.set()
+            if not release.wait(5):
+                raise AssertionError('Fixture activation was not released')
+            return result
+
+        def child_writer():
+            with child._db() as db:
+                writing.set()
+                db.execute('BEGIN IMMEDIATE')
+                # This assertion runs only after the original root commit has
+                # released its held child lock, never on an injected snapshot.
+                with self.store._db(True) as parent_db:
+                    self.assertIn('advisor_policy', self.store._contract(parent_db))
+                db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': 'AFTER_ACTIVATION'}),))
+            committed.set()
+
+        with ThreadPoolExecutor(max_workers=2) as pool, patch.object(lifecycle, '_activation_children', pause_after_check):
+            activation = pool.submit(lifecycle.enable_advisor, self.store, self.policy,
+                                     apply=True, expected_snapshot=preview['snapshot_sha256'])
+            self.assertTrue(checked.wait(5))
+            writer = pool.submit(child_writer)
+            try:
+                self.assertTrue(writing.wait(5))
+                self.assertFalse(committed.wait(0.2))
+            finally:
+                release.set()
+            self.assertEqual(activation.result(timeout=10)['status'], 'ADVISOR_ENABLED')
+            writer.result(timeout=10)
+        self.assertTrue(committed.is_set())
+        self.assertEqual(len(self.activations()), 1)
+
+    def test_contended_child_lock_fails_closed_without_activation(self):
+        self.init_quick()
+        child = self.retained_child(self.root / '.rds/exec/finished', finish=True)
+        self.retained_pointer(self.store, child.root)
+        preview = lifecycle.enable_advisor(self.store, self.policy)
+        with child._db() as busy:
+            busy.execute('BEGIN IMMEDIATE')
+            with self.assertRaisesRegex(ValueError, 'lock is unavailable.*incomplete'):
+                lifecycle.enable_advisor(self.store, self.policy, apply=True,
+                                         expected_snapshot=preview['snapshot_sha256'])
+        self.assertEqual(self.activations(), [])
+        self.assertEqual(child.snapshot()['runs'][0]['status'], 'COMPLETED')
+
+    def native_scope(self, child, kind):
+        child.mkdir(parents=True, exist_ok=True)
+        if kind == 'tms':
+            spec = {'schema': 1, 'nodes': [], 'hyperedges': [], 'goals': []}
+            path = self.write_json('map.json', spec, root=child)
+            self.output('hypergraph', '--input', str(path), '--json', root=child)
+            return child / '.rds/project.sqlite3'
+        shutil.copytree(ROOT / 'examples/reference-run', child, dirs_exist_ok=True)
+        self.output('init', '--contract', str(child / 'contract.json'), root=child)
+        return child / '.rds/state.sqlite3'
+
+    def test_native_child_without_project_contract_cannot_hide_initialized_ancestor(self):
+        self.init_quick()
+        before = self.originals()
+        for kind in ('tms', 'reference'):
+            with self.subTest(kind=kind):
+                child = self.root / kind
+                native = self.native_scope(child, kind)
+                native_sha = hashlib.sha256(native.read_bytes()).hexdigest()
+                for binding in self.contract['bindings']:
+                    shutil.copyfile(self.root / binding['path'], child / binding['path'])
+                path = self.write_json('execution-contract.json', self.contract, root=child)
+                found = self.output('project', 'discover', root=child)
+                self.assertEqual(found['relation'], 'ANCESTOR')
+                self.assertEqual(found['project_root'], str(self.root))
+                rejected = self.call('project', 'init', '--contract', str(path), '--mode', 'quick',
+                                     root=child, ok=False)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn('--separate-project', rejected.stderr)
+                self.assertEqual(hashlib.sha256(native.read_bytes()).hexdigest(), native_sha)
+                independent = self.output('project', 'init', '--contract', str(path), '--mode', 'quick',
+                                          '--separate-project', 'Separate declared ' + kind + ' fixture', root=child)
+                self.assertEqual(independent['workflow']['mode'], 'QUICK')
+                with ProjectStore(child)._db(True) as db:
+                    declaration = json.loads(db.execute("SELECT body FROM events WHERE "
+                        "json_extract(body,'$.kind')='PROJECT_SCOPE_DECLARED'").fetchone()['body'])
+                self.assertEqual(declaration['ancestor_root'], str(self.root))
+        self.assertEqual(self.originals(), before)
+
+    def test_native_scope_without_initialized_ancestor_retains_original_discovery(self):
+        for kind in ('tms', 'reference'):
+            with self.subTest(kind=kind):
+                child = self.root / kind
+                native = self.native_scope(child, kind)
+                before = hashlib.sha256(native.read_bytes()).hexdigest()
+                found = self.output('project', 'discover', root=child)
+                self.assertEqual(found['relation'], 'CURRENT')
+                self.assertEqual(found['project_root'], str(child))
+                self.assertEqual(found['workflow']['mode'], 'UNINITIALIZED')
+                self.assertEqual(hashlib.sha256(native.read_bytes()).hexdigest(), before)
+
+    def test_corrupt_native_child_is_rejected_instead_of_hidden_by_ancestor(self):
+        self.init_quick()
+        for kind in ('tms', 'reference'):
+            with self.subTest(kind=kind):
+                child = self.root / ('corrupt-' + kind)
+                (child / '.rds').mkdir(parents=True)
+                path = child / '.rds' / ('project.sqlite3' if kind == 'tms' else 'state.sqlite3')
+                path.write_bytes(b'not a sqlite database')
+                rejected = self.call('project', 'discover', root=child, ok=False)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertEqual(path.read_bytes(), b'not a sqlite database')
 
 
 if __name__ == '__main__':

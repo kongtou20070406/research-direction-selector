@@ -9,6 +9,7 @@ from rds_mutation import mutation
 
 SCHEMA = "rds-checkpoint-v1"
 MAX_BYTES = 4_000_000
+_DEPENDENCY_UNCHECKED = object()
 
 
 def _raw(value):
@@ -135,16 +136,41 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
 
 
 @mutation()
-def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None):
+def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
+                    _expected_contract_sha256=None,
+                    _expected_dependency_snapshot_sha256=_DEPENDENCY_UNCHECKED):
     from rds_campaign import enforce
     enforce(root, kind=kind)
     # Validate before opening a writer, preserving the public save boundary.
     _checkpoint_record(root, checkpoint_id, snapshot, kind=kind, decision=decision)
+    if _expected_contract_sha256 is not None:
+        if kind != 'project' or not isinstance(_expected_contract_sha256, str) or not re.fullmatch(
+                '[0-9a-f]{64}', _expected_contract_sha256):
+            raise ValueError('Expected checkpoint contract must be a project SHA256 identity')
+    if _expected_dependency_snapshot_sha256 is not _DEPENDENCY_UNCHECKED:
+        if kind != 'project' or (_expected_dependency_snapshot_sha256 is not None and
+                (not isinstance(_expected_dependency_snapshot_sha256, str) or not re.fullmatch(
+                    '[0-9a-f]{64}', _expected_dependency_snapshot_sha256))):
+            raise ValueError('Expected checkpoint dependency must be a project SHA256 identity or None')
     db = sqlite3.connect(_database(root, kind).as_uri() + '?mode=rw', uri=True,
                          timeout=15, isolation_level=None)
+    db.row_factory = sqlite3.Row
     try:
         db.execute("PRAGMA synchronous=FULL")
         db.execute("BEGIN IMMEDIATE")
+        if _expected_contract_sha256 is not None:
+            from rds_method_revision import contract_history
+            if (contract_history(db)[-1]['sha256'] != _expected_contract_sha256
+                    or _sha(snapshot['contract']) != _expected_contract_sha256):
+                raise ValueError('Quick parent contract changed before checkpoint publication; '
+                                 'inspect the retained job and any original receipt; do not rerun')
+        if _expected_dependency_snapshot_sha256 is not _DEPENDENCY_UNCHECKED:
+            head = None
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+                head = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+            if (head['sha256'] if head is not None else None) != _expected_dependency_snapshot_sha256:
+                raise ValueError('Dependency snapshot changed before checkpoint publication; '
+                                 'reanalyze the current map before recording a choice')
         result = append_checkpoint(db, root, checkpoint_id, snapshot, kind=kind, decision=decision)
         db.commit()
     except sqlite3.IntegrityError as exc:

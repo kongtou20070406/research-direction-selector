@@ -161,13 +161,16 @@ def choice(advice, context, candidate_id=None):
     return record
 
 
-def record_choice(root, advice, context, candidate_id, checkpoint_id):
+def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
+                  _expected_contract_sha256=None):
     from rds_checkpoints import save_checkpoint
     record = choice(advice, context, candidate_id)
     # Read the contract before writing advice, so a rejected record leaves no blob.
     snapshot = ProjectStore(root).snapshot(check_bindings=True)
     record['advice'] = cas_json(root, advice)
-    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record)
+    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
+                            _expected_contract_sha256=_expected_contract_sha256,
+                            _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
     saved['candidate_id'] = record['candidate']['id']
     return saved
 
@@ -471,6 +474,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 'Program-owned Advisor requires project advance/create/execute; quick exec cannot bypass it')
         require('stop_policy' not in source_contract and 'maintenance_allowance' not in source_contract,
                 'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
+        require(_native_preparation_root is not None or 'execution_policy' in source_contract,
+                'Frozen source project requires project create/execute; QUICK needs its original execution_policy accounting')
         if 'execution_policy' in source_contract:
             require(owner is None or owner == root, 'Frozen source execution policy cannot be replaced by another ledger')
             owner = root
@@ -570,6 +575,56 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 'policy_sha256': digest(execution_policy), 'route_sha256': execution_route(request['argv'], request['inputs'],
                     request['outputs'], root, parent_contract.get('objective_sha256', request.get('objective_sha256')),
                     route=_policy_route(request, None), arm='tool', executor_sha256=executor_sha256)}
+    locked_parents = {}
+
+    @contextmanager
+    def admission_context():
+        # The original allowance path acquires parent before child. Keep that
+        # order during preparation and through the child's attempt commit.
+        with mutation(), ExitStack() as locks:
+            try:
+                from rds_campaign import binding as campaign_binding
+                for scope in (root, getattr(args, 'ledger', None), _native_preparation_root):
+                    if scope is not None:
+                        require(campaign_binding(scope) is None, 'Bound campaign refuses detached QUICK preparation')
+                for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
+                    parent = ProjectStore(parent_root)
+                    create_anchor = not parent.path.is_file()
+                    parent.state_dir.mkdir(exist_ok=True)
+                    parent_db = locks.enter_context(parent._db())
+                    if create_anchor:
+                        # No contract/budget/event is created. The same SQLite
+                        # file serializes a concurrent first project init.
+                        parent_db.execute('PRAGMA journal_mode=WAL')
+                    parent_db.execute('BEGIN IMMEDIATE')
+                    locked_parents[parent_root] = parent_db
+                yield
+            finally:
+                locked_parents.clear()
+
+    def check_quick_parents():
+        # Both materialization and attempt admission require these live checks.
+        check_source_root()
+        for parent_root, prepared_sha in parent_contracts.items():
+            from rds_campaign import detached_admission
+            detached_admission(parent_root, locked_parents[parent_root])
+            current_contract, steering = _parent_controls(parent_root, db=locked_parents[parent_root])
+            current_sha = digest(current_contract) if current_contract is not None else None
+            require(current_sha == prepared_sha,
+                    'Quick parent contract changed before admission; review the original project')
+            if current_contract is not None:
+                require('advisor_policy' not in current_contract,
+                        'Program-owned Advisor was enabled before quick admission; use the original project')
+                require('stop_policy' not in current_contract and 'maintenance_allowance' not in current_contract,
+                        'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
+                require(steering is None,
+                        'Human steering changed before quick admission; use project create/execute')
+        if review is not None:
+            from rds_advisor_coverage import project_context
+            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+    def admit_quick(_db, _run):
+        check_quick_parents()
+
     args.name = args.name or 'exec-' + digest(request)[:20]
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args.name), 'Job name must contain 1–64 safe identifier characters')
     workspace = root / '.rds' / 'exec' / args.name
@@ -607,15 +662,17 @@ def execute(args, review=None, *, _native_preparation_root=None):
             executor_sha256=executor_sha256)
         if observation is not None:
             return observation
-    with mutation():
-        from rds_campaign import binding as campaign_binding
-        for scope in (root, getattr(args, 'ledger', None), _native_preparation_root):
-            if scope is not None:
-                require(campaign_binding(scope) is None, 'Bound campaign refuses detached QUICK preparation')
+    if review is not None:
+        require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
+        record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
+                      _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
+    if goal_raw is not None:
+        bind_objective(root, goal_raw)
+    with admission_context():
+        check_quick_parents()
         workspace.mkdir(parents=True)
         bindings = []
         if goal_raw is not None:
-            bind_objective(root, goal_raw)
             bind_objective(workspace, goal_raw)
             (workspace / 'rds-exec-objective.json').write_bytes(goal_raw)
             bindings.append({'path': 'rds-exec-objective.json', 'sha256': request['objective_sha256'], 'role': 'config'})
@@ -659,71 +716,23 @@ def execute(args, review=None, *, _native_preparation_root=None):
         if execution_policy is not None:
             contract['execution_policy'] = deepcopy(execution_policy)
         store.initialize(contract)
+        manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
+                    'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
+                    'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
+                    'resource_estimates': {'wall_seconds': timeout - guard_seconds}, 'description': 'Frozen quick exec'}
+        store.register(manifest, executor_sha256=executor_sha256)
+        for output in args.output:
+            store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
+        from rds_campaign import QUICK_JOB_KIND
+        for parent_db in locked_parents.values():
+            if parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+                parent_db.execute('INSERT INTO events(body) VALUES (?)',
+                    (canonical({'kind': QUICK_JOB_KIND, 'job_root': str(workspace)}),))
+    if guard_path is not None:
+        _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
     if review is not None:
-        require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
-        record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name))
-    manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
-                'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
-                'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
-                'resource_estimates': {'wall_seconds': timeout - guard_seconds}, 'description': 'Frozen quick exec'}
-    locked_parents = {}
-
-    @contextmanager
-    def admission_context():
-        # The original allowance path acquires parent before child. Keep that
-        # order and hold every parent through the child's attempt commit.
-        with mutation(), ExitStack() as locks:
-            try:
-                for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
-                    parent = ProjectStore(parent_root)
-                    create_anchor = not parent.path.is_file()
-                    parent.state_dir.mkdir(exist_ok=True)
-                    parent_db = locks.enter_context(parent._db())
-                    if create_anchor:
-                        # No contract/budget/event is created. The same SQLite
-                        # file serializes a concurrent first project init.
-                        parent_db.execute('PRAGMA journal_mode=WAL')
-                    parent_db.execute('BEGIN IMMEDIATE')
-                    locked_parents[parent_root] = parent_db
-                from rds_campaign import detached_admission, QUICK_JOB_KIND
-                for parent_root, parent_db in locked_parents.items():
-                    detached_admission(parent_root, parent_db)
-                # Register only after winning the same parent mutex as bind().
-                # No new child reservation can slip into its publication gap.
-                store.register(manifest, executor_sha256=executor_sha256)
-                for output in args.output:
-                    store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
-                if guard_path is not None:
-                    _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
-                for parent_db in locked_parents.values():
-                    if parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
-                        parent_db.execute('INSERT INTO events(body) VALUES (?)',
-                            (canonical({'kind': QUICK_JOB_KIND, 'job_root': str(workspace)}),))
-                yield
-            finally:
-                locked_parents.clear()
-
-    def admit_quick(_db, _run):
-        # Recheck at the existing transactional attempt-admission boundary,
-        # after registration and any pause before the execute call.
-        check_source_root()
-        for parent_root, prepared_sha in parent_contracts.items():
-            from rds_campaign import detached_admission
-            detached_admission(parent_root, locked_parents[parent_root])
-            current_contract, steering = _parent_controls(parent_root, db=locked_parents[parent_root])
-            current_sha = digest(current_contract) if current_contract is not None else None
-            require(current_sha == prepared_sha,
-                    'Quick parent contract changed before admission; review the original project')
-            if current_contract is not None:
-                require('advisor_policy' not in current_contract,
-                        'Program-owned Advisor was enabled before quick admission; use the original project')
-                require('stop_policy' not in current_contract and 'maintenance_allowance' not in current_contract,
-                        'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
-                require(steering is None,
-                        'Human steering changed before quick admission; use project create/execute')
-        if review is not None:
-            from rds_advisor_coverage import project_context
-            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+        from rds_advisor_coverage import project_context
+        choice(review[0], project_context(args.ledger, review[1]), args.choose)
     receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,
                             admission_context=admission_context)
     regression = None
@@ -746,7 +755,9 @@ def execute(args, review=None, *, _native_preparation_root=None):
                     'pending_evidence': ['Assess the original output; completion alone does not reject or prove a hypothesis']}
         if regression is not None:
             decision['regression_review'] = {'status': regression['status'], 'report': ref, 'scientific_support': 'UNKNOWN'}
-        save_checkpoint(args.ledger, _checkpoint_name('after', args.name), ProjectStore(args.ledger).snapshot(), kind='project', decision=decision)
+        save_checkpoint(args.ledger, _checkpoint_name('after', args.name), ProjectStore(args.ledger).snapshot(),
+                        kind='project', decision=decision,
+                        _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
     result = {'status': receipt.get('run_status', 'UNKNOWN'), 'job_root': str(workspace),
             'ledger_root': str(Path(args.ledger).resolve()) if review is not None else str(workspace),
             'receipt': receipt, 'execution_started': True, 'scientific_support': 'UNKNOWN'}
