@@ -12,11 +12,11 @@
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 [![tests](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml)
 
-**Agent 出主意，程序来记账。**
+**Agent 主动与你讨论研究，程序保存证据。**
 
 **面向学术研究、由证据驱动的 autoresearch。**
 
-面向学术研究及 Codex、Claude Code 等编程 Agent 实验工作流的本地科研内核。它在执行前冻结目标、输入与评估器，预留预算，保留执行回执，并跨会话延续已记录的证据。用它规划有界实验、恢复中断工作，并核验受支持的结果。
+面向学术研究及 Codex、Claude Code 等编程 Agent 实验工作流的科研 Skill 与本地内核。它在执行前冻结目标、输入与评估器，预留预算，保留执行回执，并跨会话延续已记录的证据。用它规划有界实验、恢复中断工作，并核验受支持的结果。
 
 [RDS 如何参与 autoresearch 工作流](docs/autoresearch.md) · [CPU 回执与恢复示例](examples/autoresearch-receipts/README.md) · [引用本软件](CITATION.cff)
 
@@ -139,6 +139,10 @@ flowchart TD
 ## Skill：以 Agent 为入口的科研指导
 
 Skill 是 Agent 阅读的部分。它告诉 Agent 何时调用内核、如何表述公平比较，以及如何报告结果而不把 `UNKNOWN` 说成成功。
+
+加载 Skill 后，宿主 AI 应在研究开始，以及证据、解释、方向或资源约束改变下一步决定时，主动发起简短讨论。它说明当前判断，推荐有价值的下一步，并在答案确实会改变工作时提出一个有针对性的问题。已授权工作继续推进，每轮都提问或确认并非必要。
+
+你可以直接说“这个结果让我怀疑原来的解释”，或者“暂停新实验，先检查对照是否公平”。AI 会讨论证据，并解释你的指令实际影响了什么。CLI 提供可核对的记录，人与 AI 的交流由宿主 AI 承担。详见[规划与改向](docs/planning-and-steering.md#host-initiated-research-discussion)。这是 Skill 的行为指导，交互质量和科研收益仍需要真实 Agent 评测。
 
 ### 安装
 
