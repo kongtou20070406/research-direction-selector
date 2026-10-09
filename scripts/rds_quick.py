@@ -822,12 +822,16 @@ def brief(root, value, version, formal=False):
                      if 'search' in r]
     analysis = owned.get('analysis_coverage') or next((r for r in graph_reviews if r), None)
     if analysis:
-        summary['analysis_coverage'] = {key: analysis[key] for key in ('status', 'full', 'scope')}
-        summary['analysis_coverage']['graphs'] = [
-            {key: graph.get(key) for key in ('kind', 'input_sha256', 'node_count', 'edge_count', 'full')}
-            for graph in analysis['graphs']]
-        summary['analysis_coverage']['reasons'] = analysis['reasons'][:3]
-        summary['analysis_coverage']['omitted_reasons'] = max(0, len(analysis['reasons']) - 3)
+        # Per-graph identities and diagnostics remain in the hashed full record.
+        # Keep coverage visible without repeating hashes alongside decision detail.
+        summary['analysis_coverage'] = {key: analysis[key] for key in ('status', 'full')}
+        summary['analysis_coverage']['graph_count'] = len(analysis['graphs'])
+        for key in ('node_count', 'edge_count'):
+            counts = [graph.get(key) for graph in analysis['graphs']]
+            summary['analysis_coverage'][key] = sum(counts) if all(type(n) is int for n in counts) else None
+        if analysis['reasons']:
+            summary['analysis_coverage']['reasons'] = analysis['reasons'][:3]
+            summary['analysis_coverage']['omitted_reasons'] = max(0, len(analysis['reasons']) - 3)
     if 'steering' in owned:
         state = owned['steering']
         summary['steering'] = {key: state.get(key) for key in ('revision', 'paused', 'kind', 'instruction_id')}

@@ -1934,7 +1934,9 @@ def _main():
             from rds_quick import brief
             summary = brief(args.root, result, VERSION)
             if workflow is not None:
-                summary['workflow'] = {key: workflow[key] for key in ('mode', 'advisor', 'next_action')}
+                # Full commands remain in the saved report/discovery response;
+                # repeating an absolute-root command crowds out decision detail.
+                summary['workflow'] = {key: workflow[key] for key in ('mode', 'advisor')}
             if args.command == 'rsi' and args.action == 'compare':
                 summary.update({k: result[k] for k in ('correctness', 'comparable_context', 'speedup_ratio',
                                                       'precision', 'precision_key', 'case_count', 'samples_per_tool',
