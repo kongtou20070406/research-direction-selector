@@ -63,18 +63,20 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
             self.assertEqual(charged[key], original[key])
         self.assertAlmostEqual(charged['remaining'], original['remaining'] - 5)
 
-    def assert_writer_commits_after_attempt(self, name, writer_store, writer, source_root=None):
+    def assert_writer_commits_after_attempt(self, name, writer_store, writer, source_root=None,
+                                          finish_writer_before_claim=False):
         args, reviewed, workspace = self.reviewed_job(name, source_root)
         entered, committed = threading.Event(), threading.Event()
         observed = {}
         original_db = writer_store._db
         original_execute, original_save = ProjectStore.execute, ProjectStore._save
+        original_claim = ProjectStore._execute_claim
 
         @contextmanager
         def observed_writer_db(readonly=False):
+            if not readonly:
+                entered.set()  # Legal writer is attempting the actual DB boundary.
             with original_db(readonly) as db:
-                if not readonly:
-                    entered.set()  # Legal writer reached its actual DB boundary.
                 yield db
 
         def write_control():
@@ -89,6 +91,13 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 self.assertFalse(committed.is_set())
                 observed['attempt'] = run['attempt_id']
             return original_save(db, run)
+
+        def claim_after_writer(store, *positional, **keywords):
+            if finish_writer_before_claim and store.root == workspace.resolve():
+                # Attempt admission is committed; the real process has not yet
+                # started, so activation must consistently see RUNNING work.
+                observed['future'].result(timeout=5)
+            return original_claim(store, *positional, **keywords)
 
         with ThreadPoolExecutor(max_workers=1) as pool:
             def execute_with_writer(store, run_id, *positional, **keywords):
@@ -105,7 +114,8 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 return original_execute(store, run_id, *positional, **keywords)
 
             with mock.patch.object(ProjectStore, 'execute', new=execute_with_writer), \
-                    mock.patch.object(ProjectStore, '_save', new=record_attempt):
+                    mock.patch.object(ProjectStore, '_save', new=record_attempt), \
+                    mock.patch.object(ProjectStore, '_execute_claim', new=claim_after_writer):
                 result = rds_quick.execute(args, review=reviewed)
             changed = observed['future'].result(timeout=5)
         self.assertTrue(committed.is_set())
@@ -159,14 +169,16 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
         helper.init_quick()
         before = helper.store.snapshot()
         preview = enable_advisor(helper.store, helper.policy)
+        def refused_activation():
+            with self.assertRaisesRegex(ValueError, 'Retained child has reserved/running work'):
+                enable_advisor(helper.store, helper.policy, apply=True,
+                               expected_snapshot=preview['snapshot_sha256'])
+            return helper.store.snapshot()
         changed = self.assert_writer_commits_after_attempt('ordered-activation', helper.store,
-            lambda: enable_advisor(helper.store, helper.policy, apply=True,
-                                   expected_snapshot=preview['snapshot_sha256']), source_root=helper.root)
+            refused_activation, source_root=helper.root, finish_writer_before_claim=True)
         after = helper.store.snapshot()
-        self.assertEqual(after['contract_sha256'], changed['contract_sha256'])
-        self.assertNotEqual(after['contract_sha256'], before['contract_sha256'])
-        for key in ('budget', 'runs', 'receipts', 'exposures'):
-            self.assertEqual(after[key], before[key])
+        self.assertEqual(after, changed)
+        self.assertEqual(after, before)
 
     def test_empty_source_lock_anchor_is_not_a_research_project_but_tms_is(self):
         from rds_project_lifecycle import discover
@@ -287,7 +299,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
         self.assertEqual(helper.store.snapshot(), observed['source'])
         self.assertIn('maintenance_allowance', observed['source']['contract'])
 
-    def test_source_advisor_activation_after_preparation_invalidates_effective_contract(self):
+    def test_source_advisor_activation_after_preparation_refuses_live_child(self):
         import test_rds_project_lifecycle as lifecycle_fixture
         from rds_project_lifecycle import enable_advisor
         helper = lifecycle_fixture.ProjectLifecycleTests(methodName='runTest')
@@ -305,20 +317,70 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
             self.assertEqual(store.root, workspace.resolve())
             self.assertEqual(observed, {})
             observed['budget'] = parent.snapshot()['budget']
-            preview = enable_advisor(source, helper.policy)
-            observed['activation'] = enable_advisor(source, helper.policy, apply=True,
-                                                    expected_snapshot=preview['snapshot_sha256'])
+            enable_advisor(source, helper.policy)
             return original_execute(store, run_id, *positional, **keywords)
 
         with mock.patch.object(ProjectStore, 'execute', new=activate_before_admission):
-            with self.assertRaisesRegex(ValueError, 'Quick parent contract changed before admission'):
+            with self.assertRaisesRegex(ValueError, 'Retained child has reserved/running work'):
                 rds_quick.execute(args, review=reviewed)
         self.assert_held_child_and_original_accounting(workspace, before, observed['budget'])
         after = source.snapshot()
-        self.assertNotEqual(after['contract_sha256'], source_before['contract_sha256'])
-        self.assertEqual(after['contract_sha256'], observed['activation']['contract_sha256'])
-        for key in ('budget', 'runs', 'receipts', 'exposures'):
-            self.assertEqual(after[key], source_before[key])
+        self.assertEqual(after, source_before)
+
+    def test_owner_activation_after_terminal_receipt_rejects_late_checkpoint(self):
+        import test_rds_project_lifecycle as lifecycle_fixture
+        from rds_project_lifecycle import enable_advisor
+        helper = lifecycle_fixture.ProjectLifecycleTests(methodName='runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        # QUICK's parent allowance supports an explicit wall-only ledger.
+        helper.recipe['budget'] = {'wall_seconds': 30}
+        for route in helper.recipe['routes']:
+            route['run']['resource_estimates'] = {'wall_seconds': route['run']['resource_estimates']['wall_seconds']}
+        helper.init_quick()
+        self.fixture.ledger = helper.root
+        parent = helper.store
+        before = parent.snapshot()
+        args, reviewed, workspace = self.reviewed_job('terminal-activation')
+        original_execute = ProjectStore.execute
+        observed = {}
+
+        def activate_after_receipt(store, run_id, *positional, **keywords):
+            receipt = original_execute(store, run_id, *positional, **keywords)
+            self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+            observed['child'] = store.snapshot()
+            observed['charged'] = parent.snapshot()
+            preview = enable_advisor(parent, helper.policy)
+            observed['activation'] = enable_advisor(parent, helper.policy, apply=True,
+                                                    expected_snapshot=preview['snapshot_sha256'])
+            observed['parent'] = parent.snapshot()
+            return receipt
+
+        with mock.patch.object(ProjectStore, 'execute', new=activate_after_receipt):
+            with self.assertRaisesRegex(ValueError, 'Quick parent contract changed before checkpoint publication'):
+                rds_quick.execute(args, review=reviewed)
+        self.assertEqual(ProjectStore(workspace).snapshot(), observed['child'])
+        self.assertEqual(parent.snapshot(), observed['parent'])
+        child = observed['child']
+        self.assertEqual(len(child['runs']), 1)
+        self.assertIsNotNone(child['runs'][0]['attempt_id'])
+        self.assertEqual(child['receipts'][0]['run_status'], 'SUCCEEDED')
+        self.assertTrue((workspace / 'launch-marker').is_file())
+        self.assertEqual(observed['parent']['budget'], observed['charged']['budget'])
+        self.assertEqual(observed['charged']['budget']['wall_seconds']['charged_estimate'],
+                         before['budget']['wall_seconds']['charged_estimate'] + 5)
+        self.assertNotEqual(observed['parent']['contract_sha256'], before['contract_sha256'])
+        from rds_checkpoints import save_checkpoint
+        # Exercise both independent checks: old live binding with an old
+        # snapshot, and a stale snapshot against the new effective binding.
+        for expected in (before['contract_sha256'], observed['parent']['contract_sha256']):
+            with self.subTest(expected=expected):
+                with self.assertRaisesRegex(ValueError, 'Quick parent contract changed before checkpoint publication'):
+                    save_checkpoint(helper.root, 'stale-identity', before, kind='project',
+                                    _expected_contract_sha256=expected)
+        with parent._db(True) as db:
+            ids = [row[0] for row in db.execute('SELECT id FROM checkpoints ORDER BY id')]
+        self.assertEqual(ids, [rds_quick._checkpoint_name('before', args.name)])
 
     def test_tms_change_after_final_choice_rejects_actual_attempt_admission(self):
         fixture = self.fixture

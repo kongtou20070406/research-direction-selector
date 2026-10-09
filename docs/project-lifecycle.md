@@ -16,7 +16,10 @@ siblings or infer that two unrelated research topics are identical. Nested new
 projects are refused by the public entry points unless initialization explicitly
 supplies `--separate-project "<independent research scope>"`; that declaration is
 recorded in the new ledger. A declared successor uses the existing `--supersedes`
-lineage. These are cooperative CLI guards, not an OS sandbox or a global project
+lineage. A nested successor may omit the separation declaration only when its
+predecessor resolves to the discovered ancestor; an unrelated predecessor does
+not authorize splitting the ancestor's research history. These are cooperative
+CLI guards, not an OS sandbox or a global project
 registry.
 
 Managed tool-qualification workspaces remain internal jobs of their original
@@ -75,6 +78,12 @@ preserves genesis, original receipts, checkpoints, attempts, exposure and spent
 budget. It launches no command. A changed policy or project state requires a
 fresh preview; an exact apply retry is idempotent. Reserved/running work,
 outstanding reservations or a prepared method revision must be reconciled first.
+This includes retained QUICK children: activation checks their original ledger
+state and receipts, and refuses missing, incomplete or still-active child work.
+QUICK decision checkpoints also verify the contract they were prepared against
+inside their write transaction. If activation wins that race, the stale
+checkpoint is rejected; an already completed child's receipt and charged budget
+remain available for inspection without rerunning the experiment.
 Activation accepts only the basic `schema/context/graph/routes/observations`
 policy; it cannot add command authority, budget or optional controller privileges.
 Missing old outputs remain UNKNOWN when Advisor collects evidence.

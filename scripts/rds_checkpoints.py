@@ -107,13 +107,25 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
             'sha256': sha, 'contract_sha256': record['contract_sha256']}
 
 
-def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None):
+def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
+                    _expected_contract_sha256=None):
     # Validate before opening a writer, preserving the public save boundary.
     _checkpoint_record(root, checkpoint_id, snapshot, kind=kind, decision=decision)
+    if _expected_contract_sha256 is not None:
+        if kind != 'project' or not isinstance(_expected_contract_sha256, str) or not re.fullmatch(
+                '[0-9a-f]{64}', _expected_contract_sha256):
+            raise ValueError('Expected checkpoint contract must be a project SHA256 identity')
     db = sqlite3.connect(_database(root, kind), timeout=15, isolation_level=None)
+    db.row_factory = sqlite3.Row
     try:
         db.execute("PRAGMA synchronous=FULL")
         db.execute("BEGIN IMMEDIATE")
+        if _expected_contract_sha256 is not None:
+            from rds_method_revision import contract_history
+            if (contract_history(db)[-1]['sha256'] != _expected_contract_sha256
+                    or _sha(snapshot['contract']) != _expected_contract_sha256):
+                raise ValueError('Quick parent contract changed before checkpoint publication; '
+                                 'inspect the retained job and any original receipt; do not rerun')
         result = append_checkpoint(db, root, checkpoint_id, snapshot, kind=kind, decision=decision)
         db.commit()
     except sqlite3.IntegrityError as exc:

@@ -157,13 +157,15 @@ def choice(advice, context, candidate_id=None):
     return record
 
 
-def record_choice(root, advice, context, candidate_id, checkpoint_id):
+def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
+                  _expected_contract_sha256=None):
     from rds_checkpoints import save_checkpoint
     record = choice(advice, context, candidate_id)
     # Read the contract before writing advice, so a rejected record leaves no blob.
     snapshot = ProjectStore(root).snapshot(check_bindings=True)
     record['advice'] = cas_json(root, advice)
-    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record)
+    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
+                            _expected_contract_sha256=_expected_contract_sha256)
     saved['candidate_id'] = record['candidate']['id']
     return saved
 
@@ -641,7 +643,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
     store.initialize(contract)
     if review is not None:
         require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
-        record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name))
+        record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
+                      _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
     manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
                 'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
                 'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
@@ -718,7 +721,9 @@ def execute(args, review=None, *, _native_preparation_root=None):
                     'pending_evidence': ['Assess the original output; completion alone does not reject or prove a hypothesis']}
         if regression is not None:
             decision['regression_review'] = {'status': regression['status'], 'report': ref, 'scientific_support': 'UNKNOWN'}
-        save_checkpoint(args.ledger, _checkpoint_name('after', args.name), ProjectStore(args.ledger).snapshot(), kind='project', decision=decision)
+        save_checkpoint(args.ledger, _checkpoint_name('after', args.name), ProjectStore(args.ledger).snapshot(),
+                        kind='project', decision=decision,
+                        _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
     result = {'status': receipt.get('run_status', 'UNKNOWN'), 'job_root': str(workspace),
             'ledger_root': str(Path(args.ledger).resolve()) if review is not None else str(workspace),
             'receipt': receipt, 'execution_started': True, 'scientific_support': 'UNKNOWN'}
