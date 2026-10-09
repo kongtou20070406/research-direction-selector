@@ -80,8 +80,9 @@ explain that the measurement is unavailable, recommend inspecting the original
 output and recovering collection, and continue that recovery within existing
 authority. It must not present the failed review as guidance or repeat the
 completed run to obtain another result. When a pause is followed by a hypothesis,
-discuss the hypothesis while keeping new dispatch paused; a distinguishing check
-requires explicit resumption under the existing steering rules.
+discuss the hypothesis while keeping new dispatch paused. Starting a new run for
+a distinguishing check requires explicit resumption under the existing steering
+rules; already authorized inspection of existing evidence can continue.
 
 Use current original evidence directly when sufficient. The optional dialogue
 view supplies inspectable retained context when needed; it is not a mandatory
