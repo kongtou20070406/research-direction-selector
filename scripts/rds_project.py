@@ -790,6 +790,8 @@ class ProjectStore:
                     db.execute("INSERT INTO predecessor VALUES (1,?,?)", (digest(predecessor), canonical(predecessor)))
             if scope_declaration is not None:
                 row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='PROJECT_SCOPE_DECLARED' LIMIT 1").fetchone()
+                require(not old or row is not None,
+                        'Independent project scope must be declared with the original contract; it cannot be added after initialization')
                 require(row is None or json.loads(row['body']) == scope_declaration,
                         'Independent project declaration is already recorded')
                 if row is None:

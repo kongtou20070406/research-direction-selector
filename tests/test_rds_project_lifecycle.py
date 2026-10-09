@@ -391,8 +391,37 @@ class ProjectLifecycleTests(unittest.TestCase):
         self.assertEqual(len(declarations), 1)
         self.assertEqual(declarations[0]['reason'], reason)
         self.assertEqual(declarations[0]['ancestor_root'], str(self.root))
+        child_before = separate.snapshot()
+        with separate._db(True) as db:
+            child_events = [tuple(row) for row in db.execute('SELECT * FROM events ORDER BY id')]
+        self.output('project', 'init', '--contract', str(path), '--separate-project', reason, root=child)
+        self.assertEqual(separate.snapshot(), child_before)
+        changed = self.call('project', 'init', '--contract', str(path),
+                            '--separate-project', 'A changed independence claim', root=child, ok=False)
+        self.assertNotEqual(changed.returncode, 0)
+        with separate._db(True) as db:
+            self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM events ORDER BY id')], child_events)
         self.assertEqual(self.originals(), before)
         self.assertEqual(self.starts(), [])
+
+    def test_scope_cannot_be_added_after_original_failure_and_checkpoint(self):
+        self.init_quick(source=fixture_module.SCRIPT + '\nraise SystemExit(3)\n')
+        self.create('baseline')
+        result = self.call('project', 'execute', '--id', 'baseline', ok=False)
+        receipt = self.receipt(json.loads(result.stdout), 'baseline')
+        self.assertEqual(receipt['run_status'], 'FAILED')
+        self.output('checkpoint', 'save', '--id', 'failed-original')
+        before, before_events = self.originals(), self.rows('events')
+        rejected = self.call('project', 'init', '--contract', str(self.contract_path), '--mode', 'quick',
+                             '--separate-project', 'Posthoc independent experiment', ok=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('cannot be added after initialization', rejected.stderr)
+        self.assertEqual(self.originals(), before)
+        self.assertEqual(self.rows('events'), before_events)
+        self.assertEqual(self.starts(), ['baseline'])
+        self.output('project', 'init', '--contract', str(self.contract_path), '--mode', 'quick')
+        self.assertEqual(self.originals(), before)
+        self.assertEqual(self.rows('events'), before_events)
 
     def test_legacy_exact_retry_retains_quick_mode_without_new_contract_or_budget(self):
         self.prepare_contract()

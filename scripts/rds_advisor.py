@@ -697,6 +697,7 @@ class RDSAdvisor:
         if not path.is_file():
             return None
         from rds_checkpoints import SCHEMA, MAX_BYTES as checkpoint_cap, _sha
+        from rds_method_revision import contract_history
         review = {"assurance": "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION", "flags": [],
                   "authorization": "UNCHANGED", "limitations": [
                       "Checkpoint hashes authenticate recorded choices, not scientific validity or execution admission.",
@@ -770,7 +771,6 @@ class RDSAdvisor:
                     db.close()
                     db = None
                 elif kind == "project":
-                    from rds_method_revision import contract_history
                     lineage = contract_history(db)
                     contract, contract_sha = lineage[-1]['contract'], lineage[-1]['sha256']
                     checkpoint_contracts = {entry['sha256']: entry['contract'] for entry in lineage}
@@ -802,12 +802,16 @@ class RDSAdvisor:
                         root = Path(hop["root"])
                         other = connect(root / ".rds" / "project.sqlite3")
                         try:
-                            row = other.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
-                            _require(row is not None and row[1] == hop["contract_sha256"]
-                                     and _sha(strict_json(row[0])) == row[1], "Predecessor contract integrity failure: " + hop["root"])
+                            predecessor_lineage = contract_history(other)
+                            predecessor_sha = predecessor_lineage[-1]['sha256']
+                            _require(predecessor_sha == hop["contract_sha256"],
+                                     "Predecessor contract integrity failure: " + hop["root"])
+                            predecessor_contracts = {entry['sha256']: entry['contract']
+                                                     for entry in predecessor_lineage}
                             pinned = {item["id"]: item["sha256"] for item in hop["checkpoint_shas"]}
                             if pinned:
-                                collect(other, root / ".rds", row[1], rows, skipped, hop["root"], pinned)
+                                collect(other, root / ".rds", predecessor_sha, rows, skipped, hop["root"], pinned,
+                                        contracts=predecessor_contracts)
                         finally:
                             other.close()
                     except (sqlite3.Error, OSError, ValueError, KeyError, TypeError, AttributeError, UnicodeError,

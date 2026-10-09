@@ -401,6 +401,20 @@ def _inputs(root, argv, binds):
     return files, raw_by_path
 
 
+def _parent_controls(root):
+    """Read effective contract and steering together without creating a ledger."""
+    parent = ProjectStore(root)
+    if not parent.path.is_file():
+        return None, None
+    with parent._db(True) as db:
+        db.execute('BEGIN')
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                or not db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
+            return None, None
+        from rds_steering import current
+        return parent._contract(db), current(db)
+
+
 def execute(args, review=None, *, _native_preparation_root=None):
     """Create one frozen normal ProjectStore per named job, without JSON boilerplate."""
     root = Path(args.root).resolve()
@@ -430,17 +444,11 @@ def execute(args, review=None, *, _native_preparation_root=None):
     check_source_root()
     require(root.is_dir(), 'Source root must exist')
     owner = Path(args.ledger).resolve() if review is not None else None
-    source_store = ProjectStore(root)
-    if source_store.path.is_file():
-        with source_store._db(True) as db:
-            # Native research records can share this database before project init.
-            has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
-                and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone()
-            source_contract = source_store._contract(db) if has_contract else {}
-            if source_contract:
-                from rds_steering import current
-                require(current(db) is None,
-                        'Human steering requires project create/execute; use the original child root to inspect or recover an existing quick job')
+    source_contract, source_steering = _parent_controls(root)
+    parent_contracts = {root: digest(source_contract) if source_contract is not None else None}
+    if source_contract is not None:
+        require(source_steering is None,
+                'Human steering requires project create/execute; use the original child root to inspect or recover an existing quick job')
         require('advisor_policy' not in source_contract,
                 'Program-owned Advisor requires project advance/create/execute; quick exec cannot bypass it')
         require('stop_policy' not in source_contract and 'maintenance_allowance' not in source_contract,
@@ -530,6 +538,10 @@ def execute(args, review=None, *, _native_preparation_root=None):
         parent = ProjectStore(owner)
         with parent._db(True) as db:
             parent_contract = parent._contract(db)
+            parent_sha = digest(parent_contract)
+            require(owner not in parent_contracts or parent_contracts[owner] == parent_sha,
+                    'Quick parent contract changed during preparation; use the original project')
+            parent_contracts[owner] = parent_sha
             execution_policy = parent_contract.get('execution_policy')
             if execution_policy is not None:
                 _, errors = parent._bindings(parent_contract)
@@ -643,15 +655,18 @@ def execute(args, review=None, *, _native_preparation_root=None):
         # Recheck at the existing transactional attempt-admission boundary,
         # after registration and any pause before the execute call.
         check_source_root()
-        for parent_root in {root, owner} - {None}:
-            parent = ProjectStore(parent_root)
-            if parent.path.is_file():
-                with parent._db(True) as parent_db:
-                    if parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
-                            and parent_db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
-                        current_contract = parent._contract(parent_db)
-                        require('advisor_policy' not in current_contract,
-                                'Program-owned Advisor was enabled before quick admission; use the original project')
+        for parent_root, prepared_sha in parent_contracts.items():
+            current_contract, steering = _parent_controls(parent_root)
+            current_sha = digest(current_contract) if current_contract is not None else None
+            require(current_sha == prepared_sha,
+                    'Quick parent contract changed before admission; review the original project')
+            if current_contract is not None:
+                require('advisor_policy' not in current_contract,
+                        'Program-owned Advisor was enabled before quick admission; use the original project')
+                require('stop_policy' not in current_contract and 'maintenance_allowance' not in current_contract,
+                        'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
+                require(steering is None,
+                        'Human steering changed before quick admission; use project create/execute')
         if review is not None:
             from rds_advisor_coverage import project_context
             choice(review[0], project_context(args.ledger, review[1]), args.choose)
