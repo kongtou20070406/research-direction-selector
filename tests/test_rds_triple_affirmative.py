@@ -141,7 +141,7 @@ class TripleAffirmativeCLITests(unittest.TestCase):
     def test_deep_learning_failing_cohort_refutes_applicability(self):
         values = {'heldout_error': 0.05, 'clean_root_replay_error': 0.06, 'worst_declared_cohort_error': 0.4}
         review = self.advise(context(DL_GOAL, DL_AFFIRM), 'heldout_error', values)
-        self.assertOpen(review, ['APPLICABLE'], 'FALSE', 'REFORMULATE')
+        self.assertOpen(review, ['APPLICABLE'], 'FALSE', 'DIAGNOSE_GOAL_GAP')
         self.assertEqual(review['next_move']['reason'],
                          'The found result fails the declared APPLICABLE affirmative; this is a scoped gap, '
                          'not an impossibility result or a causal diagnosis.')
@@ -162,7 +162,7 @@ class TripleAffirmativeCLITests(unittest.TestCase):
         self.assertNotIn('found result fails', review['next_move']['reason'])
         values['other_platform_suite_failures'] = 0
         review = self.advise(context(SW_GOAL, SW_AFFIRM), 'suite_failures', values)
-        self.assertOpen(review, ['APPLICABLE'], 'FALSE', 'REFORMULATE')
+        self.assertOpen(review, ['APPLICABLE'], 'FALSE', 'DIAGNOSE_GOAL_GAP')
 
     def test_typed_goal_with_failed_portability_is_not_called_a_found_result(self):
         facts = {'heldout_error': {'value': 0.05, 'source': 'synthetic-notes.txt'}}
@@ -178,12 +178,12 @@ class TripleAffirmativeCLITests(unittest.TestCase):
         values = {'heldout_error': 0.05, 'worst_declared_cohort_error': 0.09}
         facts = {'clean_root_replay_error': {'value': 0.5, 'source': 'synthetic-notes.txt'}}
         review = self.advise(context(DL_GOAL, DL_AFFIRM, facts), 'heldout_error', values)
-        self.assertOpen(review, ['PORTABLE'], 'FALSE', 'REFORMULATE')
+        self.assertOpen(review, ['PORTABLE'], 'FALSE', 'DIAGNOSE_GOAL_GAP')
         self.assertEqual(review['next_move']['reason'],
                          'The found result fails the declared PORTABLE affirmative; this is a scoped gap, '
                          'not an impossibility result or a causal diagnosis.')
         review = self.advise(context(DL_GOAL, DL_AFFIRM), 'heldout_error', values, {'clean_root_replay_error': 0.5})
-        self.assertOpen(review, ['PORTABLE'], 'FALSE', 'REFORMULATE')
+        self.assertOpen(review, ['PORTABLE'], 'FALSE', 'DIAGNOSE_GOAL_GAP')
         facts['clean_root_replay_error']['value'] = 0.06
         review = self.advise(context(DL_GOAL, DL_AFFIRM, facts), 'heldout_error', values)
         self.assertOpen(review, ['PORTABLE'], 'UNKNOWN', 'RESOLVE_PREMISE')
