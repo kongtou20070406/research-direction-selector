@@ -281,9 +281,13 @@ class RunnerTests(unittest.TestCase):
         for flag in ('--share-net', '--unshare-user-try', '--bind', '--bind-try', '--ro-bind-try', '--not-a-security-boundary'):
             self.assertNotIn(flag, command)
         mounts = [command[index + 1:index + 3] for index, arg in enumerate(command) if arg == '--ro-bind']
-        self.assertEqual(mounts, [['/STAGED_RUNTIME', '/'], ['/STAGED_CODE/empty', '/proc/keys'],
-                                  ['/STAGED_CODE/empty', '/proc/key-users'],
-                                  ['/STAGED_CODE/empty-proc-one', '/proc/1'],
+        # Host source paths follow pathlib on the platform inspecting the
+        # command; sandbox destinations remain Linux absolute paths.
+        empty = str(Path('/STAGED_CODE') / 'empty')
+        empty_proc = str(Path('/STAGED_CODE') / 'empty-proc-one')
+        self.assertEqual(mounts, [['/STAGED_RUNTIME', '/'], [empty, '/proc/keys'],
+                                  [empty, '/proc/key-users'],
+                                  [empty_proc, '/proc/1'],
                                   ['/STAGED_PUBLIC', '/public'], ['/STAGED_CODE', '/rds']])
 
     @unittest.skipUnless(sys.platform == 'linux', 'Linux resource limits/process-group collection')

@@ -135,13 +135,19 @@ class JumpControlBudgetTests(unittest.TestCase):
                 self.assertEqual(structure.recover_control(store.root)['reconciled_controls'], 0)
 
     def test_independent_meter_keeps_original_reservation_and_settlement(self):
-        store = self.build()
-        with structure._meter(store, 'direct-cli'):
-            self.assertEqual(self.budget(store)['reserved'], 2.)
-        after = self.budget(store)
-        self.assertEqual(after['reserved'], 0.)
-        self.assertGreater(after['spent_measured'], 0.)
-        self.assertNotIn('budget_owner', structure._events(store)[-1])
+        # An empty block can take zero clock ticks on Windows. Check exact
+        # settlement for both zero and positive durations, without sleeping.
+        for elapsed in (0., .25):
+            with self.subTest(elapsed=elapsed):
+                store = self.build()
+                with patch.object(structure, 'time') as clock:
+                    clock.monotonic.side_effect = [10., 10. + elapsed]
+                    with structure._meter(store, 'direct-cli'):
+                        self.assertEqual(self.budget(store)['reserved'], 2.)
+                after = self.budget(store)
+                self.assertEqual(after['reserved'], 0.)
+                self.assertEqual(after['spent_measured'], elapsed)
+                self.assertNotIn('budget_owner', structure._events(store)[-1])
 
     def test_independent_interrupted_meter_keeps_original_unknown_charge(self):
         store = self.build()

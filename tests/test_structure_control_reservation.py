@@ -90,16 +90,20 @@ class StructureControlReservationTests(unittest.TestCase):
 
     def test_worker_pause_exception_restores_controller_and_preserves_cost(self):
         before = self.budget()
-        with structure.reserved_control(self.store, 'pause-failure', 2) as parent:
-            with self.assertRaisesRegex(RuntimeError, 'wait failed'):
-                with parent.suspend():
-                    time.sleep(.01)
-                    raise RuntimeError('wait failed')
-            self.assertFalse(parent.paused)
-            with structure._meter(self.store, 'after-wait-failure'):
-                pass
+        # Use controlled ticks: a short real sleep need not advance a coarse
+        # Windows clock, and this test checks accounting rather than timing.
+        with patch.object(structure, 'time') as clock:
+            clock.monotonic.side_effect = [10., 10.25, 10.75, 11., 11.25, 12.]
+            with structure.reserved_control(self.store, 'pause-failure', 2) as parent:
+                with self.assertRaisesRegex(RuntimeError, 'wait failed'):
+                    with parent.suspend():
+                        raise RuntimeError('wait failed')
+                self.assertFalse(parent.paused)
+                with structure._meter(self.store, 'after-wait-failure'):
+                    pass
         after = self.budget()
-        self.assertGreater(parent.suspended, 0)
+        self.assertEqual(parent.suspended, .5)
+        self.assertEqual(self.finished(parent.id)['wall_seconds'], 1.5)
         self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'],
                                self.finished(parent.id)['wall_seconds'])
         self.assertEqual(after['reserved'], before['reserved'])
