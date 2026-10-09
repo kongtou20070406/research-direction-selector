@@ -296,17 +296,20 @@ def _collect(store, state):
                 'parsed_observations': 0, 'declared_outputs': [], 'unparsed_outputs': [], 'gaps': [], 'errors': errors}
     requested = {(o['run_id'], o['path']) for o in policy['observations']} if policy else set()
     contract_source = {'locator': 'project contract ' + digest(state['contract'])}
-    nodes.append(_node('contract', 'SUPPORTED', contract_source, claim='The frozen project contract was read'))
+    nodes.append(_node('contract', 'SUPPORTED', contract_source, record_kind='contract',
+                       claim='The frozen project contract was read'))
     for rid, run in runs.items():
         receipt = receipts.get(rid)
         require(run['status'] not in TERMINAL or receipt is not None, 'Terminal owned run has no receipt: ' + rid)
         nodes.append(_node('run:' + rid, 'SUPPORTED', {'locator': 'owned run ' + rid},
+                           record_kind='run', run_id=rid,
                            lifecycle_status=run['status'], manifest_sha256=run['manifest_sha256']))
         if receipt is None:
             for relative in run['manifest']['outpaths']:
                 coverage['declared_outputs'].append({'run_id': rid, 'path': relative, 'status': 'PENDING'})
                 nodes.append(_node('output:' + digest((rid, relative)), 'UNKNOWN',
                                    {'locator': 'pending declared output ' + rid + ':' + relative},
+                                   record_kind='declared_output', output_path=relative,
                                    interpretation='PENDING', run_id=rid))
             continue
         require(receipt.get('manifest_sha256') == run['manifest_sha256'] and receipt.get('attempt_id') == run['attempt_id']
@@ -330,7 +333,8 @@ def _collect(store, state):
             require(bound_contract is not None and receipt.get('bindings_before') == receipt.get('bindings_after') == bound_contract['bindings'],
                     'Successful owned receipt input bindings differ: ' + rid)
         source = {'locator': 'owned receipt ' + receipt['sha256']}
-        nodes.append(_node('receipt:' + rid, 'SUPPORTED', source, receipt_sha256=receipt['sha256'],
+        nodes.append(_node('receipt:' + rid, 'SUPPORTED', source, record_kind='receipt', run_id=rid,
+                           receipt_id=receipt['sha256'], receipt_sha256=receipt['sha256'],
                            outcome=receipt['run_status'], scientific_support='UNKNOWN'))
         edges.append({'id': OWNED_PREFIX + 'completion:' + rid, 'premises': [OWNED_PREFIX + 'run:' + rid],
                       'conclusion': OWNED_PREFIX + 'receipt:' + rid, 'status': 'SUPPORTED', 'source': source})
@@ -364,7 +368,8 @@ def _collect(store, state):
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 errors.append({'run_id': rid, 'path': item['path'], 'reason': str(exc)})
                 node_status = 'UNKNOWN'
-            nodes.append(_node('artifact:' + digest(key), node_status, source, run_id=rid,
+            nodes.append(_node('artifact:' + digest(key), node_status, source, record_kind='artifact', run_id=rid,
+                               receipt_id=receipt['sha256'], artifact_path=item['path'],
                                interpretation='UNPARSED', scientific_support='UNKNOWN'))
             if item.get('kind') == 'project_output':
                 output_statuses[item['path']] = 'VERIFIED_BYTES' if node_status == 'SUPPORTED' else 'UNAVAILABLE_OR_CHANGED'
@@ -378,6 +383,7 @@ def _collect(store, state):
             if status == 'MISSING':
                 nodes.append(_node('output:' + digest((rid, relative)), 'UNKNOWN',
                                    {'locator': 'missing declared output ' + rid + ':' + relative},
+                                   record_kind='declared_output', output_path=relative, receipt_id=receipt['sha256'],
                                    interpretation='MISSING', run_id=rid))
                 if expected_status == 'SUCCEEDED':
                     errors.append({'run_id': rid, 'path': relative, 'reason': 'Successful receipt omitted a declared output'})
@@ -394,7 +400,11 @@ def _collect(store, state):
             fid = 'run.' + rid + '.' + key
             fact = {'id': fid, 'value': value, 'kind': 'DERIVED', 'source': {'locator': 'owned lifecycle ' + rid},
                     'reliable': True}
-            nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], owned_fact=fact))
+            binding = {'run_id': rid} if run else {}
+            if receipt:
+                binding['receipt_id'] = receipt['sha256']
+            nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], record_kind='lifecycle_fact',
+                               route_id=rid, **binding, owned_fact=fact))
     observations = policy['observations'] if policy else []
     last_uses = {(obs['run_id'], obs['path']): i for i, obs in enumerate(observations)}
     for position, obs in enumerate(observations):
@@ -409,11 +419,16 @@ def _collect(store, state):
                                       'locator': 'verified original over JSON parse byte limit'}
                     raise ValueError('Verified original JSON exceeds the ' + str(MAX_JSON_BYTES) + '-byte parse limit')
                 require((rid, relative) in originals, 'Declared output missing, changed or over JSON byte limit')
+                # originals contains only bytes whose declared size/hash passed
+                # _read_original. Preserve that identity even if parsing fails.
+                artifact = next(a for a in receipt['artifacts'] if a['path'] == relative)
+                fact['source'] = {'path': relative, 'sha256': artifact['sha256'],
+                                  'receipt_id': receipt['sha256'],
+                                  'locator': 'verified original owned output ' + rid + ':' + relative}
                 value, locator, _ = originals[rid, relative].extract(obs['selector'], 'metric', 'json')
                 require(value is None or isinstance(value, (str, bool, int, float)), 'Owned observation must be a JSON scalar')
                 require(not isinstance(value, (int, float)) or math.isfinite(value), 'Owned observation must be finite')
                 reliable = receipt['run_status'] == 'SUCCEEDED'
-                artifact = next(a for a in receipt['artifacts'] if a['path'] == relative)
                 fact.update(value=value, kind='OBSERVED' if reliable else 'UNKNOWN', reliable=reliable,
                             source={'path': relative, 'sha256': artifact['sha256'], 'locator': locator,
                                     'receipt_id': receipt['sha256']},
@@ -431,7 +446,11 @@ def _collect(store, state):
                 # lifecycle facts. Corrupt successful evidence fails closed.
                 destination = errors if receipt['run_status'] == 'SUCCEEDED' and (rid, relative) not in oversized_json else coverage['gaps']
                 destination.append({'run_id': rid, 'fact': fid, 'reason': str(exc)})
-        nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'], owned_fact=fact))
+        binding = {'run_id': rid} if rid in runs else {}
+        if receipt:
+            binding['receipt_id'] = receipt['sha256']
+        nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'],
+                           record_kind='observation', route_id=rid, output_path=relative, **binding, owned_fact=fact))
         if (rid, relative) in originals and position == last_uses[rid, relative]:
             originals[rid, relative].clear()
     if policy and 'autonomy' in policy:
@@ -537,6 +556,8 @@ def review(store, persist=True):
               'telemetry': telemetry,
               'coverage': coverage, 'snapshot_sha256': snapshot_sha, 'selected_run': None, 'selected_manifest': None,
               'recommendations': [], 'warnings': [], 'next_move': None, 'evidence_files': files}
+    from rds_hypergraph import record_topology
+    result.update(record_topology(spec))
     if policy:
         context = deepcopy(policy['context'])
         if 'confirmation' in policy:
