@@ -148,6 +148,9 @@ def archive_agent_input(bundle, node_id=None, edge_id=None):
                     "incidences": [item for item in display["edges"] if item[4] == index],
                     "semantics": display["semantics"], "edge_types": display["edge_types"]}
         if graph["schema"] == 1:
+            hub = next(node for node in display["nodes"] if node.get("raw_hyperedge_id") == row["id"])
+            for key in ("label", "display_kind", "color", "shape", "outline", "status_text", "goal_weights"):
+                readable[key] = hub[key]
             readable.update(premises=[labels[id] for id in row["premises"]], conclusion=labels[row["conclusion"]])
         else:
             readable.update(source=labels[row["source"]], target=labels[row["target"]], semantic=row.get("semantic", "UNKNOWN"))
@@ -174,6 +177,72 @@ def _text(value, default=""):
     return readable_text(value).strip()
 
 
+def _presentation(row, *, native=False, edge=False):
+    """Reuse the scientific viewer's recorded-result semantics without editing raw data."""
+    from rds_hypergraph_view import display_record
+    kind = row.get("type") if isinstance(row.get("type"), str) else "record"
+    original = dict(row)
+    wrapped = kind in {"original_node", "history_node"}
+    if wrapped and isinstance(row.get("original_id"), str) and row["original_id"]:
+        original["id"] = row["original_id"]
+    # Only explicit record categories and reserved identities describe execution.
+    typed = {"run": "run", "execution": "run", "action": "run", "receipt": "receipt", "artifact": "artifact",
+             "output": "declared_output", "declared_output": "declared_output", "fact": "fact",
+             "observation": "observation", "lifecycle_fact": "lifecycle_fact"}
+    if "record_kind" not in original and kind in typed:
+        original["record_kind"] = typed[kind]
+    if not isinstance(original.get("status"), str):
+        original["status"] = "UNKNOWN"
+    edge = edge or kind in {"hyperedge", "and_rule", "junction"}
+    recorded = native or edge or wrapped or "record_kind" in original or original["id"].startswith("owned:")
+    if recorded:
+        info = display_record(original, edge=edge)
+        if edge and not native:
+            info["kind"] = "共同前提"
+    else:
+        categories = {"claim": ("声明", "circle", "#c2c6cc"), "hypothesis": ("声明", "circle", "#c2c6cc"),
+                      "source": ("来源", "ring", "#8ca7ba"), "snapshot": ("项目快照", "ring", "#8ca7ba"),
+                      "project": ("项目快照", "ring", "#8ca7ba"),
+                      "measurement": ("观测", "circle", "#d4c17c"), "metric": ("观测", "circle", "#d4c17c"),
+                      "file": ("产物", "hexagon", "#82b9d3"), "evidence": ("证据", "ring", "#99c4b3"),
+                      "knowledge": ("知识", "hexagon", "#82b9d3"), "version": ("历史版本", "ring", "#8ca7ba"),
+                      "experiment": ("实验", "square", "#b397d0"), "attempt": ("执行尝试", "square", "#b397d0"),
+                      "finding": ("观测", "circle", "#d4c17c"), "research": ("声明", "circle", "#c2c6cc")}
+        name, shape, color = categories.get(kind, ("记录", "circle", "#9aabb9"))
+        info = {"label": _text(row.get("label")) or _text(row.get("claim")), "kind": name,
+                "shape": shape, "color": color,
+                "outline": {"state": "neutral", "color": "#9299a6", "basis": "档案记录；不表示科研证明"},
+                "status_text": "未判定"}
+    archive_status = {"REVIEW_REQUIRED": "待复核", "ARCHIVED_SOURCE": "已归档来源", "ARCHIVED": "已归档",
+                      "ARCHIVED_SNAPSHOT": "已归档快照", "ARCHIVED_VERSION": "历史版本",
+                      "COPIED_VERIFIED": "副本已核验", "VERIFIED_WITH_SOURCE_BOUNDARIES": "来源核验有边界",
+                      "EXCEEDS_8MIB": "超出旧导入范围", "SOURCE_HASH_DIFFERS": "来源已变化",
+                      "TENSOR_OR_TRANSPORT_ARCHIVE_NOT_IMPORTED": "归档未导入", "UNREVIEWED": "未复核",
+                      "INDEX_ONLY": "仅索引"}
+    if isinstance(row.get("status"), str) and row["status"] in archive_status:
+        info["status_text"] = archive_status[row["status"]]
+        info["outline"] = {"state": "neutral", "color": "#9299a6", "basis": "档案来源状态；不表示执行或科研成功"}
+    return {"label": info["label"], "display_kind": info["kind"], "color": info["color"],
+            "shape": info["shape"], "outline": info["outline"], "status_text": info["status_text"]}
+
+
+def _goal_weights(row, goals):
+    """Copy explicitly authored native structural weights, never infer contribution."""
+    value = row.get("goal_weights")
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for goal, weight in value.items():
+        if goal not in goals or type(weight) not in {int, float} or weight < 0:
+            continue
+        try:
+            if math.isfinite(weight):
+                result[goal] = weight
+        except OverflowError:
+            pass
+    return result
+
+
 def build_archive_display(graph):
     """Validate identity/endpoints and build every display item without truncation."""
     if not isinstance(graph, dict) or not (
@@ -189,6 +258,9 @@ def build_archive_display(graph):
         raise ValueError("Archive exceeds node limit")
     if len(originals) > MAX_EDGES:
         raise ValueError("Archive exceeds edge limit")
+    declared_goals = graph.get("goals", []) if native else []
+    goals = set(declared_goals) if isinstance(declared_goals, list) and all(isinstance(g, str) for g in declared_goals) else set()
+    goals.intersection_update(row["id"] for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str))
     node_ids, edge_ids = set(), set()
     nodes, node_index = [], {}
     declared_groups = graph.get("groups", [])
@@ -206,14 +278,16 @@ def build_archive_display(graph):
         kind = row.get("type") if isinstance(row.get("type"), str) else "record"
         group = row.get("group") if isinstance(row.get("group"), str) and row["group"] else "type:" + kind
         groups.setdefault(group, {"id": group, "label": _text(group), "summary": ""})
-        label = _text(row.get("label")) or _text(row.get("claim"))
+        presentation = _presentation(row, native=native)
+        label = presentation["label"]
         if not label:
             from rds_hypergraph_view import readable_text
             label = readable_text(row["id"], machine=True).strip(" .:_-/") or "记录 " + str(i + 1)
             if "/" in label or "\\" in label:
                 label = label.replace("\\", "/").rsplit("/", 1)[-1]
-        nodes.append({"id": row["id"], "label": label, "summary": _text(row.get("summary")),
+        nodes.append({**presentation, "id": row["id"], "label": label, "summary": _text(row.get("summary")),
                       "type": kind, "status": row.get("status") if isinstance(row.get("status"), str) else "UNKNOWN",
+                      "goal_weights": _goal_weights(row, goals),
                       "group": group, "primary": row.get("primary") is True,
                       "source_id": row.get("source_id") if isinstance(row.get("source_id"), str) else None,
                       "raw_node_index": i, "raw_hyperedge_id": None, "degree": 0})
@@ -249,9 +323,11 @@ def build_archive_display(graph):
         node_index[hub] = len(nodes)
         group = "type:hyperedge"
         groups.setdefault(group, {"id": group, "label": "超边", "summary": "原 AND 规则；显示不验收科学支持"})
-        nodes.append({"id": hub, "label": _text(row.get("label"), "AND 规则 " + str(i + 1)),
+        presentation = _presentation(row, native=True, edge=True)
+        nodes.append({**presentation, "id": hub, "label": _text(row.get("label")) or presentation["label"],
                       "summary": "共同前提须同时满足；保持原规则身份与状态", "type": "hyperedge",
                       "status": row.get("status") if isinstance(row.get("status"), str) else "UNKNOWN",
+                      "goal_weights": _goal_weights(row, goals),
                       "group": group, "primary": False, "source_id": None, "raw_node_index": None,
                       "raw_hyperedge_id": row["id"], "degree": 0})
         for premise in premises:
@@ -262,7 +338,7 @@ def build_archive_display(graph):
               max((c["bounds"][2] for c in clusters), default=1), max((c["bounds"][3] for c in clusters), default=1)]
     return {"schema": "rds-archive-display-v1", "nodes": nodes, "edges": edges, "semantics": semantics,
             "edge_types": edge_types, "groups": list(groups.values()), "clusters": clusters, "roots": roots,
-            "bounds": bounds}
+            "bounds": bounds, "goals": [{"id": node["id"], "label": node["label"]} for node in nodes if node["id"] in goals]}
 
 
 def _clusters(nodes, edges, groups):

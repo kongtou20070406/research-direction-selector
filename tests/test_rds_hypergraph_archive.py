@@ -70,6 +70,100 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(bundle["display"]["semantics"], ["provenance"])
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["fixture.zip"])
 
+    def test_native_recorded_execution_results_reuse_viewer_semantics(self):
+        rows = [{"id": "owned:run:" + outcome, "record_kind": "run", "status": "SUPPORTED",
+                 "outcome": outcome, "label": {"zh": "执行 " + outcome}, "summary": "已有用途"}
+                for outcome in ("SUCCEEDED", "FAILED", "TIMED_OUT")]
+        rows.extend([
+            {"id": "owned:run:conflict", "record_kind": "run", "status": "SUPPORTED",
+             "outcome": "SUCCEEDED", "run_status": "FAILED"},
+            {"id": "owned:run:unknown", "record_kind": "run", "status": "UNKNOWN", "outcome": "FAILED"},
+            {"id": "owned:fact:run.demo.failed", "record_kind": "lifecycle_fact", "status": "SUPPORTED",
+             "owned_fact": {"id": "run.demo.failed", "value": False, "reliable": True}}])
+        graph = {"schema": 1, "nodes": rows, "hyperedges": [], "goals": []}
+        before = deepcopy(graph)
+        display = build_archive_display(graph)["nodes"]
+        self.assertEqual([n["outline"]["state"] for n in display],
+                         ["success", "failure", "failure", "neutral", "neutral", "neutral"])
+        self.assertEqual([n["outline"]["color"] for n in display[:3]], ["#39b872", "#e65b63", "#e65b63"])
+        self.assertEqual(display[1]["status_text"], "执行失败")
+        self.assertEqual(display[0]["display_kind"], "执行")
+        self.assertEqual(display[0]["shape"], "square")
+        self.assertEqual(display[0]["label"], "执行 SUCCEEDED")
+        self.assertEqual(display[0]["summary"], "已有用途")
+        self.assertEqual(graph, before)
+
+    def test_wrapped_original_records_keep_archive_binding_and_readable_results(self):
+        graph = {"schema": "rds-readonly-archive-v1", "nodes": [
+            {"id": "archive:run1", "original_id": "owned:run:job_deadbeef12345678", "type": "original_node",
+             "record_kind": "run", "label": {"zh": "训练运行"}, "status": "SUPPORTED", "outcome": "FAILED",
+             "summary": "原执行用途", "source_id": "source:fixture", "group": "history"},
+            {"id": "archive:run2", "original_id": "owned:run:old_job", "type": "history_node",
+             "status": "SUPPORTED", "outcome": "TIMED_OUT"},
+            {"id": "source", "type": "source", "status": "COPIED_VERIFIED", "label": "来源副本"},
+            {"id": "failed.json", "type": "record", "status": "SUPPORTED", "outcome": "FAILED"}], "edges": []}
+        raw = encoded(graph)
+        bundle = read_archive(self.write_zip(raw))
+        node = archive_agent_input(bundle, node_id="archive:run1")
+        self.assertEqual(node["raw"], graph["nodes"][0])
+        self.assertEqual(node["readable"]["id"], "archive:run1")
+        self.assertEqual(node["readable"]["label"], "训练运行")
+        self.assertEqual(node["readable"]["display_kind"], "执行")
+        self.assertEqual(node["readable"]["outline"]["state"], "failure")
+        self.assertEqual(node["readable"]["source_id"], "source:fixture")
+        self.assertEqual(node["readable"]["group"], "history")
+        self.assertEqual(bundle["display"]["nodes"][1]["status_text"], "执行失败")
+        self.assertEqual(bundle["display"]["nodes"][2]["status_text"], "副本已核验")
+        self.assertEqual(bundle["display"]["nodes"][2]["outline"]["state"], "neutral")
+        self.assertEqual(bundle["display"]["nodes"][3]["outline"]["state"], "neutral")
+        self.assertEqual(bundle["raw"], raw)
+        self.assertEqual(bundle["graph"], graph)
+
+    def test_only_declared_native_goals_accept_explicit_finite_structural_weights(self):
+        graph = {"schema": 1, "goals": ["goal", "missing"], "nodes": [
+            {"id": "goal", "label": "已声明目标", "status": "UNKNOWN"},
+            {"id": "candidate", "status": "UNKNOWN", "goal_weights": {"goal": 0.25, "missing": 8, "guessed": 99}}],
+            "hyperedges": [{"id": "rule", "premises": ["candidate"], "conclusion": "goal", "status": "UNKNOWN",
+                            "goal_weights": {"goal": 0.5}}]}
+        before = deepcopy(graph)
+        display = build_archive_display(graph)
+        self.assertEqual(display["goals"], [{"id": "goal", "label": "已声明目标"}])
+        self.assertEqual(display["nodes"][0]["goal_weights"], {})
+        self.assertEqual(display["nodes"][1]["goal_weights"], {"goal": 0.25})
+        self.assertEqual(display["nodes"][2]["goal_weights"], {"goal": 0.5})
+        self.assertEqual(graph, before)
+        for value in (-1, True, "0.5", float("inf"), float("nan"), 10 ** 1000):
+            with self.subTest(value=str(value)[:20]):
+                graph["nodes"][1]["goal_weights"] = {"goal": value}
+                self.assertEqual(build_archive_display(graph)["nodes"][1]["goal_weights"], {})
+        self.assertEqual(before["nodes"][1]["goal_weights"], {"goal": 0.25, "missing": 8, "guessed": 99})
+        archive = fixture()
+        archive["goals"] = ["raw:a"]
+        archive["nodes"][0]["goal_weights"] = {"raw:a": 1}
+        result = build_archive_display(archive)
+        self.assertEqual(result["goals"], [])
+        self.assertEqual(result["nodes"][0]["goal_weights"], {})
+
+    def test_archive_categories_and_missing_original_outcomes_remain_distinct_and_neutral(self):
+        graph = {"schema": "rds-readonly-archive-v1", "edges": [], "nodes": [
+            {"id": "wrapped-run", "original_id": "owned:run:job", "type": "original_node",
+             "status": "SUPPORTED", "label": "失败字样不是结果"},
+            {"id": "wrapped-receipt", "original_id": "owned:receipt:job", "type": "history_node",
+             "status": "SUPPORTED"},
+            {"id": "and-rule", "type": "hyperedge", "status": "UNKNOWN"},
+            {"id": "experiment", "type": "experiment", "status": "SUPPORTED"},
+            {"id": "attempt", "type": "attempt", "status": "SUPPORTED"},
+            {"id": "version", "type": "version", "status": "ARCHIVED_VERSION"}]}
+        before = deepcopy(graph)
+        nodes = build_archive_display(graph)["nodes"]
+        self.assertEqual([(n["display_kind"], n["shape"]) for n in nodes],
+                         [("执行", "square"), ("回执", "ring"), ("共同前提", "diamond"),
+                          ("实验", "square"), ("执行尝试", "square"), ("历史版本", "ring")])
+        self.assertTrue(all(n["outline"]["state"] == "neutral" for n in nodes))
+        self.assertEqual(nodes[0]["status_text"], "未判定")
+        self.assertEqual(nodes[5]["status_text"], "历史版本")
+        self.assertEqual(graph, before)
+
     def test_manifest_sha_length_and_unique_entry_are_required(self):
         raw = encoded(fixture())
         for field, value in (("bytes", len(raw) + 1), ("sha256", "0" * 64)):
