@@ -32,7 +32,6 @@ def _section(rows, source, pointer):
 
 def _report(store, ref):
     """Only the ledger's CAS reference is accepted, never an external JSON path."""
-    from rds_math import read_bytes
     require(isinstance(ref, dict), 'Owned report reference missing')
     sha = ref.get('sha256')
     require(isinstance(sha, str) and len(sha) == 64 and
@@ -41,8 +40,15 @@ def _report(store, ref):
     require(path.parent == (store.root / '.rds' / 'cas').resolve()
             and path.name == sha + '.json' and path.is_relative_to(store.root),
             'Owned report is outside its project CAS')
-    raw = read_bytes(path)
-    require(len(raw) == ref['bytes'] and hashlib.sha256(raw).hexdigest() == sha,
+    size = ref.get('bytes')
+    require(type(size) is int and size > 0, 'Owned report byte count invalid')
+    # Reports embed the dependency map plus review metadata; the 8 MiB
+    # research-asset cap is not their bound. Verify before allocating and read
+    # at most the retained count plus one byte to detect concurrent growth.
+    require(path.stat().st_size == size, 'Owned report CAS integrity failure')
+    with path.open('rb') as stream:
+        raw = stream.read(size + 1)
+    require(len(raw) == size and hashlib.sha256(raw).hexdigest() == sha,
             'Owned report CAS integrity failure')
     value = strict_json(raw.decode('utf-8'))
     require(isinstance(value, dict), 'Owned report is not an object')
@@ -61,9 +67,9 @@ def _interaction(plan, contract=None, request_artifact=None):
             'instruction_source': instruction_source,
             'affected_routes': _section(affected, affected_source, affected_pointer),
             'active_work': _section(plan.get('active_work', []), 'project steering', '/active_work'),
-            'continuation': ('REVIEW_MATERIAL_REVISION' if kind == 'change_request' else
+            'continuation': ('NEW_DISPATCH_PAUSED' if steering['paused'] else
+                             'REVIEW_MATERIAL_REVISION' if kind == 'change_request' else
                              'RETAIN_UNVERIFIED_HYPOTHESIS_AND_DESIGN_CHECK' if kind == 'hypothesis' else
-                             'NEW_DISPATCH_PAUSED' if steering['paused'] else
                              'RECONCILE_ORIGINAL_ACTIVE_WORK' if plan.get('active_work') else
                              'CONTINUE_WITH_NORMAL_ADMISSION'),
             'creates_new_approval_gate': False, 'scientific_support': 'UNKNOWN',
@@ -121,6 +127,8 @@ def build(store, draft):
             ('status', 'selected_run', 'selection_basis', 'next_move', 'fingerprint', 'snapshot_sha256')}
         require(all(event.get(k) == report.get(k) for k in
             ('status', 'fingerprint', 'selected_run', 'snapshot_sha256')), 'Owned report and event identities differ')
+        require(report.get('status') == 'REVIEWED',
+                'Owned Advisor report is not a completed review: ' + str(report.get('status', 'UNKNOWN')))
         require(_fingerprint(state) == report['fingerprint'],
                 'Owned contract, budget, steering or evidence state changed since this report')
         saved = current(store.root)

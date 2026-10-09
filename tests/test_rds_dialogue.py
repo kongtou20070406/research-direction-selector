@@ -90,6 +90,75 @@ class DialogueCLITests(unittest.TestCase):
         Path(report['path']).write_text('{"selected_run":"invented"}', encoding='utf-8')
         self.assertIn('integrity failure', self.dialogue()['reason'])
 
+    def test_failed_collection_never_becomes_current_advice(self):
+        self.initialize('nan')
+        self.create()
+        executed = self.execute(ok=False)
+        self.assertEqual(executed.returncode, 2)
+        self.assertEqual(self.snapshot()['runs'][0]['status'], 'COMPLETED')
+        report = self.output('project', 'next', status_codes=(2,))
+        self.assertEqual(report['status'], 'COLLECTION_FAILED')
+        before, count = self.snapshot(), self.event_count()
+        result = self.dialogue()
+        self.assertEqual(result['status'], 'STALE_OR_UNAVAILABLE')
+        self.assertEqual(result['historical_selection']['status'], 'COLLECTION_FAILED')
+        self.assertIn('COLLECTION_FAILED', result['reason'])
+        self.assertIsNone(result['selected_run'])
+        self.assertEqual(result['recommendation'], 'UNKNOWN')
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.event_count(), count)
+        self.assertEqual(self.starts(), ['baseline'])
+
+    def test_retained_pause_precedes_hypothesis_and_revision_continuations(self):
+        self.initialize()
+        self.steer(self.request('pause', ident='retained-pause'))
+        before = self.snapshot()['budget']
+        for kind in ('hypothesis', 'change_request'):
+            with self.subTest(kind=kind):
+                request = self.request(kind, ident='paused-' + kind)
+                received = self.output('project', 'steer', '--request', self.write_json('request.json', request),
+                                       '--user-directed', '--source', 'current-user:paused', '--dialogue')
+                result = received['dialogue']['interaction']
+                self.assertEqual(result['continuation'], 'NEW_DISPATCH_PAUSED')
+                self.assertTrue(result['instruction']['paused'])
+                self.assertEqual(result['instruction']['kind'], kind)
+                self.assertEqual(result['instruction_source']['request_artifact'], received['request_artifact'])
+                self.assertNotEqual(self.create(ok=False).returncode, 0)
+                self.assertEqual(self.snapshot()['budget'], before)
+                self.assertEqual(self.snapshot()['runs'], [])
+                self.assertEqual(self.starts(), [])
+
+    def test_large_owned_report_uses_recorded_size_and_rejects_invalid_sizes(self):
+        self.initialize()
+        self.output('project', 'next', '--brief')
+        from rds_tms_store import current, save
+        from rds_dialogue import _report
+        from rds_math import MAX_BYTES
+        store = ProjectStore(self.root)
+        saved = current(self.root)
+        spec = saved['dependency_map']
+        # Supported near-limit dependency metadata survives the actual owned
+        # collector and makes its CAS report larger than the asset/map cap.
+        spec['synthetic_padding'] = 'x' * (MAX_BYTES - len(canonical(spec).encode('utf-8')) - 1024)
+        self.assertLess(len(canonical(spec).encode('utf-8')), MAX_BYTES)
+        save(self.root, spec, expected=saved['sha256'], source_base=self.root)
+        reviewed = self.output('project', 'next', '--brief')
+        self.assertEqual(reviewed['status'], 'REVIEWED')
+        before, count = self.snapshot(), self.event_count()
+        cas = sorted(p.name for p in (self.root / '.rds/cas').iterdir())
+        result = self.dialogue()
+        self.assertGreater(result['source_report']['bytes'], MAX_BYTES)
+        self.assertEqual(result['status'], 'COMPATIBLE_RECORDED_ADVICE')
+        self.assertEqual(result['selected_run'], 'baseline')
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.event_count(), count)
+        self.assertEqual(sorted(p.name for p in (self.root / '.rds/cas').iterdir()), cas)
+        self.assertEqual(self.starts(), [])
+        ref = result['source_report']
+        for size in (True, 0, -1, '8', 10 ** 100, ref['bytes'] - 1, ref['bytes'] + 1):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                _report(store, {**ref, 'bytes': size})
+
     def test_current_pause_redirect_and_hypothesis_effects_precede_old_advice(self):
         self.initialize(mutate_policy=steering_fixture.SteeringCLITests.independent_routes)
         self.output('project', 'next')
