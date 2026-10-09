@@ -2,6 +2,8 @@
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import shutil
+import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
@@ -26,7 +28,15 @@ class CampaignExportTests(unittest.TestCase):
         self.f = project_fixture.ProjectTests('runTest')
         self.f.setUp()
         self.addCleanup(self.f.tearDown)
-        self.root = self.f.root.resolve()
+        temporary = tempfile.TemporaryDirectory(prefix='rds-export-workspace-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        canonical = self.root / 'canonical'
+        canonical.mkdir()
+        for binding in self.f.contract['bindings']:
+            shutil.copyfile(self.f.root / binding['path'], canonical / binding['path'])
+        self.store = ProjectStore(canonical)
+        self.store.initialize(self.f.contract)
         self.child = self.root / 'sibling'
         self.child.mkdir()
 
@@ -43,7 +53,7 @@ class CampaignExportTests(unittest.TestCase):
 
         def bind():
             started.set()
-            return campaign.bind(self.f.store, self.root)
+            return campaign.bind(self.store, self.root)
 
         with ThreadPoolExecutor(max_workers=2) as pool, patch.object(module, attribute, pause):
             writing = pool.submit(operation)
