@@ -322,6 +322,116 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                     check()
             self.assertEqual(store.snapshot(), before)
 
+    def test_perl_cwd_options_reject_before_frozen_main_binding(self):
+        # Parser/admission over a real native project; no Perl execution claim.
+        # Only absent Perl resolver metadata is stubbed, as in the PHP boundary.
+        with tempfile.TemporaryDirectory() as directory:
+            root, store = example.build(Path(directory) / 'project')
+            before = store.snapshot()
+            (root / 'worker.pl').write_text('print "frozen root worker"\n', encoding='utf-8')
+            (root / 'sub').mkdir()
+            (root / 'sub' / 'worker.pl').write_text('print "unbound child worker"\n', encoding='utf-8')
+            contract = deepcopy(before['contract'])
+            binding = next(b for b in contract['bindings'] if b['path'] == 'worker.py')
+            binding.update(path='worker.pl', sha256=file_sha(root / 'worker.pl'))
+            original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+            perl = shutil.which('perl')
+            executable = perl or str(Path(sys.executable).with_name('perl.exe' if sys.platform == 'win32' else 'perl'))
+            available = {path for name in ('perl', 'perl5.42', 'Perl5.44.exe')
+                         if (path := shutil.which(name))}
+            executables = [executable, *[shutil.which(name) or str(Path(sys.executable).with_name(name))
+                                        for name in ('perl5.42', 'Perl5.44.exe')]]
+            options = [['-S'], ['-wS'], ['-nS'], ['-wS', '-n'],
+                       ['-xsub'], ['-wxsub'], ['-x..'], ['-xsub', '-x.'],
+                       ['-0xsub'], ['-0777S'], ['-l0777S'], ['-dS'],
+                       ['-iSbackup -S'], ['-iSbackup -xsub'], ['-FS -S'],
+                       ['-FS -xsub'], ['-wiSbackup -S']]
+            for executable, option in [(entry, option) for entry in executables for option in options]:
+                argv = [executable, *option, 'worker.pl']
+                with self.subTest(executable=executable, option=option, boundary='parser'):
+                    with self.assertRaisesRegex(ValueError, 'lookup cwd'):
+                        jump._interpreter_script_operand(argv)
+                for declaration in ('explicit', 'legacy'):
+                    with self.subTest(executable=executable, option=option, boundary='binding', declaration=declaration):
+                        plan = deepcopy(original)
+                        if declaration == 'legacy':
+                            plan.pop('generator_code_paths')
+                        else:
+                            plan['generator_code_paths'][0] = 'worker.pl'
+                        for stage in plan['stages']:
+                            stage['run']['argv'] = argv
+                        if executable in available:
+                            with self.assertRaisesRegex(ValueError, 'lookup cwd'):
+                                jump._generator_bindings(store, contract, plan)
+                        else:
+                            with patch.object(store, '_command', return_value=executable):
+                                with self.assertRaisesRegex(ValueError, 'lookup cwd'):
+                                    jump._generator_bindings(store, contract, plan)
+            for options in (['-we', '1'], ['-nE1'], ['-V:S'], ['--help']):
+                self.assertIsNone(jump._interpreter_script_operand([executables[0], *options, 'worker.pl']))
+            self.assertEqual(store.snapshot(), before)
+
+    def test_perl_literal_main_and_option_values_preserve_frozen_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, store = example.build(Path(directory) / 'project')
+            before = store.snapshot()
+            original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+            perl = shutil.which('perl')
+            executable = perl or str(Path(sys.executable).with_name('perl.exe' if sys.platform == 'win32' else 'perl'))
+            available = {path for name in ('perl', 'perl5.42', 'Perl5.44.exe')
+                         if (path := shutil.which(name))}
+            executables = [executable, *[shutil.which(name) or str(Path(sys.executable).with_name(name))
+                                        for name in ('perl5.42', 'Perl5.44.exe')]]
+            cases = [('worker.pl', []), ('worker.pl', ['-w']),
+                     ('worker.pl', ['-I', 'Sdirectory']), ('worker.pl', ['-ISdirectory']), ('worker.pl', ['-IS directory']),
+                     ('worker.pl', ['-m', 'Shelper']), ('worker.pl', ['-mShelper']),
+                     ('worker.pl', ['-M', 'Shelper']), ('worker.pl', ['-MShelper']),
+                     ('worker.pl', ['-FS']), ('worker.pl', ['-F']),
+                     ('worker.pl', ['-iSbackup']), ('worker.pl', ['-iS']), ('worker.pl', ['-i']),
+                     ('worker.pl', ['-CS']), ('worker.pl', ['-CSDL']),
+                     ('worker.pl', ['-0x53']), ('worker.pl', ['-0777']),
+                     ('worker.pl', ['-l0777']), ('worker.pl', ['-x']),
+                     ('worker.pl', ['-wx']), ('worker.pl', ['-d:Shelper']), ('worker.pl', ['-dt:Shelper']),
+                     ('worker.pl', ['-d:Module=argument with space']),
+                     ('worker.pl', ['-DS']), ('-Sworker.pl', ['--']),
+                     ('-xworker.pl', ['--']), ('worker with space.pl', ['--'])]
+            for executable, (filename, options) in [(entry, case) for entry in executables for case in cases]:
+                (root / filename).write_text('print "frozen literal worker"\n', encoding='utf-8')
+                # A cwd-looking argument after the main is a script argument;
+                # after -- even the main filename itself must remain literal.
+                argv = [executable, *options, filename, '-xsub', '-S']
+                self.assertEqual(jump._interpreter_script_operand(argv), (len(argv) - 3, filename))
+                for declaration in ('explicit', 'legacy'):
+                    for role in ('missing', 'data', 'code'):
+                        with self.subTest(executable=executable, filename=filename, options=options, declaration=declaration, role=role):
+                            contract, plan = deepcopy(before['contract']), deepcopy(original)
+                            binding = next(b for b in contract['bindings'] if b['path'] == 'worker.py')
+                            binding.update(path=filename, sha256=file_sha(root / filename))
+                            if role == 'missing':
+                                contract['bindings'].remove(binding)
+                            else:
+                                binding['role'] = role
+                            if declaration == 'legacy':
+                                plan.pop('generator_code_paths')
+                            elif role == 'code':
+                                plan['generator_code_paths'][0] = filename
+                            else:
+                                plan['generator_code_paths'].remove('worker.py')
+                            for stage in plan['stages']:
+                                stage['run']['argv'] = argv
+                            def check():
+                                if role == 'code':
+                                    self.assertTrue(jump._generator_bindings(store, contract, plan))
+                                else:
+                                    with self.assertRaisesRegex(ValueError, 'entrypoint.*frozen code'):
+                                        jump._generator_bindings(store, contract, plan)
+                            if executable in available:
+                                check()
+                            else:
+                                with patch.object(store, '_command', return_value=executable):
+                                    check()
+            self.assertEqual(store.snapshot(), before)
+
     def test_php_attached_file_operand_preserves_code_role_and_declaration(self):
         # Parser/admission unit boundary over a native project. PHP execution is
         # not claimed or required; real Node execution is covered above.

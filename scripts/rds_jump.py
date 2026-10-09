@@ -350,6 +350,75 @@ def _ruby_script_operand(argv):
     return None
 
 
+def _perl_script_operand(argv):
+    """Locate Perl's literal main, rejecting unsupported cwd/PATH lookup.
+
+    Short-option consumption follows Perl 5.44 perl.c parse_body/moreswitches;
+    module/include/debug/Unicode values must not become effective -S options.
+    This checks main identity, not arbitrary imported dependencies.
+    """
+    index = 1
+    while index < len(argv):
+        option = argv[index]
+        if option == '--':
+            return index + 1 if index + 1 < len(argv) else None
+        if option == '-':
+            return None
+        if not option.startswith('-'):
+            return index
+        if option in {'--help', '--version'}:
+            return None
+        offset = 1
+        while offset < len(option):
+            flag = option[offset]
+            offset += 1
+            if flag == 'S':
+                require(False, 'Perl lookup cwd/PATH options are unsupported')
+            if flag == 'x':
+                require(offset == len(option), 'Perl lookup cwd/PATH options are unsupported')
+                break  # Bare -x strips the script prefix; no directory argument.
+            if flag in 'eEVhv?':
+                return None  # Inline/configuration/help has no main file.
+            if flag in 'ImM':
+                if offset == len(option):
+                    require(index + 1 < len(argv), 'Perl option value is missing')
+                    index += 1
+                break  # Entire attached remainder or next argv is the value.
+            if flag in 'Fi':
+                # Perl stops these values at whitespace and can resume options
+                # in the same argv. Reject that ambiguous lookup conservatively.
+                require(not re.search(r'[ \t\r\n\f\v]', option[offset:]),
+                        'Perl lookup cwd/PATH options are unsupported')
+                break  # Safe attached pattern/backup suffix, never next argv.
+            if flag == 'C':
+                value = re.match(r'(?:[0-9]+|[IOESioDALa]+)', option[offset:])
+                offset += len(value.group()) if value else 0
+            elif flag == '0':
+                rest = option[offset:]
+                if rest.startswith('x') and re.fullmatch(r'x[0-9a-fA-F]+', rest):
+                    offset = len(option)
+                else:
+                    value = re.match(r'[0-7]{0,3}', rest)
+                    offset += len(value.group())
+            elif flag == 'l':
+                rest = option[offset:]
+                value = re.match(r'[0-7]{0,' + ('4' if rest.startswith('0') else '3') + '}', rest)
+                offset += len(value.group())
+            elif flag == 'd':
+                if option[offset:offset + 1] == 't' and not re.match(r'\w', option[offset + 1:offset + 2]):
+                    offset += 1
+                if option[offset:offset + 1] in {':', '='}:
+                    break  # Debugger module and arguments consume the remainder.
+            elif flag == 'D':
+                value = re.match(r'\w*', option[offset:])
+                offset += len(value.group())
+            else:
+                require(flag in 'acfg npsutTUwWX'.replace(' ', ''),
+                        'Unsupported Perl option before main script')
+        index += 1
+    return None
+
+
 def _interpreter_script_operand(argv):
     """Return (argv index, literal main path) for supported interpreters.
 
@@ -363,6 +432,8 @@ def _interpreter_script_operand(argv):
         return file_at(_python_script_operand(argv))
     if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', name):
         return file_at(_ruby_script_operand(argv))
+    if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', name):
+        return file_at(_perl_script_operand(argv))
     shells = {'sh', 'bash', 'dash', 'ksh', 'zsh'}
     if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:
         return None
