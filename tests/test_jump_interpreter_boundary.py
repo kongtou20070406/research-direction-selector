@@ -117,7 +117,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                 for stage in plan['stages']:
                     command = next(a for a in contract['allowed_commands'] if a == stage['run']['argv'])
                     output = command[4].replace('.json', '.opaque')
-                    command[:] = [interpreter, '-r', 'node:fs', '--', 'launch-node', stage['kind'], output, 'inputs.opaque']
+                    command[:] = ['node', '-r', 'node:fs', '--', 'launch-node', stage['kind'], output, 'inputs.opaque']
                     stage['run']['argv'] = command
                     stage['output'] = output
                     stage['run']['outpaths'] = [output]
@@ -259,11 +259,14 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                     plan['generator_code_paths'].append('worker')
                             for stage in plan['stages']:
                                 stage['run']['argv'] = [parser_executable, *option, '--', stage['kind'], stage['output']]
-                            if role == 'code':
-                                self.assertTrue(jump._generator_bindings(store, contract, plan))
-                            else:
-                                with self.assertRaisesRegex(ValueError, 'entrypoint.*frozen code'):
-                                    jump._generator_bindings(store, contract, plan)
+                            # Only resolver metadata is a stub for this PHP
+                            # parser-only case; native Node uses the real kernel.
+                            with patch.object(store, '_command', return_value=parser_executable):
+                                if role == 'code':
+                                    self.assertTrue(jump._generator_bindings(store, contract, plan))
+                                else:
+                                    with self.assertRaisesRegex(ValueError, 'entrypoint.*frozen code'):
+                                        jump._generator_bindings(store, contract, plan)
             self.assertEqual(store.snapshot(), before)
 
 

@@ -374,7 +374,9 @@ def _generator_bindings(store, contract, plan):
                     'Generator code paths must be distinct frozen code bindings')
             identities.append(identity)
     for stage in plan['stages']:
-        operand = _interpreter_script_operand(stage['run']['argv'])
+        argv = stage['run']['argv']
+        executable = Path(store._command(argv)).resolve()
+        operand = _interpreter_script_operand([str(executable), *argv[1:]])
         script_operand, script_path = operand if operand is not None else (None, None)
         data_or_output = {_code_identity(store, b['path']) for b in contract['bindings'] if b['role'] != 'code'}
         data_or_output.update(_code_identity(store, p) for p in stage['run']['outpaths'])
@@ -386,7 +388,7 @@ def _generator_bindings(store, contract, plan):
             if index == script_operand:
                 candidate = script_path
             try:
-                path = Path(candidate)
+                path = executable if index == 0 else Path(candidate)
                 path = (path if path.is_absolute() else store.root / path).resolve()
                 if not path.is_relative_to(store.root.resolve()):
                     require(index != script_operand,
@@ -437,6 +439,9 @@ def load_plan(store, state):
                 and isinstance(run.get('id'), str) and run['id'] not in ids,
                 'Jump routes need distinct tool run IDs')
         require(run.get('argv') in state['contract']['allowed_commands'], 'Jump command is not authorized')
+        if 'advisor_policy' in state['contract']:
+            require(any(route['manifest'] == run for route in state['contract']['advisor_policy']['routes']),
+                    'Jump stage must exactly match a frozen Advisor route')
         require(isinstance(run.get('outpaths'), list) and isinstance(stage['output'], str)
                 and stage['output'] in run['outpaths'], 'Jump output must be declared by its run')
         require(not outputs.intersection(run['outpaths']), 'Jump routes must not overwrite prior outputs')

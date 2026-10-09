@@ -8,8 +8,9 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts'))
@@ -24,6 +25,18 @@ spec.loader.exec_module(fixture)
 jump_spec = importlib.util.spec_from_file_location('reservation_jump_fixture', REPO / 'examples/jump-generation/run.py')
 jump_fixture = importlib.util.module_from_spec(jump_spec)
 jump_spec.loader.exec_module(jump_fixture)
+
+
+class ControllerClock:
+    """Deterministic module-local intervals; native worker clocks stay real."""
+
+    def __init__(self):
+        self.value = 10.
+        self.monotonic = Mock(side_effect=lambda: self.value)
+        self.binding = SimpleNamespace(monotonic=self.monotonic)
+
+    def advance(self, elapsed):
+        self.value += elapsed
 
 
 class StructureControlReservationTests(unittest.TestCase):
@@ -41,30 +54,44 @@ class StructureControlReservationTests(unittest.TestCase):
                     if e['kind'] == structure.PREFIX + 'CONTROL_FINISHED' and e['id'] == ident)
 
     def test_parent_reserves_full_allowance_and_children_bill_one_total(self):
-        before = self.budget()
-        with structure.reserved_control(self.store, 'test-parent', 14) as parent:
-            reserved = self.budget()
-            self.assertEqual(reserved['reserved'], before['reserved'] + 14)
-            self.assertEqual(reserved['spent_measured'], before['spent_measured'])
-            children = []
-            for name in ('first-child', 'second-child'):
-                with structure._meter(self.store, name) as child:
-                    children.append(child.id)
-                    time.sleep(.01)
-                    self.assertEqual(self.budget(), reserved)
-            self.assertEqual(self.budget(), reserved)
-            self.assertEqual(parent.used, 4)
-        after = self.budget()
-        settled = self.finished(parent.id)
-        self.assertEqual(after['reserved'], before['reserved'])
-        self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], settled['wall_seconds'])
-        self.assertGreater(settled['wall_seconds'], 0)
-        self.assertEqual(after['charged_estimate'], before['charged_estimate'])
-        for ident in children:
-            event = self.finished(ident)
-            self.assertEqual(event['reservation_owner'], parent.id)
-            self.assertEqual(event['accounting'], 'PARENT_STRUCTURE_RESERVATION')
-        self.assertEqual(self.store.snapshot()['receipts'], [])
+        shared_monotonic = time.monotonic
+        for elapsed in (.25, 0.):
+            with self.subTest(elapsed=elapsed):
+                before, clock = self.budget(), ControllerClock()
+                with patch.object(structure, 'time', clock.binding):
+                    with structure.reserved_control(self.store, 'test-parent', 14) as parent:
+                        reserved = self.budget()
+                        self.assertEqual(reserved['reserved'], before['reserved'] + 14)
+                        self.assertEqual(reserved['spent_measured'], before['spent_measured'])
+                        children = []
+                        for name in ('first-child', 'second-child'):
+                            with structure._meter(self.store, name) as child:
+                                children.append(child.id)
+                                clock.advance(elapsed)
+                                self.assertEqual(self.budget(), reserved)
+                        self.assertEqual(self.budget(), reserved)
+                        self.assertEqual(parent.used, 4)
+                after = self.budget()
+                settled = self.finished(parent.id)
+                self.assertEqual(settled['wall_seconds'], 2 * elapsed)
+                self.assertEqual(clock.monotonic.call_count, 6)
+                self.assertEqual(after['reserved'], before['reserved'])
+                self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], settled['wall_seconds'])
+                if elapsed:
+                    self.assertGreater(settled['wall_seconds'], 0)
+                else:
+                    self.assertEqual(settled['wall_seconds'], 0)
+                self.assertEqual(after['charged_estimate'], before['charged_estimate'])
+                for ident in children:
+                    event = self.finished(ident)
+                    self.assertEqual(event['wall_seconds'], elapsed)
+                    self.assertEqual(event['reservation_owner'], parent.id)
+                    self.assertEqual(event['accounting'], 'PARENT_STRUCTURE_RESERVATION')
+                self.assertFalse(parent.active)
+                self.assertNotIn(parent.id, structure._ACTIVE_RESERVATIONS)
+                self.assertEqual(self.store.snapshot()['receipts'], [])
+                self.assertIs(structure.time, time)
+                self.assertIs(time.monotonic, shared_monotonic)
 
     def test_original_worker_receipt_is_paid_separately_from_suspended_parent(self):
         task = structure.request(self.root)['tasks'][0]
@@ -89,20 +116,45 @@ class StructureControlReservationTests(unittest.TestCase):
         self.assertEqual(len(self.store.snapshot()['receipts']), 1)
 
     def test_worker_pause_exception_restores_controller_and_preserves_cost(self):
-        before = self.budget()
-        with structure.reserved_control(self.store, 'pause-failure', 2) as parent:
-            with self.assertRaisesRegex(RuntimeError, 'wait failed'):
-                with parent.suspend():
-                    time.sleep(.01)
-                    raise RuntimeError('wait failed')
-            self.assertFalse(parent.paused)
-            with structure._meter(self.store, 'after-wait-failure'):
-                pass
-        after = self.budget()
-        self.assertGreater(parent.suspended, 0)
-        self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'],
-                               self.finished(parent.id)['wall_seconds'])
-        self.assertEqual(after['reserved'], before['reserved'])
+        shared_monotonic = time.monotonic
+        for elapsed in (.25, 0.):
+            with self.subTest(elapsed=elapsed):
+                before, clock = self.budget(), ControllerClock()
+                with patch.object(structure, 'time', clock.binding):
+                    with structure.reserved_control(self.store, 'pause-failure', 2) as parent:
+                        with self.assertRaisesRegex(RuntimeError, 'wait failed'):
+                            with parent.suspend():
+                                self.assertTrue(parent.paused)
+                                self.assertTrue(parent.active)
+                                clock.advance(elapsed)
+                                raise RuntimeError('wait failed')
+                        self.assertFalse(parent.paused)
+                        self.assertTrue(parent.active)
+                        self.assertEqual(parent.suspended, elapsed)
+                        self.assertIs(structure._CONTROL_RESERVATION.get(), parent)
+                        with structure._meter(self.store, 'after-wait-failure') as child:
+                            clock.advance(.125)
+                after = self.budget()
+                if elapsed:
+                    self.assertGreater(parent.suspended, 0)
+                else:
+                    self.assertEqual(parent.suspended, 0)
+                settled = self.finished(parent.id)
+                self.assertEqual(settled['wall_seconds'], .125)
+                self.assertEqual(self.finished(child.id)['wall_seconds'], .125)
+                self.assertEqual(self.finished(child.id)['reservation_owner'], parent.id)
+                self.assertEqual(parent.used, 2)
+                self.assertEqual(clock.monotonic.call_count, 6)
+                self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], settled['wall_seconds'])
+                self.assertEqual(after['reserved'], before['reserved'])
+                self.assertEqual(after['charged_estimate'], before['charged_estimate'])
+                self.assertFalse(parent.active)
+                self.assertFalse(parent.paused)
+                self.assertNotIn(parent.id, structure._ACTIVE_RESERVATIONS)
+                self.assertIsNone(structure._CONTROL_RESERVATION.get())
+                self.assertEqual(self.store.snapshot()['receipts'], [])
+                self.assertIs(structure.time, time)
+                self.assertIs(time.monotonic, shared_monotonic)
 
     def test_copied_context_cannot_pause_or_borrow_from_another_thread(self):
         with structure.reserved_control(self.store, 'thread-owner', 2) as parent:
@@ -267,13 +319,17 @@ class JumpControlBillingTests(unittest.TestCase):
     def test_fresh_jump_worker_excludes_only_paid_native_time_and_keeps_wrapper_costs(self):
         _, store, stage, request = self.prepare()
         before = store.snapshot()['budget']['wall_seconds']
+        clock = ControllerClock()
         execute = ProjectStore.execute
         def wrapped(caller, ident, **kwargs):
             time.sleep(.03)  # Real controller work before native admission.
+            clock.advance(.0625)  # Explicit controller interval, not a sleep lower bound.
             receipt = execute(caller, ident, **kwargs)
+            clock.advance(receipt['resources']['wall_seconds']['measured'])
             time.sleep(.03)  # Real controller work after native settlement.
+            clock.advance(.0625)
             return receipt
-        with structure.reserved_control(store, 'billing-fresh', 2) as parent:
+        with patch.object(structure, 'time', clock.binding), structure.reserved_control(store, 'billing-fresh', 2) as parent:
             with patch.object(ProjectStore, 'execute', wrapped):
                 receipt = rds_jump._execute_stage(store, stage, request, parent)
             self.assertEqual(receipt['run_status'], 'SUCCEEDED')
@@ -285,26 +341,32 @@ class JumpControlBillingTests(unittest.TestCase):
         after = store.snapshot()['budget']['wall_seconds']
         charged = self.finished(store, parent)['wall_seconds']
         self.assertGreaterEqual(charged, .06)
+        self.assertAlmostEqual(charged, .125)
         self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], paid + charged)
         self.assertEqual(after['charged_estimate'], before['charged_estimate'])
         self.assertEqual(after['reserved'], 0)
         self.assertEqual(store.snapshot()['receipts'], [receipt])
+        self.assertIs(structure.time, time)
 
     def test_completed_competitor_receipt_cannot_discount_a_later_observer(self):
         _, store, stage, request = self.prepare(observation=True)
         before = store.snapshot()['budget']['wall_seconds']
+        clock = ControllerClock()
         execute = ProjectStore.execute
         competitors = []
         def observed(caller, ident, **kwargs):
             time.sleep(.03)
+            clock.advance(.0625)
             competitors.append(execute(ProjectStore(store.root), ident))
+            clock.advance(competitors[-1]['resources']['wall_seconds']['measured'])
             # The caller reaches the real kernel only after the other claim
             # settled. Its admission guard is not invoked for this observation.
             result = execute(caller, ident, **kwargs)
             self.assertFalse(result['execution_started'])
             time.sleep(.03)
+            clock.advance(.0625)
             return result
-        with structure.reserved_control(store, 'billing-completed-observer', 2) as parent:
+        with patch.object(structure, 'time', clock.binding), structure.reserved_control(store, 'billing-completed-observer', 2) as parent:
             with patch.object(ProjectStore, 'execute', observed):
                 result = rds_jump._execute_stage(store, stage, request, parent)
             self.assertEqual(len(competitors), 1)
@@ -315,15 +377,18 @@ class JumpControlBillingTests(unittest.TestCase):
         after = store.snapshot()['budget']['wall_seconds']
         charged = self.finished(store, parent)['wall_seconds']
         self.assertGreaterEqual(charged, .06)
+        self.assertAlmostEqual(charged, original['resources']['wall_seconds']['measured'] + .125)
         self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'],
                                original['resources']['wall_seconds']['measured'] + charged)
         self.assertEqual(after['reserved'], 0)
         self.assertEqual(after['charged_estimate'], before['charged_estimate'])
         self.assertEqual(store.snapshot()['receipts'], [original])
+        self.assertIs(structure.time, time)
 
     def test_active_competitor_observation_preserves_full_control_bill_and_one_receipt(self):
         _, store, stage, request = self.prepare(slow=True, observation=True)
         before = store.snapshot()['budget']['wall_seconds']
+        clock = ControllerClock()
         results, errors = [], []
         execute = ProjectStore.execute
         def compete():
@@ -342,13 +407,15 @@ class JumpControlBillingTests(unittest.TestCase):
                 time.sleep(.005)
             self.assertEqual(run['status'], 'RUNNING')
             time.sleep(.03)
+            clock.advance(.0625)
             result = execute(caller, ident, **kwargs)
             self.assertEqual(result['run_status'], 'RUNNING')
             self.assertFalse(result['execution_started'])
             time.sleep(.03)
+            clock.advance(.0625)
             return result
         try:
-            with structure.reserved_control(store, 'billing-active-observer', 2) as parent:
+            with patch.object(structure, 'time', clock.binding), structure.reserved_control(store, 'billing-active-observer', 2) as parent:
                 with patch.object(ProjectStore, 'execute', observed):
                     result = rds_jump._execute_stage(store, stage, request, parent)
                 self.assertEqual(result['run_status'], 'RUNNING')
@@ -365,11 +432,13 @@ class JumpControlBillingTests(unittest.TestCase):
         after = store.snapshot()['budget']['wall_seconds']
         charged = self.finished(store, parent)['wall_seconds']
         self.assertGreaterEqual(charged, .06)
+        self.assertAlmostEqual(charged, .125)
         self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'],
                                receipt['resources']['wall_seconds']['measured'] + charged)
         self.assertEqual(after['reserved'], 0)
         self.assertEqual(after['charged_estimate'], before['charged_estimate'])
         self.assertEqual(store.snapshot()['receipts'], [receipt])
+        self.assertIs(structure.time, time)
 
 
 if __name__ == '__main__':
