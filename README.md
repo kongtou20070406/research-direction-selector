@@ -12,11 +12,11 @@
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 [![tests](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml)
 
-**Your agent proposes. The program keeps the books.**
+**Your agent discusses the research with you. The program keeps the evidence.**
 
 **Evidence-driven autoresearch for academic research.**
 
-A local research kernel for academic research and agent-driven experiment workflows with Codex, Claude Code and other coding agents. It freezes goals, inputs and evaluators before execution, reserves budgets, preserves execution receipts and carries recorded evidence across sessions. Use it to plan bounded experiments, recover interrupted work and verify supported results.
+A research Skill and local kernel for academic research and agent-driven experiment workflows with Codex, Claude Code and other coding agents. It freezes goals, inputs and evaluators before execution, reserves budgets, preserves execution receipts and carries recorded evidence across sessions. Use it to plan bounded experiments, recover interrupted work and verify supported results.
 
 [RDS in autoresearch workflows](docs/autoresearch.md) · [CPU receipt and recovery example](examples/autoresearch-receipts/README.md) · [Cite this software](CITATION.cff)
 
@@ -139,6 +139,21 @@ The five components are responsibilities in one loop. Advisor is the decision in
 ## Skill: agent-first research guidance
 
 The Skill is what your agent reads. It tells the agent when to call the kernel, how to state a fair comparison, and how to report results without upgrading `UNKNOWN` to success.
+
+With the Skill loaded, the host agent should initiate a short research discussion
+at the start and when evidence, explanations, direction or resource constraints
+change the next decision. It explains its current judgment, recommends a useful
+step and asks a focused question when the answer genuinely changes the work.
+Already authorized work continues; questions and confirmations are not required
+every round.
+
+You can say, "This result makes me doubt our explanation," or "Pause new runs;
+first inspect whether the control was fair." The agent discusses the evidence
+and explains the actual consequences of your instruction. The CLI supplies
+inspectable records; conversation is the host agent's responsibility. See
+[planning and steering](docs/planning-and-steering.md#host-initiated-research-discussion).
+This is Skill guidance; conversation quality and scientific benefit still need
+real-agent evaluation.
 
 ### Install
 

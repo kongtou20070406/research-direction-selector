@@ -12,7 +12,7 @@
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 [![tests](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml/badge.svg)](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml)
 
-**Agent が提案し、プログラムが帳簿をつける。**
+**Agent があなたと研究を進め、プログラムが証拠を残す。**
 
 Codex、Claude Code などのコーディング Agent のためのローカル研究カーネルです。実験が何を示すべきかを事前に凍結し、コストの高いジョブを一度だけ実行し、Agent が書き換えられないレシートを残し、すでに失敗したことを覚えています。次の一手は、コンテキストウィンドウの記憶ではなく、記録された証拠から決まります。
 
@@ -139,6 +139,10 @@ flowchart TD
 ## Skill：Agent を入口とする研究支援
 
 Skill は Agent が読む部分です。いつカーネルを呼ぶか、公平な比較をどう述べるか、`UNKNOWN` を成功に格上げせずに結果をどう報告するかを Agent に示します。
+
+Skill を読み込んだホスト Agent は、研究の開始時や、証拠・説明・方向・資源の制約が次の判断を変えるときに、短い対話を自ら始めます。現在の判断を説明し、有用な次の一手を勧め、答えが作業を変える場合に的を絞った質問をします。許可済みの作業は継続し、毎回の質問や確認は必要ありません。
+
+「この結果を見ると、元の説明に疑問があります」「新しい実験を止め、まず対照が公平か確認してください」のように話せます。Agent は証拠を議論し、指示が実際に何へ影響したかを説明します。CLI は確認可能な記録を提供し、対話はホスト Agent が担います。詳しくは[計画と方向変更](docs/planning-and-steering.md#host-initiated-research-discussion)を参照してください。これは Skill の行動指針であり、対話の質と科学的な利益には実際の Agent による評価が必要です。
 
 ### インストール
 

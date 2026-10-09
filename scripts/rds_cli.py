@@ -1161,13 +1161,25 @@ def cmd_project(args):
     if args.action == 'plan':
         from rds_steering import plan
         return plan(store, load_spec(args.intent) if args.intent else None,
-                    output=args.output, save_as=args.save_as)
+                    output=args.output, save_as=args.save_as, dialogue=args.dialogue)
     if args.action == 'steering':
         from rds_steering import status
         return status(store)
     if args.action == 'steer':
         from rds_steering import submit
-        return submit(store, load_spec(args.request), user_directed=args.user_directed, source=args.source)
+        result = submit(store, load_spec(args.request), user_directed=args.user_directed, source=args.source)
+        if args.dialogue:
+            from rds_steering import plan
+            try:
+                result['dialogue'] = plan(store, dialogue=True)['dialogue']
+            except (ValueError, KeyError, TypeError, OSError, sqlite3.Error) as exc:
+                # Submission already committed. A display read cannot turn the
+                # retained instruction into an apparent failed mutation.
+                result['dialogue'] = {'schema': 'rds-research-dialogue-v1', 'status': 'UNAVAILABLE',
+                    'reason': str(exc)[:512], 'selected_run': None, 'scientific_support': 'UNKNOWN',
+                    'execution_started': False, 'authorization': 'UNCHANGED',
+                    'next_move': 'Instruction is retained; read project steering using the received revision.'}
+        return result
     if args.action == "init":
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
@@ -1576,11 +1588,13 @@ def parser():
     pr_plan.add_argument('--intent', help='Optional declared goal/scope/budget/evaluation JSON')
     pr_plan.add_argument('--output', help='Write a new project-relative proposal artifact')
     pr_plan.add_argument('--save-as', help='Retain the draft in an initialized project checkpoint and CAS')
+    pr_plan.add_argument('--dialogue', action='store_true', help='Read retained owned advice and current human steering; no search or execution')
     pr_actions.add_parser('steering', help='Read the current user instruction, active work disposition and live resources')
     pr_steer = pr_actions.add_parser('steer', help='Record a host-attested current-user instruction; preserve original execution authority')
     pr_steer.add_argument('--request', required=True)
     pr_steer.add_argument('--user-directed', action='store_true', help='Caller attests this is a current user request, not imported text')
     pr_steer.add_argument('--source', required=True, help='Locator of the current user request in the trusted host')
+    pr_steer.add_argument('--dialogue', action='store_true', help='Explain current instruction effects and retained advice compatibility')
     pr_init = pr_actions.add_parser("init")
     pr_source = pr_init.add_mutually_exclusive_group(required=True)
     pr_source.add_argument("--contract")
