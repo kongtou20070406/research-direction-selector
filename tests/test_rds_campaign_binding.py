@@ -233,9 +233,14 @@ class CampaignBindingTests(unittest.TestCase):
         with patch.object(campaign, '_publish', side_effect=OSError('publication stopped')):
             with self.assertRaises(OSError):
                 campaign.bind(self.store, self.workspace)
-        with self.assertRaisesRegex(ValueError, 'another identity'):
+        original, snapshot = self.events(), self.store.snapshot()
+        self.assertEqual(len(original), 1)
+        with self.assertRaisesRegex(ValueError, 'Conflicting foreign campaign binding intent'):
             campaign.bind(self.store, self.root)
         self.assertFalse((self.root / campaign.MARKER).exists())
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.events(), original)
+        self.assertEqual(self.store.snapshot(), snapshot)
 
     def test_workspace_must_be_existing_project_ancestor(self):
         sibling = self.workspace / 'sibling'
