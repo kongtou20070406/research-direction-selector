@@ -303,12 +303,95 @@ class ContinuationTests(unittest.TestCase):
                        'expected_revision': snap.get('steering', {}).get('revision')}
             self.f.call('project', 'steer', '--request', self.f.write_json('steer.json', request),
                         '--user-directed', '--source', 'current-user-message:continuation-test')
-            out = self.drive()
+            if kind == 'resume':
+                # Isolate the full steering/collection semantics from controller
+                # throughput. Workers, their deadlines and the ledger stay real;
+                # this controller-only clock is not a wall-time measurement.
+                clock = SimpleNamespace(monotonic=lambda: 0., time=autonomy.time.time)
+                with patch.object(autonomy, 'time', clock):
+                    out = autonomy.drive(ProjectStore(self.f.root), until_judgment=True,
+                                         controller_wall_seconds=8)
+            else:
+                out = self.drive()
             if kind == 'pause':
                 self.assertEqual(out['status'], 'HUMAN_STEERING_REQUIRED')
                 self.assertEqual(self.f.starts(), [])
                 self.assertEqual(self.f.snapshot()['budget'], snap['budget'])
         self.assertEqual(self.f.starts(), ['baseline', 'repair'])
+        self.assertEqual(out['status'], 'JUDGMENT_REQUIRED', out)
+        after = self.f.snapshot()
+        self.assertFalse(after['steering']['paused'])
+        self.assertEqual([r['run_id'] for r in after['receipts']], ['baseline', 'repair'])
+        self.assertTrue(all(r['run_status'] == 'SUCCEEDED' for r in after['receipts']))
+        self.assertEqual(len({r['attempt_id'] for r in after['receipts']}), 2)
+        self.assertEqual(out['handoff']['goal_status'], 'FALSE')
+        self.assertEqual(out['handoff']['resources'], after['budget'])
+        self.assertAlmostEqual(after['budget']['wall_seconds']['reserved'], 0)
+
+    def test_real_cli_resume_preserves_original_uncertain_attempt_and_allowance(self):
+        self.f.initialize()
+        self.f.create()
+        store = ProjectStore(self.f.root)
+        # A synthetic, still-live original dispatch: resume must observe this
+        # attempt instead of buying another worker. No clock is replaced here.
+        with store._db() as db:
+            run = store._run(db, 'baseline')
+            run.update(attempt_id='uncertain-original', worker_pid=os.getpid())
+            store._save(db, run)
+        original = self.f.snapshot()
+        for kind in ('pause', 'resume'):
+            snap = self.f.snapshot()
+            request = {'id': kind, 'kind': kind, 'message': 'Explicit fixture user direction',
+                       'contract_sha256': snap['contract_sha256'],
+                       'expected_revision': snap.get('steering', {}).get('revision')}
+            self.f.call('project', 'steer', '--request', self.f.write_json('steer.json', request),
+                        '--user-directed', '--source', 'current-user-message:continuation-test')
+            out = self.drive()  # Actual CLI, original 8-second controller allowance.
+            after = self.f.snapshot()
+            self.assertEqual(after['runs'], original['runs'])
+            self.assertEqual(after['contract_sha256'], original['contract_sha256'])
+            self.assertEqual(after['exposures'], original['exposures'])
+            self.assertEqual(after['receipts'], [])
+            self.assertEqual(self.f.starts(), [])
+            if kind == 'pause':
+                self.assertTrue(after['steering']['paused'])
+                self.assertEqual(out['status'], 'HUMAN_STEERING_REQUIRED', out)
+                self.assertEqual(after['budget'], original['budget'])
+                with store._db(True) as db:
+                    self.assertEqual(autonomy._events(db, ('AUTONOMY_DRIVE_CLAIMED',
+                                                          'AUTONOMY_DRIVE_RELEASED')), [])
+            else:
+                self.assertFalse(after['steering']['paused'])
+                self.assertEqual(out['status'], 'WAITING_FOR_ORIGINAL_ATTEMPT', out)
+                self.assertEqual(out['authorization'], 'UNCHANGED')
+                self.assertEqual(out['executed'], [])
+                self.assertEqual(out['handoff']['evidence_status'], 'UNAVAILABLE')
+                self.assertEqual(out['handoff']['goal_status'], 'UNKNOWN')
+        with store._db(True) as db:
+            events = autonomy._events(db, ('AUTONOMY_DRIVE_CLAIMED', 'AUTONOMY_DRIVE_RELEASED'))
+        self.assertEqual([e['kind'] for e in events],
+                         ['AUTONOMY_DRIVE_CLAIMED', 'AUTONOMY_DRIVE_RELEASED'])
+        claim, release = events
+        self.assertEqual(claim['controller_reservation'], 8)
+        self.assertEqual(claim['owner'], release['owner'])
+        self.assertEqual(release['reason'], 'WAITING_FOR_ORIGINAL_ATTEMPT')
+        self.assertEqual(release['executed'], [])
+        elapsed = out['controller_wall_seconds']
+        self.assertGreater(elapsed, 0)
+        self.assertEqual(release['controller_wall_seconds'], elapsed)
+        self.assertEqual(out['handoff']['resources'], after['budget'])
+        for resource, budget in original['budget'].items():
+            expected = dict(budget)
+            if resource == 'wall_seconds':
+                expected['spent_measured'] += min(elapsed, 8)
+                expected['charged_estimate'] += max(elapsed - 8, 0)
+                expected['remaining'] -= elapsed
+            for field, value in expected.items():
+                if isinstance(value, (float, int)):
+                    self.assertAlmostEqual(after['budget'][resource][field], value,
+                                           msg=resource + '.' + field)
+                else:
+                    self.assertEqual(after['budget'][resource][field], value)
 
     def test_control_exhaustion_stops_before_worker_and_releases_hold(self):
         self.f.initialize()
