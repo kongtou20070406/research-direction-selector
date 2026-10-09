@@ -191,7 +191,7 @@ def compare_metrics(candidate, baseline):
         result['reason'] = 'UNSUPPORTED_METRIC_DIRECTION'
     else:
         try:
-            if type(cv) is not type(bv):
+            if isinstance(cv, int) != isinstance(bv, int):
                 exact_delta = Fraction(cv) - Fraction(bv)
                 delta = float(exact_delta)
                 _require(delta != 0 or exact_delta == 0, 'Unrepresentable difference')
@@ -531,7 +531,7 @@ def compare_paired_metrics(candidate, baseline, sampling):
         return result
     try:
         # Mixed subtraction must preserve the inputs before float coercion.
-        differences = [Fraction(c) - Fraction(b) if type(c) is not type(b) else c - b
+        differences = [Fraction(c) - Fraction(b) if isinstance(c, int) != isinstance(b, int) else c - b
                        for c, b in zip(cv, bv)]
         exact_mean = None
         if any(isinstance(v, (int, Fraction)) for v in differences):
