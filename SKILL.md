@@ -30,11 +30,23 @@ ON applicable research request:
     LOAD supporting resources only when the current decision needs them
 
     BEFORE every experiment, including continuation from a child directory:
-        RUN project discover FROM the requested root; inspect requested root and ancestors only
+        IF the user has identified an existing campaign workspace and canonical project:
+            BIND once: project bind-workspace --workspace-root <that existing workspace>
+            FROM the existing canonical root; retain the returned absolute binding path
+            SET RDS_CAMPAIGN_BINDING TO that path in all subsequent command/subprocess environments
+            NEVER invent another workspace, goal or ledger to evade history, failures or budget
+        NOTE: campaign binding is opt-in; existing workflows default to UNBOUND
+        RUN project discover FROM the requested root; a binding takes precedence even in siblings
+        OTHERWISE inspect the requested root and ancestors only
         IF EXISTING_PROJECT: REBIND CLI TO returned project_root; reuse its ledger and budget
         ADD this experiment as a run in that project; do not initialize a project per experiment
         IF no project exists: prepare explicit research declarations before project init
-        USE --separate-project <reason> only for a deliberately independent nested project
+        USE --separate-project <reason> only for a deliberately independent UNBOUND nested project
+        IN a bound campaign, reuse canonical project create/execute/advance:
+            NEVER use a copied contract, successor, legacy reference init or public QUICK exec to start over
+            REPAIR missing/invalid binding or canonical ledger; do not initialize a replacement
+            RETAIN registered-tool read-only receipt checks; public new qualification is refused
+        NOTE: binding guards RDS entry points, not arbitrary host code or the whole operating system
         NEVER use a child directory or exec TO bypass an existing parent project
 
     INPUT := user request + current project evidence + authorized resources

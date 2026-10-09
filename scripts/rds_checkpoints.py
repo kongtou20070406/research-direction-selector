@@ -80,6 +80,8 @@ def read_checkpoint(db, checkpoint_id, *, root):
 def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None, idempotent=False,
                       _owned_run_id=None):
     """Append within an existing transaction; never commit the caller's work."""
+    from rds_campaign import enforce
+    enforce(root, kind=kind)
     if not db.in_transaction:
         raise ValueError('Checkpoint append requires the owning transaction')
     filename = db.execute('PRAGMA database_list').fetchone()[2]
@@ -108,9 +110,12 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
 
 
 def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None):
+    from rds_campaign import enforce
+    enforce(root, kind=kind)
     # Validate before opening a writer, preserving the public save boundary.
     _checkpoint_record(root, checkpoint_id, snapshot, kind=kind, decision=decision)
-    db = sqlite3.connect(_database(root, kind), timeout=15, isolation_level=None)
+    db = sqlite3.connect(_database(root, kind).as_uri() + '?mode=rw', uri=True,
+                         timeout=15, isolation_level=None)
     try:
         db.execute("PRAGMA synchronous=FULL")
         db.execute("BEGIN IMMEDIATE")

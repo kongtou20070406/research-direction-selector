@@ -189,6 +189,9 @@ class RDSState:
         self.db_path = self.directory / "state.sqlite3"
 
     def connect(self, create=False, readonly=False):
+        if not readonly:
+            from rds_campaign import enforce
+            enforce(self.root, kind='reference')
         if create:
             require(not (self.directory / "contract.json").exists(),
                     "Legacy v5 JSON state found; preserve it and initialize a new root")
@@ -1117,10 +1120,13 @@ def cmd_project(args):
     """Run a locked external project without claiming task or mechanism gains."""
     from rds_project import ProjectStore
     from rds_project_lifecycle import check_root, discover, enable_advisor, initialize
-    store = ProjectStore(args.root)
     if args.action == 'discover':
         return discover(args.root)
-    if args.action != 'init':
+    store = ProjectStore(args.root)
+    if args.action == 'bind-workspace':
+        from rds_campaign import bind
+        return {'status': 'BOUND', 'binding': bind(store, args.workspace_root), 'execution_started': False}
+    if args.action not in {'init', 'recover'}:
         check_root(args.root)
     if args.action == 'enable-advisor':
         return enable_advisor(store, load_spec(args.policy), apply=args.apply,
@@ -1527,6 +1533,8 @@ def parser():
     project = commands.add_parser("project", help="Locked local project runner with receipts and resource accounting")
     pr_actions = project.add_subparsers(dest="action", required=True)
     pr_actions.add_parser('discover', help='Find the existing project in this root/ancestors; report mode and next capabilities without execution')
+    pr_bind = pr_actions.add_parser('bind-workspace', help='Bind this workspace to the existing canonical research ledger; preserve history and budget')
+    pr_bind.add_argument('--workspace-root', required=True, help='Existing workspace containing this project and its experiment directories')
     pr_enable = pr_actions.add_parser('enable-advisor', help='Preview or atomically enable Advisor in this same ledger; preserve history and budget')
     pr_enable.add_argument('--policy', required=True, help='Explicit basic owned Advisor policy JSON')
     pr_enable.add_argument('--apply', action='store_true', help='Apply the exact reviewed snapshot; preview by default')
@@ -1749,6 +1757,9 @@ def _main():
         print("[RDS-HINT] python -B scripts/rds_cli.py --root \"" + str(args.root) + "\" project next", file=sys.stderr)
         return 1
     try:
+        from rds_campaign import enforce
+        if not (args.command == 'project' and args.action in {'discover', 'recover'}):
+            enforce(args.root)
         if args.command == "history":
             from rds_obelisk import history_command
             return history_command(args) or 0
@@ -1922,13 +1933,20 @@ def _main():
             from rds_project_lifecycle import describe
             workflow = result.get('workflow') or describe(args.root, quick=args.command in {'exec', 'init'})
             print('[RDS] mode=' + workflow['mode'] + ' advisor=' + workflow['advisor'] +
+                  ' continuity=' + workflow['continuity']['status'] +
                   ' root=' + workflow['project_root'], file=sys.stderr)
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json
+        if args.command == 'project' and args.action == 'recover':
+            from rds_campaign import binding
+            scope = binding(args.root)
+            if scope is not None and Path(args.root).resolve() != Path(scope['project_root']):
+                compact = False  # Recovery may settle an old attempt; it cannot write a new CAS brief.
         if compact:
             from rds_quick import brief
             summary = brief(args.root, result, VERSION)
             if workflow is not None:
-                summary['workflow'] = {key: workflow[key] for key in ('mode', 'advisor', 'next_action')}
+                summary['workflow'] = {key: workflow[key] for key in ('mode', 'advisor')}
+                summary['workflow']['continuity'] = workflow['continuity']['status']
             if args.command == 'rsi' and args.action == 'compare':
                 summary.update({k: result[k] for k in ('correctness', 'comparable_context', 'speedup_ratio',
                                                       'precision', 'precision_key', 'case_count', 'samples_per_tool',

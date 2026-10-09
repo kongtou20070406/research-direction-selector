@@ -1,4 +1,4 @@
-"""Frozen stdlib model adapter executed as an ordinary owned project route.
+"""Frozen model adapter executed as an ordinary owned project route.
 
 It returns source as data. Only the existing method-revision gate can adopt it.
 No credentials, approval policy, sandbox settings or hooks are changed here.
@@ -76,6 +76,14 @@ def provider_command(provider, paths, root):
 
 
 def execute(root, rid):
+    runtime = os.environ.get('RDS_RUNTIME_SCRIPTS')
+    if runtime is not None:
+        runtime_path = Path(runtime)
+        if not runtime_path.is_absolute() or not runtime_path.is_dir():
+            raise ValueError('Owned worker runtime must be an absolute existing directory')
+        sys.path.insert(0, str(runtime_path))
+    from rds_campaign import enforce
+    enforce(root)
     root = Path(root).resolve()
     with sqlite3.connect(root / '.rds/project.sqlite3') as db:
         db.row_factory = sqlite3.Row

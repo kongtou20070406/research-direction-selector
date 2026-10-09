@@ -104,6 +104,8 @@ def extract_function(raw, entry):
 
 
 def extract(root, source, entry, name):
+    from rds_campaign import enforce
+    enforce(root)
     name = _name(name)
     original = read_bytes(source)
     code, included = extract_function(original, entry)
@@ -159,9 +161,12 @@ def _preparation_contract(store, db):
 
 def _begin_preparation(store, request):
     """Freeze qualification intent against init in the existing root ledger."""
+    _qualification_root(store.root)
     from rds_artifacts import strict_json
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
+        from rds_campaign import detached_admission
+        detached_admission(store.root, db)
         if _preparation_contract(store, db):
             return
         db.execute('CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,body TEXT NOT NULL)')
@@ -222,7 +227,16 @@ def _charge_validation(ledger, workspace, token, timeout):
     require(not job.snapshot(check_bindings=True)['binding_check']['errors'], 'Retained validation bindings changed')
 
 
+def _qualification_root(root):
+    from rds_campaign import binding, enforce
+    enforce(root)
+    require(binding(root) is None,
+            'Bound campaign tool qualification requires an existing approved canonical project route; '
+            'public validation cannot create another preparation experiment')
+
+
 def validate(root, name, case_file, timeout=10, ledger=None, *, comparison=None):
+    _qualification_root(root)
     store = ProjectStore(root)
     if store.path.is_file():
         with store._db(True) as db:
@@ -330,6 +344,8 @@ def _check_validation(root, value, candidate):
 
 
 def register(root, name, validation_id=None):
+    from rds_campaign import enforce
+    enforce(root)
     name = _name(name)
     candidate = get(root, 'tool:' + name)
     require(candidate is not None, 'Unknown tool candidate')
@@ -364,6 +380,7 @@ def command(args):
     if args.action == 'validate':
         return validate(args.root, args.name, args.cases, args.timeout, args.ledger)
     if args.action == 'compare':
+        _qualification_root(args.root)
         from rds_tool_compare import compare
         return compare(args.root, args.baseline, args.candidate, args.cases, args.precision_key,
                        args.precision, args.timeout, args.min_speedup, args.ledger)
@@ -374,6 +391,8 @@ def command(args):
         require(value is not None, 'Tool is not registered for local reuse')
         result = register(args.root, args.name, value['data']['validation'])
         if getattr(args, 'output', None):
+            from rds_campaign import enforce
+            enforce(args.root)
             path = ProjectStore(args.root)._path(args.output)
             require(path.suffix == '.py', 'Export the tool as a project-relative .py module')
             code = blob(args.root, value['asset'])

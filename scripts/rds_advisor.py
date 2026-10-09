@@ -432,6 +432,8 @@ class RDSAdvisor:
 
     def ingest_document(self, doc_path: Path, topic: Optional[str] = None) -> Dict[str, Any]:
         """Store unreviewed source excerpts with a short isolated WAL transaction."""
+        from rds_campaign import enforce
+        enforce(self.root_dir)
         doc_path = doc_path.resolve()
         if not doc_path.exists():
             raise FileNotFoundError(f"Document not found: {doc_path}")

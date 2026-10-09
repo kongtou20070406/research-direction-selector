@@ -159,9 +159,20 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
         helper.init_quick()
         before = helper.store.snapshot()
         preview = enable_advisor(helper.store, helper.policy)
+
+        def activate_after_admission():
+            # The first actual writer waits for child admission, then the
+            # committed QUICK_JOB_ADMITTED event invalidates the old preview.
+            with self.assertRaisesRegex(ValueError, 'Project changed since preview'):
+                enable_advisor(helper.store, helper.policy, apply=True,
+                               expected_snapshot=preview['snapshot_sha256'])
+            fresh = enable_advisor(helper.store, helper.policy)
+            self.assertNotEqual(fresh['snapshot_sha256'], preview['snapshot_sha256'])
+            return enable_advisor(helper.store, helper.policy, apply=True,
+                                  expected_snapshot=fresh['snapshot_sha256'])
+
         changed = self.assert_writer_commits_after_attempt('ordered-activation', helper.store,
-            lambda: enable_advisor(helper.store, helper.policy, apply=True,
-                                   expected_snapshot=preview['snapshot_sha256']), source_root=helper.root)
+            activate_after_admission, source_root=helper.root)
         after = helper.store.snapshot()
         self.assertEqual(after['contract_sha256'], changed['contract_sha256'])
         self.assertNotEqual(after['contract_sha256'], before['contract_sha256'])
@@ -348,14 +359,13 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
 
         def update_before_real_admission(store, run_id, *positional, **keywords):
             # This is after quick.execute's final outer choice, but before the
-            # original execute method invokes its actual admission callback.
+            # parent admission locks and real child registration. Commit a
+            # legitimate new map here; inspect the actual registered run only
+            # when the original execute reaches its admission callback.
             self.assertEqual(store.root, workspace.resolve())
             self.assertEqual(run_id, 'coverage-race')
             self.assertTrue(callable(keywords.get('admission_guard')))
             self.assertEqual(observed, {})
-            at_entry = store.snapshot()['runs'][0]
-            self.assertEqual(at_entry['status'], 'RESERVED')
-            self.assertIsNone(at_entry['attempt_id'])
             observed['budget'] = parent.snapshot()['budget']
             changed = deepcopy(initial)
             changed['nodes'].append({'id': 'new-premise', 'status': 'UNKNOWN',
@@ -363,6 +373,18 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
             observed['map'] = changed
             observed['sha256'] = save(fixture.ledger, changed, expected=initial_sha,
                                      source_base=fixture.ledger)
+            original_guard = keywords['admission_guard']
+
+            def observe_registered_admission(db, run):
+                actual = store._run(db, run_id)
+                self.assertEqual(actual, run)
+                self.assertEqual(actual['status'], 'RESERVED')
+                self.assertIsNone(actual['attempt_id'])
+                self.assertIsNone(actual['started_at'])
+                observed['registered'] = actual['id']
+                return original_guard(db, run)
+
+            keywords['admission_guard'] = observe_registered_admission
             return original_execute(store, run_id, *positional, **keywords)
 
         with mock.patch.object(ProjectStore, 'execute', new=update_before_real_admission):
@@ -370,6 +392,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 rds_quick.execute(args, review=(advice, context))
 
         self.assertNotEqual(observed['sha256'], initial_sha)
+        self.assertEqual(observed['registered'], 'coverage-race')
         retained = ProjectStore(workspace).snapshot()
         self.assertEqual(len(retained['runs']), 1)
         self.assertEqual(retained['runs'][0]['status'], 'RESERVED')

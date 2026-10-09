@@ -193,6 +193,8 @@ def compile_recipe(store, recipe):
 
 def initialize(store, recipe_path, *, separate_reason=None):
     """Prepare an immutable protocol, then use the original initializer."""
+    from rds_campaign import enforce
+    enforce(store.root)
     from rds_project_lifecycle import check_root
     check_root(store.root, separate_reason=separate_reason)
     source = Path(recipe_path).resolve()

@@ -23,6 +23,14 @@ def discover(root):
     """Inspect only the requested root and its ancestors, without creating state."""
     requested = Path(root).resolve()
     require(requested.is_dir(), 'Project root must exist')
+    from rds_campaign import binding
+    bound = binding(requested)
+    if bound is not None:
+        info = describe(bound['project_root'])
+        return {'status': 'EXISTING_PROJECT', 'requested_root': str(requested),
+                'project_root': bound['project_root'], 'relation': 'WORKSPACE_BINDING',
+                'workflow': info, 'next_action': info['next_action'], 'execution_started': False,
+                'search_scope': 'BOUND_CAMPAIGN', 'sibling_projects_searched': False}
     for candidate in (requested, *requested.parents):
         state = candidate / '.rds'
         # A native objective/CAS is also an existing research workspace, even
@@ -52,6 +60,8 @@ def discover(root):
 
 def describe(root, *, quick=False):
     root = Path(root).resolve()
+    from rds_campaign import binding
+    bound = binding(root)
     store = ProjectStore(root)
     contract = None
     if store.path.is_file():
@@ -80,10 +90,18 @@ def describe(root, *, quick=False):
         capabilities = ['project plan', 'project init --recipe <recipe.json>', 'exec -- <command...>']
         info['next_action'] = _command(root, 'project plan')
     info['capabilities'] = capabilities + ['hypergraph --help', 'rsi list', 'checkpoint save --help']
+    info['continuity'] = ({'status': 'BOUND', 'project_root': bound['project_root'],
+                           'workspace_root': bound['workspace_root'], 'binding_path': bound['binding_path'],
+                           'binding_id': bound['binding_id']}
+                          if bound is not None else {'status': 'UNBOUND'})
+    if contract is not None and bound is None:
+        info['capabilities'].append('project bind-workspace --workspace-root <research-workspace>')
     return info
 
 
 def check_root(root, *, separate_reason=None, supersedes=None):
+    from rds_campaign import enforce
+    enforce(root)
     if separate_reason is not None:
         require(isinstance(separate_reason, str) and 1 <= len(separate_reason.strip()) <= 2048,
                 '--separate-project needs a nonempty reason of at most 2048 characters')
