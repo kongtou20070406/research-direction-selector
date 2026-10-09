@@ -298,7 +298,10 @@ class Wheel:
         self.write("transitions.jsonl", "", text=True, once=True)
         self.write("rsi.json", {"slice_id": protocol_slice(self.contract), "regret": "UNKNOWN",
                                 "rule_edits": False, "scientific_accuracy_gain": "UNKNOWN"}, once=True)
-        self.project("init", "--contract", str(project_contract_path))
+        # Preserve the declared contract: the wheel's plain execution ledger is
+        # explicitly QUICK; a supplied owned Advisor policy still requires FULL.
+        mode = "full" if "advisor_policy" in contract else "quick"
+        self.project("init", "--contract", str(project_contract_path), "--mode", mode)
 
     def manifest(self, factor, kind, budget_ms=None):
         require(isinstance(factor, str) and TOKEN.fullmatch(factor), "invalid factor")
