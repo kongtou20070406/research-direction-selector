@@ -872,7 +872,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                     'outcome': 'deferred', 'evidence': context['facts']}
         path = self.write_json('owned-decision.json', decision)
         before = self.snapshot()
-        rejected = self.call('checkpoint', 'save', '--id', 'matching-owned', '--decision', path)
+        rejected = self.call('checkpoint', 'save', '--id', 'matching-owned', '--decision', path, ok=False)
         self.assertEqual(rejected.returncode, 1)
         self.assertIn('owns decision checkpoints', rejected.stderr)
         self.assertEqual(self.snapshot(), before)
