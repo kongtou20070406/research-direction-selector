@@ -497,6 +497,26 @@ class RDSAdvisor:
 
     def recommend_next_directions(self, state: Dict[str, Any], judgment_graph: Dict[str, Any],
                                   *, priority_action_ids=()) -> List[Dict[str, Any]]:
+        """Public recommendations retain the registered owned project graph."""
+        from rds_project import ProjectStore, require
+        store = ProjectStore(self.root_dir)
+        if store.path.is_file():
+            with store._db(True) as db:
+                has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+                row = db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() if has_contract else None
+                contract = store._contract(db) if row else {}
+            if 'advisor_policy' in contract:
+                require(judgment_graph == contract['advisor_policy']['graph'],
+                        'Program-owned Advisor requires the complete frozen direction graph; caller graph overrides are not accepted')
+                require(not priority_action_ids, 'Program-owned Advisor owns route priority; use project next')
+                # Caller facts/state cannot replace owned collection. The owned
+                # path invokes the private analysis method after collection.
+                from rds_owned_advisor import review
+                return review(store)['recommendations']
+        return self._recommend_next_directions(state, judgment_graph, priority_action_ids=priority_action_ids)
+
+    def _recommend_next_directions(self, state: Dict[str, Any], judgment_graph: Dict[str, Any],
+                                   *, priority_action_ids=()) -> List[Dict[str, Any]]:
         """Read real state and supplied graph; recommend a review, never a causal ranking."""
         recommendations = []
         context = state.get("advisor_context", {})
@@ -507,9 +527,10 @@ class RDSAdvisor:
         research_mode = context.get("research_mode") if isinstance(context, dict) else None
         if research_mode is not None and research_mode not in ("theory", "empirical", "mixed"):
             raise ValueError("research_mode must be theory, empirical or mixed")
+        frontier = None
         if isinstance(context, dict) and "frontier" in context:
-            from rds_frontier import discover_frontier
-            frontier = discover_frontier(context["frontier"])
+            from rds_advisor_coverage import _operation_frontier
+            frontier = _operation_frontier(context)
             if "frontier_proposals" in context:
                 from rds_frontier_proposals import review_proposals
                 frontier["proposal_review"] = review_proposals(frontier, context["frontier"], context["frontier_proposals"])
@@ -524,6 +545,8 @@ class RDSAdvisor:
         if not isinstance(context, dict) or "decision" in context or "frontier" not in context:
             from rds_advisor_search import search_directions, review_selection
             options = {"templates": state["advisor_templates"]} if state.get("advisor_templates") else {}
+            if frontier is not None:
+                options['_frontier'] = frontier
             if priority_action_ids:
                 options['priority_action_ids'] = priority_action_ids
             if isinstance(context, dict):

@@ -16,6 +16,8 @@ import test_rds_advisor_search as search_fixture
 import test_rds_experiments as composition_fixture
 import test_rds_hypergraph_coverage as hypergraph_fixture
 import test_rds_owned_advisor as owned_fixture
+import test_rds_frontier as frontier_fixture
+from unittest.mock import patch
 
 
 def context(**extra):
@@ -41,6 +43,33 @@ def disconnected_dependency_map():
 
 
 class AdvisorCoverageTests(unittest.TestCase):
+    def test_active_frontier_truncation_blocks_raw_search_choice(self):
+        frontier = frontier_fixture.fixture()
+        frontier['limits'] = {'max_nodes': 1}
+        ctx = context(frontier=frontier)
+        result = search_directions({'nodes': [search_fixture.node('root')], 'edges': []}, ctx)
+        self.assertFalse(result['analysis_coverage']['full'])
+        coverage = next(row for row in result['analysis_coverage']['graphs'] if row['kind'] == 'FRONTIER_GRAPH')
+        self.assertEqual(coverage['node_count'], 3)
+        self.assertEqual(coverage['input_sha256'], digest(frontier))
+        self.assertIn('Frontier: node limit', coverage['reasons'])
+        self.assertEqual(len(coverage['analyzed_nodes']), 3)
+        self.assertEqual(result['candidates'][0]['status'], 'NEEDS_COMPLETE_ANALYSIS')
+        with self.assertRaisesRegex(ValueError, 'Complete graph analysis required'):
+            choice(advice(result), ctx)
+
+    def test_frontier_cutoff_exclusions_remain_explicit_and_complete(self):
+        frontier = frontier_fixture.fixture()
+        frontier['nodes'].append(frontier_fixture.node('future', available_on='2001-01-01'))
+        ctx = context(frontier=frontier)
+        result = search_directions({'nodes': [search_fixture.node('root')], 'edges': []}, ctx)
+        self.assertTrue(result['analysis_coverage']['full'])
+        coverage = result['frontier_coverage']
+        future = next(row for row in coverage['analyzed_nodes'] if row['id'] == 'future')
+        self.assertEqual(future['disposition'], 'EXCLUDED_AT_CUTOFF')
+        self.assertEqual(future['reason'], 'FUTURE_RECORD')
+        self.assertEqual(choice(advice(result), ctx)['candidate']['id'], 'root:root-test')
+
     def test_disconnected_completion_is_analyzed_without_changing_action_readiness(self):
         root, disconnected = search_fixture.node("root"), search_fixture.node("disconnected")
         disconnected["executable"]["decisions"] = []
@@ -160,6 +189,44 @@ class AdvisorCoverageCLITests(unittest.TestCase):
         case.setUp()
         self.addCleanup(case.doCleanups)
         return case
+
+    def test_owned_public_api_rejects_direction_subsets_and_collects_native_state(self):
+        case = self.fixture()
+        case.initialize()
+        before = case.snapshot()
+        graph = deepcopy(before['contract']['advisor_policy']['graph'])
+        api = RDSAdvisor(case.root)
+        supplied = {**before, 'advisor_context': context(facts={'caller-invented': search_fixture.fact(True)})}
+        for changed in ({'nodes': graph['nodes'][:1], 'edges': []},
+                        {**graph, 'nodes': [{**graph['nodes'][0], 'description': 'caller replacement'}, *graph['nodes'][1:]]}):
+            with self.subTest(graph=changed), self.assertRaisesRegex(ValueError, 'complete frozen direction graph'):
+                api.recommend_next_directions(supplied, changed)
+        report = {'recommendations': api.recommend_next_directions(supplied, graph)}
+        search = first_search(report)
+        self.assertEqual({row['id'] for row in search['graph_coverage']['analyzed_nodes']},
+                         {node['id'] for node in graph['nodes']})
+        self.assertNotEqual(search['context_sha256'], digest(supplied['advisor_context']))
+        self.assertTrue(search['analysis_coverage']['full'])
+        self.assertEqual(case.starts(), [])
+        after = case.snapshot()
+        for key in ('budget', 'runs', 'receipts', 'contract_sha256'):
+            self.assertEqual(after[key], before[key], key)
+
+    def test_public_advisor_reuses_frontier_calculation_and_blocks_selection(self):
+        case = self.fixture()
+        case.initialize(include_policy=False)
+        frontier = frontier_fixture.fixture()
+        frontier['limits'] = {'max_nodes': 1}
+        ctx = context(frontier=frontier)
+        graph = {'nodes': [search_fixture.node('root')], 'edges': []}
+        with patch('rds_frontier.discover_frontier', wraps=frontier_fixture.discover_frontier) as calculate:
+            report = {'recommendations': RDSAdvisor(case.root).recommend_next_directions({'advisor_context': ctx}, graph)}
+        self.assertEqual(calculate.call_count, 1)
+        search = first_search(report)
+        self.assertFalse(search['analysis_coverage']['full'])
+        self.assertEqual(search['candidates'][0]['status'], 'NEEDS_COMPLETE_ANALYSIS')
+        with self.assertRaisesRegex(ValueError, 'Complete graph analysis required'):
+            choice(report, ctx)
 
     def test_owned_candidate_cap_refuses_advance_without_launch_or_budget_reset(self):
         case = self.fixture()

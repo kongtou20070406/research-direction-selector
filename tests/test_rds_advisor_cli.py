@@ -390,6 +390,10 @@ class AdvisorCLITests(unittest.TestCase):
             actual = next(row['search']['experiment_composition'] for row in with_artifacts['recommendations']
                           if row.get('type') == 'EXECUTABLE_DIRECTION_SEARCH')
             self.assertTrue(actual['candidates'])
+            # Importing an empty manifest adds explicit context fields; bind
+            # that input identity while preserving identical computed results.
+            self.assertEqual(len(actual['rule_search'].pop('context_sha256')), 64)
+            self.assertEqual(len(expected['rule_search'].pop('context_sha256')), 64)
             self.assertEqual(actual, expected)
             self.assertTrue(all(not candidate['execution_authorized'] for candidate in actual['candidates']))
             self.assertFalse((project / '.rds').exists())

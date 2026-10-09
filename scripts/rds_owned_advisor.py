@@ -571,7 +571,7 @@ def review(store, persist=True):
             from rds_owned_tools import applicable, gate_graph
             tool_reports = applicable(store, state['contract'], context['facts'])
             graph = gate_graph(graph, tool_reports, context['facts'])
-        recommendations = RDSAdvisor(store.root).recommend_next_directions(
+        recommendations = RDSAdvisor(store.root)._recommend_next_directions(
             state_for_advisor, graph, priority_action_ids=priority)
         advice = {'advisor_type': 'STRATEGIC_RESEARCH_ADVICE', 'recommendations': recommendations,
                   'recommendations_count': len(recommendations)}

@@ -49,7 +49,8 @@ def describe(root, *, quick=False):
     contract = None
     if store.path.is_file():
         with store._db(True) as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                    and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
                 contract = store._contract(db)
     owned = contract is not None and 'advisor_policy' in contract
     mode = 'QUICK' if quick or contract is not None and not owned else 'FULL' if owned else 'UNINITIALIZED'

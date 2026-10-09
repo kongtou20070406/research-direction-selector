@@ -125,11 +125,11 @@ class ToolPreparationTests(unittest.TestCase):
     def test_qualification_marker_wins_concurrent_init_and_no_cost_is_omitted(self):
         entered, release = threading.Event(), threading.Event()
         original_execute = tools.execute
-        def paused(args):
+        def paused(args, **kwargs):
             entered.set()
             if not release.wait(15):
                 raise RuntimeError('synchronized qualifier timed out')
-            return original_execute(args)
+            return original_execute(args, **kwargs)
         with ThreadPoolExecutor(max_workers=1) as pool, patch('rds_tools.execute', side_effect=paused):
             pending = pool.submit(self.qualify)
             self.assertTrue(entered.wait(15))

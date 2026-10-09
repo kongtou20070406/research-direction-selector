@@ -19,6 +19,10 @@ recorded in the new ledger. A declared successor uses the existing `--supersedes
 lineage. These are cooperative CLI guards, not an OS sandbox or a global project
 registry.
 
+Managed tool-qualification workspaces remain internal jobs of their original
+project. Their internal caller verifies the original preparation ledger and
+workspace identity; the public nested `exec` entry does not gain an exemption.
+
 ## FULL and QUICK
 
 New public `project init` defaults to **FULL**, with program-owned Advisor:
@@ -77,10 +81,14 @@ Missing old outputs remain UNKNOWN when Advisor collects evidence.
 
 ## Complete analysis before any selection
 
-Advisor reviews the entire active direction graph and the current dependency
-map, including disconnected components, all nodes and all edges. Saved project
+Advisor reviews the entire active direction graph, the current dependency map
+and any supplied frontier graph, including disconnected components, all nodes
+and all edges. Saved project
 dependencies are loaded automatically. A caller cannot replace them with a
 smaller map for a single review; update the declared current map first.
+The public Advisor API also rejects replacing an owned project's frozen direction
+graph and collects the project's actual evidence. Frontier analysis retains its
+explicit date cutoff; excluded future records are visible in the report.
 
 `analysis_coverage` reports FULL or INCOMPLETE, input identities, node/edge counts
 and reasons. Detailed reports retain node conditions and edge dispositions.

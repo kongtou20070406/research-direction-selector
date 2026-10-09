@@ -401,18 +401,41 @@ def _inputs(root, argv, binds):
     return files, raw_by_path
 
 
-def execute(args, review=None):
+def execute(args, review=None, *, _native_preparation_root=None):
     """Create one frozen normal ProjectStore per named job, without JSON boilerplate."""
     root = Path(args.root).resolve()
     from rds_project_lifecycle import check_root
-    check_root(root)
+    def check_source_root():
+        if _native_preparation_root is None:
+            check_root(root)
+            return
+        # Native qualification already belongs to its research project's
+        # preparation ledger. This private caller path is not a CLI escape.
+        parent = ProjectStore(_native_preparation_root)
+        check_root(parent.root)
+        token = root.name
+        require(re.fullmatch(r'[0-9a-f]{32}', token) and
+                root == parent.root / '.rds' / 'rsi' / 'tool-checks' / token and args.name == 'tool-check',
+                'Native preparation must use its original managed workspace')
+        from rds_tools import _preparation_contract
+        with parent._db(True) as parent_db:
+            if not _preparation_contract(parent, parent_db):
+                rows = parent_db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_STARTED' "
+                                         "AND json_extract(body,'$.request.token')=? LIMIT 2", (token,)).fetchall()
+                require(len(rows) == 1, 'Native preparation requires its original project intent')
+                intent = json.loads(rows[0]['body'])
+                require(intent['request_sha256'] == digest(intent['request']) and
+                        intent['request']['job_root'] == (root / '.rds/exec/tool-check').relative_to(parent.root).as_posix(),
+                        'Native preparation intent or workspace changed')
+    check_source_root()
     require(root.is_dir(), 'Source root must exist')
     owner = Path(args.ledger).resolve() if review is not None else None
     source_store = ProjectStore(root)
     if source_store.path.is_file():
         with source_store._db(True) as db:
             # Native research records can share this database before project init.
-            has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+            has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone()
             source_contract = source_store._contract(db) if has_contract else {}
             if source_contract:
                 from rds_steering import current
@@ -434,12 +457,11 @@ def execute(args, review=None):
     if argv[0].endswith('.py') and (root / argv[0]).is_file():
         argv = [sys.executable, '-B'] + argv
     if review is not None:
-        if review[1].get('require_goal_link'):
-            from rds_math import check_context
-            binding = check_context(args.ledger, review[1])
-            if binding is not None:
-                context = {**deepcopy(review[1]), 'objective_binding': binding}
-                review = (review[0], context)
+        from rds_math import check_context
+        binding = check_context(args.ledger, review[1])
+        if binding is not None:
+            context = {**deepcopy(review[1]), 'objective_binding': binding}
+            review = (review[0], context)
         selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
         args.choose = selected['candidate']['id']
     argv[0] = ProjectStore._command(argv)
@@ -617,7 +639,23 @@ def execute(args, review=None):
     if review is not None:
         from rds_advisor_coverage import project_context
         choice(review[0], project_context(args.ledger, review[1]), args.choose)
-    receipt = store.execute(args.name, background=args.background)
+    def admit_quick(_db, _run):
+        # Recheck at the existing transactional attempt-admission boundary,
+        # after registration and any pause before the execute call.
+        check_source_root()
+        for parent_root in {root, owner} - {None}:
+            parent = ProjectStore(parent_root)
+            if parent.path.is_file():
+                with parent._db(True) as parent_db:
+                    if parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                            and parent_db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
+                        current_contract = parent._contract(parent_db)
+                        require('advisor_policy' not in current_contract,
+                                'Program-owned Advisor was enabled before quick admission; use the original project')
+        if review is not None:
+            from rds_advisor_coverage import project_context
+            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+    receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick)
     regression = None
     if guard_path is not None:
         from rds_guard import evaluate

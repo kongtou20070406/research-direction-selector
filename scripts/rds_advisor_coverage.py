@@ -6,6 +6,41 @@ claims nor converts descriptive relations or unknown evidence into true facts.
 from copy import deepcopy
 
 
+def _operation_frontier(context):
+    """Calculate the supplied frontier once, retaining its existing semantics."""
+    if 'frontier' not in context:
+        return None
+    from rds_frontier import discover_frontier
+    from rds_project import digest
+    spec = context['frontier']
+    report = discover_frontier(spec)
+    excluded = {(row['record_type'], row['id']): row for row in report['excluded']}
+    nodes = spec.get('nodes', [])
+    edges = spec.get('edges', [])
+    eligible_nodes = [row for row in nodes if ('nodes', row['id']) not in excluded]
+    used_nodes = {row['id'] for row in eligible_nodes[:report['truncation']['limits']['max_nodes']]}
+    eligible_edges = [i for i, row in enumerate(edges) if ('edges', 'edge:' + str(i)) not in excluded
+                      and row['from'] in used_nodes and row['to'] in used_nodes]
+    used_edges = set(eligible_edges[:report['truncation']['limits']['max_edges']])
+    def disposition(kind, ident, used):
+        if (kind, ident) in excluded:
+            return {'disposition': 'EXCLUDED_AT_CUTOFF', 'reason': excluded[kind, ident]['reason']}
+        return {'disposition': 'AVAILABLE_GRAPH_INPUT' if used else 'OMITTED_GRAPH_INPUT',
+                'reason': 'Used by existing frontier analysis' if used else 'Node/edge bound or unavailable endpoint'}
+    truncated = report['truncation']['truncated']
+    report['coverage'] = {'status': 'INCOMPLETE' if truncated else 'FULL', 'full': not truncated,
+                          'input_sha256': digest(spec), 'node_count': len(nodes), 'edge_count': len(edges),
+                          'analysis': 'EXISTING_FRONTIER_REACHABILITY_AND_DECLARED_REQUESTS',
+                          'analyzed_nodes': [{'id': row['id'], **disposition('nodes', row['id'], row['id'] in used_nodes)}
+                                             for row in nodes],
+                          'analyzed_edges': [{'id': 'edge:' + str(i), 'declared_status': row['status'],
+                                              **disposition('edges', 'edge:' + str(i), i in used_edges)}
+                                             for i, row in enumerate(edges)],
+                          'statistics': deepcopy(report['statistics']), 'excluded': deepcopy(report['excluded']),
+                          'reasons': ['Frontier: ' + reason for reason in report['truncation']['reasons']]}
+    return report
+
+
 def project_context(root, context):
     """Saved active dependencies cannot be omitted or replaced for one choice."""
     from rds_tms_store import current, with_saved_dependencies
@@ -46,6 +81,11 @@ def assess(search, dependency=None):
                        'edge_count': coverage.get('counts', {}).get('hyperedges')})
         if dependency.get('status') != 'ANALYZED' or coverage.get('full') is not True:
             reasons.extend(coverage.get('reasons') or [dependency.get('reason') or 'Dependency graph analysis is incomplete'])
+    if search.get('frontier_coverage') is not None:
+        coverage = search['frontier_coverage']
+        graphs.append({'kind': 'FRONTIER_GRAPH', **deepcopy(coverage)})
+        if coverage.get('full') is not True:
+            reasons.extend(coverage.get('reasons') or ['Frontier graph analysis is incomplete'])
     return {'scope': 'ALL_DECLARED_ACTIVE_GRAPHS', 'status': 'INCOMPLETE' if reasons else 'FULL',
             'full': not reasons, 'graphs': graphs, 'reasons': list(dict.fromkeys(reasons)),
             'authorization': 'UNCHANGED', 'assurance': 'DECLARED_PROGRAM_ANALYSIS_NOT_SCIENTIFIC_PROOF'}

@@ -378,18 +378,21 @@ def _dependency_review(context, *, audit_receipts=False, audit_files=False, read
         if input_review['errors']:
             raise ValueError('; '.join(row['path'] + ': ' + row['reason'] for row in input_review['errors']))
         try:
-            shared = {}
-            if 'analysis_targets' in inspect.signature(analyze_hypergraph).parameters:
-                shared['analysis_targets'] = 'all'
-            if read_receipt is not None and "read_receipt" in inspect.signature(analyze_hypergraph).parameters:
+            shared = {'analysis_targets': 'all'}
+            if read_receipt is not None:
                 # An analyzer without the shared lookup still audits, reading on its own.
                 shared["read_receipt"] = read_receipt
-            result = analyze_hypergraph(spec, audit_receipts_enabled=audit_receipts, **shared) if audit_receipts \
-                else analyze_hypergraph(spec, **shared)
+            if audit_receipts:
+                shared['audit_receipts_enabled'] = True
+            result = analyze_hypergraph(spec, **shared)
         except TypeError:
-            # Analyzer without the receipts slice: no receipt audit is possible,
-            # and a binding it cannot check must not be silently trusted.
-            result = analyze_hypergraph(spec)
+            # Older analyzers may still audit without the shared lookup. Retain
+            # every supported check; missing all-node coverage stays incomplete.
+            parameters = inspect.signature(analyze_hypergraph).parameters
+            compatible = {key: value for key, value in shared.items() if key in parameters}
+            if compatible == shared or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+                raise  # Do not retry or hide an internal analyzer TypeError.
+            result = analyze_hypergraph(spec, **compatible)
         if audit_files:
             from rds_hypergraph import audit_sources
             result["source_file_audit"] = audit_sources(spec)
@@ -1055,7 +1058,7 @@ def review_selection(search, context, *, _dependency=None, audit_receipts=False,
 
 def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nodes=128,
                       templates=None, max_combinations=128, max_compose_depth=2,
-                      _dependency=None, _defer_selection_review=False,
+                      _dependency=None, _defer_selection_review=False, _frontier=None,
                       audit_receipts=False, audit_files=False, priority_action_ids=()):
     """Compose source-labelled checks and tests for the supplied next decision.
 
@@ -1102,10 +1105,20 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
                                "Dominance requires valid same-scope rival predictions; decision labels alone do not establish scientific value."]}
     graph_sha = hashlib.sha256(json.dumps(graph, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
     from rds_project import digest
-    result['context_sha256'] = digest(context)
+    try:
+        result['context_sha256'] = digest(context)
+    except (ValueError, TypeError):
+        # Invalid dependency input still gets its read-only diagnostic. It
+        # cannot carry a selection identity or authorize a candidate.
+        result['context_sha256'] = None
     result['graph_coverage'] = {'status': 'INCOMPLETE', 'full': False, 'input_sha256': graph_sha,
                               'node_count': len(nodes), 'edge_count': len(raw_edges),
-                              'analyzed_nodes': [], 'analyzed_edges': [], 'reasons': []}
+                              'analyzed_nodes': [], 'analyzed_edges': [],
+                              'reasons': [] if result['context_sha256'] else ['Context has no valid analysis identity']}
+    if 'frontier' in context:
+        from rds_advisor_coverage import _operation_frontier
+        frontier = _frontier if _frontier is not None else _operation_frontier(context)
+        result['frontier_coverage'] = deepcopy(frontier['coverage'])
     def finish():
         chosen_templates = templates if templates is not None else context.get("templates")
         dependency = _dependency
@@ -1292,7 +1305,7 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
                                                          else 'UNCONFIGURED_UNKNOWN',
                                           'derivation': derivation, 'completion_conditions': completion,
                                           'action_validation': {'valid': valid, 'reason': reason},
-                                          'discrimination': _discrimination(action, facts) if isinstance(action, dict)
+                                          'discrimination': _discrimination(action, facts) if valid
                                               and 'discrimination' in action else None})
     for index, edge in enumerate(raw_edges):
         missing = [edge[k] for k in ('from', 'to') if edge[k] not in nodes]
