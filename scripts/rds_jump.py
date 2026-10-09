@@ -340,6 +340,7 @@ def _ruby_script_operand(argv):
                     'Ruby script lookup cwd/PATH options are unsupported for Jump')
             if flag in 'eh':
                 return None  # Inline code/help does not name a main file.
+            require(flag != 'r', 'Ruby preloads are unsupported for frozen Jump code')
             if flag in 'rIE':
                 if offset == len(option):
                     index += 1  # Required value occupies the following token.
@@ -450,6 +451,8 @@ def _interpreter_script_operand(argv):
         return file_at(_perl_script_operand(argv))
     if name in {'node', 'nodejs'}:
         return _node_arguments(argv)[0]
+    if re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', name):
+        name = 'php'  # Kernel resolution can turn a php alias into php8.3.
     shells = {'sh', 'bash', 'dash', 'ksh', 'zsh'}
     if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:
         return None
@@ -617,6 +620,8 @@ def _generator_bindings(store, contract, plan):
         for index, arg in enumerate(stage['run']['argv']):
             if index in preloads:
                 continue  # Exact explicit preload identity was checked above.
+            if script_operand is not None and index > script_operand:
+                continue  # Literal main has ended interpreter option parsing.
             if index != 0 and index != script_operand and arg.startswith('-') and '=' not in arg:
                 continue  # Interpreter options are not code/data path operands.
             candidate = (arg.split('=', 1)[1] if index != 0 and index != script_operand

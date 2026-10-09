@@ -137,6 +137,43 @@ class NeighborhoodTests(unittest.TestCase):
         self.assertEqual(len(self.store.snapshot()['receipts']), 14)
         self.assertEqual(plan['limits'], self.policy['slots'])
 
+    def test_stagnation_aliases_share_output_normalization_without_erasing_computation_identity(self):
+        self.incumbent()
+        self.execute('p3', 'overshoot', 'refine')
+        self.execute('p4', 'overshoot', 'evidence')
+        self.execute('alternative', 'near-linear', 'refine')
+        self.execute('alias', 'near-linear', 'evidence')
+        rows, feedback, state = self.inputs()
+        self.assertEqual(len(state['receipts']), 14)
+        # The following are pure allocation fixtures over retained observations,
+        # not new worker executions or rewritten original receipts.
+        for spelling in ('standalone', 'attached'):
+            for difference in ('none', 'mode', 'flag', 'ordinal', 'protocol'):
+                props = deepcopy(rows)
+                for ident, row in props.items():
+                    run = row['proposal']['experiment']['runs'][0]
+                    if spelling == 'attached':
+                        run['argv'] = ['--output='+a if a in run['outpaths'] else a for a in run['argv']]
+                    if ident in ('alternative', 'alias'):
+                        run['argv'][3] = 'overshoot'
+                        if difference == 'mode':
+                            run['argv'][3] = 'near-linear'
+                        elif difference == 'flag':
+                            # Same flag change on both repeats keeps them qualified.
+                            run['argv'].append('--different-intervention')
+                        elif difference == 'ordinal':
+                            run['outpaths'].insert(0, 'out/unused.json')
+                        elif difference == 'protocol':
+                            run['protocol']['sha256'] = 'f'*64
+                with self.subTest(spelling=spelling, difference=difference):
+                    plan = allocation.build(self.policy, props, feedback, state)
+                    self.assertEqual(len(plan['neighborhood']['trials']), 2)
+                    self.assertTrue(all(t['outcome'] == 'STAGNANT' for t in plan['neighborhood']['trials']))
+                    self.assertEqual(len(plan['neighborhood']['paused_parents']), int(difference != 'none'))
+                    if difference == 'none':
+                        self.assertEqual(plan['selected_parent'], 'p2')
+        self.assertEqual(self.store.snapshot(), state)
+
     def test_unknown_noise_incomparability_shared_runs_and_refutation(self):
         self.execute()
         self.execute('p1', 'weak')

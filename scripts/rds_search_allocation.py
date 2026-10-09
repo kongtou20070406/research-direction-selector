@@ -68,12 +68,8 @@ def load_policy(store, state):
     return validate(strict_json(raw.decode('utf-8-sig')))
 
 
-def experiment_key(row):
-    """Only declared identical interventions count as repeated observations.
-
-    Output filenames may differ. Arbitrary argument aliases are not inferred.
-    """
-    run = row['proposal']['experiment']['runs'][0]
+def output_argv(run):
+    """Normalize declared output names, retaining option prefixes and ordinals."""
     outputs = run['outpaths']
     def argument(value):
         prefix, separator, tail = value.partition('=')
@@ -83,8 +79,17 @@ def experiment_key(row):
             return value
         normalized = '<output:' + str(outputs.index(token)) + '>'
         return prefix + '=' + normalized if attached else normalized
+    return [argument(a) for a in run['argv']]
+
+
+def experiment_key(row):
+    """Only declared identical interventions count as repeated observations.
+
+    Output filenames may differ. Arbitrary argument aliases are not inferred.
+    """
+    run = row['proposal']['experiment']['runs'][0]
     return digest({'hypothesis': hypothesis_key(row['discriminator']),
-                   'argv': [argument(a) for a in run['argv']],
+                   'argv': output_argv(run),
                    'protocol': run['protocol']})
 
 

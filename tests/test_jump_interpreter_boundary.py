@@ -202,7 +202,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
             original=json.loads((root/'jump-generation.json').read_text(encoding='utf-8'))
             php=shutil.which('php')
             executable=php or str(Path(sys.executable).with_name('php.exe' if sys.platform=='win32' else 'php'))
-            def make(options):
+            def make(options, executable):
                 plan=deepcopy(original);plan['generator_code_paths']=['worker.php']
                 for stage in plan['stages']:stage['run']['argv']=[executable,*options,'worker.php']
                 return plan
@@ -213,9 +213,21 @@ class InterpreterBoundaryTests(unittest.TestCase):
                 for option in options:
                     with self.subTest(option=option):
                         with self.assertRaisesRegex(ValueError,'PHP startup configuration'):
-                            jump._generator_bindings(store,contract,make(option))
+                            jump._generator_bindings(store,contract,make(option, executable))
                 for option in ([],['-n'],['--no-php-ini'],['-n','-f']):
-                    self.assertTrue(jump._generator_bindings(store,contract,make(option)))
+                    self.assertTrue(jump._generator_bindings(store,contract,make(option, executable)))
+            # Deterministic resolved metadata covers direct versioned names and
+            # raw php aliases. This does not claim native PHP execution.
+            for name in ('php8.3', 'php8.5.exe'):
+                resolved = str(Path(sys.executable).with_name(name))
+                for raw in (resolved, 'php'):
+                    with patch.object(store, '_command', return_value=resolved):
+                        for option in options:
+                            with self.subTest(raw=raw, resolved=name, option=option):
+                                with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                                    jump._generator_bindings(store, contract, make(option, raw))
+                        for option in ([], ['-n'], ['--no-php-ini'], ['-n', '-f'], ['-n', '-F']):
+                            self.assertTrue(jump._generator_bindings(store, contract, make(option, raw)))
             self.assertEqual(store.snapshot(),before)
 
     def freeze(self, root, change):
@@ -472,13 +484,12 @@ class InterpreterBoundaryTests(unittest.TestCase):
                          if (path := shutil.which(name))}
             executables = [executable, *[shutil.which(name) or str(Path(sys.executable).with_name(name))
                                         for name in ('ruby3.3', 'Ruby3.4.exe')]]
-            cases = [('worker.rb', []), ('worker.rb', ['-r', 'Chelper']),
-                     ('worker.rb', ['-rChelper']), ('worker.rb', ['-ICdirectory']),
+            cases = [('worker.rb', []), ('worker.rb', ['-ICdirectory']),
                      ('worker.rb', ['-I', '-Cdirectory']), ('worker.rb', ['-FC']),
                      ('worker.rb', ['-iCbackup']), ('worker.rb', ['-W:Ccategory']),
                      ('worker.rb', ['-KU']), ('worker.rb', ['-K']), ('worker.rb', ['-x']),
                      ('-Cworker.rb', ['--']), ('-Xworker.rb', ['--']), ('-xworker.rb', ['--']),
-                     ('worker.rb', ['-rShelper']), ('worker.rb', ['-ISdirectory']),
+                     ('worker.rb', ['-ISdirectory']), ('worker.rb', ['-I', '-rvalue']),
                      ('-Sworker.rb', ['--'])]
             for executable, (filename, options) in [(entry, case) for entry in executables for case in cases]:
                 (root / filename).write_text('puts "frozen literal worker"\n', encoding='utf-8')
@@ -515,6 +526,46 @@ class InterpreterBoundaryTests(unittest.TestCase):
                             else:
                                 with patch.object(store, '_command', return_value=executable):
                                     check()
+            self.assertEqual(store.snapshot(), before)
+
+    def test_ruby_effective_preloads_reject_without_reclassifying_values_or_script_arguments(self):
+        # Admission against a real ProjectStore, with resolver metadata only.
+        # Ruby startup lookup is unsupported, including apparently local files.
+        with tempfile.TemporaryDirectory() as directory:
+            root, store = example.build(Path(directory) / 'project')
+            before = store.snapshot()
+            worker = root / 'worker.rb'
+            worker.write_text('puts "frozen"\n', encoding='utf-8')
+            local = root / 'hook.rb'
+            local.write_text('puts "preload"\n', encoding='utf-8')
+            external = root.parent / 'outside.rb'
+            external.write_text('puts "external preload"\n', encoding='utf-8')
+            contract = deepcopy(before['contract'])
+            binding = next(b for b in contract['bindings'] if b['path'] == 'worker.py')
+            binding.update(path='worker.rb', sha256=file_sha(worker))
+            contract['bindings'].append({'path': 'hook.rb', 'role': 'code', 'sha256': file_sha(local)})
+            original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+            for name in ('ruby', 'ruby3.3', 'Ruby3.4.exe'):
+                executable = str(Path(sys.executable).with_name(name))
+                for declaration in ('explicit', 'legacy'):
+                    def make(options, arguments=()):
+                        plan = deepcopy(original)
+                        if declaration == 'legacy':
+                            plan.pop('generator_code_paths')
+                        else:
+                            plan['generator_code_paths'] = ['worker.rb', 'hook.rb']
+                        for stage in plan['stages']:
+                            stage['run']['argv'] = [executable, *options, 'worker.rb', *arguments]
+                        return plan
+                    with patch.object(store, '_command', return_value=executable):
+                        for value in (str(external), './hook.rb', 'mutable-package'):
+                            for options in (['-r', value], ['-r'+value], ['-wr'+value], ['-W2r', value]):
+                                with self.subTest(name=name, declaration=declaration, options=options):
+                                    with self.assertRaisesRegex(ValueError, 'Ruby preloads are unsupported'):
+                                        jump._generator_bindings(store, contract, make(options))
+                        for options, arguments in ((['-I', '-rvalue'], ()), (['-W:rvalue'], ()),
+                                                   (['--'], ('-r', str(external), './unbound.js'))):
+                            self.assertTrue(jump._generator_bindings(store, contract, make(options, arguments)))
             self.assertEqual(store.snapshot(), before)
 
     def test_perl_cwd_options_reject_before_frozen_main_binding(self):
@@ -640,7 +691,11 @@ class InterpreterBoundaryTests(unittest.TestCase):
                      ('--file=worker', '-fworker', '--process-file=worker', '-Fworker')]
             cases += [(filename, argv) for filename in ('-fworker', '--file=worker')
                       for argv in (['--', filename], ['-f', filename])]
-            for filename, option in cases:
+            cases = [(entry, filename, option)
+                     for entry in (parser_executable, str(Path(sys.executable).with_name('php8.3')),
+                                   str(Path(sys.executable).with_name('php8.5.exe')))
+                     for filename, option in cases]
+            for parser_executable, filename, option in cases:
                 (root / filename).write_bytes((root / 'worker.py').read_bytes())
                 for declaration in ('explicit', 'legacy'):
                     for role in ('missing', 'data', 'code'):

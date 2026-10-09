@@ -6,7 +6,7 @@ persisted controller state: original proposals, receipts and policy own history.
 from fractions import Fraction
 
 from rds_project import digest
-from rds_search_allocation import experiment_key
+from rds_search_allocation import experiment_key, output_argv
 
 
 def review(policy, rows, evidence, usable, eligible):
@@ -113,8 +113,7 @@ def review(policy, rows, evidence, usable, eligible):
             elif trial['outcome'] == 'STAGNANT':
                 run = rows[trial['proposal_ids'][-1]]['proposal']['experiment']['runs'][0]
                 # Renaming a hypothesis cannot mint a distinct computation.
-                stagnant.add(digest({'argv': ['<output:' + str(run['outpaths'].index(a)) + '>'
-                                             if a in run['outpaths'] else a for a in run['argv']],
+                stagnant.add(digest({'argv': output_argv(run),
                                      'protocol': run['protocol']}))
             # An unresolved trial supplies no useful gain that could reopen
             # this anchor; retain earlier repeatedly stagnant interventions.
