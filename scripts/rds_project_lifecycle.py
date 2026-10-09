@@ -15,6 +15,7 @@ import sqlite3
 import time
 
 from rds_project import ProjectStore, canonical, digest, load_json, require, _shell_argument
+from rds_mutation import mutation
 
 ACTIVATED = 'ADVISOR_POLICY_ENABLED'
 POLICY_FIELDS = {'schema', 'context', 'graph', 'routes', 'observations'}
@@ -124,6 +125,19 @@ def check_root(root, *, separate_reason=None, supersedes=None):
     return found
 
 
+def require_advisor_root(root):
+    """Use the nearest existing scope and require its canonical FULL root."""
+    requested = Path(root).resolve()
+    search_root = next((candidate for candidate in (requested, *requested.parents)
+                        if candidate.is_dir()), requested)
+    scope = discover(search_root)
+    require(not (scope['workflow']['mode'] == 'FULL'
+                 and Path(scope['project_root']).resolve() != requested),
+            'Advisor must use the existing FULL project root: ' + str(scope.get('project_root')))
+    return requested
+
+
+@mutation()
 def initialize(store, contract, *, mode=None, supersedes=None, separate_reason=None):
     """Public entry: FULL by default for new contracts, unchanged legacy retries."""
     check_root(store.root, separate_reason=separate_reason, supersedes=supersedes)

@@ -16,6 +16,7 @@ import sys
 import time
 
 from rds_project import ProjectStore, canonical, digest, execution_route, file_sha, number, require
+from rds_mutation import mutation
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_FILES = 128
@@ -160,6 +161,8 @@ def choice(advice, context, candidate_id=None):
 def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
                   _expected_contract_sha256=None):
     from rds_checkpoints import save_checkpoint
+    from rds_advisor_coverage import project_context
+    context = project_context(root, context)
     record = choice(advice, context, candidate_id)
     # Read the contract before writing advice, so a rejected record leaves no blob.
     snapshot = ProjectStore(root).snapshot(check_bindings=True)
@@ -501,23 +504,41 @@ def execute(args, review=None, *, _native_preparation_root=None):
         require(all(row['candidate'] in args.output for row in policy.get('metrics', [])), 'Declare each guarded candidate using --output')
         binds += ['data=' + p.relative_to(root).as_posix() for p in dependencies]
     files, raw_by_path = _inputs(root, argv, binds)
+    # Check the complete frozen layout before writing a prospective checkpoint
+    # or charging an owning ledger. OS failures remain visible retained failures.
+    generated = ['rds-exec-request.json', 'rds-exec-metadata.json', 'rds-exec-protocol.json']
+    if goal_raw is not None:
+        generated.append('rds-exec-objective.json')
+    preflight = ProjectStore(root)
+    def layout_key(path):
+        return Path(preflight._output_key(path))
+    def overlaps(left, right):
+        return left == right or left in right.parents or right in left.parents
+    generated_paths = [layout_key(root / name) for name in generated]
+    bound_paths = [layout_key(p) for p in files]
+    for path, key in zip(files, bound_paths):
+        require(not path.name.startswith('rds-exec-'), 'Input uses a reserved rds-exec- filename')
+        require(not any(overlaps(key, generated_path) for generated_path in generated_paths),
+                'Input path overlaps a generated exec file')
     # Validate all output declarations before creating a child workspace or charging
     # an owning project ledger. A rejected binding must be safe to retry unchanged.
     if args.output:
-        preflight = ProjectStore(root)
         output_roots = sorted({Path(p).parts[0] for p in args.output if len(Path(p).parts) > 1}) or ['outputs']
         output_files = sorted({Path(p).as_posix() for p in args.output if len(Path(p).parts) == 1})
         preflight_contract = {'output_roots': output_roots, 'output_files': output_files,
                               'bindings': [{'path': p.relative_to(root).as_posix()} for p in files]}
         seen_outputs = set()
-        bound_paths = [(root / p.relative_to(root)).resolve() for p in files]
         for output in args.output:
             output_path = preflight._path(output, output=True, contract=preflight_contract)
             output_key = preflight._output_key(output_path)
             require(output_key not in seen_outputs, 'Output paths must be unique')
+            key = layout_key(output_path)
+            require(not any(overlaps(key, Path(previous)) for previous in seen_outputs),
+                    'Output paths overlap each other')
             seen_outputs.add(output_key)
-            require(not any(output_path == bound or output_path in bound.parents or bound in output_path.parents
-                            for bound in bound_paths), 'Output path overlaps a bound input')
+            require(not any(overlaps(key, bound) for bound in bound_paths), 'Output path overlaps a bound input')
+            require(not any(overlaps(key, generated_path) for generated_path in generated_paths),
+                    'Output path overlaps a generated exec file')
     request = {'argv': argv, 'timeout': timeout, 'outputs': args.output,
                'inputs': [{'path': p.relative_to(root).as_posix(), 'roles': sorted(roles),
                            'sha256': hashlib.sha256(raw_by_path[p]).hexdigest()} for p, roles in sorted(files.items())]}
@@ -566,7 +587,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
     def admission_context():
         # The original allowance path acquires parent before child. Keep that
         # order during preparation and through the child's attempt commit.
-        with ExitStack() as locks:
+        with mutation(), ExitStack() as locks:
             try:
                 for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
                     parent = ProjectStore(parent_root)

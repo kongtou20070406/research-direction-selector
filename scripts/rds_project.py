@@ -23,6 +23,8 @@ import sys
 import time
 import uuid
 
+from rds_mutation import mutation
+
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
 ROLES = {"code", "config", "data", "evaluator", "protocol"}
@@ -623,6 +625,7 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
+    @mutation()
     def initialize(self, contract, supersedes=None, *, scope_declaration=None):
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")

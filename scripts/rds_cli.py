@@ -918,12 +918,8 @@ def cmd_meta(args, rds):
 
 
 def cmd_advise(args, rds):
-    from rds_project_lifecycle import discover
-    requested = Path(args.root).resolve()
-    search_root = next((candidate for candidate in (requested, *requested.parents) if candidate.is_dir()), requested)
-    scope = discover(search_root)
-    require(not (scope['workflow']['mode'] == 'FULL' and Path(scope['project_root']).resolve() != requested),
-            'Advisor must use the existing FULL project root: ' + str(scope.get('project_root')))
+    from rds_project_lifecycle import require_advisor_root
+    require_advisor_root(args.root)
     from rds_advisor import RDSAdvisor
     owned = _owned_project(args.root)
     if owned is not None:
