@@ -68,6 +68,49 @@ class PythonModuleBoundaryTests(unittest.TestCase):
     def test_frozen_module_file_still_requires_explicit_file_entrypoint(self):
         self.refuse(['-m', 'worker'], frozen_worker=True)
 
+    def test_noop_t_cannot_hide_module_mode_in_frozen_explicit_or_legacy_plan(self):
+        for legacy in (False, True):
+            for options in (['-t', '-m', 'worker'], ['-tmworker'], ['-Btmworker']):
+                self.refuse(options, legacy=legacy)
+
+    def test_noop_t_preserves_explicit_file_identity_and_unbound_refusal(self):
+        for options in (['-t', 'worker.py'], ['-Bt', 'worker.py'], ['-tB', 'worker.py']):
+            for frozen_worker in (False, True):
+                with self.subTest(options=options, frozen_worker=frozen_worker), tempfile.TemporaryDirectory() as directory:
+                    root, store = self.build(directory, options, frozen_worker=frozen_worker)
+                    before = store.snapshot()
+                    plan = fixtures.json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+                    with patch.object(fixtures.ProjectStore, 'execute', side_effect=AssertionError('dispatch forbidden')), \
+                            patch.object(fixtures.ProjectStore, 'register', side_effect=AssertionError('registration forbidden')):
+                        if frozen_worker:
+                            loaded = jump.load_plan(store, before)
+                            self.assertEqual(len(loaded['stages']), 3)
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'entrypoint.*frozen code'):
+                                jump.load_plan(store, before)
+                            result = jump.prepare_owned(store, plan['stages'][0]['run'])
+                            self.assertEqual(result['status'], 'JUMP_UNAVAILABLE')
+                            self.assertIn('frozen code', result['diagnostic'])
+                            self.assertFalse(result['changed'])
+                            self.assertFalse(result['execution_started'])
+                    self.assertEqual(store.snapshot(), before)
+
+    def test_all_cpython_continuing_short_flags_preserve_later_module_refusal(self):
+        # CPython 3.11/3.13 initconfig.c: flags that continue before c/m/file.
+        for flag in 'bBdEiIOPqRsStuvx':
+            for options in ([f'-{flag}', '-m', 'worker'], [f'-{flag}mworker']):
+                with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'Python module execution'):
+                    jump._python_script_operand(['python', *options])
+            self.assertEqual(jump._python_script_operand(['python', f'-{flag}', 'worker.py']), 2)
+        for options, index in ((['-tW', '-m', 'worker.py'], 3),
+                               (['-tX', '-m', 'worker.py'], 3),
+                               (['-tW-m', 'worker.py'], 2),
+                               (['-tX-m', 'worker.py'], 2),
+                               (['-t', '--', '-m'], 3),
+                               (['-t', 'worker.py', '-m', 'worker'], 2)):
+            self.assertEqual(jump._python_script_operand(['python', *options]), index)
+        self.assertIsNone(jump._python_script_operand(['python', '-tc', 'pass', '-m']))
+
     def test_option_values_literal_main_and_postscript_module_arguments_stay_admissible(self):
         controls = [(['-W', '-m', 'worker.py'], None),
                     (['-X', '-m', 'worker.py'], None),

@@ -300,7 +300,8 @@ def _python_script_operand(argv):
                 if flag in {'W', 'X'}:
                     index += 1 if offset + 1 < len(flags) else 2
                     break
-                if flag not in 'bBdEiIOPqRsSuvx':
+                # CPython accepts -t as a compatibility no-op; keep scanning.
+                if flag not in 'bBdEiIOPqRsStuvx':
                     return None  # Unknown/stopping options cannot execute a file.
             else:
                 index += 1
