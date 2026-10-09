@@ -191,9 +191,14 @@ def compare_metrics(candidate, baseline):
         result['reason'] = 'UNSUPPORTED_METRIC_DIRECTION'
     else:
         try:
-            delta = cv - bv
+            if type(cv) is not type(bv):
+                exact_delta = Fraction(cv) - Fraction(bv)
+                delta = float(exact_delta)
+                _require(delta != 0 or exact_delta == 0, 'Unrepresentable difference')
+            else:
+                delta = cv - bv
             improvement = -delta if ci['direction'] == 'minimize' else delta
-        except ArithmeticError:
+        except (ArithmeticError, ValueError):
             result['reason'] = 'UNREPRESENTABLE_DIFFERENCE'
             return result
         if not _numeric(delta) or not _numeric(improvement):
@@ -525,13 +530,14 @@ def compare_paired_metrics(candidate, baseline, sampling):
     if result['status'] != 'COMPARABLE':
         return result
     try:
-        differences = [c - b for c, b in zip(cv, bv)]
-        if all(isinstance(v, int) for v in differences):
-            mean = sum(differences) / len(differences)
-        elif any(isinstance(v, int) for v in differences):
-            # fsum converts each int to float; retain integer low bits even
-            # when a float elsewhere makes the observations heterogeneous.
-            mean = float(sum((Fraction(v) for v in differences), Fraction()) / len(differences))
+        # Mixed subtraction must preserve the inputs before float coercion.
+        differences = [Fraction(c) - Fraction(b) if type(c) is not type(b) else c - b
+                       for c, b in zip(cv, bv)]
+        exact_mean = None
+        if any(isinstance(v, (int, Fraction)) for v in differences):
+            exact_mean = sum((Fraction(v) for v in differences), Fraction()) / len(differences)
+            mean = float(exact_mean)
+            _require(mean != 0 or exact_mean == 0, 'Unrepresentable paired difference')
         else:
             mean = fsum(differences) / len(differences)
         improvement = -mean if report['candidate']['identity']['direction'] == 'minimize' else mean
@@ -542,7 +548,13 @@ def compare_paired_metrics(candidate, baseline, sampling):
     result.update(mean_delta=mean, mean_improvement=improvement)
     if sampling['independent'] and len(differences) > 1:
         try:
-            centered = [v - mean for v in differences]
+            if exact_mean is not None:
+                exact_centered = [Fraction(v) - exact_mean for v in differences]
+                centered = [float(v) for v in exact_centered]
+                _require(all(v == 0 or rounded != 0 for v, rounded in zip(exact_centered, centered)),
+                         'Unrepresentable centered differences')
+            else:
+                centered = [v - mean for v in differences]
             _require(all(_numeric(v) for v in centered), 'Unrepresentable centered differences')
             scale = max(abs(v) for v in centered)
             se = (scale * (fsum((v / scale) ** 2 for v in centered)
@@ -579,15 +591,22 @@ def check_residuals(candidate, reference, domain):
     if report['status'] != 'COMPARABLE':
         return result
     try:
-        residuals = [abs(c - r) for c, r in zip(cv, rv)]
-        tolerances = [domain['atol'] + domain['rtol'] * abs(r) for r in rv]
-        _require(all(_numeric(v) for v in residuals + tolerances), 'Unrepresentable residual')
+        # Compare the original represented numbers exactly, before subtraction
+        # or tolerance multiplication can discard integer low bits.
+        residuals = [abs(Fraction(c) - Fraction(r)) for c, r in zip(cv, rv)]
+        tolerances = [Fraction(domain['atol']) + Fraction(domain['rtol']) * abs(Fraction(r)) for r in rv]
+        all_integer = all(isinstance(v, int) for v in cv + rv)
+        if not all_integer:
+            _require(all(_numeric(float(v)) for v in residuals), 'Unrepresentable residual')
+        _require(all(_numeric(float(v)) for v in tolerances), 'Unrepresentable residual')
+        maximum = max(residuals)
+        reported_maximum = int(maximum) if all_integer else float(maximum)
+        _require(maximum == 0 or reported_maximum != 0, 'Unrepresentable residual')
     except (ArithmeticError, ValueError):
         result['reason'] = 'UNREPRESENTABLE_RESIDUAL'
         return result
-    maximum = max(residuals)
     violations = sum(v > t for v, t in zip(residuals, tolerances))
-    result.update(status='OBSERVED', reason=None, max_abs_residual=maximum, violations=violations,
+    result.update(status='OBSERVED', reason=None, max_abs_residual=reported_maximum, violations=violations,
                   within_tolerance=violations == 0, worst_pointer='/values/' + str(residuals.index(maximum)))
     return result
 

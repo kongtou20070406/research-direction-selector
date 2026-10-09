@@ -43,6 +43,8 @@ def _number(value):
         raise ValueError('Continuous number exceeds numeric bound') from exc
     _require(math.isfinite(result) and abs(result) <= MAX_ABS_VALUE,
              'Continuous number is nonfinite or exceeds numeric bound')
+    _require(type(value) is not int or result == value,
+             'Continuous integer must be exactly representable as a bounded float')
     return result
 
 

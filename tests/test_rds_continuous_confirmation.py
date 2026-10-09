@@ -30,6 +30,37 @@ def output(expression='2*x0+1'):
 
 
 class ContinuousArithmeticTests(unittest.TestCase):
+    def test_lossy_integer_inputs_labels_and_constants_refuse_before_float_replay(self):
+        inputs = {'schema': 1, 'variables': ['x0'], 'rows': [
+            {'id': 'r0', 'values': [1e16]}, {'id': 'r1', 'values': [0]}]}
+        labels = {'schema': 1, 'rows': [
+            {'id': 'r0', 'target': 10**16 + 1}, {'id': 'r1', 'target': 0}]}
+        candidate = {**output('x0'), 'row_ids': ['r0', 'r1']}
+        original = deepcopy([inputs, labels, candidate])
+        for claim in ({**CLAIM, 'max_nrmse': 0, 'min_r2': 0},
+                      {**CLAIM, 'max_nrmse': 1e-7, 'min_r2': 1},
+                      {**CLAIM, 'max_nrmse': 0, 'min_r2': 1}, CLAIM):
+            with self.assertRaisesRegex(ValueError, 'exactly representable'):
+                check_output(claim, inputs, labels, candidate, SHA)
+        self.assertEqual([inputs, labels, candidate], original)
+        inputs['rows'][0]['values'][0] = 10**16 + 1
+        with self.assertRaisesRegex(ValueError, 'exactly representable'):
+            evaluate('x0', inputs)
+        with self.assertRaisesRegex(ValueError, 'exactly representable'):
+            SafeExpression(str(10**16 + 1), 1)
+
+    def test_representable_large_integers_and_finite_floats_keep_perfect_fit(self):
+        for values in ([2**54, 0], [-2**54, 0], [float(2**54), 0.], [3, -2]):
+            inputs = {'schema': 1, 'variables': ['x0'], 'rows': [
+                {'id': 'r' + str(i), 'values': [value]} for i, value in enumerate(values)]}
+            labels = {'schema': 1, 'rows': [
+                {'id': row['id'], 'target': row['values'][0]} for row in inputs['rows']]}
+            candidate = {**output('x0'), 'row_ids': ['r0', 'r1']}
+            for claim in ({**CLAIM, 'max_nrmse': 0, 'min_r2': 0},
+                          {**CLAIM, 'max_nrmse': 1e-7, 'min_r2': 1},
+                          {**CLAIM, 'max_nrmse': 0, 'min_r2': 1}):
+                self.assertEqual(check_output(claim, inputs, labels, candidate, SHA)['status'], 'PASS')
+
     def test_replays_predictions_and_recomputes_metrics(self):
         replay = evaluate('2*x0+1', INPUTS)
         self.assertEqual(replay['predictions'], [-1., 1., 3., 5.])
@@ -253,13 +284,16 @@ class ContinuousOwnedReceiptTests(unittest.TestCase):
         self.addCleanup(self.harness.doCleanups)
 
     def build(self, *, expression='2*x0+1', verdict='PASS', abstain=False, malformed=None,
-              wrong_label_hash=False, evaluator_metrics=False, evaluator_replay=False, constant=False, nested_labels=False):
+              wrong_label_hash=False, evaluator_metrics=False, evaluator_replay=False, constant=False,
+              nested_labels=False, lossy_integer=False):
         h = self.harness
         writer = h.write
         labels = deepcopy(LABELS)
         if constant:
             for row in labels['rows']:
                 row['target'] = 0
+        if lossy_integer:
+            labels['rows'][0]['target'] = 10**16 + 1
         writer('labels.json', '[' * 10000 + '0' + ']' * 10000 if nested_labels else labels)
         def write(path, value):
             if path == 'claim.json':
@@ -315,6 +349,19 @@ class ContinuousOwnedReceiptTests(unittest.TestCase):
         with patch.object(ProjectStore, 'initialize', new=initialize):
             h.build()
         return h
+
+    def test_lossy_frozen_integer_stays_unknown_with_original_receipts(self):
+        h = self.build(lossy_integer=True)
+        labels_before = (h.root / 'labels.json').read_bytes()
+        result = h.run_all()
+        self.assertEqual(result['task_confirmation'], 'UNKNOWN', result)
+        self.assertIn('exactly representable', str(result['reasons']))
+        self.assertEqual(result['execution']['candidate'], 'SUCCEEDED')
+        self.assertEqual((h.root / 'labels.json').read_bytes(), labels_before)
+        before = h.store.snapshot()
+        self.assertEqual(len(before['receipts']), 2)
+        h.store.recover('confirmation')
+        self.assertEqual(h.store.snapshot()['budget'], before['budget'])
 
     def test_original_receipts_confirm_finite_fit_and_preserve_limits(self):
         h = self.build()

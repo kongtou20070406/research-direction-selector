@@ -28,6 +28,29 @@ DOMAIN = {'domain': 'four explicitly supplied points', 'precision': 'float64',
 
 
 class PairedMethodTests(unittest.TestCase):
+    def test_mixed_original_pairs_preserve_low_bits_before_subtraction(self):
+        for candidate, baseline in (([10**16 + 1], [1e16]), ([1e16], [10**16 + 1]),
+                                    ([10**16 + 1, 1e16], [1e16, 10**16 + 1])):
+            expected = float(sum((Fraction(c) - Fraction(b) for c, b in zip(candidate, baseline)),
+                                 Fraction()) / len(candidate))
+            c, b = points(candidate, True), points(baseline)
+            before = deepcopy([c, b])
+            result = compare_paired_metrics(c, b, dict(SAMPLING, independent=True))
+            self.assertEqual(result['status'], 'COMPARABLE')
+            self.assertEqual(result['mean_delta'], expected)
+            self.assertEqual(result['mean_improvement'], -expected)
+            if len(candidate) == 2:
+                self.assertEqual(result['standard_error'], 1)
+            self.assertEqual([c, b], before)
+
+    def test_integer_low_bits_preserve_centered_uncertainty(self):
+        result = compare_paired_metrics(points([10**16 + 1, 10**16], True), points([0, 0]),
+                                        dict(SAMPLING, independent=True))
+        self.assertEqual(result['status'], 'COMPARABLE')
+        self.assertEqual(result['standard_error'], .5)
+        self.assertEqual(result['uncertainty_status'], 'ESTIMATED_UNDER_CALLER_IID_PREMISE')
+        self.assertEqual(result['scientific_support'], 'UNKNOWN')
+
     def test_cancellation_permutations_keep_exact_mean_and_direction(self):
         values = [1e16, 1.0, -1e16]
         expected = float(sum(map(Fraction, values)) / len(values))
@@ -128,6 +151,32 @@ class PairedMethodTests(unittest.TestCase):
 
 
 class ResidualMethodTests(unittest.TestCase):
+    def test_mixed_original_residual_and_tolerance_boundary_are_exact(self):
+        c, r = points([10**16 + 1], True), points([1e16])
+        before = deepcopy([c, r])
+        for atol, expected in ((0, False), (.5, False), (1, True)):
+            result = check_residuals(c, r, dict(DOMAIN, atol=atol))
+            self.assertEqual(result['status'], 'OBSERVED')
+            self.assertEqual(result['max_abs_residual'], 1)
+            self.assertEqual(result['within_tolerance'], expected)
+        # 1 + (2**53+1) is exactly 2**53+2, not rounded 2**53.
+        result = check_residuals(points([2**53 + 2], True), points([2**53 + 1]),
+                                 dict(DOMAIN, atol=0., rtol=1 / (2**53 + 1)))
+        exact_tolerance = Fraction(1 / (2**53 + 1)) * (2**53 + 1)
+        self.assertEqual(result['within_tolerance'], Fraction(1) <= exact_tolerance)
+        self.assertEqual([c, r], before)
+
+    def test_mixed_perfect_representable_tiny_and_unrepresentable_residuals(self):
+        for values, reference in (([2**54, 0], [float(2**54), 0.]), ([0., 2], [0, 2.])):
+            result = check_residuals(points(values, True), points(reference), dict(DOMAIN, atol=0))
+            self.assertTrue(result['within_tolerance'])
+            self.assertEqual(result['max_abs_residual'], 0)
+        result = check_residuals(points([5e-324], True), points([0]), dict(DOMAIN, atol=0))
+        self.assertEqual(result['max_abs_residual'], 5e-324)
+        self.assertFalse(result['within_tolerance'])
+        result = check_residuals(points([1e308], True), points([-1e308]), DOMAIN)
+        self.assertEqual(result['reason'], 'UNREPRESENTABLE_RESIDUAL')
+
     def test_exact_boundary_and_original_worst_pointer(self):
         result = check_residuals(points([0, 1.25, 2.5], True), points([0, 1, 2]), DOMAIN)
         self.assertEqual(result['status'], 'OBSERVED')
