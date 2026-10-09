@@ -1,4 +1,4 @@
-"""Offline wheel tests. Fake project responses are unit fixtures; one test uses real CLI receipts."""
+"""Offline wheel tests. Fake project responses are unit fixtures; real CLI tests verify kernel behavior."""
 from copy import deepcopy
 import importlib.util
 import io
@@ -466,6 +466,41 @@ class WheelTests(unittest.TestCase):
 
 
 class RealWheelTests(unittest.TestCase):
+    def test_project_init_rejection_leaves_wheel_uninitialized_for_corrected_retry(self):
+        with tempfile.TemporaryDirectory(prefix="rds-wheel-init-retry-") as directory:
+            root = Path(directory) / "project"
+            initialize = Wheel.initialize
+            original = {}
+
+            def reject_missing_code(wheel, contract_path):
+                contract = read_json(contract_path)
+                original.update(deepcopy(contract))
+                contract["bindings"] = [b for b in contract["bindings"] if b["role"] != "code"]
+                contract_path.write_text(canonical(contract) + "\n", encoding="utf-8")
+                return initialize(wheel, contract_path)
+
+            # Keep all wheel-specific inputs valid; the real kernel rejects the
+            # missing role. No FakeProject or bootstrap execution is involved.
+            with patch.object(Wheel, "initialize", autospec=True, side_effect=reject_missing_code):
+                with self.assertRaisesRegex(wheel_module.WheelError, "code/config/data/evaluator/protocol bindings required"):
+                    fixture.prepare(root)
+            self.assertFalse((root / ".rds/wheel").exists())
+            frozen = {p: p.read_bytes() for p in (root / "trusted").iterdir()}
+            contract_path = root / "project-contract.json"
+            contract_path.write_text(canonical(original) + "\n", encoding="utf-8")
+            wheel = Wheel(root)
+            wheel.initialize(contract_path)
+            status = wheel.project("status")
+            self.assertEqual(status["contract"], original)
+            self.assertEqual(status["contract_sha256"], digest(original))
+            self.assertEqual(status["runs"], [])
+            self.assertEqual(status["receipts"], [])
+            budget = status["budget"]["wall_seconds"]
+            self.assertEqual(budget["cap"], original["budget"]["wall_seconds"])
+            self.assertEqual(budget["remaining"], budget["cap"])
+            self.assertEqual(read_json(wheel.state_path("state.json"))["ticks"], 0)
+            self.assertEqual(frozen, {p: p.read_bytes() for p in frozen})
+
     def test_real_project_cli_fixture_uses_original_receipts_until_pause(self):
         with tempfile.TemporaryDirectory(prefix="rds-wheel-cli-") as directory:
             root = Path(directory) / "project"

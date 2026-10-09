@@ -306,6 +306,9 @@ class Wheel:
             self.manifest(factor, "main")
         self.manifest(setup["initial"]["factor"], "initial")
         self.manifest(setup["control"]["factor"], "control")
+        # Kernel validation can reject a contract that passed the wheel checks.
+        # Publish wheel state only after the project contract is accepted.
+        self.project("init", "--contract", str(project_contract_path))
         self.write("contract.json", self.contract, once=True)
         self.write("factors.txt", "".join(f + "\n" for f in factors), text=True, once=True)
         self.write("dead.txt", "", text=True, once=True)
@@ -318,7 +321,6 @@ class Wheel:
         self.write("transitions.jsonl", "", text=True, once=True)
         self.write("rsi.json", {"slice_id": protocol_slice(self.contract), "regret": "UNKNOWN",
                                 "rule_edits": False, "scientific_accuracy_gain": "UNKNOWN"}, once=True)
-        self.project("init", "--contract", str(project_contract_path))
 
     def manifest(self, factor, kind, budget_ms=None):
         require(isinstance(factor, str) and TOKEN.fullmatch(factor), "invalid factor")
