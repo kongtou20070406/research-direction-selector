@@ -151,6 +151,30 @@ class PairedMethodTests(unittest.TestCase):
 
 
 class ResidualMethodTests(unittest.TestCase):
+    def test_large_all_integer_tolerances_keep_exact_thresholds_and_extraction(self):
+        code, _ = extract_function((ROOT / 'scripts/rds_result_tools.py').read_bytes(), 'check_residuals')
+        namespace = {}
+        exec(compile(code, '<extracted-integer-tolerance>', 'exec'), namespace)
+        for atol, rtol, reference in ((10**400, 0, [0]), (0, 10**400, [1])):
+            candidate, baseline = points([2], True), points(reference)
+            domain = dict(DOMAIN, atol=atol, rtol=rtol)
+            before = deepcopy([candidate, baseline, domain])
+            residual = abs(Fraction(2) - Fraction(reference[0]))
+            threshold = Fraction(atol) + Fraction(rtol) * abs(Fraction(reference[0]))
+            for operation in (check_residuals, namespace['check_residuals']):
+                result = operation(candidate, baseline, domain)
+                self.assertEqual(result['status'], 'OBSERVED')
+                self.assertEqual(result['within_tolerance'], residual <= threshold)
+                self.assertEqual(result['max_abs_residual'], residual)
+                self.assertEqual(result['scientific_support'], 'UNKNOWN')
+            self.assertEqual([candidate, baseline, domain], before)
+        for domain in (dict(DOMAIN, atol=1e308, rtol=1e308),
+                       dict(DOMAIN, atol=10**400, rtol=0)):
+            for operation in (check_residuals, namespace['check_residuals']):
+                result = operation(points([1.], True), points([1.]), domain)
+                self.assertEqual(result['status'], 'UNKNOWN')
+                self.assertEqual(result['reason'], 'UNREPRESENTABLE_RESIDUAL')
+
     def test_mixed_original_residual_and_tolerance_boundary_are_exact(self):
         c, r = points([10**16 + 1], True), points([1e16])
         before = deepcopy([c, r])

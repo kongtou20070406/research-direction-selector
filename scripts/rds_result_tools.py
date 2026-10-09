@@ -598,7 +598,10 @@ def check_residuals(candidate, reference, domain):
         all_integer = all(isinstance(v, int) for v in cv + rv)
         if not all_integer:
             _require(all(_numeric(float(v)) for v in residuals), 'Unrepresentable residual')
-        _require(all(_numeric(float(v)) for v in tolerances), 'Unrepresentable residual')
+        # Retain the original finite arithmetic range gate without forcing
+        # exact all-integer thresholds into a float merely for validation.
+        _require(all(_numeric(domain['atol'] + domain['rtol'] * abs(r)) for r in rv),
+                 'Unrepresentable residual')
         maximum = max(residuals)
         reported_maximum = int(maximum) if all_integer else float(maximum)
         _require(maximum == 0 or reported_maximum != 0, 'Unrepresentable residual')
