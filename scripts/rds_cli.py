@@ -1116,6 +1116,9 @@ def cmd_project(args):
     if args.action == 'trajectory':
         from rds_trajectory import report
         return report(args.root, args.manifest)
+    if args.action == 'compose-tools':
+        from rds_tool_calls import compose
+        return compose(args.root, args.request)
     from rds_project import ProjectStore
     store = ProjectStore(args.root)
     if args.action == 'plan':
@@ -1486,6 +1489,10 @@ def parser():
     rsi_use.add_argument('--output', '-o', help='Export a verified local module to a project-relative .py file without overwriting')
     rsi_list = rsi_actions.add_parser('list', help='Discover local tool entries; registration is not a fresh reuse check')
     rsi_list.add_argument('--name', help='Inspect one exact local tool name without dumping unrelated records')
+    rsi_discover = rsi_actions.add_parser('discover', help='Disclose selected local signatures and frozen tool routes; no dispatch')
+    rsi_discover.add_argument('--name', help='Exact local tool name')
+    rsi_discover.add_argument('--obligation', help='Exact current goal obligation')
+    rsi_discover.add_argument('--limit', type=int, default=8)
     rsi_prepare = rsi_actions.add_parser('prepare-application', help='Export a qualified finite task candidate before frozen project init; no execution')
     for field in ('name', 'inputs', 'cases', 'code-path', 'driver', 'request', 'output',
                   'decision', 'candidate', 'run-id', 'obligation'):
@@ -1552,6 +1559,8 @@ def parser():
     pr_actions.add_parser("costs")
     pr_trajectory = pr_actions.add_parser('trajectory', help='Read original provider/tool/evaluator records; no execution or new ledger')
     pr_trajectory.add_argument('--manifest', required=True, help='Project-relative rds-trajectory-manifest-v1 JSON')
+    pr_compose = pr_actions.add_parser('compose-tools', help='Compose existing qualified tool routes with original admission and recovery')
+    pr_compose.add_argument('--request', required=True)
     pr_control = pr_actions.add_parser("control-check")
     pr_control.add_argument("--candidate", required=True)
     pr_control.add_argument("--current", required=True)
@@ -1901,6 +1910,8 @@ def _main():
         else:
             result = cmd_status(args, rds)
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json
+        if args.command == 'rsi' and args.action == 'discover':
+            compact = False  # Discovery is already bounded and must expose the requested signatures.
         if compact:
             from rds_quick import brief
             summary = brief(args.root, result, VERSION)
@@ -1926,6 +1937,8 @@ def _main():
             return {'LOCAL_CASES_PASSED': 0, 'FAILED': 1, 'UNKNOWN': 2}[result['status']]
         if args.command == 'rsi' and args.action == 'compare':
             return 1 if result['correctness'] == 'FAIL' else 2 if result['status'] == 'UNKNOWN' else 0
+        if args.command == 'project' and args.action == 'compose-tools' and result['status'] == 'HANDOFF':
+            return 2
         if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and result.get('receipt', result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
         if result.get('status') == 'COLLECTION_FAILED' or (result.get('advisor') or {}).get('status') == 'COLLECTION_FAILED':

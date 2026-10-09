@@ -60,6 +60,7 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `project recover` | Reconcile an existing interrupted attempt | Existing `--id`; inspect retained state and artifacts rather than duplicating the attempt | [Project runner](development-loop.md) |
 | `project next` | Derive the next campaign step | Initialized project ledger; resolve actual inputs in any emitted command | [Project next implementation](../scripts/rds_project.py), [Development loop](development-loop.md) |
 | `project advance` | Execute one program-selected route and receive its results | Frozen `advisor_policy`; optional `--brief` or authorized `--background`; collection failures require recovery, not rerunning completed work | [Owned Advisor](program-owned-advisor.md) |
+| `project compose-tools` | Compose bounded status, collection, qualified tool execution and cost reads | `--request` with exact contract hash and frozen run IDs; every execution rechecks current admission | [Tool composition](tool-composition.md) |
 | `project drive` | Recover and drive a bounded research loop; request, verify and adopt a different method/tool on obstacles | Frozen `advisor_policy.autonomy`; pass limit plus original cumulative steps/budget/deadline | [Research drive](autonomy-loop.md), [domain confirmation](domain-confirmation.md) |
 | `project compare` | Compare recorded control/treatment arms | Eligible completed arms and precommitted primary metric/useful-delta declaration | [Project comparison](../tests/test_rds_project_next.py) |
 | `project status` | Inspect current runs, budget and receipts | Existing project; `--brief` gives bounded state plus a saved-record locator | [Output](agent-entry.md) |
@@ -71,6 +72,8 @@ Global `--version` reports the installed version; `--help` lists the installed c
 
 For repeated JSON/metric/failure reading, [result tools](result-tools.md) provide
 three data-only functions using the existing extraction and owned-consumer commands below.
+Use `rsi discover --name <tool>` or `--obligation <fact>` for bounded local signatures
+and frozen route prerequisites; see [discovery and composition](tool-composition.md).
 
 | Command | Purpose | Inputs and prerequisites | Guide |
 | --- | --- | --- | --- |
@@ -81,6 +84,7 @@ three data-only functions using the existing extraction and owned-consumer comma
 | `math refute` | Retain a declared refutation and affected lineage | Existing `--id`, original `--reason` and `--evidence`; preserve previous records | [Native research](native-research.md) |
 | `math status` | Inspect native objective/assets | Native project records; storage does not establish proof | [Native research](native-research.md) |
 | `rsi list` | Discover retained local functions | Native tool records; optional exact `--name`; listing is not a fresh reuse check | [Local tools](native-research.md) |
+| `rsi discover` | Disclose bounded local signatures and frozen tool routes | Optional exact `--name` or `--obligation`, bounded `--limit`; discovery starts no execution and applicability is checked at admission | [Tool composition](tool-composition.md) |
 | `rsi extract` | Extract a bounded local function candidate | `--source`, `--entry`, `--name`; supported AST and dependency closure | [Local tools](native-research.md) |
 | `rsi validate` | Execute finite local qualification cases | Extracted `--name`, `--cases`, bounded timeout; supply `--ledger` when charging an existing research budget | [Local tools](native-research.md) |
 | `rsi register` | Register an eligible validated local function | `--name`; `--validation` may be omitted only for one passing validation; rechecks bindings and receipt | [Local tools](native-research.md) |

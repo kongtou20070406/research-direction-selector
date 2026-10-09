@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO / 'scripts'))
 from rds_project import ProjectStore
 
 
-def run(workspace, *, recipe=False):
+def run(workspace, *, recipe=False, compose=False):
     root = Path(workspace).resolve()
     if root.is_relative_to(REPO):
         raise ValueError('Choose a fresh sibling workspace outside the checkout')
@@ -38,7 +38,9 @@ def run(workspace, *, recipe=False):
         if args[0] == 'rsi':
             args = (*args, '--json')
         argv = [sys.executable, '-B', str(REPO / 'scripts/rds_cli.py'), '--root', str(root), *args]
-        proc = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=40,
+        # A composite includes several original admission/collection passes.
+        # This host wait does not change tool timeouts or the project budget.
+        proc = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=180 if args[:2] == ('project', 'compose-tools') else 40,
                               env={**os.environ, 'RDS_USAGE_DB': str(root / 'usage.sqlite3')})
         trace.append({'stage': stage, 'argv': argv, 'returncode': proc.returncode,
                       'stdout': proc.stdout, 'stderr': proc.stderr})
@@ -167,12 +169,28 @@ def run(workspace, *, recipe=False):
                         'tool_bindings': tools}}
         write('contract.json', contract)
         call('init', 'project', 'init', '--contract', str(root / 'contract.json'))
-    call('before', 'project', 'next')
-    for index in range(3):
-        call('advance-' + str(index), 'project', 'advance')
-    final = call('after', 'project', 'next')
+    if compose:
+        from rds_tool_calls import SCHEMA
+        call('discovery', 'rsi', 'discover', '--name', 'extract')
+        # Follow this example's declared route order, as in the existing consumer.
+        # Each internal call still rechecks selection; a mismatch stops the request.
+        request = {'schema': SCHEMA, 'contract_sha256': ProjectStore(root).snapshot()['contract_sha256'], 'max_wall_seconds': 120,
+                   'steps': [{'op': 'status'}, {'op': 'collect'}] + [
+                       {'op': 'execute_tool', 'run_id': spec[0]} for spec in specs] + [
+                       {'op': 'collect'}, {'op': 'costs'}]}
+        write('composition.json', request)
+        call('composition', 'project', 'compose-tools', '--request', 'composition.json')
+        final = call('verification', 'project', 'next')
+    else:
+        call('before', 'project', 'next')
+        for index in range(3):
+            call('advance-' + str(index), 'project', 'advance')
+        final = call('after', 'project', 'next')
     before_recovery = call('status-before-recovery', 'project', 'status')
-    call('recovery', 'project', 'advance')
+    if compose:
+        call('recovery', 'project', 'compose-tools', '--request', 'composition.json')
+    else:
+        call('recovery', 'project', 'advance')
     after_recovery = call('status-after-recovery', 'project', 'status')
     if before_recovery['runs'] != after_recovery['runs'] or before_recovery['budget'] != after_recovery['budget']:
         raise RuntimeError('Recovery changed completed runs or budget')
@@ -188,6 +206,11 @@ def run(workspace, *, recipe=False):
         sizes.append({'operation': name, 'original_source_bytes': raw_bytes,
                       'returned_application_bytes': returned_bytes, 'bytes_difference': raw_bytes - returned_bytes})
     summary = {'workspace': str(root), 'tool_utilization': final['tool_utilization'],
+               'execution_interface': 'composition' if compose else 'existing entries in a host program',
+               'consumer_cli_calls': sum(t['stage'] in {'before', 'after', 'composition'} or t['stage'].startswith('advance-')
+                                         for t in trace),
+               'verification_cli_calls': sum(t['stage'] == 'verification' for t in trace),
+               'discovery_cli_calls': sum(t['stage'] == 'discovery' for t in trace),
                'selected_run': final['selected_run'], 'material_bytes': sizes,
                'recovery_preserved_runs_and_budget': True, 'real_model_round_trips': 'NOT_RUN',
                'token_savings': 'NOT_MEASURED', 'scientific_gain': 'UNKNOWN',
@@ -200,5 +223,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', required=True)
     parser.add_argument('--recipe', action='store_true', help='Assemble the same owned consumers from a compact recipe')
+    parser.add_argument('--compose', action='store_true', help='Use the same tools through bounded composition')
     args = parser.parse_args()
-    print(json.dumps(run(args.workspace, recipe=args.recipe), indent=2, allow_nan=False))
+    print(json.dumps(run(args.workspace, recipe=args.recipe, compose=args.compose), indent=2, allow_nan=False))
