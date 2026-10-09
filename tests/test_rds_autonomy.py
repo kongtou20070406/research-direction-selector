@@ -218,8 +218,9 @@ class AutonomyTests(unittest.TestCase):
         import time
         for slow_boundary in ('register', '_advisor_prepare_run'):
             with self.subTest(boundary=slow_boundary):
-                # The real review/registration remains intact; only its elapsed
-                # work is delayed, so no verdict or worker result is mocked.
+                # Keep real review/registration, but advance only the controller
+                # clock at the selected boundary. A slow CI host must not run
+                # out of allowance before reaching the boundary under test.
                 root = self.root / slow_boundary
                 root.mkdir()
                 self.root, self.store = root, ProjectStore(root)
@@ -227,10 +228,13 @@ class AutonomyTests(unittest.TestCase):
                 original = getattr(self.store, slow_boundary)
                 def delayed(*args, **kwargs):
                     result = original(*args, **kwargs)
-                    time.sleep(1.05)
+                    clock.monotonic.return_value = 12.
                     return result
-                with patch.object(self.store, slow_boundary, side_effect=delayed):
-                    result = autonomy.drive(self.store, max_steps=1)
+                with patch.object(autonomy, 'time', wraps=time) as clock:
+                    clock.monotonic.return_value = 10.
+                    with patch.object(self.store, slow_boundary, side_effect=delayed) as boundary:
+                        result = autonomy.drive(self.store, max_steps=1)
+                    self.assertEqual(boundary.call_count, 1)
                 state = self.store.snapshot()
                 self.assertEqual(result['status'], 'HANDOFF_REQUIRED', result)
                 self.assertIn('CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', result['reason'])
@@ -238,7 +242,7 @@ class AutonomyTests(unittest.TestCase):
                 self.assertIsNone(state['runs'][0]['attempt_id'])
                 self.assertEqual(state['runs'][0]['status'], 'RESERVED')
                 self.assertEqual(state['receipts'], [])
-                self.assertGreaterEqual(result['controller_wall_seconds'], 1.05)
+                self.assertEqual(result['controller_wall_seconds'], 2.)
                 self.assertEqual(self.calls(), [])
 
     def test_oversize_provider_originals_stay_unknown_without_a_second_paid_slot(self):
