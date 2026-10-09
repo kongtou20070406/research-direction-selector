@@ -5,6 +5,8 @@ Domain workers generate explanations; structure retains and tests them.
 """
 from copy import deepcopy
 import hashlib
+import os
+from pathlib import Path
 import re
 
 from rds_artifacts import strict_json
@@ -47,8 +49,11 @@ def _origin(store, state):
     for binding in ancestor['contract']['bindings']:
         if binding['role'] in {'config', 'data', 'evaluator'}:
             require(current.get(binding['path']) == binding, 'Jump immutable source compatibility changed')
-        if binding['role'] == 'code' and any(binding['path'] in stage['run']['argv'] for stage in plan['stages']):
-            require(current.get(binding['path']) == binding, 'Jump generator code compatibility changed')
+    current_code = {_code_identity(store, b['path']): b for b in state['contract']['bindings'] if b['role'] == 'code'}
+    for binding in _generator_bindings(store, ancestor['contract'], plan):
+        current_binding = current_code.get(_code_identity(store, binding['path']))
+        require(current_binding is not None and current_binding['sha256'] == binding['sha256'],
+                'Jump generator code compatibility changed')
     return started, req, plan, origin, history
 
 
@@ -251,6 +256,45 @@ def validate_use(context, value):
     return {'schema': 1, 'packet_sha256': context['sha256'], 'decisions': [checked[ident] for ident in ids]}
 
 
+def _code_identity(store, path):
+    return os.path.normcase(str(store._path(path).resolve()))
+
+
+def _generator_bindings(store, contract, plan):
+    """Frozen explicit dependencies, with conservative legacy code fallback.
+
+    This declaration does not infer or prove arbitrary dynamic import closure.
+    """
+    code = {_code_identity(store, b['path']): b for b in contract['bindings'] if b['role'] == 'code'}
+    declared = plan.get('generator_code_paths')
+    if declared is None:
+        require('generator_code_paths' not in plan, 'Generator code paths must be a nonempty list')
+        return list(code.values())
+    require(isinstance(declared, list) and 1 <= len(declared) <= 64,
+            'Generator code paths must be a nonempty bounded list')
+    identities = []
+    for path in declared:
+        require(isinstance(path, str) and path and len(path) <= 2048, 'Invalid generator code path')
+        identity = _code_identity(store, path)
+        require(identity in code and identity not in identities,
+                'Generator code paths must be distinct frozen code bindings')
+        identities.append(identity)
+    for stage in plan['stages']:
+        for arg in stage['run']['argv']:
+            candidate = arg.split('=', 1)[1] if arg.startswith('-') and '=' in arg else arg
+            try:
+                path = Path(candidate)
+                path = (path if path.is_absolute() else store.root / path).resolve()
+                if not path.is_relative_to(store.root.resolve()):
+                    continue
+                identity = os.path.normcase(str(path))
+            except (ValueError, OSError):
+                continue  # Executables/options outside the root are not code bindings.
+            require(identity not in code or identity in identities,
+                    'Jump argv code entrypoint is absent from generator dependencies')
+    return [code[identity] for identity in identities]
+
+
 def load_plan(store, state):
     bindings = [b for b in state['contract']['bindings'] if b['path'] == POLICY_PATH]
     if not bindings:
@@ -262,7 +306,8 @@ def load_plan(store, state):
     raw = path.read_bytes()
     require(hashlib.sha256(raw).hexdigest() == bindings[0]['sha256'], 'Jump plan binding changed')
     plan = strict_json(raw.decode('utf-8-sig'))
-    require(isinstance(plan, dict) and set(plan) == {'schema', 'stages'} and type(plan['schema']) is int
+    require(isinstance(plan, dict) and {'schema', 'stages'} <= set(plan)
+            and set(plan) <= {'schema', 'stages', 'generator_code_paths'} and type(plan['schema']) is int
             and plan['schema'] == 1, 'Unsupported jump plan')
     stages = plan['stages']
     require(isinstance(stages, list) and len(stages) == 3, 'Declare exactly probe, refresh and synthesize stages')
@@ -287,6 +332,7 @@ def load_plan(store, state):
         require(set(run.get('resource_estimates', {})) == set(state['budget']), 'Jump route resource dimensions differ')
         ids.add(run['id'])
         outputs.update(run['outpaths'])
+    _generator_bindings(store, state['contract'], plan)
     return plan
 
 
@@ -308,6 +354,7 @@ def prepare_owned(store, selected_manifest):
     """Prepare/collect frozen generators; the owning drive alone executes them."""
     before = digest(structure._events(store))
     try:
+        require(selected_manifest is None or isinstance(selected_manifest, dict), 'Selected jump manifest must be an object')
         state = store.snapshot()
         found = _origin(store, state)
         if found is not None:
@@ -322,8 +369,16 @@ def prepare_owned(store, selected_manifest):
                     'Unfinished jump cannot cross a method revision')
         else:
             plan = load_plan(store, state)
-            if plan is None or selected_manifest != plan['stages'][0]['run']:
+            if plan is None or selected_manifest is None:
                 return None
+            if selected_manifest.get('id') not in {s['run']['id'] for s in plan['stages']}:
+                return None
+            if selected_manifest != plan['stages'][0]['run']:
+                return {'status': 'JUMP_WAITING_ADMISSION', 'next_stage': 'probe',
+                        'selected_manifest': deepcopy(plan['stages'][0]['run']), 'sources': [],
+                        'changed': False, 'execution_started': False, 'retry_authorized': False}
+        if selected_manifest is not None and selected_manifest.get('id') not in {s['run']['id'] for s in (found[2] if found else plan)['stages']}:
+            return None
         result = generate(store.root, _prepare_only=True, _selected_manifest=selected_manifest)
         return {**result, 'changed': digest(structure._events(store)) != before,
                 'execution_started': False}
@@ -332,7 +387,61 @@ def prepare_owned(store, selected_manifest):
                 'diagnostic': str(exc)[:512], 'execution_started': False, 'retry_authorized': False}
 
 
+def _owned_stage(store, stage, req):
+    state = store.snapshot()
+    require(state['contract_sha256'] == req['scope']['contract_sha256'],
+            'Unfinished jump cannot cross a method revision')
+    run = next((r for r in state['runs'] if r['id'] == stage['run']['id']), None)
+    if run is not None:
+        require(run['manifest_sha256'] == digest(stage['run']) and run['manifest'] == stage['run'],
+                'Jump run ID already belongs to another manifest')
+        require(run.get('effective_contract_sha256', state['contract_sha256']) == state['contract_sha256'],
+                'Jump run belongs to another effective contract')
+    return run
+
+
+def _execute_stage(store, stage, req, control):
+    """Reconcile only the two exact kernel races over the same owned manifest."""
+    run = _owned_stage(store, stage, req)
+    if run is None:
+        try:
+            store.register(stage['run'])
+        except ValueError as exc:
+            if str(exc) not in {'Run ID already exists', 'Outputs must be unique and absent before registration'}:
+                raise
+            if _owned_stage(store, stage, req) is None:
+                raise  # Unowned pre-existing output is an ordinary admission failure.
+        run = _owned_stage(store, stage, req)
+    if run['status'] in TERMINAL or run.get('attempt_id') is not None:
+        return store.recover(run['id'])
+    try:
+        with control.suspend():
+            receipt = store.execute(run['id'])
+    except ValueError as exc:
+        if str(exc) != 'Run already dispatched or started; recover never reruns it':
+            raise
+        raced = _owned_stage(store, stage, req)
+        require(raced is not None and (raced['status'] in TERMINAL or raced.get('attempt_id') is not None),
+                'Competing jump attempt is missing')
+        return store.recover(run['id'])
+    if receipt.get('run_status') not in {'SUCCEEDED', 'FAILED', 'INTERRUPTED'}:
+        # Policy-enabled execute may return an observation instead of raising.
+        # Recover observes this attempt; it never launches another process.
+        raced = _owned_stage(store, stage, req)
+        require(raced is not None and raced.get('attempt_id') is not None, 'Jump observation has no owned attempt')
+        return store.recover(run['id'])
+    return receipt
+
+
 def generate(root, steps=1, *, _prepare_only=False, _selected_manifest=None):
+    try:
+        return _generate(root, steps, _prepare_only=_prepare_only, _selected_manifest=_selected_manifest)
+    except structure.StructureControlBusy:
+        return {'status': 'JUMP_BUSY', 'execution_started': False, 'retry_authorized': False,
+                'scientific_support': 'UNKNOWN'}
+
+
+def _generate(root, steps=1, *, _prepare_only=False, _selected_manifest=None):
     """Advance at most three already-authorized routes; never redispatch attempts.
 
     One frozen plan permits one generation per contract. A new evidence round
@@ -376,8 +485,7 @@ def generate(root, steps=1, *, _prepare_only=False, _selected_manifest=None):
     structure._live(store, req, allow_owned_updates=True)
     prior, dispatched, result = [], 0, None
     for stage in plan['stages']:
-        state = store.snapshot()
-        run = next((r for r in state['runs'] if r['id'] == stage['run']['id']), None)
+        run = _owned_stage(store, stage, req)
         if run:
             require(run['manifest_sha256'] == digest(stage['run']), 'Jump run ID already belongs to another manifest')
             if run['status'] not in TERMINAL and run.get('attempt_id') is not None:
@@ -401,21 +509,48 @@ def generate(root, steps=1, *, _prepare_only=False, _selected_manifest=None):
                 return {'status': 'JUMP_STEP_LIMIT', 'id': ident, 'next_stage': stage['kind'],
                         'sources': prior, 'scientific_support': 'UNKNOWN'}
             structure._live(store, req, allow_owned_updates=True)
-            if run is None:
-                store.register(stage['run'])
-            receipt = store.execute(stage['run']['id'])
-            dispatched += 1
-            if receipt.get('run_status') != 'SUCCEEDED':
-                return {'status': 'JUMP_STOPPED', 'run_id': stage['run']['id'],
-                        'reason': receipt.get('run_status', 'UNKNOWN'), 'scientific_support': 'UNKNOWN',
-                        'retry_authorized': False}
+            # Reserve all possible adoption work before the worker reserves or
+            # starts. A synthesis can yield four proposals (14 controller seconds).
+            cap = 14 if stage['kind'] == 'synthesize' else 2
+            with structure.reserved_control(store, 'jump-stage-' + stage['kind'], cap) as control:
+                receipt = _execute_stage(store, stage, req, control)
+                dispatched += 1
+                if receipt.get('run_status') not in {'SUCCEEDED', 'FAILED', 'INTERRUPTED'}:
+                    return {'status': 'RECOVERY_REQUIRED', 'id': ident, 'run_id': stage['run']['id'],
+                            'execution_started': False, 'retry_authorized': False}
+                if receipt.get('run_status') != 'SUCCEEDED':
+                    return {'status': 'JUMP_STOPPED', 'run_id': stage['run']['id'],
+                            'reason': receipt['run_status'], 'scientific_support': 'UNKNOWN',
+                            'retry_authorized': False}
+                with structure._meter(store, 'jump-consume'):
+                    result, ref = _read_stage(store, stage, req, prior)
+                    prior.append(ref)
+                if stage['kind'] == 'synthesize':
+                    return _finish_generated(store, root, ident, req, result, prior)
+            continue
         if _prepare_only:
             result, ref = _read_stage(store, stage, req, prior)
             prior.append(ref)
         else:
+            if stage['kind'] == 'synthesize':
+                # The worker already completed elsewhere. Read its verified
+                # original to size the remaining adoption grant, without rerun.
+                result, ref = _read_stage(store, stage, req, prior)
+                proposals = result.get('proposals') if isinstance(result, dict) else None
+                require(isinstance(proposals, list) and len(proposals) <= 4, 'Invalid generated proposal count')
+                cap = 4 + (2 + 2 * len(proposals) if proposals else 0)
+                with structure.reserved_control(store, 'jump-adopt-completed', cap):
+                    with structure._meter(store, 'jump-consume'):
+                        result, ref = _read_stage(store, stage, req, prior)
+                        prior.append(ref)
+                    return _finish_generated(store, root, ident, req, result, prior)
             with structure._meter(store, 'jump-consume'):
                 result, ref = _read_stage(store, stage, req, prior)
                 prior.append(ref)
+    return _finish_generated(store, root, ident, req, result, prior)
+
+
+def _finish_generated(store, root, ident, req, result, prior):
     require(isinstance(result, dict) and result.get('status') in {'PROPOSED', 'NO_CANDIDATE'},
             'Synthesis must return PROPOSED or NO_CANDIDATE')
     proposals = result.get('proposals')

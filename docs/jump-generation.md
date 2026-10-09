@@ -52,6 +52,18 @@ generator bindings or an unfinished generation crossing a revision stop visibly.
 
 Nested structure control uses the drive's explicit controller reservation and is
 charged once. Standalone structure calls retain their own bounded metering.
+Direct `structure jump` reserves the next stage's controller work before its
+worker is admitted: two seconds for probe/refresh consumption and fourteen for
+the largest synthesis adoption (consume, fresh request, up to four proposals,
+and finish). These are reservations within the original project budget, not new
+budget or provider authority. Controller phases borrow the parent reservation;
+only the outer controller scope charges elapsed control. Synchronous worker
+execution is paid by its original receipt, separately from controller time.
+An interrupted direct reservation requires `structure recover`; it conservatively
+charges the parent cap once with UNKNOWN final control cost. An active competing
+controller returns `JUMP_BUSY`. Registration/execution races reconcile only an
+exact owned manifest and its existing attempt; active observations require
+recovery and never authorize another process.
 Repeated drive calls recover original attempts and do not repurchase a completed
 model request. `STEP_LIMIT` permits another bounded pass on the same ledger;
 uncertain provider delivery still requires reconciliation. The example retains
@@ -59,6 +71,16 @@ each CLI response in `out/trajectory.json`, original provider traces and receipt
 and a summary showing actual status and unmeasured scientific gain.
 
 ## Return the jump to the AI
+
+A new frozen plan can declare `generator_code_paths`, a nonempty bounded list
+of frozen code bindings used by all three generator stages, including helpers.
+Entrypoint paths are resolved before matching, including `./file.py`, a project
+absolute path, and an explicit `-key=file.py` or `--key=file.py` argument. After a method revision these declared code
+bytes must remain identical. A legacy plan without this field conservatively
+requires all original code bindings to remain identical. The declaration does
+not prove arbitrary dynamic import closure. The owning drive prepares only the
+exact next-stage manifest; selecting a later stage or changing its manifest
+returns `JUMP_WAITING_ADMISSION` before any initial generation request or run.
 
 Generation completes by returning `agent_context`, a hash-bound
 `rds-jump-packet-v1` containing the actual new premises, representation changes,

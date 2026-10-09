@@ -82,7 +82,8 @@ def build(root, native=None):
                  for rid, argv, outputs, _, cap in specs}
     stages = [{'kind': kind, 'run': {**manifests['jump-' + kind], 'protocol_path': 'protocol.json'},
                'output': 'out/' + kind + '.json'} for kind in ('probe', 'refresh', 'synthesize')]
-    write(root, 'jump-generation.json', {'schema': 1, 'stages': stages})
+    write(root, 'jump-generation.json', {'schema': 1, 'stages': stages,
+                                        'generator_code_paths': ['generator.py', 'instrument.py', 'rds_jump_search.py']})
     write(root, 'template.json', {'experiment': {'candidate_output': 'out/candidate1.json', 'verdict_output': 'out/check1.json',
         'runs': [{**manifests[rid], 'protocol_path': 'protocol.json'} for rid in ('candidate1', 'check1')]}})
     bindings = [{'path': name, 'role': role, 'sha256': file_sha(root / name)} for role, names in [

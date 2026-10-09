@@ -587,9 +587,9 @@ def drive(store, max_steps=8, prepare_only=False):
                     result['jump_generation'] = prepared_jump
                     if prepared_jump['changed']:
                         continue  # Re-select from the changed original evidence.
-                    if prepared_jump['status'] != 'READY_TO_EXECUTE' and not (
-                            prepared_jump['status'] == 'JUMP_WAITING_ADMISSION' and manifest is not None):
-                        result['status'] = prepared_jump['status']
+                    if prepared_jump['status'] != 'READY_TO_EXECUTE' or prepared_jump.get('selected_manifest') != manifest:
+                        result['status'] = (prepared_jump['status'] if prepared_jump['status'] != 'READY_TO_EXECUTE'
+                                            else 'JUMP_WAITING_ADMISSION')
                         break
             if manifest is None:
                 confirmation = report.get('confirmation')

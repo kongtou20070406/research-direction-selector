@@ -26,9 +26,10 @@ def read(path):
 
 
 def original(ref):
-    if sha(ref['path']) != ref['sha256']:
+    raw = Path(ref['path']).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != ref['sha256']:
         raise ValueError('Original source changed')
-    return read(ref['path'])
+    return json.loads(raw.decode('utf-8-sig'))
 
 
 def context(kind):
@@ -42,7 +43,14 @@ def context(kind):
         for stage in read('jump-generation.json')['stages']:
             if stage['kind'] == kind:
                 break
-            receipt = json.loads(db.execute('SELECT body FROM receipts WHERE run_id=?', (stage['run']['id'],)).fetchone()[0])
+            row = db.execute('SELECT sha256,body FROM receipts WHERE run_id=?', (stage['run']['id'],)).fetchone()
+            if row is None:
+                raise ValueError('Original receipt missing')
+            receipt = json.loads(row[1])
+            body = {k: v for k, v in receipt.items() if k != 'sha256'}
+            if (receipt.get('run_status') != 'SUCCEEDED' or receipt.get('sha256') != row[0]
+                    or hashlib.sha256(canonical(body).encode('utf-8')).hexdigest() != row[0]):
+                raise ValueError('Original receipt changed or did not succeed')
             item = next(a for a in receipt['artifacts'] if a.get('kind') == 'project_output' and a['path'] == stage['output'])
             doc = original(item)
             prior.append({'run_id': receipt['run_id'], 'receipt_sha256': receipt['sha256'],
@@ -61,7 +69,8 @@ def proposal(req, result, template):
         binding = next(b for b in contract['bindings'] if b['path'] == protocol_path and b['role'] == 'protocol')
         run['protocol'] = {k: binding[k] for k in ('path', 'sha256')}
     candidate, rival = result['candidate'], result['rival']
-    name = 'generated-' + hashlib.sha256(canonical(candidate).encode('utf-8')).hexdigest()[:16]
+    identity = {'request': req, 'candidate': candidate}
+    name = 'generated-' + hashlib.sha256(canonical(identity).encode('utf-8')).hexdigest()[:16]
     explanation = 'Exact finite integer relation: ' + canonical(candidate)
     node = {'id': name, 'kind': 'model', 'label': explanation,
             'source': {'locator': 'out/synthesize.json#/result/search/candidate'}}
@@ -98,7 +107,10 @@ def proposal(req, result, template):
 def main():
     kind, output = sys.argv[1:]
     if kind == 'candidate':
-        result = read('out/synthesize.json')['result']['search']
+        # Read the exact synthesis bytes authenticated by the successful
+        # original receipt, just like the preceding generation stages.
+        _, _, docs = context('candidate')
+        result = docs[-1]['search']
         Path(output).write_text(canonical({'expression': result['candidate'], 'probe': result['probe'],
             'predictions': [{'inputs': env, 'value': evaluate(result['candidate'], env)}
                             for env in read('domain.json')['probes']]}), encoding='utf-8')

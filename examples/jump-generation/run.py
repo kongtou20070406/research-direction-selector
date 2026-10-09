@@ -58,7 +58,8 @@ def build(root, *, corpus=None, measurement_offset=0, max_candidates=2000, searc
                 'protocol_path': 'protocol.json', 'resource_estimates': {'wall_seconds': 10}, 'timeout_seconds': 10}
     stages = [{'kind': kind, 'run': manifest('jump-' + kind, commands[i], 'out/' + kind + '.json'),
                'output': 'out/' + kind + '.json'} for i, kind in enumerate(('probe', 'refresh', 'synthesize'))]
-    write(root / 'jump-generation.json', {'schema': 1, 'stages': stages})
+    write(root / 'jump-generation.json', {'schema': 1, 'stages': stages,
+                                        'generator_code_paths': ['worker.py', 'instrument.py', 'rds_jump_search.py']})
     write(root / 'template.json', {'experiment': {'candidate_output': 'out/candidate.json', 'verdict_output': 'out/verdict.json',
               'runs': [manifest('jump-candidate', commands[3], 'out/candidate.json'),
                        manifest('jump-verifier', commands[4], 'out/verdict.json')]}})
