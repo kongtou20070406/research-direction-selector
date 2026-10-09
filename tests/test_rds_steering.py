@@ -442,7 +442,10 @@ class SteeringDriveTests(unittest.TestCase):
                         '--user-directed', '--source', 'current-user:drive-fixture')
 
     def test_paused_drive_has_no_provider_call_and_resume_reaches_original_quality_endpoint(self):
-        self.build()
+        # This checks steering and the quality endpoint, not provider latency.
+        # The default4s worker leaves only2s for the provider; keep a bounded
+        # startup allowance and exercise a real response beyond that old limit.
+        self.build(modes={'repair1': 'delayed'}, timeout=10)
         before = self.store.snapshot()['budget']
         self.steer('pause')
         result = self.cli('project', 'drive', '--max-steps', '4')
@@ -451,10 +454,16 @@ class SteeringDriveTests(unittest.TestCase):
         self.assertEqual(self.store.snapshot()['budget'], before)
         self.assertEqual(self.events('AUTONOMY_DRIVE_CLAIMED'), [])
         self.steer('resume')
-        self.cli('project', 'drive', '--max-steps', '4')
+        result = self.cli('project', 'drive', '--max-steps', '4')
+        receipts = self.store.snapshot()['receipts']
+        diagnostics = {'drive': result, 'receipts': receipts}
+        self.assertEqual(result['status'], 'GOAL_PREDICATES_MET_CONFIRMATION_UNDECLARED', diagnostics)
         self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual({r['run_id']: r['run_status'] for r in receipts},
+                         {'repair1': 'SUCCEEDED', 'solve': 'SUCCEEDED'}, diagnostics)
+        self.assertTrue(all(not r['errors'] for r in receipts), diagnostics)
         self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
-        self.assertEqual(len(self.store.snapshot()['receipts']), 2)
+        self.assertEqual(len(receipts), 2)
 
     def test_exhausted_drive_accepts_pause_without_controller_allowance(self):
         self.build()
