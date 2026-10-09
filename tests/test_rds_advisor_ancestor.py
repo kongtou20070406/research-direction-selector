@@ -77,6 +77,25 @@ class AdvisorAncestorTests(unittest.TestCase):
         self.assertNotIn('project discover', result.stderr)
         self.assertFalse(missing.exists())
 
+    def test_nonexistent_child_cannot_bypass_full_ancestor(self):
+        self.f.initialize()
+        before = self.f.snapshot()
+        missing = self.f.root / 'not-created' / 'child'
+        result = self.f.call('advise', *self.inputs(self.f.root), root=missing, ok=False)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('Advisor must use the existing FULL project root', result.stderr)
+        self.assertIn(str(self.f.root), result.stderr)
+        self.assertFalse((self.f.root / 'not-created').exists())
+        for key in ('contract', 'contract_sha256', 'budget', 'runs', 'receipts'):
+            self.assertEqual(self.f.snapshot()[key], before[key])
+
+    def test_independent_missing_root_keeps_existing_rejection(self):
+        missing = self.f.root / 'not-created'
+        result = self.f.call('advise', *self.inputs(self.f.root), root=missing, ok=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, '[RDS-REJECT] Project root must exist\n')
+        self.assertFalse(missing.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

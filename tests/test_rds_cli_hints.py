@@ -70,6 +70,7 @@ class BatchValidationTests(unittest.TestCase):
 class InitExampleHintTests(unittest.TestCase):
     def test_every_l3_init_rejection_names_root_discovery(self):
         with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "proj").mkdir()
             contract = Path(raw) / "contract.json"
             contract.write_text("5", encoding="utf-8")
             result = run_cli("--root", str(Path(raw) / "proj"), "init", "--contract", str(contract))
@@ -80,6 +81,7 @@ class InitExampleHintTests(unittest.TestCase):
 
     def test_project_init_rejection_names_root_discovery(self):
         with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "proj").mkdir()
             contract = Path(raw) / "contract.json"
             contract.write_text("5", encoding="utf-8")
             result = run_cli("--root", str(Path(raw) / "proj"), "project", "init", "--contract", str(contract))
