@@ -52,6 +52,13 @@ an admitted sibling attempt: its narrow progress/receipt/cost settlement and
 `project recover --id <original-run>` remain available without new admission,
 budget, policy changes or brief artifacts.
 
+For the legacy reference API, `RDSState.connect(readonly=True)` remains available
+for reads. Raw writable connections are refused: use
+`with state.transaction(create=...) as (db, snapshot):` for writes. That existing
+API owns the mutation lock through commit and close, so a connection acquired
+before binding cannot later commit history to another ledger. Keep these
+transactions short; perform external work after the transaction closes.
+
 If the marker was deleted while `RDS_CAMPAIGN_BINDING` still requires it, only
 the explicit `project bind-workspace` command can restore it. The requested
 workspace must match that exact required path and the original ledger's unique

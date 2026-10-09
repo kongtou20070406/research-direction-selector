@@ -47,7 +47,8 @@ class CampaignNativeTests(unittest.TestCase):
             rejected.initialize(self.fixture.contract)
         self.assertFalse(rejected.state_dir.exists())
         with self.assertRaisesRegex(ValueError, 'canonical project ledger'):
-            RDSState(self.root).connect(create=True)
+            with RDSState(self.root).transaction(create=True):
+                pass
         self.assertFalse((self.store.state_dir / 'state.sqlite3').exists())
         success = self.fixture.run_spec(self.fixture.spec(rid='r2'))
         self.assertEqual(success['run_status'], 'SUCCEEDED')
@@ -64,10 +65,13 @@ class CampaignNativeTests(unittest.TestCase):
         bind(self.store, self.root)
         graph = {'schema': 1, 'nodes': [{'id': 'g', 'status': 'UNKNOWN', 'source': 'synthetic'}],
                  'hyperedges': [], 'goals': ['g']}
+        def create_reference():
+            with RDSState(self.child).transaction(create=True):
+                pass
         for write in (lambda: cas_bytes(self.child, b'original input'),
                       lambda: save_dependencies(self.child, graph, expected=None),
                       lambda: save_checkpoint(self.child, 'new', snapshot, kind='project'),
-                      lambda: RDSState(self.child).connect(create=True)):
+                      create_reference):
             with self.subTest(writer=write), self.assertRaisesRegex(ValueError, 'canonical project ledger'):
                 write()
             self.assertFalse((self.child / '.rds').exists())

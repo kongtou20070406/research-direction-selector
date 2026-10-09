@@ -22,7 +22,6 @@ import subprocess
 import sys
 import time
 import uuid
-from rds_mutation import mutation
 
 from rds_mutation import mutation
 
