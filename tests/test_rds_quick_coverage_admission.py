@@ -121,7 +121,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 def final_check_then_writer(db, run):
                     original_guard(db, run)
                     observed['future'] = pool.submit(write_control)
-                    self.assertTrue(entered.wait(3), 'Writer did not reach the database')
+                    self.assertTrue(entered.wait(3), 'Writer did not attempt admission')
                     self.assertFalse(committed.wait(0.2), 'Control committed before attempt admission')
                 keywords['admission_guard'] = final_check_then_writer
                 return original_execute(store, run_id, *positional, **keywords)
@@ -523,6 +523,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
     def test_record_choice_rejects_live_tms_change_in_checkpoint_transaction(self):
         parent = ProjectStore(self.fixture.ledger)
         initial = {'schema': 1, 'nodes': [], 'hyperedges': [], 'goals': []}
+        original_cas = rds_quick.cas_json
         for index in range(2):
             with self.subTest(original_head=index):
                 original = current(self.fixture.ledger)
@@ -535,14 +536,25 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 changed = deepcopy(initial)
                 changed['nodes'].append({'id': 'new-' + str(index), 'status': 'UNKNOWN',
                     'source': {'locator': 'concurrent synthetic declaration'}})
-                new_sha = save(self.fixture.ledger, changed,
-                               expected=original['sha256'] if original else None,
-                               source_base=self.fixture.ledger)
+                observed = {}
+
+                def change_after_choice(*positional, **keywords):
+                    # Normalization and choice validation have completed. Keep
+                    # the real CAS write, then change the live head immediately
+                    # before the original checkpoint publication transaction.
+                    ref = original_cas(*positional, **keywords)
+                    observed['new_sha'] = save(self.fixture.ledger, changed,
+                        expected=original['sha256'] if original else None,
+                        source_base=self.fixture.ledger)
+                    return ref
+
                 checkpoint = 'stale-choice-' + str(index)
-                with self.assertRaisesRegex(ValueError, 'Dependency snapshot changed before checkpoint publication'):
-                    rds_quick.record_choice(self.fixture.ledger, reviewed[0], reviewed[1], None, checkpoint)
+                with mock.patch.object(rds_quick, 'cas_json', side_effect=change_after_choice) as cas:
+                    with self.assertRaisesRegex(ValueError, 'Dependency snapshot changed before checkpoint publication'):
+                        rds_quick.record_choice(self.fixture.ledger, reviewed[0], reviewed[1], None, checkpoint)
+                    self.assertEqual(cas.call_count, 1)
                 self.assertEqual(parent.snapshot(), before)
-                self.assertEqual(current(self.fixture.ledger)['sha256'], new_sha)
+                self.assertEqual(current(self.fixture.ledger)['sha256'], observed['new_sha'])
                 with parent._db(True) as db:
                     exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='checkpoints'").fetchone()
                     if exists:
