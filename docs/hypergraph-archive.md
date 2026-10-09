@@ -12,8 +12,12 @@ initialize a research project, or run scientific dependency analysis. The local
 renderer and Pixi assets must match the existing pinned versions. The exported
 HTML works offline; opening the page does not use a CDN.
 
-Zoomed-out groups summarize their members and relations. Zooming in reveals
-smaller groups and then individual nodes. Panning and zooming query spatial
+Ordinary zoom uses world-aligned spatial cells with a 12–28 screen-pixel
+hysteresis band, revealing individual records as cells split. It does not replace
+all records with a different semantic hierarchy at a global zoom threshold.
+Research-group, source and block views remain explicit settings buttons. Opening
+a semantic group fits its retained members' current bounds and scopes the view
+to those exact descendants; a back button restores the previous view. Panning and zooming query spatial
 indexes for the visible region, including links crossing the viewport. Original
 nodes, edges, versions and hyperedge memberships remain in the complete data
 layer. Aggregation is a display operation, never a merged scientific conclusion.
@@ -43,7 +47,11 @@ Each summary retains its represented relation count; node
 details and agent queries still access the complete relations. Lines crossing
 the visible area remain queryable even when both endpoints are outside it.
 
-Raw record views aggregate only when the visible records exceed 3,500. Screen-external
+Raw record views aggregate nearby records into cells, with a maximum of 3,500
+visible glyphs. Single-member cells keep the actual record's identity, color,
+shape and status. Changed representations fade over 280 ms; exiting glyphs have
+no labels or interaction, and the combined transition stays within that budget.
+Screen-external
 endpoints do not consume that record budget. At most 256 separate geometry anchors
 support connection summaries; they have no glyph, label, interaction or physics.
 Visible record identity, position, appearance and status are retained when they fit.
@@ -51,8 +59,8 @@ Aggregated points use their members' actual centroid and always have a positive
 visible count. Their
 counts account for every visible original record, including isolated records.
 Search and paginated details still use the full identities and relationships.
-Only coarse spatial indexes are built at startup; the raw spatial index is built
-on the first record viewport. Representative dragging does not build that index.
+The default spatial overview requests the raw spatial index once. Explicit
+semantic views and representative dragging can use only the coarse indexes.
 That first full record request can still take
 longer on a large archive. Viewport requests are sent one at a time, with only the
 latest pending camera view retained. Reused scenes avoid rebuilding unchanged
@@ -60,7 +68,12 @@ renderer topology, and raster labels are created only when needed.
 
 Dragging a node reheats a bounded neighborhood with damping; dragging the
 background pans the view. Dependency, source and history links use different
-spring strengths and minimum lengths. Springs preserve longer initial spans,
+spring strengths and minimum lengths. Hidden membership links and relations set
+to no force do not take spring or neighbor slots. Each new drag seed rebuilds its
+own neighborhood, prioritizing configured active relation strength. Mixed bundles
+retain independent force contributions rather than taking the first relation's
+settings. The link-distance control scales the initial archived span, with 80
+retaining the baseline. Springs preserve longer initial spans,
 and weak position constraints prevent a distant source link from pulling the
 released node across the archive. The local layout has at most 512 active nodes and
 1,024 springs. This is a display approximation, not scientific analysis or an
@@ -72,6 +85,13 @@ repaired in yielded batches. Pausing stops motion and commits that index repair.
 Repeated pointer movements are coalesced to the newest position each frame;
 release flushes that position before releasing the anchor. Clicking alone does
 not start a force simulation. Relayout reheats a bounded visible neighborhood.
+Orphan filtering uses the active display relationships and applies to all levels;
+coarse member and relation counts are recomputed from the retained original records.
+Scoping a group does not redefine whether a record is isolated: its external
+active links remain clipped context geometry, while outside records are not drawn
+as group members. Spatial cells also offer a paginated member list, so coincident
+records remain accessible without inventing new positions. A selected record
+keeps its own glyph and is deducted from the spatial-cell count.
 
 Search the full archive to locate a node, then inspect its readable purpose and
 paginated relationships. Scientific dependency, provenance, membership and

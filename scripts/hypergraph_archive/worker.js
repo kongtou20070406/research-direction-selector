@@ -22,11 +22,11 @@ const ArchiveCore = (() => {
       while(x!==endX||y!==endY){if(Math.min(nx,ny)>=1-1e-12){keys.add(endX+','+endY);break;}if(Math.abs(nx-ny)<1e-12){keys.add((x+sx)+','+y);keys.add(x+','+(y+sy));x+=sx;y+=sy;nx+=tx;ny+=ty;}else if(nx<ny){x+=sx;nx+=tx;}else{y+=sy;ny+=ty;}keys.add(x+','+y);}return [...keys];
     }
     edge(i){for(const key of this.ec[i]||[])this.remove(this.eg,key,i);const e=this.edges[i];this.ec[i]=this.cells(this.points[e.a],this.points[e.b]);for(const key of this.ec[i])this.add(this.eg,key,i);}
-    query(rect) {
+    query(rect,nodesOnly=false) {
       if(!Array.isArray(rect)||rect.length!==4||!rect.every(Number.isFinite)||rect[0]>rect[2]||rect[1]>rect[3])throw Error('Viewport must have finite ordered bounds');
       const ns=new Set(),es=new Set();let cells=0,examinedCells=0;const c=this.cell;
       const x0=Math.max(this.extent[0],Math.floor(rect[0]/c)),y0=Math.max(this.extent[1],Math.floor(rect[1]/c)),x1=Math.min(this.extent[2],Math.floor(rect[2]/c)),y1=Math.min(this.extent[3],Math.floor(rect[3]/c));
-      const visit=key=>{cells++;for(const i of this.ng.get(key)||[])ns.add(i);for(const i of this.eg.get(key)||[])es.add(i);};
+      const visit=key=>{cells++;for(const i of this.ng.get(key)||[])ns.add(i);if(!nodesOnly)for(const i of this.eg.get(key)||[])es.add(i);};
       // Use the cheaper of a cropped rectangle and the finite occupied set.
       // Extents may conservatively grow after motion; sparse scans stay bounded.
       if(x0<=x1&&y0<=y1&&this.occupied.size){
@@ -56,9 +56,9 @@ const ArchiveCore = (() => {
         nodes.forEach((_,i)=>nodeMap[i]=map.get(ancestor(i,level)));
         nodes.forEach((n,i)=>{if(n.primary)points[nodeMap[i]].primary=true;});
       }
-      const edges=[],agg=new Map();let internal=0;
-      rawEdges.forEach((e,i)=>{const a=nodeMap[e[0]],b=nodeMap[e[1]],semantic=data.semantics[e[2]],type=data.edge_types[e[3]],f=family(semantic,type),relationKey=semantic+'|'+type,membership=/snapshot_contains|membership|归属/i.test(semantic+' '+type);if(level!==3&&a===b){internal++;return;}const key=a+':'+b+':'+f+':'+membership;if(level===3){edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i});return;}if(agg.has(key)){const bundled=edges[agg.get(key)];bundled.count++;if(bundled.relationKey!==relationKey){bundled.relationKey=null;bundled.mixedRelation=true;}}else{agg.set(key,edges.length);edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i});}});
-      levels.push({points,edges,spatial:null,internal,nodeMap});if(level<3)ensureSpatial(level);progress({level,points:points.length,edges:edges.length,spatialReady:level<3});
+      const edges=[],agg=new Map(),edgeMap=new Int32Array(rawEdges.length).fill(-1);let internal=0;
+      rawEdges.forEach((e,i)=>{const a=nodeMap[e[0]],b=nodeMap[e[1]],semantic=data.semantics[e[2]],type=data.edge_types[e[3]],f=family(semantic,type),relationKey=semantic+'|'+type,membership=/snapshot_contains|membership|归属/i.test(semantic+' '+type);if(level!==3&&a===b){internal++;return;}const key=a+':'+b+':'+f+':'+membership;if(level===3){edgeMap[i]=edges.length;edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i});return;}if(agg.has(key)){edgeMap[i]=agg.get(key);const bundled=edges[edgeMap[i]];bundled.count++;const term=bundled.forceTerms.find(t=>t.semantic===semantic&&t.type===type);if(term)term.count++;else bundled.forceTerms.push({semantic,type,membership,count:1});if(bundled.relationKey!==relationKey){bundled.relationKey=null;bundled.mixedRelation=true;}}else{edgeMap[i]=edges.length;agg.set(key,edges.length);edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i,forceTerms:[{semantic,type,membership,count:1}]});}});
+      levels.push({points,edges,spatial:null,internal,nodeMap,edgeMap});if(level<3)ensureSpatial(level);progress({level,points:points.length,edges:edges.length,spatialReady:level<3});
     }
     function ensureSpatial(level){const stage=levels[level];if(!stage.spatial){stage.spatial=new Spatial(stage.points,stage.edges,data.bounds);indexStats.spatialBuilds++;indexStats.spatialEdgeVisits+=stage.edges.length;if(level===3){indexStats.rawSpatialBuilds++;indexStats.rawSpatialEdgeVisits+=stage.edges.length;}progress({level,spatialReady:true,points:stage.points.length,edges:stage.edges.length,indexStats:{...indexStats}});}return stage.spatial;}
     function rebuildSpatial(level){const stage=levels[level];if(!stage.spatial)return null;stage.spatial=null;return ensureSpatial(level);}
@@ -66,6 +66,25 @@ const ArchiveCore = (() => {
     nodes.forEach((_,i)=>rootMembers[levels[0].nodeMap[i]].push(i));
     rootMembers.forEach((members,root)=>{const chosen=new Set();const sample=(candidates,limit)=>{const count=Math.min(limit,candidates.length);for(let j=0;j<count;j++)chosen.add(candidates[Math.floor((j+.5)*candidates.length/count)]);};sample(members.filter(i=>nodes[i].primary),8);sample(members.filter(i=>!chosen.has(i)&&/hyperedge/i.test(nodes[i].type)),8);sample(members.filter(i=>!chosen.has(i)),32-chosen.size);representatives.set(levels[0].points[root].index,[...chosen]);});
     function presentation(n){const fields={};for(const key of ['label','summary','type','status','status_text','display_kind','color','shape','outline','goal_weights','group','source_id','primary'])if(Object.hasOwn(n,key))fields[key]=n[key];return fields;}
+    let filterCache=null;
+    function clearFilters(){filterCache=null;}
+    function filtered(filters={}){
+      const q=String(filters.query||'').trim().toLocaleLowerCase(),scope=Number.isInteger(filters.scope)?filters.scope:null,key=JSON.stringify([filters.membership!==false,filters.showOrphans!==false,q,scope]);
+      if(scope!==null&&!clusters[scope])throw Error('Cluster index out of range');
+      if(filterCache?.key===key)return filterCache;
+      const eligible=new Uint8Array(nodes.length),activeDegree=new Uint32Array(nodes.length),keep=new Uint8Array(nodes.length),sizes=levels.map(s=>new Uint32Array(s.points.length)),edgeSizes=levels.map(s=>new Uint32Array(s.edges.length)),internal=[0,0,0,0];
+      for(let i=0;i<nodes.length;i++)eligible[i]=Number(!q||search[i].includes(q));
+      for(const e of levels[3].edges)if(eligible[e.a]&&eligible[e.b]&&(filters.membership!==false||!e.membership)){activeDegree[e.a]+=e.count;activeDegree[e.b]+=e.count;}
+      for(let i=0;i<nodes.length;i++)if(eligible[i]&&(filters.showOrphans!==false||activeDegree[i]>0)&&(scope===null||ancestor(i,clusters[scope].level)===scope)){keep[i]=1;for(let l=0;l<4;l++)sizes[l][levels[l].nodeMap[i]]++;}
+      for(let i=0;i<rawEdges.length;i++){const e=levels[3].edges[i];if(!eligible[e.a]||!eligible[e.b]||scope!==null&&!keep[e.a]&&!keep[e.b]||filters.membership===false&&e.membership)continue;for(let l=0;l<4;l++){const j=levels[l].edgeMap[i];if(j<0)internal[l]++;else edgeSizes[l][j]++;}}
+      return filterCache={key,keep,sizes,edgeSizes,internal,degree:activeDegree};
+    }
+    function clusterView(index,filters={},position=i=>nodes[i]){
+      const c=clusters[index];if(!c)throw Error('Cluster index out of range');
+      const selection=filtered({...filters,scope:index}),bounds=[Infinity,Infinity,-Infinity,-Infinity];let total=0;
+      for(let i=0;i<nodes.length;i++)if(selection.keep[i]){const n=position(i);total++;bounds[0]=Math.min(bounds[0],n.x);bounds[1]=Math.min(bounds[1],n.y);bounds[2]=Math.max(bounds[2],n.x);bounds[3]=Math.max(bounds[3],n.y);}
+      return {index,cluster:c,memberBounds:total?bounds:[c.x,c.y,c.x,c.y],total};
+    }
     function neighbors(index,page=0,size=24) {
       if(!Number.isInteger(index)||index<0||index>=nodes.length)throw Error('Node index out of range');
       page=Math.max(0,Math.floor(Number(page)||0));size=Math.min(100,Math.max(1,Math.floor(Number(size)||24)));
@@ -74,24 +93,32 @@ const ArchiveCore = (() => {
       const n=nodes[index];return {node:{...presentation(n),id:n.id,x:n.x,y:n.y,parent:n.parent,degree:n.degree??degree[index]},index,page,size,total,entries};
     }
     function find(query,page=0,size=20){const q=query.toLocaleLowerCase().trim(),matches=[];for(let i=0;i<search.length;i++)if(search[i].includes(q))matches.push(i);return {total:matches.length,page,size,entries:matches.slice(page*size,(page+1)*size).map(i=>({...presentation(nodes[i]),index:i,record:nodes[i].id,x:nodes[i].x,y:nodes[i].y}))};}
+    function cellMembers(cell,filters={},page=0,size=24){
+      if(!Array.isArray(cell)||cell.length!==3||!cell.every(Number.isFinite)||cell[0]<=0||!Number.isInteger(cell[1])||!Number.isInteger(cell[2]))throw Error('Invalid spatial cell');
+      const [width,x,y]=cell,rect=[x*width,y*width,(x+1)*width,(y+1)*width],selection=filtered(filters);
+      const matches=ensureSpatial(3).query(rect,true).nodes.filter(i=>selection.keep[i]&&Math.floor(nodes[i].x/width)===x&&Math.floor(nodes[i].y/width)===y&&i!==filters.selected);
+      page=Math.max(0,Math.floor(Number(page)||0));size=Math.max(1,Math.min(100,Math.floor(Number(size)||24)));
+      return {page,size,total:matches.length,entries:matches.slice(page*size,(page+1)*size).map(i=>({...presentation(nodes[i]),index:i}))};
+    }
     function viewport(level,rect,edgeBudget=3500,nodeBudget=3500,filters={}) {
       nodeBudget=Math.max(16,Math.min(3500,Math.floor(Number(nodeBudget)||3500)));
       edgeBudget=Math.max(4,Math.min(3500,Math.floor(Number(edgeBudget)||3500)));
-      const stage=levels[level],found=ensureSpatial(level).query(rect),q=String(filters.query||'').trim().toLocaleLowerCase();
-      const keep=i=>{const p=stage.points[i];return (filters.showOrphans!==false||!p.raw||degree[p.index]>0)&&(!q||[p.label,p.summary,p.record,p.group].join(' ').toLocaleLowerCase().includes(q));};
+      const stage=levels[level],found=ensureSpatial(level).query(rect),q=String(filters.query||'').trim().toLocaleLowerCase(),selection=filtered(filters);
+      const keep=i=>selection.sizes[level][i]>0;
       const indexedCrossingEdges=found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),indexedVisibleNodes=found.nodes.length;
-      if(filters.membership===false||filters.showOrphans===false||q){found.nodes=found.nodes.filter(keep);found.edges=found.edges.filter(i=>{const e=stage.edges[i];return (filters.membership!==false||!e.membership)&&(!q||(keep(e.a)&&keep(e.b)));});found.counters.visibleNodes=found.nodes.length;found.counters.crossingEdges=found.edges.length;}
+      found.nodes=found.nodes.filter(keep);found.edges=found.edges.filter(i=>selection.edgeSizes[level][i]>0);found.counters.visibleNodes=found.nodes.length;found.counters.crossingEdges=found.edges.length;
       // Screen-external connection endpoints are geometry, not visible records.
       // They must never replace an affordable set of original record glyphs.
-      const nodeAggregation=found.nodes.length>nodeBudget,display=new Map();let points;
-      if(nodeAggregation){
-        const bins=new Map(),divisions=Math.min(32,Math.floor(Math.sqrt(nodeBudget))),size=Math.max(1,Math.max(rect[2]-rect[0],rect[3]-rect[1])/divisions);
-        for(const i of found.nodes){const p=stage.points[i],bx=Math.min(divisions-1,Math.floor((p.x-rect[0])/size)),by=Math.min(divisions-1,Math.floor((p.y-rect[1])/size)),key=bx+','+by;if(!bins.has(key))bins.set(key,{id:'v'+level+':'+key,index:p.index,raw:false,type:'density',zoomOnly:true,label:level===3?'记录聚合':'分组汇总',count:0,x:0,y:0});const bin=bins.get(key);bin.count++;bin.x+=p.x;bin.y+=p.y;display.set(i,bin);}
-        points=[...bins.values()];for(const p of points){p.x/=p.count;p.y/=p.count;}
-      }else{points=found.nodes.map(i=>stage.points[i]);for(const i of found.nodes)display.set(i,stage.points[i]);}
+      let nodeAggregation=found.nodes.length>nodeBudget;const display=new Map();let points;
+      if(nodeAggregation||level===3&&Number.isFinite(filters.cellSize)&&filters.cellSize>0){
+        let size=Number.isFinite(filters.cellSize)&&filters.cellSize>0?filters.cellSize:2**Math.ceil(Math.log2(Math.max(rect[2]-rect[0],rect[3]-rect[1],1)/Math.max(1,Math.floor(Math.sqrt(nodeBudget))))),bins;
+        do{bins=new Map();display.clear();for(const i of found.nodes){const p=stage.points[i],key=i===filters.selected?'selected:'+i:Math.floor(p.x/size)+','+Math.floor(p.y/size);if(!bins.has(key))bins.set(key,{id:'v'+level+':'+size+':'+key,index:p.index,raw:false,type:'density',zoomOnly:true,label:level===3?'附近记录':'附近分组',cell:[size,Math.floor(p.x/size),Math.floor(p.y/size)],count:0,x:0,y:0,bounds:[Infinity,Infinity,-Infinity,-Infinity],first:i});const bin=bins.get(key);bin.count++;bin.x+=p.x;bin.y+=p.y;bin.bounds[0]=Math.min(bin.bounds[0],p.x);bin.bounds[1]=Math.min(bin.bounds[1],p.y);bin.bounds[2]=Math.max(bin.bounds[2],p.x);bin.bounds[3]=Math.max(bin.bounds[3],p.y);display.set(i,bin);}if(bins.size>nodeBudget)size*=2;}while(bins.size>nodeBudget);
+        points=[...bins.values()];for(let j=0;j<points.length;j++){const p=points[j];if(p.count===1){const original=stage.points[p.first];points[j]=level===3?original:{...original,count:selection.sizes[level][p.first]};display.set(p.first,points[j]);}else{p.x/=p.count;p.y/=p.count;p.label+=' · '+p.count;}}
+        nodeAggregation=points.some(p=>p.type==='density');
+      }else{points=found.nodes.map(i=>level===3?stage.points[i]:{...stage.points[i],count:selection.sizes[level][i]});for(let j=0;j<found.nodes.length;j++)display.set(found.nodes[j],points[j]);}
       const exact=new Map(),context=[];
       const merge=(to,e)=>{to.count+=e.count;if(to.relationKey!==e.relationKey){to.relationKey=null;to.semantic=to.type=undefined;to.membership=undefined;to.mixedRelation=true;}};
-      for(const i of found.edges){const e=stage.edges[i],a=display.get(e.a),b=display.get(e.b);
+      for(const i of found.edges){const e={...stage.edges[i],count:selection.edgeSizes[level][i]},a=display.get(e.a),b=display.get(e.b);
         if(a&&b){const key=a.id+'>'+b.id+':'+e.family+':'+e.relationKey;if(exact.has(key))merge(exact.get(key),e);else exact.set(key,{...e,source:a.id,target:b.id});}
         else context.push(e);
       }
@@ -108,10 +135,10 @@ const ArchiveCore = (() => {
       const anchors=[],summaries=[];for(const e of bundle.values()){const ids=e.line.map((p,j)=>{const id='a'+level+':'+summaries.length+':'+j;anchors.push({id,x:p.x,y:p.y,anchor:true});return id;});const {line,...fields}=e;summaries.push({...fields,source:ids[0],target:ids[1]});}
       const edges=[...kept,...summaries];
       let representativeCount=0,representativeCandidates=0;
-      if(level===0){const records=[];for(const p of points){if(p.type!=='cluster')continue;const selected=representatives.get(p.index)||[];representativeCandidates+=selected.length;for(const i of selected){const n=levels[3].points[i];if(n.x<rect[0]||n.x>rect[2]||n.y<rect[1]||n.y>rect[3]||(filters.showOrphans===false&&degree[i]===0)||(q&&![n.label,n.summary,n.record,n.group].join(' ').toLocaleLowerCase().includes(q)))continue;records.push({...n,representative:true});}}const room=Math.max(0,nodeBudget-points.length),count=Math.min(room,records.length);for(let j=0;j<count;j++)points.push(records[Math.floor((j+.5)*records.length/count)]);representativeCount=count;}
-      return {level,points,anchors,edges,counters:{...found.counters,...indexStats,totalNodes:nodes.length,totalEdges:rawEdges.length,indexedCrossingEdges,indexedVisibleNodes,displayFiltered:filters.membership===false||filters.showOrphans===false||!!q,stagePoints:stage.points.length,stageEdges:stage.edges.length,internalEdges:stage.internal,renderedPoints:points.length,renderedAnchors:anchors.length,exactEdges:kept.length,summaryEdges:summaries.length,renderedEdges:edges.length,nodeBudget,nodeAggregation,aggregatedNodes:nodeAggregation?found.nodes.length:0,representedVisibleNodes:found.nodes.length,representatives:representativeCount,representativeCandidates,densityStars:0,representedCrossingEdges:found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),densityBundles:nodeAggregation||summaries.length>0}};
+      if(level===0){const records=[];for(const p of points){if(p.type!=='cluster')continue;const selected=representatives.get(p.index)||[];representativeCandidates+=selected.length;for(const i of selected){const n=levels[3].points[i];if(n.x<rect[0]||n.x>rect[2]||n.y<rect[1]||n.y>rect[3]||!selection.keep[i])continue;records.push({...n,representative:true});}}const room=Math.max(0,nodeBudget-points.length),count=Math.min(room,records.length);for(let j=0;j<count;j++)points.push(records[Math.floor((j+.5)*records.length/count)]);representativeCount=count;}
+      return {level,points,anchors,edges,counters:{...found.counters,...indexStats,totalNodes:nodes.length,totalEdges:rawEdges.length,indexedCrossingEdges,indexedVisibleNodes,displayFiltered:filters.membership===false||filters.showOrphans===false||!!q||Number.isInteger(filters.scope),scope:filters.scope??null,stagePoints:stage.points.length,stageEdges:stage.edges.length,internalEdges:selection.internal[level],renderedPoints:points.length,renderedAnchors:anchors.length,exactEdges:kept.length,summaryEdges:summaries.length,renderedEdges:edges.length,nodeBudget,nodeAggregation,aggregatedNodes:nodeAggregation?found.nodes.length:0,representedVisibleNodes:found.nodes.length,representatives:representativeCount,representativeCandidates,densityStars:0,representedCrossingEdges:found.edges.reduce((sum,i)=>sum+selection.edgeSizes[level][i],0),densityBundles:nodeAggregation||summaries.length>0}};
     }
-    return {data,levels,degree,counts,adjacency,byId,neighbors,find,viewport,indexStats,ensureSpatial,rebuildSpatial};
+    return {data,levels,degree,counts,adjacency,byId,neighbors,find,viewport,indexStats,ensureSpatial,rebuildSpatial,filtered,clearFilters,clusterView,cellMembers};
   }
   return {family,intersects,Spatial,create};
 })();
@@ -120,9 +147,9 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
   // Indexed geometry is a stable snapshot while local coordinates animate. Camera
   // queries use that complete snapshot; after commit, incident segments are repaired
   // in yielded batches before any exact raw-coordinate query is answered.
-  let index=null,raw=null,sim=null,timer=null,steps=0,aggregate=null,physicsIds=[],physicsEdges=[],physicsLinks=[],paused=false;
+  let index=null,raw=null,sim=null,timer=null,steps=0,aggregate=null,physicsIds=[],physicsEdges=[],physicsLinks=[],paused=false,simSeed=null;
   let repairTimer=null,repairList=[],repairCursor=0,waitingViews=[],revision=0,dirtyEdges=new Set(),pendingPositions=new Map(),dirtyStageEdges=new Map(),dirtyStageNodes=new Map(),blockedLevels=new Set(),levelRemaining=new Map(),commitJob=null,commitTimer=null,deferredMotion=null;
-  const defaults={damping:.55,flowStrength:.005,groupStrength:.025,edgeRepulsion:.15,edgeClearance:35,centerStrength:.035,repelStrength:35,linkStrength:1,linkDistance:80,weightMode:'degree',goal:'',relations:{dependency:{mode:'attract',strength:1},source:{mode:'attract',strength:.35},history:{mode:'attract',strength:.15},other:{mode:'none',strength:1}}};
+  const defaults={damping:.55,flowStrength:.005,groupStrength:.025,edgeRepulsion:.15,edgeClearance:35,centerStrength:.035,repelStrength:35,linkStrength:1,linkDistance:80,membership:true,weightMode:'degree',goal:'',relations:{dependency:{mode:'attract',strength:1},source:{mode:'attract',strength:.35},history:{mode:'attract',strength:.15},other:{mode:'none',strength:1}}};
   let options={...defaults,relations:Object.assign(Object.create(null),defaults.relations)};
   const send=(type,value,request)=>self.postMessage({type,...value,request});
   async function unpack(value){const bytes=Uint8Array.from(atob(value.trim()),c=>c.charCodeAt(0));const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));return JSON.parse(await new Response(stream).text());}
@@ -169,20 +196,30 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
     for(const [key,[lo,hi]] of Object.entries(ranges))if(Object.hasOwn(value,key)){if(!Number.isFinite(value[key])||value[key]<lo||value[key]>hi)throw Error('Invalid force option '+key);}
     const relations=Object.assign(Object.create(null),options.relations);if(value.relations!==undefined){if(!value.relations||typeof value.relations!=='object'||Array.isArray(value.relations))throw Error('Invalid relation options');for(const [key,r] of Object.entries(value.relations)){if(!r||!['attract','repel','none'].includes(r.mode)||!Number.isFinite(r.strength)||r.strength<0||r.strength>2)throw Error('Invalid relation '+key);relations[key]={mode:r.mode,strength:r.strength};}}
     if(value.weightMode!==undefined&&!['uniform','degree','goal'].includes(value.weightMode))throw Error('Invalid charge weighting');
-    const next={...options,relations};for(const key of Object.keys(ranges))if(Object.hasOwn(value,key))next[key]=value[key];if(value.weightMode!==undefined)next.weightMode=value.weightMode;if(value.goal!==undefined)next.goal=String(value.goal);options=next;if(sim){applyForces();reheat();}
+    if(value.membership!==undefined&&typeof value.membership!=='boolean')throw Error('Invalid membership option');
+    const next={...options,relations};for(const key of Object.keys(ranges))if(Object.hasOwn(value,key))next[key]=value[key];if(value.weightMode!==undefined)next.weightMode=value.weightMode;if(value.goal!==undefined)next.goal=String(value.goal);if(value.membership!==undefined)next.membership=value.membership;options=next;
+    if(sim){const seed=simSeed,p=sim.nodes().find(p=>('n'+p.id===seed||sim===aggregate?.simulation&&'c'+index.levels[aggregate.level].points[p.id].index===seed));if(p&&(value.relations!==undefined||value.membership!==undefined)){const force={x:p.x,y:p.y,released:p.fx===null||p.fx===undefined};simSeed=null;if(seed[0]==='n')physics(Number(seed.slice(1)),force);else aggregatePhysics(Number(seed.slice(1)),force);}else{applyForces();reheat();}}
   }
   function relation(e){return options.relations[e.semantic+'|'+e.type]||options.relations[e.family]||{mode:'none',strength:1};}
+  function active(e){const r=relation(e);return (options.membership||!e.membership)&&r.mode!=='none'&&r.strength>0;}
+  function priority(a,b){return relation(b).strength-relation(a).strength||Number(b.family==='dependency')-Number(a.family==='dependency')||(a.index??0)-(b.index??0);}
+  function rawTerm(e,i){const semantic=index.data.semantics[e[2]],type=index.data.edge_types[e[3]];return {source:e[0],target:e[1],semantic,type,family:ArchiveCore.family(semantic,type),membership:/snapshot_contains|membership|归属/i.test(semantic+' '+type),count:1,index:i};}
+  function forceTerms(e){return (e.forceTerms||(!e.mixedRelation?[{semantic:e.semantic,type:e.type,membership:e.membership,count:e.count}]:[])).map(t=>({...t,family:ArchiveCore.family(t.semantic,t.type),source:e.a,target:e.b,index:e.index,bundleCount:e.count})).filter(active);}
+  function clusterProvenance(ci){const c=index.data.clusters[ci],fields={},sources=new Set(),groups=new Set(),stack=[ci];let parent=ci;while(parent!==null&&parent!==undefined){const p=index.data.clusters[parent];if(!fields.source_id&&p.source_id)fields.source_id=p.source_id;if(!fields.group&&p.group)fields.group=p.group;parent=p.parent;}while(stack.length){const p=index.data.clusters[stack.pop()];for(const ni of p.nodes||[]){const n=index.data.nodes[ni];if(n.source_id)sources.add(n.source_id);if(n.group)groups.add(n.group);}for(const child of p.children||[])stack.push(child);}if(!fields.source_id&&sources.size===1)fields.source_id=[...sources][0];if(!fields.group&&groups.size===1)fields.group=[...groups][0];if(!fields.source_id&&!fields.group&&c.parent!==null&&c.parent!==undefined)fields.group='cluster:'+c.parent;return fields;}
   function weight(p){if(options.weightMode==='uniform')return 1;if(options.weightMode==='goal'){const v=p.goal_weights?.[options.goal];return Number.isFinite(v)&&v>=0?1+Math.min(5,v):1;}return Math.min(6,Math.sqrt((p.degree??p.count??0)+1));}
   function applyForces(){
     if(!sim)return;const coarse=sim===aggregate?.simulation,scale=coarse?10:1;
     sim.velocityDecay(options.damping).force('charge',d3.forceManyBody().strength(p=>-options.repelStrength*scale*weight(p))).force('collision',d3.forceCollide(coarse?0:12));
     // Preserve the archived separation so long historical spans cannot spring to 80px.
-    const desired=e=>Math.max(e.restLength,options.linkDistance*scale*(e.family==='dependency'?.56:e.family==='history'?1.375:1));
-    sim.force('links',d3.forceLink(physicsLinks).id(p=>p.id).distance(desired).strength(e=>{const r=relation(e);return r.mode==='attract'?options.linkStrength*r.strength*(coarse?.025:.12):0;}));
+    const desired=e=>Math.max(e.restLength,80*scale*(e.family==='dependency'?.56:e.family==='history'?1.375:1))*(options.linkDistance/80);
+    const contribution=e=>(e.count||1)/(e.bundleCount||1);
+    sim.force('links',d3.forceLink(physicsLinks).id(p=>p.id).distance(desired).strength(e=>{const r=relation(e);return active(e)&&r.mode==='attract'?options.linkStrength*r.strength*contribution(e)*(coarse?.025:.12):0;}));
     sim.force('x',d3.forceX(p=>p.ax).strength(options.centerStrength)).force('y',d3.forceY(p=>p.ay).strength(options.centerStrength));
-    const nodes=sim.nodes(),groups=new Map(),members=new Map();for(const p of nodes){const group=p.source_id||p.group;if(group){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(p);}if(/hyperedge|junction|and.rule/i.test(p.type||''))members.set(p.id,new Set());}for(const e of physicsLinks){members.get(e.source.id)?.add(e.target.id);members.get(e.target.id)?.add(e.source.id);}
+    const nodes=sim.nodes(),groups=new Map(),members=new Map(),ownMembers=new Map(),localIds=new Set(nodes.map(p=>p.id)),incidence=e=>/premise|conclusion|共同前提|结论/i.test(e.type||'');
+    for(const p of nodes){const group=p.source_id||p.group;if(group){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(p);}if(/hyperedge|junction|and.rule/i.test(p.type||'')){members.set(p.id,new Set());const own=new Set();if(!coarse)for(let j=index.counts[p.id];j<index.counts[p.id+1];j++){const ei=index.adjacency[j],e=rawTerm(index.data.edges[ei],ei),other=e.source===p.id?e.target:e.source;if(incidence(e)&&localIds.has(other))own.add(other);}ownMembers.set(p.id,own);}}
+    for(const e of physicsLinks)if(incidence(e)){members.get(e.source.id)?.add(e.target.id);members.get(e.target.id)?.add(e.source.id);}
     sim.force('archive-controls',alpha=>{
-      for(const e of physicsLinks){const r=relation(e),a=e.source,b=e.target,dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy));if(r.mode==='repel'&&d<desired(e)){const f=Math.min(20*scale,(desired(e)-d)*options.linkStrength*r.strength*.06*alpha);a.vx-=dx/d*f;a.vy-=dy/d*f;b.vx+=dx/d*f;b.vy+=dy/d*f;}if(r.mode!=='none'&&e.family==='dependency'&&options.flowStrength){const f=Math.min(10*scale,Math.max(0,options.linkDistance*scale-dx)*options.flowStrength*alpha);a.vx-=f;b.vx+=f;}}
+      for(const e of physicsLinks){if(!active(e))continue;const r=relation(e),a=e.source,b=e.target,dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy));if(r.mode==='repel'&&d<desired(e)){const f=Math.min(20*scale,(desired(e)-d)*options.linkStrength*r.strength*contribution(e)*.06*alpha);a.vx-=dx/d*f;a.vy-=dy/d*f;b.vx+=dx/d*f;b.vy+=dy/d*f;}if(e.family==='dependency'&&options.flowStrength){const f=Math.min(10*scale,Math.max(0,options.linkDistance*scale-dx)*options.flowStrength*alpha)*contribution(e);a.vx-=f;b.vx+=f;}}
       // Cohesion shares displacement within the original group without collapsing
       // the archived geometry of records separated by thousands of world units.
       if(options.groupStrength)for(const group of groups.values()){if(group.length<2)continue;const x=group.reduce((s,p)=>s+p.x-p.ax,0)/group.length,y=group.reduce((s,p)=>s+p.y-p.ay,0)/group.length;for(const p of group){p.vx+=(x-(p.x-p.ax))*options.groupStrength*alpha;p.vy+=(y-(p.y-p.ay))*options.groupStrength*alpha;}}
@@ -190,7 +227,7 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
         const lookup=new Map(nodes.map(p=>[p.id,p])),clearance=options.edgeClearance*scale;
         // Only real local incidence links form the clearance geometry. Test its
         // segments as well as the hub; own premises/conclusions are exempt.
-        for(const h of nodes){const linked=members.get(h.id);if(!linked)continue;for(const p of nodes){if(p===h||linked.has(p.id))continue;let nearest={x:h.x,y:h.y,d:Math.hypot(p.x-h.x,p.y-h.y),t:0,end:null};
+        for(const h of nodes){const linked=members.get(h.id);if(!linked)continue;for(const p of nodes){if(p===h||ownMembers.get(h.id)?.has(p.id))continue;let nearest={x:h.x,y:h.y,d:Math.hypot(p.x-h.x,p.y-h.y),t:0,end:null};
           for(const id of linked){const end=lookup.get(id);if(!end||p.x<Math.min(h.x,end.x)-clearance||p.x>Math.max(h.x,end.x)+clearance||p.y<Math.min(h.y,end.y)-clearance||p.y>Math.max(h.y,end.y)+clearance)continue;const dx=end.x-h.x,dy=end.y-h.y,length2=dx*dx+dy*dy,t=length2?Math.max(0,Math.min(1,((p.x-h.x)*dx+(p.y-h.y)*dy)/length2)):0,x=h.x+t*dx,y=h.y+t*dy,d=Math.hypot(p.x-x,p.y-y);if(d<nearest.d)nearest={x,y,d,t,end};}
           if(nearest.d>=clearance)continue;let dx=p.x-nearest.x,dy=p.y-nearest.y,d=nearest.d;if(d<1e-6){dx=nearest.end?-(nearest.end.y-h.y):1;dy=nearest.end?nearest.end.x-h.x:0;d=Math.hypot(dx,dy)||1;}const f=Math.min(20*scale,(clearance-nearest.d)*options.edgeRepulsion*alpha),fx=dx/d*f,fy=dy/d*f;p.vx+=fx;p.vy+=fy;h.vx-=fx*(1-nearest.t);h.vy-=fy*(1-nearest.t);if(nearest.end){nearest.end.vx-=fx*nearest.t;nearest.end.vy-=fy*nearest.t;}
         }}
@@ -203,24 +240,24 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
   function anchor(seed,force){const p=sim.nodes().find(p=>p.id===seed);if(!p)return;if(force.x===null?force.y!==null:!Number.isFinite(force.x)||!Number.isFinite(force.y))throw Error('Drag needs finite coordinates or a null release');p.fx=force.x;p.fy=force.y;if(force.x!==null){p.x=force.x;p.y=force.y;}else{p.ax=p.x;p.ay=p.y;p.vx=p.vy=0;sim.force('x').x(p=>p.ax);sim.force('y').y(p=>p.ay);}if(sim===aggregate?.simulation)aggregate.dirty=true;else pendingPositions.set(p.id,{x:p.x,y:p.y});reheat();}
   function physics(seed,force){
     if(!index||typeof d3==='undefined')return;if(!Number.isInteger(seed)||seed<0||seed>=index.data.nodes.length)throw Error('Node index out of range');
-    if(force.x===null&&(!sim||sim===aggregate?.simulation||!physicsIds.includes(seed)))return;
-    if(sim===aggregate?.simulation)commitAggregate();
-    if(!sim||sim===aggregate?.simulation||!physicsIds.includes(seed)){
-      stop();const ids=new Set([seed]);for(let j=index.counts[seed];j<index.counts[seed+1]&&ids.size<512;j++){const e=index.data.edges[index.adjacency[j]];ids.add(e[0]);ids.add(e[1]);}
+    if(force.x===null&&(!sim||sim===aggregate?.simulation||simSeed!=='n'+seed))return;
+    if(sim===aggregate?.simulation){commitAggregate();if(commitJob){deferredMotion={type:'drag',id:'n'+seed,...force};return;}}
+    if(!sim||sim===aggregate?.simulation||simSeed!=='n'+seed){
+      stop();const ids=new Set([seed]),neighbors=[];for(let j=index.counts[seed];j<index.counts[seed+1];j++){const ei=index.adjacency[j],e=rawTerm(index.data.edges[ei],ei);if(active(e))neighbors.push(e);}neighbors.sort(priority);for(const e of neighbors){if(ids.size>=512)break;ids.add(e.source);ids.add(e.target);}
       physicsIds=[...ids];const chosen=new Set(physicsIds),points=physicsIds.map(i=>({...index.levels[3].points[i],id:i,...pendingPositions.get(i),ax:pendingPositions.get(i)?.x??index.levels[3].points[i].x,ay:pendingPositions.get(i)?.y??index.levels[3].points[i].y}));
-      const seen=new Set();physicsLinks=[];const incident=new Set();for(const i of physicsIds)for(let j=index.counts[i];j<index.counts[i+1];j++){const ei=index.adjacency[j],e=index.data.edges[ei];incident.add(ei);if(physicsLinks.length<1024&&!seen.has(ei)&&chosen.has(e[0])&&chosen.has(e[1])){seen.add(ei);const semantic=index.data.semantics[e[2]],type=index.data.edge_types[e[3]],a=index.levels[3].points[e[0]],b=index.levels[3].points[e[1]];physicsLinks.push({source:e[0],target:e[1],family:ArchiveCore.family(semantic,type),semantic,type,restLength:Math.hypot(a.x-b.x,a.y-b.y)});}}
-      physicsEdges=[...incident];for(const ei of physicsEdges)dirtyEdges.add(ei);sim=d3.forceSimulation(points).stop().alphaDecay(.045);steps=0;applyForces();
+      const seen=new Set(),links=[];const incident=new Set();for(const i of physicsIds)for(let j=index.counts[i];j<index.counts[i+1];j++){const ei=index.adjacency[j],e=index.data.edges[ei];incident.add(ei);if(!seen.has(ei)&&chosen.has(e[0])&&chosen.has(e[1])){seen.add(ei);const term=rawTerm(e,ei),a=index.levels[3].points[e[0]],b=index.levels[3].points[e[1]];if(active(term))links.push({...term,restLength:Math.hypot(a.x-b.x,a.y-b.y)});}}
+      physicsLinks=links.sort(priority).slice(0,1024);physicsEdges=[...incident];for(const ei of physicsEdges)dirtyEdges.add(ei);sim=d3.forceSimulation(points).stop().alphaDecay(.045);simSeed='n'+seed;steps=0;applyForces();
     }
-    anchor(seed,force);
+    anchor(seed,force);if(force.released)anchor(seed,{x:null,y:null});
   }
   function aggregatePhysics(clusterIndex,force){
     if(!index||typeof d3==='undefined')return;const cluster=index.data.clusters[clusterIndex];if(!cluster)throw Error('Cluster index out of range');const level=cluster.level,stage=index.levels[level],seed=stage.points.findIndex(p=>p.index===clusterIndex);
-    if(force.x===null&&(!aggregate||aggregate.level!==level||!aggregate.points.some(p=>p.id===seed)))return;
-    if(!aggregate||sim!==aggregate.simulation||aggregate.level!==level||!aggregate.points.some(p=>p.id===seed)){
-      stop();if(sim&&sim!==aggregate?.simulation)commitRaw();commitAggregate();const ids=new Set([seed]);for(const e of stage.edges){if(ids.size>=512)break;if(e.a===seed||e.b===seed){if(ids.size<512)ids.add(e.a);if(ids.size<512)ids.add(e.b);}}
-      const points=[...ids].map(id=>({...stage.points[id],id,ox:stage.points[id].x,oy:stage.points[id].y,ax:stage.points[id].x,ay:stage.points[id].y}));physicsLinks=[];for(const e of stage.edges)if(physicsLinks.length<1024&&ids.has(e.a)&&ids.has(e.b)){const rawEdge=index.data.edges[e.index],semantic=index.data.semantics[rawEdge[2]],type=index.data.edge_types[rawEdge[3]];physicsLinks.push({source:e.a,target:e.b,family:e.family,semantic,type,restLength:Math.hypot(stage.points[e.a].x-stage.points[e.b].x,stage.points[e.a].y-stage.points[e.b].y)});}aggregate={level,points,dirty:false,simulation:d3.forceSimulation(points).stop().alphaDecay(.06)};sim=aggregate.simulation;physicsIds=[];physicsEdges=[];steps=0;applyForces();
+    if(force.x===null&&(!aggregate||aggregate.level!==level||simSeed!=='c'+clusterIndex))return;
+    if(!aggregate||sim!==aggregate.simulation||aggregate.level!==level||simSeed!=='c'+clusterIndex){
+      stop();if(sim&&sim!==aggregate?.simulation)commitRaw();commitAggregate();if(commitJob){deferredMotion={type:'drag',id:'c'+clusterIndex,...force};return;}const ids=new Set([seed]),neighbors=[];for(const e of stage.edges)if(e.a===seed||e.b===seed)neighbors.push(...forceTerms(e));neighbors.sort(priority);for(const e of neighbors){if(ids.size>=512)break;ids.add(e.source);ids.add(e.target);}
+      const points=[...ids].map(id=>({...stage.points[id],...clusterProvenance(stage.points[id].index),id,ox:stage.points[id].x,oy:stage.points[id].y,ax:stage.points[id].x,ay:stage.points[id].y})),links=[];for(const e of stage.edges)if(ids.has(e.a)&&ids.has(e.b))for(const term of forceTerms(e))links.push({...term,restLength:Math.hypot(stage.points[e.a].x-stage.points[e.b].x,stage.points[e.a].y-stage.points[e.b].y)});physicsLinks=links.sort(priority).slice(0,1024);aggregate={level,points,dirty:false,simulation:d3.forceSimulation(points).stop().alphaDecay(.06)};sim=aggregate.simulation;simSeed='c'+clusterIndex;physicsIds=[];physicsEdges=[];steps=0;applyForces();
     }
-    anchor(seed,force);
+    anchor(seed,force);if(force.released)anchor(seed,{x:null,y:null});
   }
   function explicitReheat(id){
     if(!index)return;
@@ -232,14 +269,23 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
     const seed=Number(id.slice(1));
     if(id[0]==='n'){
       const point=pendingPositions.get(seed)||index.levels[3].points[seed];if(!point)throw Error('Node index out of range');
-      physics(seed,{x:point.x,y:point.y});anchor(seed,{x:null,y:null});
+      physics(seed,{x:point.x,y:point.y,released:true});
     }else{
       const point=index.data.clusters[seed];if(!point)throw Error('Cluster index out of range');
-      aggregatePhysics(seed,{x:point.x,y:point.y});const local=index.levels[point.level].points.findIndex(p=>p.index===seed);anchor(local,{x:null,y:null});
+      aggregatePhysics(seed,{x:point.x,y:point.y,released:true});
     }
   }
+  function livePosition(i){
+    const old=index.levels[3].points[i];if(!old)throw Error('Node index out of range');
+    if(commitJob){const s=commitJob.shifts.get(commitJob.stage.nodeMap[i]);return {x:old.x+(s?.x||0),y:old.y+(s?.y||0)};}
+    if(aggregate?.dirty){const mapped=index.levels[aggregate.level].nodeMap[i],p=aggregate.points.find(p=>p.id===mapped);if(p)return {x:old.x+p.x-p.ox,y:old.y+p.y-p.oy};}
+    return pendingPositions.get(i)||old;
+  }
   self.onmessage=async event=>{const m=event.data;try{
-    if(commitJob&&['drag','resume','reheat'].includes(m.type)){deferredMotion=m;return;}
+    if(commitJob&&['drag','resume','reheat'].includes(m.type)){
+      if(m.type==='drag'&&m.x===null){if(deferredMotion?.type==='drag'&&deferredMotion.id===m.id)deferredMotion={...deferredMotion,released:true};else if(!deferredMotion&&simSeed===m.id)deferredMotion=m;}
+      else deferredMotion=m;return;
+    }
     if(m.type==='init'){
       stop();if(repairTimer!==null)clearTimeout(repairTimer);if(commitTimer!==null)clearTimeout(commitTimer);commitTimer=null;commitJob=null;deferredMotion=null;dirtyStageEdges.clear();dirtyStageNodes.clear();blockedLevels.clear();levelRemaining.clear();repairTimer=null;sim=null;aggregate=null;physicsIds=[];physicsEdges=[];physicsLinks=[];dirtyEdges.clear();pendingPositions.clear();repairList=[];repairCursor=0;waitingViews=[];paused=false;revision=0;
       const data=await unpack(m.compressed);index=ArchiveCore.create(data,p=>send('progress',p));const catalog=new Map(),goals=new Set();for(const n of data.nodes)for(const [key,value] of Object.entries(n.goal_weights||{}))if(Number.isFinite(value)&&value>=0)goals.add(key);for(const e of data.edges){const semantic=data.semantics[e[2]],type=data.edge_types[e[3]],key=semantic+'|'+type;if(!catalog.has(key))catalog.set(key,{key,semantic,type,family:ArchiveCore.family(semantic,type),count:0});catalog.get(key).count++;}
@@ -249,12 +295,13 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
     }else if(m.type==='configure'){configure(m.options||{});send('configured',{options},m.request);
     }else if(m.type==='search')send('search',index.find(m.query,m.page),m.request);
     else if(m.type==='detail')send('detail',index.neighbors(m.index,m.page),m.request);
-    else if(m.type==='locate'){const n=index.data.nodes[m.index];let p=pendingPositions.get(m.index);if(commitJob){const old=index.levels[3].points[m.index],shift=commitJob.shifts.get(commitJob.stage.nodeMap[m.index]);p={x:old.x+(shift?.x||0),y:old.y+(shift?.y||0)};}else if(aggregate?.dirty){const old=index.levels[3].points[m.index],mapped=index.levels[aggregate.level].nodeMap[m.index],motion=aggregate.points.find(p=>p.id===mapped);if(motion)p={x:old.x+motion.x-motion.ox,y:old.y+motion.y-motion.oy};}send('locate',{index:m.index,x:p?.x??n.x,y:p?.y??n.y,parent:n.parent,raw_node_index:n.raw_node_index,raw_hyperedge_id:n.raw_hyperedge_id},m.request);}
+    else if(m.type==='locate'){const n=index.data.nodes[m.index],p=livePosition(m.index);send('locate',{index:m.index,x:p.x,y:p.y,parent:n.parent,raw_node_index:n.raw_node_index,raw_hyperedge_id:n.raw_hyperedge_id},m.request);}
     else if(m.type==='raw-locator')send('raw-locator',{index:index.data.edges[m.index][4]},m.request);
-    else if(m.type==='cluster'){const c=index.data.clusters[m.index];send('cluster',{index:m.index,cluster:c},m.request);}
+    else if(m.type==='cluster')send('cluster',index.clusterView(m.index,m.filters||{},livePosition),m.request);
+    else if(m.type==='cell-members')send('cell-members',index.cellMembers(m.cell,m.filters||{},m.page),m.request);
     else if(m.type==='highlight'){const found=new Set([m.index]),edges=[];for(let j=index.counts[m.index];j<index.counts[m.index+1];j++){const ei=index.adjacency[j],e=index.data.edges[ei];found.add(e[0]);found.add(e[1]);edges.push(ei);}send('highlight',{nodes:[...found],edges},m.request);}
-    else if(m.type==='drag'&&m.id.startsWith('n'))physics(Number(m.id.slice(1)),{x:m.x,y:m.y});
-    else if(m.type==='drag'&&m.id.startsWith('c'))aggregatePhysics(Number(m.id.slice(1)),{x:m.x,y:m.y});
+    else if(m.type==='drag'&&m.id.startsWith('n'))physics(Number(m.id.slice(1)),{x:m.x,y:m.y,released:!!m.released});
+    else if(m.type==='drag'&&m.id.startsWith('c'))aggregatePhysics(Number(m.id.slice(1)),{x:m.x,y:m.y,released:!!m.released});
     else if(m.type==='pause'){deferredMotion=null;paused=true;stop();if(sim){for(const p of sim.nodes()){p.fx=p.fy=null;p.ax=p.x;p.ay=p.y;}sim.force('x').x(p=>p.ax);sim.force('y').y(p=>p.ay);}emitPhysics(true);if(aggregate?.dirty)commitAggregate();else commitRaw();}
     else if(m.type==='resume'){paused=false;reheat();}
     else if(m.type==='reheat'){paused=false;explicitReheat(m.id);}
