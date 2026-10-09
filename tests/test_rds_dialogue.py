@@ -128,6 +128,53 @@ class DialogueCLITests(unittest.TestCase):
                 self.assertEqual(self.snapshot()['runs'], [])
                 self.assertEqual(self.starts(), [])
 
+    def test_inherited_redirect_effects_use_current_revision_not_latest_request(self):
+        self.initialize(mutate_policy=steering_fixture.SteeringCLITests.independent_routes)
+        self.steer(self.request('redirect', ident='initial-routes', withdraw=['baseline'], prefer=['repair']))
+        for kind in ('hypothesis', 'redirect'):
+            with self.subTest(kind=kind):
+                request = self.request(kind, ident='inherit-' + kind,
+                                       **({'prefer': ['repair']} if kind == 'redirect' else {}))
+                received = self.steer(request)
+                before, count = self.snapshot(), self.event_count()
+                interaction = self.dialogue()['interaction']
+                source = {'command': 'project steering', 'revision': received['received_revision']}
+                self.assertEqual(interaction.get('dispatch_source'), source)
+                self.assertEqual(interaction['affected_routes']['original'], source)
+                self.assertEqual(interaction['affected_routes']['items'], ['baseline', 'repair'])
+                self.assertEqual(interaction['instruction']['withdrawn_runs'], ['baseline'])
+                self.assertEqual(interaction['instruction']['preferred_runs'], ['repair'])
+                self.assertEqual(interaction['instruction_source']['request_artifact_scope'], 'LATEST_REQUEST_ONLY')
+                latest = received['request_artifact']
+                from pathlib import Path
+                from rds_source_documents import strict_json
+                self.assertNotIn('withdraw', strict_json(Path(latest['path']).read_text(encoding='utf-8'))['request'])
+                self.assertEqual(self.snapshot(), before)
+                self.assertEqual(self.event_count(), count)
+                self.assertEqual(self.starts(), [])
+
+    def test_blocked_candidate_retains_frozen_action_and_its_original_source(self):
+        self.initialize('positive')
+        self.create()
+        self.execute()
+        self.output('project', 'next', '--brief')
+        before, count = self.snapshot(), self.event_count()
+        result = self.dialogue()
+        blocked = next(row for row in result['candidates']['items'] if row['run_id'] == 'repair')
+        action = self.policy['graph']['nodes'][1]['executable']['action']
+        self.assertEqual(blocked['status'], 'BLOCKED_PREREQUISITE')
+        self.assertEqual(blocked['description'], action['description'])
+        self.assertEqual(blocked['explanations'], action['competing_explanations'])
+        self.assertEqual(blocked['observation_to_next_decision'], action['outcomes'])
+        self.assertEqual(blocked['action_source'], {'command': 'project status',
+            'contract_sha256': before['contract_sha256'],
+            'locator': '/contract/advisor_policy/graph/nodes/1/executable/action'})
+        self.assertIn('/blocked_candidates/', blocked['evidence_locator']['locator'])
+        self.assertIsNone(result['selected_run'])
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.event_count(), count)
+        self.assertEqual(self.starts(), ['baseline'])
+
     def test_large_owned_report_uses_recorded_size_and_rejects_invalid_sizes(self):
         self.initialize()
         self.output('project', 'next', '--brief')

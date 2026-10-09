@@ -7,7 +7,7 @@ from copy import deepcopy
 import hashlib
 import sqlite3
 
-from rds_project import canonical, require
+from rds_project import canonical, digest, require
 from rds_source_documents import strict_json
 
 ITEMS = 4
@@ -17,7 +17,7 @@ DETAIL_BYTES = 2048
 def _detail(value, source, pointer):
     if len(canonical(value).encode('utf-8')) <= DETAIL_BYTES:
         return deepcopy(value)
-    identity = {k: deepcopy(value[k]) for k in ('candidate', 'run_id', 'selected_run', 'status', 'is_recorded_selection', 'kind')
+    identity = {k: deepcopy(value[k]) for k in ('candidate', 'run_id', 'selected_run', 'status', 'is_recorded_selection', 'kind', 'action_source')
                 if isinstance(value, dict) and k in value}
     locator = value.get('evidence_locator', {}).get('locator', pointer) if isinstance(value, dict) else pointer
     return {**identity, 'details_omitted': True, 'original': source, 'locator': locator}
@@ -60,11 +60,15 @@ def _interaction(plan, contract=None, request_artifact=None):
     routes = [r['manifest']['id'] for r in (contract or {}).get('advisor_policy', {}).get('routes', [])]
     affected = routes if steering['paused'] else sorted(set(steering['withdrawn_runs'] + steering['preferred_runs']))
     kind = steering.get('kind')
-    instruction_source = {'command': 'project steering', 'request_artifact': request_artifact}
-    affected_source = ({'command': 'project status'} if steering['paused'] else instruction_source)
+    dispatch_source = {'command': 'project steering', 'revision': steering.get('revision')}
+    instruction_source = {**dispatch_source, 'request_artifact': request_artifact,
+                          'request_artifact_scope': 'LATEST_REQUEST_ONLY'}
+    affected_source = ({'command': 'project status', 'contract_sha256': digest(contract)}
+                       if steering['paused'] and contract is not None else dispatch_source)
     affected_pointer = '/contract/advisor_policy/routes' if steering['paused'] else '/steering'
-    return {'instruction': _detail(steering, instruction_source, '/steering'),
+    return {'instruction': _detail(steering, dispatch_source, '/steering'),
             'instruction_source': instruction_source,
+            'dispatch_source': dispatch_source,
             'affected_routes': _section(affected, affected_source, affected_pointer),
             'active_work': _section(plan.get('active_work', []), 'project steering', '/active_work'),
             'continuation': ('NEW_DISPATCH_PAUSED' if steering['paused'] else
@@ -155,18 +159,30 @@ def build(store, draft):
                     if r.get('type') == 'EXECUTABLE_DIRECTION_SEARCH']
         candidates = []
         route_map = {r['candidate']: r for r in contract.get('advisor_policy', {}).get('routes', [])}
+        action_map = {}
+        for node_index, node in enumerate(contract.get('advisor_policy', {}).get('graph', {}).get('nodes', [])):
+            action = node.get('executable', {}).get('action')
+            if action:
+                action_map[action['id']] = (action, {'command': 'project status',
+                    'contract_sha256': digest(contract),
+                    'locator': '/contract/advisor_policy/graph/nodes/' + str(node_index) + '/executable/action'})
         for index, search in searches:
             entries = [(key, i, candidate) for key in ('candidates', 'blocked_candidates')
                        for i, candidate in enumerate(search.get(key, []))]
             for key, candidate_index, candidate in entries:
-                action = candidate.get('action', {})
-                route = route_map.get(action.get('id', candidate.get('action_id')))
                 locator = '/recommendations/' + str(index) + '/search/' + key + '/' + str(candidate_index)
+                if 'action' in candidate:
+                    action = candidate['action']
+                    action_source = {'report': ref, 'locator': locator + '/action'}
+                else:
+                    action, action_source = action_map.get(candidate.get('action_id'), ({}, None))
+                route = route_map.get(action.get('id', candidate.get('action_id')))
                 candidates.append({'candidate': candidate.get('id', candidate.get('rule_id')),
                     'run_id': route['manifest']['id'] if route else None,
                     'status': candidate.get('status', 'UNKNOWN'),
                     'is_recorded_selection': bool(route and route['manifest']['id'] == report.get('selected_run')),
                     'description': action.get('description', 'UNKNOWN'),
+                    'action_source': action_source,
                     'explanations': action.get('competing_explanations', 'UNKNOWN'),
                     'observation_to_next_decision': action.get('outcomes', 'UNKNOWN'),
                     'predictions': _detail(candidate.get('discrimination', 'UNKNOWN'), ref,
