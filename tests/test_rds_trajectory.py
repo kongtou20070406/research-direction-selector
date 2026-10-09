@@ -164,6 +164,94 @@ class TrajectoryTests(unittest.TestCase):
                 self.assertIsNone(result['provider_usage']['total_tokens']['value'])
                 self.assertTrue(result['providers'][0]['usage_problems'])
 
+    def test_bad_recovery_selector_preserves_complete_planning_phase(self):
+        self.provider()
+        before = self.run_report()
+        original_manifest = json.loads(json.dumps(self.manifest))
+        for failure in ('missing', 'hash', 'record', 'format'):
+            with self.subTest(failure=failure):
+                self.manifest = json.loads(json.dumps(original_manifest))
+                if failure in ('missing', 'hash'):
+                    source = self.unavailable_source(failure)
+                    spec = {**self.manifest['providers'][0], 'source': source}
+                    self.manifest['providers'].append(spec)
+                else:
+                    spec = self.provider([] if failure == 'record' else response('recovery'), name='recovery.json')
+                    if failure == 'format':
+                        spec['format'] = 'unsupported-format'
+                spec['phase'] = 'recovery'
+                original = {s['path']: (self.root / s['path']).read_bytes()
+                            for s in self.manifest['sources'] if (self.root / s['path']).exists()}
+                result = self.run_report()
+                self.assertEqual(result['phases']['planning'], before['phases']['planning'])
+                self.assertIsNone(result['provider_usage']['total_tokens']['value'])
+                self.assertEqual(result['provider_usage']['total_tokens']['observed_subtotal'], 130)
+                self.assertIn('recovery', result['phases'])
+                self.assertEqual(result['phases']['recovery']['provider_attempts'], 0)
+                self.assertIsNone(result['phases']['recovery']['tokens']['total_tokens']['value'])
+                problem = next(e for e in result['errors'] if e.get('kind') == 'providers')
+                self.assertEqual(problem['phase'], 'recovery')
+                self.assertEqual(problem['source']['id'], spec['source'])
+                self.assertEqual(problem['source']['pointer'], spec['pointer'])
+                self.assertTrue(problem['reason'])
+                self.assertEqual(result['coverage']['complete_research_cost'], 'UNKNOWN')
+                self.assertEqual({p: (self.root / p).read_bytes() for p in original}, original)
+                self.assertFalse((self.root / '.rds').exists())
+
+    def test_bad_unknown_phase_selector_conservatively_affects_known_phases(self):
+        self.provider()
+        self.provider(response('recovery'), name='recovery.json')['phase'] = 'recovery'
+        original_manifest = json.loads(json.dumps(self.manifest))
+        for attribution in ('omitted', 'UNKNOWN'):
+            with self.subTest(attribution=attribution):
+                self.manifest = json.loads(json.dumps(original_manifest))
+                source = self.unavailable_source('missing')
+                spec = {**self.manifest['providers'][0], 'source': source}
+                if attribution == 'omitted':
+                    spec.pop('phase')
+                else:
+                    spec['phase'] = 'UNKNOWN'
+                self.manifest['providers'].append(spec)
+                result = self.run_report()
+                for phase in ('planning', 'recovery'):
+                    self.assertIsNone(result['phases'][phase]['tokens']['total_tokens']['value'])
+                    self.assertEqual(result['phases'][phase]['tokens']['total_tokens']['observed_subtotal'], 130)
+                problem = next(e for e in result['errors'] if e.get('kind') == 'providers')
+                self.assertEqual(problem.get('phase'), 'UNKNOWN')
+                self.assertIn('UNKNOWN', result['phases'])
+                self.assertIsNone(result['provider_usage']['total_tokens']['value'])
+                self.assertEqual(result['provider_usage']['total_tokens']['observed_subtotal'], 260)
+                self.assertEqual(result['coverage']['complete_research_cost'], 'UNKNOWN')
+
+    def test_provider_conflicts_affect_only_implicated_or_unknown_phases(self):
+        for other_phase in ('recovery', 'verification', 'UNKNOWN'):
+            with self.subTest(other_phase=other_phase):
+                self.manifest['sources'], self.manifest['providers'] = [], []
+                self.provider(response('planning'), name='planning.json')
+                self.provider(response('verification'), name='verification.json')['phase'] = 'verification'
+                before = self.run_report()
+                self.provider(response('conflicted'), name='recovery-one.json')['phase'] = 'recovery'
+                changed = response('conflicted')
+                changed['usage'].update(input_tokens=101, total_tokens=131)
+                self.provider(changed, name='recovery-two.json')['phase'] = other_phase
+                result = self.run_report()
+                self.assertEqual(result['status'], 'CONFLICT')
+                if other_phase == 'UNKNOWN':
+                    self.assertIsNone(result['phases']['planning']['tokens']['total_tokens']['value'])
+                else:
+                    self.assertEqual(result['phases']['planning'], before['phases']['planning'])
+                if other_phase == 'recovery':
+                    self.assertEqual(result['phases']['verification'], before['phases']['verification'])
+                else:
+                    self.assertIsNone(result['phases']['verification']['tokens']['total_tokens']['value'])
+                    self.assertEqual(result['phases']['verification']['tokens']['total_tokens']['observed_subtotal'], 130)
+                self.assertIsNone(result['provider_usage']['total_tokens']['value'])
+                self.assertEqual(result['provider_usage']['total_tokens']['observed_subtotal'], 260)
+                self.assertEqual(result['provider_attempts_observed'], 2)
+                self.assertEqual(result['conflicts'][0].get('phases'), sorted({'recovery', other_phase}))
+                self.assertEqual(len(result['conflicts'][0]['sources']), 2)
+                self.assertEqual(result['coverage']['complete_research_cost'], 'UNKNOWN')
+
     def test_batches_are_one_round_trip_and_internal_steps_are_separate(self):
         self.tool('one')
         self.tool('two')

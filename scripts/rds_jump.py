@@ -361,7 +361,7 @@ def _interpreter_script_operand(argv):
     name = Path(argv[0]).name.casefold().removesuffix('.exe')
     if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', name):
         return file_at(_python_script_operand(argv))
-    if name == 'ruby':
+    if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', name):
         return file_at(_ruby_script_operand(argv))
     shells = {'sh', 'bash', 'dash', 'ksh', 'zsh'}
     if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:

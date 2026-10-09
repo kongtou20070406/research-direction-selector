@@ -234,18 +234,22 @@ class InterpreterBoundaryTests(unittest.TestCase):
             original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
             ruby = shutil.which('ruby')
             executable = ruby or str(Path(sys.executable).with_name('ruby.exe' if sys.platform == 'win32' else 'ruby'))
+            available = {path for name in ('ruby', 'ruby3.3', 'Ruby3.4.exe')
+                         if (path := shutil.which(name))}
+            executables = [executable, *[shutil.which(name) or str(Path(sys.executable).with_name(name))
+                                        for name in ('ruby3.3', 'Ruby3.4.exe')]]
             options = [['-Csub'], ['-C', 'sub'], ['-Csub', '-C.'],
                        ['-C', 'sub', '-C', '.'], ['-C..'], ['-C', '..'],
                        ['-Xsub'], ['-X', 'sub'], ['-wCsub'], ['-anC', 'sub'],
                        ['-W0Csub'], ['-KUCsub'], ['-000Csub'], ['-xsub'], ['-wxsub'],
                        ['-S'], ['-wS']]
-            for option in options:
+            for executable, option in [(entry, option) for entry in executables for option in options]:
                 argv = [executable, *option, 'worker.rb']
-                with self.subTest(option=option, boundary='parser'):
+                with self.subTest(executable=executable, option=option, boundary='parser'):
                     with self.assertRaisesRegex(ValueError, 'lookup cwd'):
                         jump._interpreter_script_operand(argv)
                 for declaration in ('explicit', 'legacy'):
-                    with self.subTest(option=option, boundary='binding', declaration=declaration):
+                    with self.subTest(executable=executable, option=option, boundary='binding', declaration=declaration):
                         plan = deepcopy(original)
                         if declaration == 'legacy':
                             plan.pop('generator_code_paths')
@@ -253,7 +257,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                             plan['generator_code_paths'][0] = 'worker.rb'
                         for stage in plan['stages']:
                             stage['run']['argv'] = argv
-                        if ruby:
+                        if executable in available:
                             with self.assertRaisesRegex(ValueError, 'lookup cwd'):
                                 jump._generator_bindings(store, contract, plan)
                         else:
@@ -269,6 +273,10 @@ class InterpreterBoundaryTests(unittest.TestCase):
             original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
             ruby = shutil.which('ruby')
             executable = ruby or str(Path(sys.executable).with_name('ruby.exe' if sys.platform == 'win32' else 'ruby'))
+            available = {path for name in ('ruby', 'ruby3.3', 'Ruby3.4.exe')
+                         if (path := shutil.which(name))}
+            executables = [executable, *[shutil.which(name) or str(Path(sys.executable).with_name(name))
+                                        for name in ('ruby3.3', 'Ruby3.4.exe')]]
             cases = [('worker.rb', []), ('worker.rb', ['-r', 'Chelper']),
                      ('worker.rb', ['-rChelper']), ('worker.rb', ['-ICdirectory']),
                      ('worker.rb', ['-I', '-Cdirectory']), ('worker.rb', ['-FC']),
@@ -277,7 +285,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                      ('-Cworker.rb', ['--']), ('-Xworker.rb', ['--']), ('-xworker.rb', ['--']),
                      ('worker.rb', ['-rShelper']), ('worker.rb', ['-ISdirectory']),
                      ('-Sworker.rb', ['--'])]
-            for filename, options in cases:
+            for executable, (filename, options) in [(entry, case) for entry in executables for case in cases]:
                 (root / filename).write_text('puts "frozen literal worker"\n', encoding='utf-8')
                 # A cwd-looking argument after the main is a script argument;
                 # after -- even the main filename itself must remain literal.
@@ -285,7 +293,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                 self.assertEqual(jump._interpreter_script_operand(argv), (len(argv) - 3, filename))
                 for declaration in ('explicit', 'legacy'):
                     for role in ('missing', 'data', 'code'):
-                        with self.subTest(filename=filename, options=options, declaration=declaration, role=role):
+                        with self.subTest(executable=executable, filename=filename, options=options, declaration=declaration, role=role):
                             contract, plan = deepcopy(before['contract']), deepcopy(original)
                             binding = next(b for b in contract['bindings'] if b['path'] == 'worker.py')
                             binding.update(path=filename, sha256=file_sha(root / filename))
@@ -307,7 +315,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                 else:
                                     with self.assertRaisesRegex(ValueError, 'entrypoint.*frozen code'):
                                         jump._generator_bindings(store, contract, plan)
-                            if ruby:
+                            if executable in available:
                                 check()
                             else:
                                 with patch.object(store, '_command', return_value=executable):

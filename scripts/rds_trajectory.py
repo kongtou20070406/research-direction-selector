@@ -168,7 +168,8 @@ def _deduplicate(rows, conflicts, kind):
         fingerprints = {digest({k: v for k, v in row.items() if k != 'source'}) for row in items}
         if len(fingerprints) != 1:
             conflicts.append({'kind': kind, 'key': list(key), 'reason': 'conflicting records for one identity',
-                              'sources': [row['source'] for row in items]})
+                              'sources': [row['source'] for row in items],
+                              **({'phases': sorted({row['phase'] for row in items})} if kind == 'providers' else {})})
             continue
         row = dict(items[0])
         row['sources'] = [item['source'] for item in items]
@@ -233,8 +234,9 @@ def _report(root, manifest_path):
                 require(spec.get('phase', 'UNKNOWN') in PHASES, 'unsupported phase')
             source = next(item for item in sources if item['id'] == spec['source'])
             locator = {**source, 'pointer': spec['pointer'], 'fields': spec.get('fields', {})}
+            attribution = {'phase': spec.get('phase', 'UNKNOWN')} if kind == 'providers' else {}
             if spec['source'] not in documents:
-                errors.append({'kind': kind, 'index': index, 'source': locator, 'reason': 'source unavailable'})
+                errors.append({'kind': kind, 'index': index, 'source': locator, 'reason': 'source unavailable', **attribution})
                 continue
             try:
                 record = _pointer(documents[spec['source']], spec['pointer'])
@@ -254,7 +256,7 @@ def _report(root, manifest_path):
                         'selected report record exceeds 32 KiB; use narrower original fields')
                 groups[kind].append(row)
             except (ValueError, KeyError, IndexError, TypeError) as exc:
-                errors.append({'kind': kind, 'index': index, 'source': locator, 'reason': str(exc)})
+                errors.append({'kind': kind, 'index': index, 'source': locator, 'reason': str(exc), **attribution})
     duplicates = {}
     for kind in ('providers', 'tools', 'outcomes'):
         groups[kind], duplicates[kind] = _deduplicate(groups[kind], conflicts, kind)
@@ -268,11 +270,15 @@ def _report(root, manifest_path):
     round_trips = {(row['namespace'], row['round_trip_id']) for row in llm if row['round_trip_id'] is not None}
     tool_incomplete = any(row['round_trip_id'] is None for row in llm) or any(
         e.get('kind') == 'tools' for e in errors) or any(c['kind'] == 'tools' for c in conflicts)
+    # Selector attribution survives unavailable/malformed records; a conflicting
+    # identity implicates every phase actually declared for that identity.
+    uncertain_phases = {e['phase'] for e in errors if e.get('kind') == 'providers'}
+    uncertain_phases.update(phase for c in conflicts if c['kind'] == 'providers' for phase in c['phases'])
     phases = {phase: {'provider_attempts': len(rows), 'tokens': {key: _total(rows, key) for key in TOKEN_FIELDS + ('total_tokens',)}}
-              for phase in sorted({row['phase'] for row in providers})
+              for phase in sorted({row['phase'] for row in providers} | uncertain_phases)
               for rows in [[row for row in providers if row['phase'] == phase]]}
-    if any(e.get('kind') == 'providers' for e in errors) or any(c['kind'] == 'providers' for c in conflicts):
-        for phase in phases.values():
+    for name, phase in phases.items():
+        if name in uncertain_phases or 'UNKNOWN' in uncertain_phases:
             for field in phase['tokens'].values():
                 field.update(value=None, status='UNKNOWN')
     tool_totals = {key: _total(tools, key) for key in ('schema_tokens', 'returned_tokens', 'format_error', 'retry', 'regenerated_code')}
