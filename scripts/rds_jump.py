@@ -442,6 +442,16 @@ def _interpreter_script_operand(argv):
     """
     def file_at(index):
         return (index, argv[index]) if index is not None and index < len(argv) else None
+    def php_explicit_file(main):
+        # -f/-F consumes its file as an option value. PHP continues getopt
+        # until -- or the first ordinary argument; the file alone is no cutoff.
+        if main is not None:
+            for option in argv[main[0] + 1:]:
+                if option in {'-', '--'} or not option.startswith('-'):
+                    break
+                require(option in {'-n', '--no-php-ini', '-q'},
+                        'PHP startup configuration/unsupported options cannot bind frozen code')
+        return main
     name = Path(argv[0]).name.casefold().removesuffix('.exe')
     if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', name):
         return file_at(_python_script_operand(argv))
@@ -498,10 +508,10 @@ def _interpreter_script_operand(argv):
                       'lua': {'-e', '-l'}, 'rscript': set()}[name]
             # PHP's explicit file flag names the main script itself.
             if name == 'php' and option in {'-f', '--file', '-F', '--process-file'}:
-                return file_at(index + 1)
+                return php_explicit_file(file_at(index + 1))
             if name == 'php' and (option.startswith(('--file=', '--process-file=')) or
                                   (option.startswith(('-f', '-F')) and len(option) > 2)):
-                return index, option.split('=', 1)[1] if option.startswith('--') else option[2:]
+                return php_explicit_file((index, option.split('=', 1)[1] if option.startswith('--') else option[2:].removeprefix('=')))
             index += 2 if option in values else 1
     return None
 

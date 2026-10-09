@@ -226,6 +226,17 @@ class InterpreterBoundaryTests(unittest.TestCase):
                             with self.subTest(raw=raw, resolved=name, option=option):
                                 with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
                                     jump._generator_bindings(store, contract, make(option, raw))
+                        for file_option in (['-f', 'worker.php'], ['-fworker.php'], ['--file=worker.php'],
+                                            ['-F', 'worker.php'], ['--process-file=worker.php']):
+                            for option in options:
+                                with self.subTest(raw=raw, file_option=file_option, startup_tail=option):
+                                    with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                                        jump._generator_bindings(store, contract, make(file_option+option, raw))
+                            # Only -- or an ordinary runtime argument ends PHP
+                            # option parsing after an explicit main file.
+                            for arguments in (['--', '-d', 'runtime=value'], ['-', '-d', 'runtime=value'],
+                                              ['literal', '-d', 'runtime=value'], ['-n']):
+                                self.assertTrue(jump._generator_bindings(store, contract, make(file_option+arguments, raw)))
                         for option in ([], ['-n'], ['--no-php-ini'], ['-n', '-f'], ['-n', '-F']):
                             self.assertTrue(jump._generator_bindings(store, contract, make(option, raw)))
             self.assertEqual(store.snapshot(),before)
@@ -688,8 +699,9 @@ class InterpreterBoundaryTests(unittest.TestCase):
             original_plan = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
             parser_executable = str(Path(sys.executable).with_name('php.exe' if sys.platform == 'win32' else 'php'))
             cases = [('worker', [option]) for option in
-                     ('--file=worker', '-fworker', '--process-file=worker', '-Fworker')]
-            cases += [(filename, argv) for filename in ('-fworker', '--file=worker')
+                     ('--file=worker', '-fworker', '-f=worker', '--process-file=worker', '-Fworker', '-F=worker')]
+            cases += [('=worker', ['-f==worker']), ('=worker', ['-F==worker'])]
+            cases += [(filename, argv) for filename in ('-fworker', '--file=worker', '=worker')
                       for argv in (['--', filename], ['-f', filename])]
             cases = [(entry, filename, option)
                      for entry in (parser_executable, str(Path(sys.executable).with_name('php8.3')),
@@ -713,6 +725,14 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                 plan['generator_code_paths'][0] = filename
                             else:
                                 plan['generator_code_paths'].remove('worker.py')
+                            if option in (['-f=worker'], ['-F=worker']):
+                                # A frozen file named =worker must not mask the
+                                # actual main worker consumed by PHP getopt.
+                                (root / '=worker').write_bytes((root / 'worker.py').read_bytes())
+                                contract['bindings'].append({'path': '=worker', 'role': 'code',
+                                                             'sha256': file_sha(root / '=worker')})
+                                if declaration == 'explicit':
+                                    plan['generator_code_paths'].append('=worker')
                             if filename != 'worker':
                                 # A separate frozen worker must not mask the
                                 # literal main named -fworker / --file=worker.
