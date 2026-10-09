@@ -89,9 +89,9 @@ class CapabilityRequirementCLITests(unittest.TestCase):
         self.assertEqual(review['goal']['status'], 'FALSE')
         self.assertNotIn('obstruction_review', baseline)
         self.assertNotIn('obstructions', baseline['next_move'])
-        # A generic reformulation becomes the specific jump; authorization and preserved inputs are unchanged.
+        # A generic goal-gap review becomes the sourced capability step; authority is unchanged.
         move, before = review['next_move'], baseline['next_move']
-        self.assertEqual((before['kind'], move['kind']), ('REFORMULATE', 'SPECIFY_CAPABILITY'))
+        self.assertEqual((before['kind'], move['kind']), ('DIAGNOSE_GOAL_GAP', 'SPECIFY_CAPABILITY'))
         self.assertEqual(move['supersedes'], {'kind': before['kind'], 'reason': before['reason']})
         self.assertEqual({k: move[k] for k in ('basis', 'authorization', 'preserve_refs')},
                          {k: before[k] for k in ('basis', 'authorization', 'preserve_refs')})
@@ -493,6 +493,7 @@ class CapabilityRequirementReviewTests(unittest.TestCase):
         alternative = self.superseded(context(*DEEP_LEARNING), goal, 'REVIEW_ALTERNATIVE', 'One procedure was supplied.')
         self.assertEqual(alternative['kind'], 'SPECIFY_CAPABILITY')
         for kind, reason in (('DESIGN_DISCRIMINATOR', 'Supported same-scope prediction sets overlap.'),
+                             ('REVIEW_DECISION_HISTORY', 'Choices oscillate without a rejected route.'),
                              ('RESOLVE_PREMISE', 'The bounded search omitted part of the supplied scope.'),
                              ('RESOLVE_PREMISE', 'Resolve the affected evidence, prediction scope, method or budget conditions first.'),
                              ('REVIEW_GOAL_LINK', 'No declared dependency path.')):
