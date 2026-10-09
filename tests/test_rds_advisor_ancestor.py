@@ -45,7 +45,7 @@ class AdvisorAncestorTests(unittest.TestCase):
                 result = self.f.call('advise', *self.inputs(child), root=child, ok=False)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn('Advisor must use the existing FULL project root', result.stderr)
-                self.assertIn(str(self.f.root), result.stderr)
+                self.assertIn(str(self.f.root.resolve()), result.stderr)
                 self.assertEqual(result.stdout, '')
                 if token:
                     self.assertEqual(current(child)['sha256'], token)
@@ -84,7 +84,7 @@ class AdvisorAncestorTests(unittest.TestCase):
         result = self.f.call('advise', *self.inputs(self.f.root), root=missing, ok=False)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('Advisor must use the existing FULL project root', result.stderr)
-        self.assertIn(str(self.f.root), result.stderr)
+        self.assertIn(str(self.f.root.resolve()), result.stderr)
         self.assertFalse((self.f.root / 'not-created').exists())
         for key in ('contract', 'contract_sha256', 'budget', 'runs', 'receipts'):
             self.assertEqual(self.f.snapshot()[key], before[key])
