@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,98 @@ spec.loader.exec_module(example)
 
 
 class InterpreterBoundaryTests(unittest.TestCase):
+    def test_node_preloads_require_project_frozen_code_and_declaration(self):
+        interpreter = shutil.which('node')
+        if interpreter is None:
+            self.skipTest('Native Node interpreter unavailable')
+        with tempfile.TemporaryDirectory() as directory:
+            root, store = example.build(Path(directory) / 'project')
+            before = store.snapshot()
+            worker, loader, external = root / 'worker.js', root / 'loader.opaque', Path(directory) / 'hook.js'
+            worker.write_text('console.log(globalThis.preloaded)', encoding='utf-8')
+            loader.write_text('globalThis.preloaded = 1;', encoding='utf-8')
+            external.write_text('globalThis.preloaded = 1;', encoding='utf-8')
+            observed = []
+            for value in (1, 2):
+                external.write_text(f'globalThis.preloaded = {value};', encoding='utf-8')
+                observed.append(subprocess.check_output([interpreter, '-r', str(external), str(worker)],
+                                                       text=True, timeout=5).strip())
+            self.assertEqual(observed, ['1', '2'])  # Actual mutable external code precedes unchanged main.
+            original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+            contract = deepcopy(before['contract'])
+            binding = next(b for b in contract['bindings'] if b['path'] == 'worker.py')
+            binding.update(path='worker.js', sha256=file_sha(worker))
+            named = root / 'hook.js'
+            named.write_text('globalThis.preloaded = 1;', encoding='utf-8')
+            modules = root / 'node_modules'
+            modules.mkdir()
+            (modules / 'hook.js').write_text('globalThis.preloaded = 3;', encoding='utf-8')
+            self.assertEqual(subprocess.check_output([interpreter, '-r', 'hook.js', str(worker)],
+                                                    cwd=root, text=True, timeout=5).strip(), '3')
+            self.assertEqual(subprocess.check_output([interpreter, '-p', "new URL('file:./tmp/hook.mjs').pathname"],
+                                                    text=True, timeout=5).strip(), '/tmp/hook.mjs')
+            for declaration in ('explicit', 'legacy'):
+                def make(options, arguments=()):
+                    plan = deepcopy(original)
+                    if declaration == 'legacy':
+                        plan.pop('generator_code_paths')
+                    else:
+                        plan['generator_code_paths'] = ['worker.js']
+                    for stage in plan['stages']:
+                        stage['run']['argv'] = [interpreter, *options, 'worker.js', *arguments]
+                    return plan
+                for flag in ('-r', '--require', '--import', '--loader', '--experimental-loader'):
+                    forms = [[flag, str(external)]]
+                    forms += [[flag + '=' + external.as_uri()]] if flag.startswith('--') else [['-r' + str(external)]]
+                    for options in forms:
+                        with self.subTest(declaration=declaration, options=options):
+                            with self.assertRaisesRegex(ValueError, 'preload.*project-relative frozen code'):
+                                jump._generator_bindings(store, contract, make(options))
+                for options in (['--import=data:text/javascript,globalThis.preloaded=3'], ['--require', 'unbound-package']):
+                    with self.assertRaisesRegex(ValueError, 'preload.*frozen code'):
+                        jump._generator_bindings(store, contract, make(options))
+                for name in ('hook.js', 'package', '#hook'):
+                    path = root / name
+                    if name != 'hook.js':
+                        path.write_text('globalThis.preloaded = 1;', encoding='utf-8')
+                    frozen = deepcopy(contract)
+                    frozen['bindings'].append({'path': name, 'role': 'code', 'sha256': file_sha(path)})
+                    for flag in ('-r', '--require', '--import', '--loader', '--experimental-loader'):
+                        plan = make([flag, name])
+                        if declaration == 'explicit':
+                            plan['generator_code_paths'].append(name)
+                        with self.subTest(declaration=declaration, flag=flag, bare=name):
+                            with self.assertRaisesRegex(ValueError, 'preload.*explicit frozen code file'):
+                                jump._generator_bindings(store, frozen, plan)
+                for role in ('missing', 'data', 'code'):
+                    frozen = deepcopy(contract)
+                    if role != 'missing':
+                        frozen['bindings'].append({'path': 'loader.opaque', 'role': role, 'sha256': file_sha(loader)})
+                    for options in (['-r', './loader.opaque'], ['-r./loader.opaque'],
+                                    ['--import=' + loader.as_uri()], ['--loader', str(loader)]):
+                        plan = make(options)
+                        if role == 'code' and declaration == 'explicit':
+                            with self.assertRaisesRegex(ValueError, 'preload.*generator dependencies'):
+                                jump._generator_bindings(store, frozen, plan)
+                            plan['generator_code_paths'].append('loader.opaque')
+                        if role == 'code':
+                            self.assertTrue(jump._generator_bindings(store, frozen, plan))
+                            for uri in ('file:./loader.opaque', 'file:loader.opaque',
+                                        loader.as_uri().replace('file:///', 'file:\\\\\\')):
+                                malformed = make(['--import=' + uri])
+                                if declaration == 'explicit':
+                                    malformed['generator_code_paths'].append('loader.opaque')
+                                with self.subTest(declaration=declaration, uri=uri):
+                                    with self.assertRaisesRegex(ValueError, 'preload.*project-relative frozen code'):
+                                        jump._generator_bindings(store, frozen, malformed)
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'preload.*frozen code'):
+                                jump._generator_bindings(store, frozen, plan)
+                for options, arguments in ((['-r', 'node:fs'], ()), (['--title', '-r'], ()),
+                                           ([], ('-r', str(external)))):
+                    self.assertTrue(jump._generator_bindings(store, contract, make(options, arguments)))
+            self.assertEqual(store.snapshot(), before)
+
     def freeze(self, root, change):
         initialize = ProjectStore.initialize
         def frozen(store, contract):

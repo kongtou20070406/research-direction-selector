@@ -404,7 +404,13 @@ def process_result(store, event, receipt):
                 raise ModelResultIntegrityError(str(exc)) from exc
             if response is not None and response['status'] != 'unknown' and request.get('jump_packet') is not None:
                 from rds_jump import validate_use
-                usage = validate_use(request['jump_packet'], strict_json(response.get('jump_use_json', '')))
+                try:
+                    jump_use = strict_json(response.get('jump_use_json', ''))
+                except RecursionError as exc:
+                    # Invalid untrusted suggestion: consume this paid result once
+                    # through the existing rejection path, without new dispatch.
+                    raise ValueError('Jump-use JSON nesting exceeds parser limit') from exc
+                usage = validate_use(request['jump_packet'], jump_use)
                 body = {'kind': 'AUTONOMY_JUMP_REFERENCED', 'run_id': rid,
                         'request_sha256': event['request']['sha256'], 'receipt_sha256': receipt['sha256'],
                         'usage': usage, 'response_source_sha256': digest(response.get('source', '')),

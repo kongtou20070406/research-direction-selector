@@ -37,6 +37,7 @@ if mode=='ack': usage['decisions'][0]['reason']='ACK ACK ACK'
 if mode=='mismatch': usage['packet_sha256']='0'*64
 if mode!='missing': reply['jump_use_json']=json.dumps(usage)
 if mode=='oversize_use': reply['jump_use_json']='x'*(2*1024*1024-400)
+if mode=='deep_use': reply['jump_use_json']='['*4000+'0'+']'*4000
 if mode in ('envelope_bound','raw_bound'):""")
 
 
@@ -87,6 +88,46 @@ class JumpAiConsumerTests(unittest.TestCase):
         self.assertEqual(self.case.events('AUTONOMY_JUMP_REFERENCED'), references)
         self.assertEqual(self.case.store.snapshot(), before)
         self.assertEqual(self.case.calls(), ['repair1'])
+
+    def test_deep_jump_use_rejects_paid_result_once_without_new_dispatch(self):
+        self.build('deep_use')
+        event, receipt = self.run_repair()
+        before = self.case.store.snapshot()
+        response_bytes = (self.case.root / 'outputs/repair1.json').read_bytes()
+        response = json.loads(response_bytes.decode('utf-8'))
+        self.assertEqual(response['status'], 'proposed')
+        self.assertLessEqual(len(response_bytes), autonomy.MAX_BYTES)
+        self.assertEqual(response['jump_use_json'], '['*4000+'0'+']'*4000)
+        original_artifacts = {item['path']: (self.case.root / item['path']).read_bytes()
+                              for item in receipt['artifacts']}
+        original_finished = self.case.events('ATTEMPT_FINISHED')
+        original_code = (self.case.root / 'code.py').read_bytes()
+        for _ in range(2):
+            with patch.object(jump, 'packet', return_value=deepcopy(self.context)):
+                result = autonomy.drive(self.case.store, max_steps=1, prepare_only=True)
+            self.assertEqual(result['executed'], [])
+            self.assertEqual(self.case.calls(), ['repair1'])
+            processed = self.case.events(autonomy.PROCESSED)
+            self.assertEqual(len(processed), 1)
+            self.assertEqual(processed[0]['outcome'], 'PROPOSAL_REJECTED')
+            self.assertIn('Jump-use JSON nesting', processed[0]['reason'])
+            self.assertEqual(processed[0]['receipt_sha256'], receipt['sha256'])
+            self.assertEqual(autonomy.process_result(self.case.store, event, receipt), 'PROPOSAL_REJECTED')
+            after = self.case.store.snapshot()
+            self.assertEqual(after['runs'], before['runs'])
+            self.assertEqual(after['receipts'], before['receipts'])
+            self.case.assert_single_model_cost(before)
+        claims = self.case.events('AUTONOMY_DRIVE_CLAIMED')
+        releases = self.case.events('AUTONOMY_DRIVE_RELEASED')
+        self.assertEqual(len(claims), 2)
+        self.assertEqual(len(releases), 2)
+        self.assertEqual([row['owner'] for row in releases], [row['owner'] for row in claims])
+        self.assertEqual(self.case.events('AUTONOMY_JUMP_REFERENCED'), [])
+        self.assertEqual(self.case.events('AUTONOMY_PROPOSAL_VALIDATED'), [])
+        self.assertEqual(self.case.events('METHOD_REVISION_ADOPTED'), [])
+        self.assertEqual(self.case.events('ATTEMPT_FINISHED'), original_finished)
+        self.assertEqual((self.case.root / 'code.py').read_bytes(), original_code)
+        self.assertEqual({path: (self.case.root / path).read_bytes() for path in original_artifacts}, original_artifacts)
 
     def test_ack_cannot_become_an_adopted_method(self):
         self.build('ack')

@@ -9,6 +9,8 @@ import math
 import os
 from pathlib import Path
 import re
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from rds_artifacts import strict_json
 from rds_project import ProjectStore, digest, require, TERMINAL
@@ -482,6 +484,53 @@ def _interpreter_script_operand(argv):
     return None
 
 
+def _node_preload_operands(argv, script_operand):
+    """Explicit Node preloads before the main; imported dependency closure is separate."""
+    name = Path(argv[0]).name.casefold().removesuffix('.exe')
+    if name not in {'node', 'nodejs'}:
+        return {}
+    flags = {'-r', '--require', '--import', '--loader', '--experimental-loader'}
+    values = {'--title', '--input-type', '-e', '--eval', '-p', '--print'}
+    end = script_operand if script_operand is not None else len(argv)
+    result, index = {}, 1
+    while index < end:
+        option = argv[index]
+        if option == '--' or not option.startswith('-'):
+            break
+        operand_index, value = index, None
+        if option in flags:
+            require(index + 1 < end, 'Node preload value is missing')
+            operand_index = index + 1
+            value = argv[operand_index]
+            index += 1
+        elif any(option.startswith(flag + '=') for flag in flags if flag.startswith('--')):
+            value = option.split('=', 1)[1]
+        elif option.startswith('-r') and not option.startswith('--') and len(option) > 2:
+            value = option[2:]
+        elif option in values:
+            index += 1  # A flag-looking title or inline source is still a value.
+        if value is not None:
+            require(bool(value), 'Node preload value is missing')
+            if value.startswith('node:'):
+                result[operand_index] = None  # Builtin module, not a mutable external file.
+            else:
+                if value.startswith('file:'):
+                    url = urlsplit(value)
+                    require(url.scheme == 'file' and url.netloc in {'', 'localhost'}
+                            and not url.query and not url.fragment and '\\' not in value
+                            and url.path.startswith('/'),
+                            'Node preload must be project-relative frozen code')
+                    value = url2pathname(url.path)
+                    require(Path(value).is_absolute(), 'Node preload file URI must be absolute')
+                require('://' not in value and not value.startswith('data:'),
+                        'Node preload must be project-relative frozen code')
+                require(Path(value).is_absolute() or value.startswith(('./', '../', '.\\', '..\\')),
+                        'Node preload must use an explicit frozen code file, not module lookup')
+                result[operand_index] = value
+        index += 1
+    return result
+
+
 def _generator_bindings(store, contract, plan):
     """Frozen explicit dependencies, with conservative legacy code fallback.
 
@@ -507,9 +556,22 @@ def _generator_bindings(store, contract, plan):
         executable = Path(store._command(argv)).resolve()
         operand = _interpreter_script_operand([str(executable), *argv[1:]])
         script_operand, script_path = operand if operand is not None else (None, None)
+        preloads = _node_preload_operands([str(executable), *argv[1:]], script_operand)
+        for candidate in preloads.values():
+            if candidate is None:
+                continue
+            path = Path(candidate)
+            path = (path if path.is_absolute() else store.root / path).resolve()
+            require(path.is_relative_to(store.root.resolve()),
+                    'Node preload must be project-relative frozen code')
+            identity = os.path.normcase(str(path))
+            require(identity in code, 'Node preload is not a frozen code binding')
+            require(identity in identities, 'Node preload is absent from generator dependencies')
         data_or_output = {_code_identity(store, b['path']) for b in contract['bindings'] if b['role'] != 'code'}
         data_or_output.update(_code_identity(store, p) for p in stage['run']['outpaths'])
         for index, arg in enumerate(stage['run']['argv']):
+            if index in preloads:
+                continue  # Exact explicit preload identity was checked above.
             if index != 0 and index != script_operand and arg.startswith('-') and '=' not in arg:
                 continue  # Interpreter options are not code/data path operands.
             candidate = (arg.split('=', 1)[1] if index != 0 and index != script_operand
