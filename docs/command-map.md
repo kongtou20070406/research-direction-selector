@@ -1,6 +1,6 @@
 # Public command map
 
-Problem-model exploration uses `structure request|propose|next|drive|advance|feedback|activate|rollback|list|recover`.
+Problem-model exploration uses `structure request|propose|jump|next|drive|advance|feedback|activate|rollback|list|recover`.
 It requires an initialized project and current TMS, uses existing execution authority and budget,
 and returns open Agent tasks or independently checked observations. See [problem structure](problem-structure.md).
 
@@ -9,6 +9,7 @@ Use this map when the short Skill route table does not cover the task. It covers
 | Command | Behavior | Prerequisite | Guide |
 | --- | --- | --- | --- |
 | `structure request` | Return bounded open Agent tasks | Initialized project and saved dependencies | [Problem structure](problem-structure.md) |
+| `structure jump` | Generate explanations and return their original content to the Agent | Frozen `jump-generation.json` routes and `--steps` in 1..3 | [Jump generation and AI input](jump-generation.md) |
 | `structure propose` | Retain an experimental topology branch | Current request, sourced testable proposal and allowed manifests | [Problem structure](problem-structure.md) |
 | `structure next` | Consume feedback and select a distinguishing test | Same ledger and remaining budget | [Problem structure](problem-structure.md) |
 | `structure drive` | Bounded proposal/execution/feedback handoff | Existing admission and `--steps` in 1..8 | [Problem structure](problem-structure.md) |

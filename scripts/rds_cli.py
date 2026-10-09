@@ -1423,6 +1423,7 @@ def parser():
     structure_actions.add_parser('next')
     structure_actions.add_parser('list')
     structure_actions.add_parser('recover')
+    structure_actions.add_parser('jump', help='Generate explanations through frozen probe, refresh and synthesis routes').add_argument('--steps', type=int, default=1)
     structure_actions.add_parser('drive', help='Consume proposals and feedback until a bounded stop or open Agent task').add_argument('--steps', type=int, default=1)
     hypergraph = commands.add_parser('hypergraph', help='Bounded AND/OR proof dependency analysis, not proof certification')
     hypergraph.add_argument('--input', '-i', help='Import or restore a map; omitted inputs reuse this root\'s saved map')
@@ -1860,7 +1861,10 @@ def _main():
             result = cmd_advise(args, rds)
         elif args.command == 'structure':
             import rds_structure
-            if args.action == 'request':
+            if args.action == 'jump':
+                from rds_jump import generate
+                result = generate(args.root, args.steps)
+            elif args.action == 'request':
                 result = rds_structure.request(args.root, args.limit)
             elif args.action == 'propose':
                 result = rds_structure.propose(args.root, load_spec(args.proposal))

@@ -281,6 +281,10 @@ def request_repair(store, report):
         state = _state(store, db)
     config = state['contract']['advisor_policy']['autonomy']
     slots = config['repair_slots']
+    from rds_jump import packet as jump_packet
+    jumps = jump_packet(store)
+    if jumps is not None and jumps['status'] != 'CURRENT':
+        return 'JUMP_CONTEXT_REQUIRES_ORIGINALS'
     existing = state['autonomy_records']
     ids = {s['run_id'] for s in slots}
     previous = [e for e in existing if e['kind'] == PROCESSED]
@@ -314,6 +318,8 @@ def request_repair(store, report):
                'rejected_methods': deepcopy(previous),
                'evidence_excerpts': evidence_excerpts(store, state, ids),
                'authority': 'EXISTING_GOAL_BUDGET_COMMANDS_AND_CODE_PATH_ONLY'}
+    if jumps is not None:
+        request['jump_packet'] = jumps
     require(len(canonical(request).encode('utf-8')) <= MAX_BYTES, 'Model request exceeds bound')
     ref = cas_bytes(store.root, canonical(request).encode('utf-8'))
     with store._db() as db:
@@ -383,6 +389,23 @@ def process_result(store, event, receipt):
                     reason = 'ORIGINAL_MODEL_RESPONSE_JSON_BYTE_LIMIT'
             except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
                 raise ModelResultIntegrityError(str(exc)) from exc
+            if response is not None and response['status'] != 'unknown' and request.get('jump_packet') is not None:
+                from rds_jump import validate_use
+                usage = validate_use(request['jump_packet'], strict_json(response.get('jump_use_json', '')))
+                body = {'kind': 'AUTONOMY_JUMP_REFERENCED', 'run_id': rid,
+                        'request_sha256': event['request']['sha256'], 'receipt_sha256': receipt['sha256'],
+                        'usage': usage, 'response_source_sha256': digest(response.get('source', '')),
+                        'response_policy_sha256': digest(response.get('policy_json', '')),
+                        'status': 'RESPONSE_REFERENCED', 'scientific_support': 'UNKNOWN'}
+                with store._db() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    existing_use = [e for e in _events(db, ('AUTONOMY_JUMP_REFERENCED',)) if e['run_id'] == rid]
+                    require(len(existing_use) <= 1, 'Duplicate jump response reference')
+                    if existing_use:
+                        require({k: v for k, v in existing_use[0].items() if k != 'sha256'} == body,
+                                'Jump response reference conflicts with original')
+                    else:
+                        _append(db, body)
             if response is not None and response['status'] == 'proposed':
                 require(isinstance(response['source'], str) and response['source'].strip() and
                         len(response['source'].encode('utf-8')) <= MAX_BYTES and
@@ -473,6 +496,8 @@ def drive(store, max_steps=8, prepare_only=False):
     policy = contract.get('advisor_policy')
     require(policy and 'autonomy' in policy, 'project drive requires a frozen autonomy declaration')
     config = validate_policy(store, contract, policy)
+    has_jump = any(b['path'] == 'jump-generation.json' and b['role'] == 'config'
+                   for b in contract['bindings'])
     from rds_steering import SteeringBlocked, status as steering_status
     instruction = steering_status(store)
     if instruction['steering']['paused']:
@@ -553,6 +578,19 @@ def drive(store, max_steps=8, prepare_only=False):
                 db.execute('BEGIN IMMEDIATE')
                 store._campaign_deadline(db, state['contract'], admit=True)
             manifest = report.get('selected_manifest')
+            if has_jump:
+                from rds_jump import prepare_owned
+                from rds_structure import owned_control
+                with owned_control(store, owner, lambda: allowance - (time.monotonic() - started - worker_wall)):
+                    prepared_jump = prepare_owned(store, manifest)
+                if prepared_jump is not None:
+                    result['jump_generation'] = prepared_jump
+                    if prepared_jump['changed']:
+                        continue  # Re-select from the changed original evidence.
+                    if prepared_jump['status'] != 'READY_TO_EXECUTE' or prepared_jump.get('selected_manifest') != manifest:
+                        result['status'] = (prepared_jump['status'] if prepared_jump['status'] != 'READY_TO_EXECUTE'
+                                            else 'JUMP_WAITING_ADMISSION')
+                        break
             if manifest is None:
                 confirmation = report.get('confirmation')
                 if confirmation and all(v != 'PENDING' for v in confirmation['execution'].values()) and confirmation['task_confirmation'] == 'UNKNOWN':
@@ -615,4 +653,7 @@ def drive(store, max_steps=8, prepare_only=False):
             _append(db, {'kind': 'AUTONOMY_DRIVE_RELEASED', 'owner': owner, 'reason': result['status'],
                          'controller_wall_seconds': overhead, 'executed': deepcopy(executed)})
         result['controller_wall_seconds'] = overhead
+    if has_jump:
+        from rds_jump import packet
+        result['jump_packet'] = packet(store)
     return result

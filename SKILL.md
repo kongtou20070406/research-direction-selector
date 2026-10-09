@@ -82,6 +82,12 @@ ON applicable research request:
     IF project has advisor_policy:
         RUN advise --working-set --brief FROM the current ledger and owned dependency graph
         READ working_set goals, final selection, unresolved hypotheses and scoped feedback
+        IF jump_packet or structure jump/drive agent_context is present:
+            READ its new premises, representation changes, rival predictions and original evidence
+            USE these as inputs to the next explanation, experiment or permitted code revision
+            EXPLICITLY adopt/adapt/reject/defer each supplied idea with a reason and concrete next_step
+            BIND packet_sha256 and item IDs in the next decision checkpoint or returned jump_use_json
+            READ omitted originals first; receipt of a packet is not evidence of scientific benefit
         IF working_set is UNAVAILABLE: inspect diagnostic/original report; do not infer a fresh choice
         READ original/details_omitted locators BEFORE a consequential evidence-dependent choice
         KEEP process failure distinct FROM prediction REFUTE; legacy/unbound evidence stays UNKNOWN
@@ -89,6 +95,9 @@ ON applicable research request:
         IF advisor_policy declares autonomy:
             READ docs/autonomy-loop.md
             RUN project drive --max-steps <bounded-pass> TO recover and continue the same ledger
+            IF jump-generation.json is frozen, drive prepares and collects its selected generator routes
+                RETURN verified jump evidence with execution feedback to each actual model request
+                KEEP ancestor hypotheses historical after a method revision; do not relabel their support
             TREAT obstacles as inputs for different permitted routes or method/tool proposals
             CONSUME original repair/rejection receipts; do not repeat uncertain delivery
             KEEP scoped exhaustion distinct from scientific impossibility
