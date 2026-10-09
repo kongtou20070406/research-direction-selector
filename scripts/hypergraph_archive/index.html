@@ -21,13 +21,14 @@
   <nav id="layers" aria-label="显示层级"><button type="button" data-level="0">研究组</button><button type="button" data-level="1">来源</button><button type="button" data-level="2">分块</button><button type="button" data-level="3">记录</button></nav>
   <label class="display-option"><input id="show-names" type="checkbox">显示主要名称</label>
   <label class="display-option" for="node-size">节点大小<input id="node-size" type="range" min="0.5" max="2" step="0.1" value="1"></label>
-  <label class="display-option" for="edge-width">连线粗细<input id="edge-width" type="range" min="0.5" max="2" step="0.1" value="1"></label>
+  <label class="display-option" for="edge-width">连线粗细<input id="edge-width" type="range" min="0.3" max="3" step="0.1" value="1"></label>
+  <div id="extra-controls"></div>
 </aside>
 <aside id="card" aria-label="节点详情" hidden></aside><div id="hover" role="tooltip" hidden></div>
 <aside id="legend" aria-label="图例">
   <div class="legend-row"><span><i class="symbol claim">●</i>声明</span><span><i class="symbol run">■</i>执行</span><span><i class="symbol fact">○</i>事实</span><span><i class="symbol output">⬡</i>产物</span><span><i class="symbol observation">●</i>观测</span><span><i class="symbol hub">◇</i>共同前提</span></div>
   <div class="legend-row legend-note"><span>聚合点显示数量</span><span>浅紫实线 · 依赖</span><span>浅蓝虚线 · 来源</span><span>点线 · 历史</span><span>灰线 · 其他 / 混合</span></div>
 </aside>
-<footer><span id="state" role="status">准备全量索引…</span><div class="counts"><span id="totals">正在读取…</span><span id="view-counts"></span></div></footer>
+<footer><span id="state" role="status">准备全量索引…</span><span id="growth-progress" role="status"></span><div class="counts"><span id="totals">正在读取…</span><span id="view-counts"></span></div></footer>
 <script id="archive-data" type="text/plain">@@ARCHIVE_DATA@@</script><script id="archive-raw" type="text/plain">@@ARCHIVE_RAW@@</script><script id="d3-worker-lib" type="text/plain">@@D3@@</script><script id="archive-worker" type="text/plain">@@WORKER@@</script><script id="archive-renderer" type="text/plain">@@RENDERER@@</script><script>@@PIXI@@</script><script>@@EXPLORER@@</script>
 </body></html>

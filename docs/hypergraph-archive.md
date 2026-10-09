@@ -20,13 +20,21 @@ layer. Aggregation is a display operation, never a merged scientific conclusion.
 
 The page keeps the compact Obsidian-style canvas and controls. Search, display
 levels, node and line sizes, and optional names are in the collapsed settings
-panel. Record types use distinct colors and shapes; hovering or clicking shows
+panel. The same panel includes damping, attraction, weight-sensitive repulsion,
+dependency flow, grouping and hyperedge clearance controls. Node categories have
+editable colors, shapes and sizes. Relation families and individual recorded
+relation types have editable colors, widths, line patterns and attraction,
+repulsion or no-force behavior. Individual relations inherit family settings
+until explicitly overridden. Settings are saved for the same archive identity.
+Record types use distinct colors and shapes; hovering or clicking shows
 their readable names and details. The overview includes at most 32 actual
 representative records per visible research group, without inventing connections.
 Representatives also share the overall 3,500-point drawing budget. Larger group
 views are binned transparently; their counts describe groups at that zoom level.
-The slow reveal button replays the current display; reset view returns to the
-overview without changing the archived records.
+The current display grows gradually on opening. Its duration and replay/skip
+controls are available in settings; reset view returns to the overview without
+changing the archived records. Labels retain a fixed screen font size through
+zoom and node-size changes, avoid collisions and do not duplicate hover text.
 
 Dense views progressively coarsen connection bundles until they fit the display
 budget of 3,500 lines. Every bundle retains its represented relation count; node
@@ -37,7 +45,8 @@ Raw record views also aggregate when their drawing points exceed 3,500. Their
 counts account for every visible original record, including isolated records.
 Search and paginated details still use the full identities and relationships.
 Only coarse spatial indexes are built at startup; the raw spatial index is built
-on the first record viewport or record drag. That first request can still take
+on the first record viewport. Representative dragging does not build that index.
+That first full record request can still take
 longer on a large archive. Viewport requests are sent one at a time, with only the
 latest pending camera view retained. Reused scenes avoid rebuilding unchanged
 renderer topology, and raster labels are created only when needed.
@@ -49,14 +58,23 @@ and weak position constraints prevent a distant source link from pulling the
 released node across the archive. The local layout has at most 512 active nodes and
 1,024 springs. This is a display approximation, not scientific analysis or an
 all-edge physical simulation. During motion the existing scene follows the
-layout; exact viewport queries resume after the incident-edge index is repaired
-in small batches. Pausing stops motion and completes that index repair.
+layout. Camera requests during motion use an explicit stable indexed snapshot
+with the current local motion overlaid, so panning and zooming remain responsive.
+Exact updated crossing-link queries resume after the incident-edge index is
+repaired in yielded batches. Pausing stops motion and commits that index repair.
+Repeated pointer movements are coalesced to the newest position each frame;
+release flushes that position before releasing the anchor. Clicking alone does
+not start a force simulation. Relayout reheats a bounded visible neighborhood.
 
 Search the full archive to locate a node, then inspect its readable purpose and
 paginated relationships. Scientific dependency, provenance, membership and
 history retain their distinct meanings. A supported archival statement or a
 high connection count does not establish experimental success or contribution
-to a research objective. Missing scientific weight remains unmeasured.
+to a research objective. Successful/failed execution outlines require explicit
+run or receipt outcomes; statement support is not execution success. Conflicting
+or absent outcomes remain neutral. Original readable presentation and native
+goal weights are retained when present; otherwise size/charge use connection
+degree or uniform weighting. Missing scientific weight remains unmeasured.
 
 Agents can obtain separate readable and original information without opening a
 browser:

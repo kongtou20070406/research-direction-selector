@@ -50,14 +50,14 @@ const ArchiveCore = (() => {
     function ancestor(index,level){let c=nodes[index].parent;while(clusters[c].level>level)c=clusters[c].parent;return c;}
     for(let level=0;level<4;level++) {
       const points=[],map=new Map(),nodeMap=new Uint32Array(nodes.length);
-      if(level===3)nodes.forEach((n,i)=>{map.set(i,i);points.push({id:'n'+i,record:n.id,index:i,raw:true,x:n.x,y:n.y,label:n.label,type:n.type,status:n.status,primary:n.primary,degree:n.degree??degree[i],count:1});nodeMap[i]=i;});
+      if(level===3)nodes.forEach((n,i)=>{map.set(i,i);points.push({...n,id:'n'+i,record:n.id,index:i,raw:true,degree:n.degree??degree[i],clusterPath:[ancestor(i,0),ancestor(i,1),ancestor(i,2)],count:1});nodeMap[i]=i;});
       else {
         clusters.forEach((c,i)=>{if(c.level===level){map.set(i,points.length);points.push({id:'c'+i,index:i,raw:false,x:c.x,y:c.y,label:c.label,type:'cluster',count:c.node_count,primary:c.nodes.some(n=>nodes[n].primary),status:'CLUSTER'});}});
         nodes.forEach((_,i)=>nodeMap[i]=map.get(ancestor(i,level)));
         nodes.forEach((n,i)=>{if(n.primary)points[nodeMap[i]].primary=true;});
       }
       const edges=[],agg=new Map();let internal=0;
-      rawEdges.forEach((e,i)=>{const a=nodeMap[e[0]],b=nodeMap[e[1]],f=family(data.semantics[e[2]],data.edge_types[e[3]]);if(level!==3&&a===b){internal++;return;}const key=a+':'+b+':'+f;if(level===3){edges.push({a,b,family:f,count:1,index:i});return;}if(agg.has(key)){edges[agg.get(key)].count++;}else{agg.set(key,edges.length);edges.push({a,b,family:f,count:1,index:i});}});
+      rawEdges.forEach((e,i)=>{const a=nodeMap[e[0]],b=nodeMap[e[1]],semantic=data.semantics[e[2]],type=data.edge_types[e[3]],f=family(semantic,type),relationKey=semantic+'|'+type,membership=/snapshot_contains|membership|归属/i.test(semantic+' '+type);if(level!==3&&a===b){internal++;return;}const key=a+':'+b+':'+f+':'+membership;if(level===3){edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i});return;}if(agg.has(key)){const bundled=edges[agg.get(key)];bundled.count++;if(bundled.relationKey!==relationKey){bundled.relationKey=null;bundled.mixedRelation=true;}}else{agg.set(key,edges.length);edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i});}});
       levels.push({points,edges,spatial:null,internal,nodeMap});if(level<3)ensureSpatial(level);progress({level,points:points.length,edges:edges.length,spatialReady:level<3});
     }
     function ensureSpatial(level){const stage=levels[level];if(!stage.spatial){stage.spatial=new Spatial(stage.points,stage.edges,data.bounds);indexStats.spatialBuilds++;indexStats.spatialEdgeVisits+=stage.edges.length;if(level===3){indexStats.rawSpatialBuilds++;indexStats.rawSpatialEdgeVisits+=stage.edges.length;}progress({level,spatialReady:true,points:stage.points.length,edges:stage.edges.length,indexStats:{...indexStats}});}return stage.spatial;}
@@ -65,17 +65,22 @@ const ArchiveCore = (() => {
     const rootMembers=levels[0].points.map(()=>[]),representatives=new Map();
     nodes.forEach((_,i)=>rootMembers[levels[0].nodeMap[i]].push(i));
     rootMembers.forEach((members,root)=>{const chosen=new Set();const sample=(candidates,limit)=>{const count=Math.min(limit,candidates.length);for(let j=0;j<count;j++)chosen.add(candidates[Math.floor((j+.5)*candidates.length/count)]);};sample(members.filter(i=>nodes[i].primary),8);sample(members.filter(i=>!chosen.has(i)&&/hyperedge/i.test(nodes[i].type)),8);sample(members.filter(i=>!chosen.has(i)),32-chosen.size);representatives.set(levels[0].points[root].index,[...chosen]);});
+    function presentation(n){const fields={};for(const key of ['label','summary','type','status','status_text','display_kind','color','shape','outline','goal_weights','group','source_id','primary'])if(Object.hasOwn(n,key))fields[key]=n[key];return fields;}
     function neighbors(index,page=0,size=24) {
       if(!Number.isInteger(index)||index<0||index>=nodes.length)throw Error('Node index out of range');
       page=Math.max(0,Math.floor(Number(page)||0));size=Math.min(100,Math.max(1,Math.floor(Number(size)||24)));
       const start=counts[index],total=counts[index+1]-start,entries=[];
-      for(let j=start+page*size;j<Math.min(start+total,start+(page+1)*size);j++){const edgeIndex=adjacency[j],e=rawEdges[edgeIndex],other=e[0]===index?e[1]:e[0];entries.push({edge:edgeIndex,index:other,label:nodes[other].label,status:nodes[other].status,type:data.edge_types[e[3]],semantic:data.semantics[e[2]],direction:e[0]===index?'out':'in'});}
-      return {node:nodes[index],index,page,size,total,entries};
+      for(let j=start+page*size;j<Math.min(start+total,start+(page+1)*size);j++){const edgeIndex=adjacency[j],e=rawEdges[edgeIndex],other=e[0]===index?e[1]:e[0];entries.push({...presentation(nodes[other]),edge:edgeIndex,index:other,node_type:nodes[other].type,type:data.edge_types[e[3]],semantic:data.semantics[e[2]],direction:e[0]===index?'out':'in'});}
+      const n=nodes[index];return {node:{...presentation(n),id:n.id,x:n.x,y:n.y,parent:n.parent,degree:n.degree??degree[index]},index,page,size,total,entries};
     }
-    function find(query,page=0,size=20){const q=query.toLocaleLowerCase().trim(),matches=[];for(let i=0;i<search.length;i++)if(search[i].includes(q))matches.push(i);return {total:matches.length,page,size,entries:matches.slice(page*size,(page+1)*size).map(i=>({index:i,record:nodes[i].id,label:nodes[i].label,type:nodes[i].type,status:nodes[i].status,x:nodes[i].x,y:nodes[i].y}))};}
-    function viewport(level,rect,edgeBudget=3500,nodeBudget=3500) {
+    function find(query,page=0,size=20){const q=query.toLocaleLowerCase().trim(),matches=[];for(let i=0;i<search.length;i++)if(search[i].includes(q))matches.push(i);return {total:matches.length,page,size,entries:matches.slice(page*size,(page+1)*size).map(i=>({...presentation(nodes[i]),index:i,record:nodes[i].id,x:nodes[i].x,y:nodes[i].y}))};}
+    function viewport(level,rect,edgeBudget=3500,nodeBudget=3500,filters={}) {
       nodeBudget=Math.max(16,Math.min(3500,Math.floor(Number(nodeBudget)||3500)));
-      const stage=levels[level],found=ensureSpatial(level).query(rect),nodeSet=new Set(found.nodes);let edges=found.edges.map(i=>stage.edges[i]),points;
+      const stage=levels[level],found=ensureSpatial(level).query(rect),q=String(filters.query||'').trim().toLocaleLowerCase();
+      const keep=i=>{const p=stage.points[i];return (filters.showOrphans!==false||!p.raw||degree[p.index]>0)&&(!q||[p.label,p.summary,p.record,p.group].join(' ').toLocaleLowerCase().includes(q));};
+      const indexedCrossingEdges=found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),indexedVisibleNodes=found.nodes.length;
+      if(filters.membership===false||filters.showOrphans===false||q){found.nodes=found.nodes.filter(keep);found.edges=found.edges.filter(i=>{const e=stage.edges[i];return (filters.membership!==false||!e.membership)&&(!q||(keep(e.a)&&keep(e.b)));});found.counters.visibleNodes=found.nodes.length;found.counters.crossingEdges=found.edges.length;}
+      const nodeSet=new Set(found.nodes);let edges=found.edges.map(i=>stage.edges[i]),points;
       for(const e of edges){nodeSet.add(e.a);nodeSet.add(e.b);}
       // Connection bundles add drawing points of their own. Budget their finite
       // maximum before deciding whether to retain all individual visible nodes.
@@ -100,8 +105,8 @@ const ArchiveCore = (() => {
         edges=[...bundle.values()];points=[...bins.values(),...found.nodes.map(i=>stage.points[i])];
       }else{for(const e of edges){nodeSet.add(e.a);nodeSet.add(e.b);}points=[...nodeSet].map(i=>stage.points[i]);edges=edges.map(e=>({...e,source:stage.points[e.a].id,target:stage.points[e.b].id}));}
       let representativeCount=0,representativeCandidates=0;
-      if(level===0){const records=[];for(const p of points){if(p.type!=='cluster')continue;const selected=representatives.get(p.index)||[];representativeCandidates+=selected.length;for(const i of selected){const n=levels[3].points[i];if(n.x<rect[0]||n.x>rect[2]||n.y<rect[1]||n.y>rect[3])continue;records.push({...n,representative:true});}}const room=Math.max(0,nodeBudget-points.length),count=Math.min(room,records.length);for(let j=0;j<count;j++)points.push(records[Math.floor((j+.5)*records.length/count)]);representativeCount=count;}
-      return {level,points,edges,counters:{...found.counters,...indexStats,totalNodes:nodes.length,totalEdges:rawEdges.length,stagePoints:stage.points.length,stageEdges:stage.edges.length,internalEdges:stage.internal,renderedPoints:points.length,renderedEdges:edges.length,nodeBudget,nodeAggregation,aggregatedNodes:nodeAggregation?nodeSet.size:0,representedVisibleNodes:found.nodes.length,representatives:representativeCount,representativeCandidates,densityStars:0,representedCrossingEdges:found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),densityBundles:nodeAggregation||found.edges.length>edgeBudget}};
+      if(level===0){const records=[];for(const p of points){if(p.type!=='cluster')continue;const selected=representatives.get(p.index)||[];representativeCandidates+=selected.length;for(const i of selected){const n=levels[3].points[i];if(n.x<rect[0]||n.x>rect[2]||n.y<rect[1]||n.y>rect[3]||(filters.showOrphans===false&&degree[i]===0)||(q&&![n.label,n.summary,n.record,n.group].join(' ').toLocaleLowerCase().includes(q)))continue;records.push({...n,representative:true});}}const room=Math.max(0,nodeBudget-points.length),count=Math.min(room,records.length);for(let j=0;j<count;j++)points.push(records[Math.floor((j+.5)*records.length/count)]);representativeCount=count;}
+      return {level,points,edges,counters:{...found.counters,...indexStats,totalNodes:nodes.length,totalEdges:rawEdges.length,indexedCrossingEdges,indexedVisibleNodes,displayFiltered:filters.membership===false||filters.showOrphans===false||!!q,stagePoints:stage.points.length,stageEdges:stage.edges.length,internalEdges:stage.internal,renderedPoints:points.length,renderedEdges:edges.length,nodeBudget,nodeAggregation,aggregatedNodes:nodeAggregation?nodeSet.size:0,representedVisibleNodes:found.nodes.length,representatives:representativeCount,representativeCandidates,densityStars:0,representedCrossingEdges:found.edges.reduce((sum,i)=>sum+stage.edges[i].count,0),densityBundles:nodeAggregation||found.edges.length>edgeBudget}};
     }
     return {data,levels,degree,counts,adjacency,byId,neighbors,find,viewport,indexStats,ensureSpatial,rebuildSpatial};
   }
@@ -109,62 +114,150 @@ const ArchiveCore = (() => {
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=ArchiveCore;
 if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
-  let index=null,raw=null,sim=null,timer=null,physicsIds=[],physicsEdges=[],steps=0,physicsSprings=0,aggregate=null,indexUpdating=false,repairCursor=0,repairTimer=null,waitingViews=[],dirtyEdges=new Set(),repairList=[];
+  // Indexed geometry is a stable snapshot while local coordinates animate. Camera
+  // queries use that complete snapshot; after commit, incident segments are repaired
+  // in yielded batches before any exact raw-coordinate query is answered.
+  let index=null,raw=null,sim=null,timer=null,steps=0,aggregate=null,physicsIds=[],physicsEdges=[],physicsLinks=[],paused=false;
+  let repairTimer=null,repairList=[],repairCursor=0,waitingViews=[],revision=0,dirtyEdges=new Set(),pendingPositions=new Map(),dirtyStageEdges=new Map(),dirtyStageNodes=new Map(),blockedLevels=new Set(),levelRemaining=new Map(),commitJob=null,commitTimer=null,deferredMotion=null;
+  const defaults={damping:.55,flowStrength:.005,groupStrength:.025,edgeRepulsion:.15,edgeClearance:35,centerStrength:.035,repelStrength:35,linkStrength:1,linkDistance:80,weightMode:'degree',goal:'',relations:{dependency:{mode:'attract',strength:1},source:{mode:'attract',strength:.35},history:{mode:'attract',strength:.15},other:{mode:'none',strength:1}}};
+  let options={...defaults,relations:Object.assign(Object.create(null),defaults.relations)};
   const send=(type,value,request)=>self.postMessage({type,...value,request});
   async function unpack(value){const bytes=Uint8Array.from(atob(value.trim()),c=>c.charCodeAt(0));const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));return JSON.parse(await new Response(stream).text());}
   function stop(){if(timer!==null)clearTimeout(timer);timer=null;if(sim)sim.stop();}
   function refreshBounds(){const bounds=[Infinity,Infinity,-Infinity,-Infinity];const include=(x,y)=>{bounds[0]=Math.min(bounds[0],x);bounds[1]=Math.min(bounds[1],y);bounds[2]=Math.max(bounds[2],x);bounds[3]=Math.max(bounds[3],y);};for(const n of index.data.nodes)include(n.x,n.y);for(const c of index.data.clusters){include(c.bounds[0],c.bounds[1]);include(c.bounds[2],c.bounds[3]);}index.data.bounds=Number.isFinite(bounds[0])?bounds:[0,0,0,0];send('bounds-updated',{bounds:index.data.bounds});}
-  function flushViews(){const views=waitingViews;waitingViews=[];for(const m of views)send('viewport',index.viewport(m.level,m.rect,Math.max(100,Math.min(3500,Number(m.edgeBudget)||3500)),m.nodeBudget),m.request);}
-  function repairEdges(){if(repairTimer!==null)clearTimeout(repairTimer);const started=performance.now();let visited=0;while(repairCursor<repairList.length&&visited<2000&&performance.now()-started<6){index.levels[3].spatial.edge(repairList[repairCursor++]);visited++;}send('index-progress',{remaining:repairList.length-repairCursor,visited});if(repairCursor<repairList.length){repairTimer=setTimeout(repairEdges,8);}else{repairTimer=null;dirtyEdges.clear();indexUpdating=false;refreshBounds();send('positions-updated',{});flushViews();}}
+  function viewport(m){const value=index.viewport(m.level,m.rect,Math.max(100,Math.min(3500,Number(m.edgeBudget)||3500)),m.nodeBudget,m.filters||{});Object.assign(value.counters,{stableViewport:!!timer||pendingPositions.size>0||!!aggregate?.dirty,movingNodes:aggregate?.dirty?aggregate.points.length:pendingPositions.size,geometryRevision:revision,indexRemaining:repairList.length-repairCursor});send('viewport',value,m.request);}
+  function flushViews(){const views=waitingViews;waitingViews=[];for(const m of views){if(blockedLevels.has(m.level))waitingViews.push(m);else viewport(m);}}
+  function repairEdges(){repairTimer=null;const started=performance.now();let visited=0;while(repairCursor<repairList.length&&visited<2000&&performance.now()-started<6){const task=repairList[repairCursor++],spatial=index.levels[task.level].spatial;if(task.node)spatial.node(task.index);else spatial.edge(task.index);visited++;const remaining=levelRemaining.get(task.level)-1;levelRemaining.set(task.level,remaining);if(remaining===0)blockedLevels.delete(task.level);}send('index-progress',{remaining:repairList.length-repairCursor,visited});flushViews();if(repairCursor<repairList.length)repairTimer=setTimeout(repairEdges,8);else{repairList=[];repairCursor=0;dirtyEdges.clear();dirtyStageEdges.clear();dirtyStageNodes.clear();blockedLevels.clear();revision++;refreshBounds();send('positions-updated',{geometryRevision:revision});flushViews();}}
+  function markNode(level,i){if(index.levels[level].spatial){if(!dirtyStageNodes.has(level))dirtyStageNodes.set(level,new Set());dirtyStageNodes.get(level).add(i);}}
+  function maintain(){if(repairTimer!==null)clearTimeout(repairTimer);repairList=[];repairCursor=0;blockedLevels.clear();levelRemaining.clear();for(const [level,ids] of dirtyStageNodes)for(const i of ids)repairList.push({level,index:i,node:true});for(const [level,ids] of dirtyStageEdges)for(const i of ids)repairList.push({level,index:i});if(index.levels[3].spatial)for(const i of dirtyEdges)repairList.push({level:3,index:i});for(const task of repairList){blockedLevels.add(task.level);levelRemaining.set(task.level,(levelRemaining.get(task.level)||0)+1);}if(repairList.length){if(repairList.length<=2000)repairEdges();else repairTimer=setTimeout(repairEdges,0);}else{repairTimer=null;dirtyEdges.clear();dirtyStageNodes.clear();dirtyStageEdges.clear();revision++;refreshBounds();send('positions-updated',{geometryRevision:revision});flushViews();}}
+  function commitRaw(){if(!pendingPositions.size)return;const stage=index.levels[3];for(const [i,p] of pendingPositions){stage.points[i].x=index.data.nodes[i].x=p.x;stage.points[i].y=index.data.nodes[i].y=p.y;markNode(3,i);}pendingPositions.clear();maintain();}
+  function aggregateCommitStep(sync=false){
+    commitTimer=null;const job=commitJob;if(!job)return;const started=performance.now();let visited=0;
+    while(commitJob&&visited<2000&&(sync||performance.now()-started<6)){
+      if(job.phase===0){
+        if(job.cursor>=index.data.nodes.length){job.phase=1;job.cursor=0;continue;}
+        const i=job.cursor++,n=index.data.nodes[i],shift=job.shifts.get(job.stage.nodeMap[i]);visited++;
+        if(shift){n.x+=shift.x;n.y+=shift.y;job.points[3][i]={...index.levels[3].points[i],x:n.x,y:n.y};markNode(3,i);if(index.levels[3].spatial)for(let j=index.counts[i];j<index.counts[i+1];j++)dirtyEdges.add(index.adjacency[j]);}
+      }else if(job.phase===1){
+        if(job.cursor>=index.data.clusters.length){job.phase=2;job.level=0;job.cursor=0;continue;}
+        const c=index.data.clusters[job.cursor],i=job.cursor++;visited++;if(c.level<job.aggregate.level)continue;let ancestor=i;while(index.data.clusters[ancestor].level>job.aggregate.level)ancestor=index.data.clusters[ancestor].parent;const shift=job.shifts.get(job.clusterToPoint.get(ancestor));if(shift){c.x+=shift.x;c.y+=shift.y;c.bounds=c.bounds.map((v,j)=>v+(j%2?shift.y:shift.x));}
+      }else if(job.phase===2){
+        if(job.level>=3){job.phase=3;job.level=0;job.cursor=0;continue;}
+        const stage=index.levels[job.level];if(job.cursor>=stage.points.length){job.level++;job.cursor=0;continue;}const i=job.cursor++,p=stage.points[i],c=index.data.clusters[p.index];visited++;if(p.x!==c.x||p.y!==c.y){job.points[job.level][i]={...p,x:c.x,y:c.y};markNode(job.level,i);}
+      }else if(job.phase===3){
+        if(job.level>=3){
+          for(let level=0;level<4;level++){index.levels[level].points=job.points[level];if(index.levels[level].spatial)index.levels[level].spatial.points=job.points[level];}
+          job.aggregate.points.forEach(p=>{p.ox=p.x;p.oy=p.y;p.ax=p.x;p.ay=p.y;});job.aggregate.simulation.force('x').x(p=>p.ax);job.aggregate.simulation.force('y').y(p=>p.ay);job.aggregate.dirty=false;commitJob=null;maintain();const next=deferredMotion;deferredMotion=null;if(next)self.onmessage({data:next});break;
+        }
+        const stage=index.levels[job.level],changed=dirtyStageNodes.get(job.level);if(!changed||job.cursor>=stage.edges.length){job.level++;job.cursor=0;continue;}const i=job.cursor++,e=stage.edges[i];visited++;if(changed.has(e.a)||changed.has(e.b)){if(!dirtyStageEdges.has(job.level))dirtyStageEdges.set(job.level,new Set());dirtyStageEdges.get(job.level).add(i);}
+      }
+    }
+    if(commitJob){send('index-progress',{remaining:Math.max(0,index.data.nodes.length-job.cursor),visited,phase:'aggregate-commit'});if(!sync)commitTimer=setTimeout(aggregateCommitStep,0);}
+  }
   function commitAggregate(){
-    if(!aggregate?.dirty)return;stop();const stage=index.levels[aggregate.level],shifts=new Map(aggregate.points.map(p=>[p.id,{x:p.x-p.ox,y:p.y-p.oy}]));
-    index.data.nodes.forEach((n,i)=>{const shift=shifts.get(stage.nodeMap[i]);if(shift){n.x+=shift.x;n.y+=shift.y;index.levels[3].points[i].x=n.x;index.levels[3].points[i].y=n.y;}});
-    const clusterToPoint=new Map(stage.points.map((p,i)=>[p.index,i]));index.data.clusters.forEach((c,i)=>{if(c.level<aggregate.level)return;let ancestor=i;while(index.data.clusters[ancestor].level>aggregate.level)ancestor=index.data.clusters[ancestor].parent;const shift=shifts.get(clusterToPoint.get(ancestor));if(shift){c.x+=shift.x;c.y+=shift.y;c.bounds=c.bounds.map((v,j)=>v+(j%2?shift.y:shift.x));}});
-    refreshBounds();for(let level=0;level<4;level++){const st=index.levels[level];if(level<3)st.points.forEach(p=>{const c=index.data.clusters[p.index];p.x=c.x;p.y=c.y;});index.rebuildSpatial(level);}
-    aggregate.points.forEach(p=>{p.ox=p.x;p.oy=p.y;p.ax=p.x;p.ay=p.y;});aggregate.dirty=false;dirtyEdges.clear();indexUpdating=false;send('positions-updated',{});flushViews();
+    if(commitJob||!aggregate?.dirty)return;stop();if(repairTimer!==null){clearTimeout(repairTimer);repairTimer=null;}const stage=index.levels[aggregate.level],shifts=new Map();for(const p of aggregate.points){const x=p.x-p.ox,y=p.y-p.oy;if(x!==0||y!==0)shifts.set(p.id,{x,y});}
+    commitJob={aggregate,stage,shifts,clusterToPoint:new Map(stage.points.map((p,i)=>[p.index,i])),points:index.levels.map(s=>s.points.slice()),phase:0,cursor:0,level:0};
+    // Tiny fixtures and small archives commit immediately. Large archives keep
+    // their indexed camera snapshot intact until yielded preparation is published.
+    if(index.data.nodes.length<=2000){while(commitJob)aggregateCommitStep(true);}else commitTimer=setTimeout(aggregateCommitStep,0);
+  }
+  function configure(value){
+    const ranges={damping:[.1,.9],flowStrength:[0,.08],groupStrength:[0,.15],edgeRepulsion:[0,.6],edgeClearance:[0,200],centerStrength:[0,.3],repelStrength:[0,3000],linkStrength:[0,2],linkDistance:[0,1000]};
+    for(const [key,[lo,hi]] of Object.entries(ranges))if(Object.hasOwn(value,key)){if(!Number.isFinite(value[key])||value[key]<lo||value[key]>hi)throw Error('Invalid force option '+key);}
+    const relations=Object.assign(Object.create(null),options.relations);if(value.relations!==undefined){if(!value.relations||typeof value.relations!=='object'||Array.isArray(value.relations))throw Error('Invalid relation options');for(const [key,r] of Object.entries(value.relations)){if(!r||!['attract','repel','none'].includes(r.mode)||!Number.isFinite(r.strength)||r.strength<0||r.strength>2)throw Error('Invalid relation '+key);relations[key]={mode:r.mode,strength:r.strength};}}
+    if(value.weightMode!==undefined&&!['uniform','degree','goal'].includes(value.weightMode))throw Error('Invalid charge weighting');
+    const next={...options,relations};for(const key of Object.keys(ranges))if(Object.hasOwn(value,key))next[key]=value[key];if(value.weightMode!==undefined)next.weightMode=value.weightMode;if(value.goal!==undefined)next.goal=String(value.goal);options=next;if(sim){applyForces();reheat();}
+  }
+  function relation(e){return options.relations[e.semantic+'|'+e.type]||options.relations[e.family]||{mode:'none',strength:1};}
+  function weight(p){if(options.weightMode==='uniform')return 1;if(options.weightMode==='goal'){const v=p.goal_weights?.[options.goal];return Number.isFinite(v)&&v>=0?1+Math.min(5,v):1;}return Math.min(6,Math.sqrt((p.degree??p.count??0)+1));}
+  function applyForces(){
+    if(!sim)return;const coarse=sim===aggregate?.simulation,scale=coarse?10:1;
+    sim.velocityDecay(options.damping).force('charge',d3.forceManyBody().strength(p=>-options.repelStrength*scale*weight(p))).force('collision',d3.forceCollide(coarse?0:12));
+    // Preserve the archived separation so long historical spans cannot spring to 80px.
+    const desired=e=>Math.max(e.restLength,options.linkDistance*scale*(e.family==='dependency'?.56:e.family==='history'?1.375:1));
+    sim.force('links',d3.forceLink(physicsLinks).id(p=>p.id).distance(desired).strength(e=>{const r=relation(e);return r.mode==='attract'?options.linkStrength*r.strength*(coarse?.025:.12):0;}));
+    sim.force('x',d3.forceX(p=>p.ax).strength(options.centerStrength)).force('y',d3.forceY(p=>p.ay).strength(options.centerStrength));
+    const nodes=sim.nodes(),groups=new Map(),members=new Map();for(const p of nodes){const group=p.source_id||p.group;if(group){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(p);}if(/hyperedge|junction|and.rule/i.test(p.type||''))members.set(p.id,new Set());}for(const e of physicsLinks){members.get(e.source.id)?.add(e.target.id);members.get(e.target.id)?.add(e.source.id);}
+    sim.force('archive-controls',alpha=>{
+      for(const e of physicsLinks){const r=relation(e),a=e.source,b=e.target,dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy));if(r.mode==='repel'&&d<desired(e)){const f=Math.min(20*scale,(desired(e)-d)*options.linkStrength*r.strength*.06*alpha);a.vx-=dx/d*f;a.vy-=dy/d*f;b.vx+=dx/d*f;b.vy+=dy/d*f;}if(r.mode!=='none'&&e.family==='dependency'&&options.flowStrength){const f=Math.min(10*scale,Math.max(0,options.linkDistance*scale-dx)*options.flowStrength*alpha);a.vx-=f;b.vx+=f;}}
+      // Cohesion shares displacement within the original group without collapsing
+      // the archived geometry of records separated by thousands of world units.
+      if(options.groupStrength)for(const group of groups.values()){if(group.length<2)continue;const x=group.reduce((s,p)=>s+p.x-p.ax,0)/group.length,y=group.reduce((s,p)=>s+p.y-p.ay,0)/group.length;for(const p of group){p.vx+=(x-(p.x-p.ax))*options.groupStrength*alpha;p.vy+=(y-(p.y-p.ay))*options.groupStrength*alpha;}}
+      if(options.edgeRepulsion){
+        const lookup=new Map(nodes.map(p=>[p.id,p])),clearance=options.edgeClearance*scale;
+        // Only real local incidence links form the clearance geometry. Test its
+        // segments as well as the hub; own premises/conclusions are exempt.
+        for(const h of nodes){const linked=members.get(h.id);if(!linked)continue;for(const p of nodes){if(p===h||linked.has(p.id))continue;let nearest={x:h.x,y:h.y,d:Math.hypot(p.x-h.x,p.y-h.y),t:0,end:null};
+          for(const id of linked){const end=lookup.get(id);if(!end||p.x<Math.min(h.x,end.x)-clearance||p.x>Math.max(h.x,end.x)+clearance||p.y<Math.min(h.y,end.y)-clearance||p.y>Math.max(h.y,end.y)+clearance)continue;const dx=end.x-h.x,dy=end.y-h.y,length2=dx*dx+dy*dy,t=length2?Math.max(0,Math.min(1,((p.x-h.x)*dx+(p.y-h.y)*dy)/length2)):0,x=h.x+t*dx,y=h.y+t*dy,d=Math.hypot(p.x-x,p.y-y);if(d<nearest.d)nearest={x,y,d,t,end};}
+          if(nearest.d>=clearance)continue;let dx=p.x-nearest.x,dy=p.y-nearest.y,d=nearest.d;if(d<1e-6){dx=nearest.end?-(nearest.end.y-h.y):1;dy=nearest.end?nearest.end.x-h.x:0;d=Math.hypot(dx,dy)||1;}const f=Math.min(20*scale,(clearance-nearest.d)*options.edgeRepulsion*alpha),fx=dx/d*f,fy=dy/d*f;p.vx+=fx;p.vy+=fy;h.vx-=fx*(1-nearest.t);h.vy-=fy*(1-nearest.t);if(nearest.end){nearest.end.vx-=fx*nearest.t;nearest.end.vy-=fy*nearest.t;}
+        }}
+      }
+    });
+  }
+  function emitPhysics(settled){if(!sim)return;const points=sim.nodes(),coarse=sim===aggregate?.simulation,buffer=new Float32Array(points.length*2);points.forEach((p,i)=>{buffer[i*2]=p.x;buffer[i*2+1]=p.y;});self.postMessage({type:'physics',ids:points.map(p=>coarse?index.levels[aggregate.level].points[p.id].id:'n'+p.id),buffer:buffer.buffer,nodes:points.length,edges:physicsEdges.length,springs:physicsLinks.length,steps,settled,paused,stableViewport:!settled,aggregateLevel:coarse?aggregate.level:null,clusterShifts:coarse?points.map(p=>({index:index.levels[aggregate.level].points[p.id].index,dx:p.x-p.ox,dy:p.y-p.oy})):[]},[buffer.buffer]);}
+  function tick(){timer=null;if(!sim||paused)return;sim.tick();steps++;if(sim===aggregate?.simulation)aggregate.dirty=true;else for(const p of sim.nodes())pendingPositions.set(p.id,{x:p.x,y:p.y});const settled=sim.alpha()<.005;emitPhysics(settled);if(settled){if(sim===aggregate?.simulation)commitAggregate();else commitRaw();}else timer=setTimeout(tick,35);}
+  function reheat(){if(!sim||paused||commitJob)return;sim.alpha(Math.max(sim.alpha(),.4));if(timer===null)timer=setTimeout(tick,0);}
+  function anchor(seed,force){const p=sim.nodes().find(p=>p.id===seed);if(!p)return;if(force.x===null?force.y!==null:!Number.isFinite(force.x)||!Number.isFinite(force.y))throw Error('Drag needs finite coordinates or a null release');p.fx=force.x;p.fy=force.y;if(force.x!==null){p.x=force.x;p.y=force.y;}else{p.ax=p.x;p.ay=p.y;p.vx=p.vy=0;sim.force('x').x(p=>p.ax);sim.force('y').y(p=>p.ay);}if(sim===aggregate?.simulation)aggregate.dirty=true;else pendingPositions.set(p.id,{x:p.x,y:p.y});reheat();}
+  function physics(seed,force){
+    if(!index||typeof d3==='undefined')return;if(!Number.isInteger(seed)||seed<0||seed>=index.data.nodes.length)throw Error('Node index out of range');
+    if(force.x===null&&(!sim||sim===aggregate?.simulation||!physicsIds.includes(seed)))return;
+    if(sim===aggregate?.simulation)commitAggregate();
+    if(!sim||sim===aggregate?.simulation||!physicsIds.includes(seed)){
+      stop();const ids=new Set([seed]);for(let j=index.counts[seed];j<index.counts[seed+1]&&ids.size<512;j++){const e=index.data.edges[index.adjacency[j]];ids.add(e[0]);ids.add(e[1]);}
+      physicsIds=[...ids];const chosen=new Set(physicsIds),points=physicsIds.map(i=>({...index.levels[3].points[i],id:i,...pendingPositions.get(i),ax:pendingPositions.get(i)?.x??index.levels[3].points[i].x,ay:pendingPositions.get(i)?.y??index.levels[3].points[i].y}));
+      const seen=new Set();physicsLinks=[];const incident=new Set();for(const i of physicsIds)for(let j=index.counts[i];j<index.counts[i+1];j++){const ei=index.adjacency[j],e=index.data.edges[ei];incident.add(ei);if(physicsLinks.length<1024&&!seen.has(ei)&&chosen.has(e[0])&&chosen.has(e[1])){seen.add(ei);const semantic=index.data.semantics[e[2]],type=index.data.edge_types[e[3]],a=index.levels[3].points[e[0]],b=index.levels[3].points[e[1]];physicsLinks.push({source:e[0],target:e[1],family:ArchiveCore.family(semantic,type),semantic,type,restLength:Math.hypot(a.x-b.x,a.y-b.y)});}}
+      physicsEdges=[...incident];for(const ei of physicsEdges)dirtyEdges.add(ei);sim=d3.forceSimulation(points).stop().alphaDecay(.045);steps=0;applyForces();
+    }
+    anchor(seed,force);
   }
   function aggregatePhysics(clusterIndex,force){
-    if(!index||typeof d3==='undefined')return;stop();if(repairTimer!==null){clearTimeout(repairTimer);repairTimer=null;}
-    const level=index.data.clusters[clusterIndex].level,stage=index.levels[level],seed=stage.points.findIndex(p=>p.index===clusterIndex);
-    if(!aggregate||aggregate.level!==level||!aggregate.points.some(p=>p.id===seed)){commitAggregate();const ids=new Set([seed]);for(const e of stage.edges){if(ids.size>=512)break;if(e.a===seed||e.b===seed){ids.add(e.a);ids.add(e.b);}}const points=[...ids].map(id=>({id,x:stage.points[id].x,y:stage.points[id].y,ox:stage.points[id].x,oy:stage.points[id].y,ax:stage.points[id].x,ay:stage.points[id].y})),links=[];for(const e of stage.edges)if(links.length<1024&&ids.has(e.a)&&ids.has(e.b))links.push({source:e.a,target:e.b,family:e.family,restLength:Math.hypot(stage.points[e.a].x-stage.points[e.b].x,stage.points[e.a].y-stage.points[e.b].y)});aggregate={level,points,dirty:false,simulation:d3.forceSimulation(points).stop().alphaDecay(.06).velocityDecay(.6).force('charge',d3.forceManyBody().strength(-450)).force('links',d3.forceLink(links).id(p=>p.id).distance(e=>Math.max(e.restLength,e.family==='dependency'?450:e.family==='source'?650:800)).strength(e=>e.family==='dependency'?.025:e.family==='source'?.012:.005)).force('x',d3.forceX(p=>p.ax).strength(.02)).force('y',d3.forceY(p=>p.ay).strength(.02)),springs:links.length};}
-    sim=aggregate.simulation;const anchor=aggregate.points.find(p=>p.id===seed);if(anchor&&force){anchor.fx=force.x;anchor.fy=force.y;if(force.x!==null){anchor.x=force.x;anchor.y=force.y;}else{anchor.ax=anchor.x;anchor.ay=anchor.y;anchor.vx=anchor.vy=0;sim.force('x').x(p=>p.ax);sim.force('y').y(p=>p.ay);}}sim.alpha(.3);steps=0;aggregate.dirty=true;indexUpdating=true;
-    const tick=()=>{sim.tick();steps++;const coords=new Float32Array(aggregate.points.length*2);aggregate.points.forEach((p,i)=>{stage.points[p.id].x=p.x;stage.points[p.id].y=p.y;coords[i*2]=p.x;coords[i*2+1]=p.y;});const settled=sim.alpha()<.006;self.postMessage({type:'physics',ids:aggregate.points.map(p=>stage.points[p.id].id),buffer:coords.buffer,nodes:aggregate.points.length,edges:aggregate.springs,springs:aggregate.springs,steps,settled},[coords.buffer]);if(settled){timer=null;commitAggregate();return;}timer=setTimeout(tick,35);};timer=setTimeout(tick,0);
-  }
-  function physics(seed,force) {
-    if(!index||typeof d3==='undefined')return;commitAggregate();index.ensureSpatial(3);
-    if(repairTimer!==null){clearTimeout(repairTimer);repairTimer=null;}
-    if(!sim||sim===aggregate?.simulation||!physicsIds.includes(seed)) {
-      stop();const ids=new Set([seed]),offset=index.counts[seed],end=index.counts[seed+1];
-      for(let j=offset;j<end&&ids.size<512;j++){const e=index.data.edges[index.adjacency[j]];ids.add(e[0]);ids.add(e[1]);}
-      physicsIds=[...ids];const chosen=new Set(physicsIds),points=physicsIds.map(i=>{const p=index.levels[3].points[i];return {id:i,x:p.x,y:p.y,ax:p.x,ay:p.y};}),edges=[];
-      const seen=new Set();springs:for(const i of physicsIds)for(let j=index.counts[i];j<index.counts[i+1];j++){if(edges.length>=1024)break springs;const ei=index.adjacency[j],e=index.data.edges[ei];if(!seen.has(ei)&&chosen.has(e[0])&&chosen.has(e[1])){seen.add(ei);edges.push({source:e[0],target:e[1],family:ArchiveCore.family(index.data.semantics[e[2]],index.data.edge_types[e[3]]),restLength:Math.hypot(index.levels[3].points[e[0]].x-index.levels[3].points[e[1]].x,index.levels[3].points[e[0]].y-index.levels[3].points[e[1]].y)});}}
-      physicsSprings=edges.length;physicsEdges=[...new Set(physicsIds.flatMap(i=>Array.from(index.adjacency.subarray(index.counts[i],index.counts[i+1]))))];
-      sim=d3.forceSimulation(points).stop().alphaDecay(.045).velocityDecay(.55).force('charge',d3.forceManyBody().strength(p=>-35*Math.min(6,Math.sqrt(index.degree[p.id]+1)))).force('collision',d3.forceCollide(12)).force('links',d3.forceLink(edges).id(p=>p.id).distance(e=>Math.max(e.restLength,e.family==='dependency'?45:e.family==='source'?80:e.family==='history'?110:95)).strength(e=>e.family==='dependency'?.12:e.family==='source'?.045:e.family==='history'?.018:.01)).force('x',d3.forceX(p=>p.ax).strength(.035)).force('y',d3.forceY(p=>p.ay).strength(.035));steps=0;
+    if(!index||typeof d3==='undefined')return;const cluster=index.data.clusters[clusterIndex];if(!cluster)throw Error('Cluster index out of range');const level=cluster.level,stage=index.levels[level],seed=stage.points.findIndex(p=>p.index===clusterIndex);
+    if(force.x===null&&(!aggregate||aggregate.level!==level||!aggregate.points.some(p=>p.id===seed)))return;
+    if(!aggregate||sim!==aggregate.simulation||aggregate.level!==level||!aggregate.points.some(p=>p.id===seed)){
+      stop();if(sim&&sim!==aggregate?.simulation)commitRaw();commitAggregate();const ids=new Set([seed]);for(const e of stage.edges){if(ids.size>=512)break;if(e.a===seed||e.b===seed){if(ids.size<512)ids.add(e.a);if(ids.size<512)ids.add(e.b);}}
+      const points=[...ids].map(id=>({...stage.points[id],id,ox:stage.points[id].x,oy:stage.points[id].y,ax:stage.points[id].x,ay:stage.points[id].y}));physicsLinks=[];for(const e of stage.edges)if(physicsLinks.length<1024&&ids.has(e.a)&&ids.has(e.b)){const rawEdge=index.data.edges[e.index],semantic=index.data.semantics[rawEdge[2]],type=index.data.edge_types[rawEdge[3]];physicsLinks.push({source:e.a,target:e.b,family:e.family,semantic,type,restLength:Math.hypot(stage.points[e.a].x-stage.points[e.b].x,stage.points[e.a].y-stage.points[e.b].y)});}aggregate={level,points,dirty:false,simulation:d3.forceSimulation(points).stop().alphaDecay(.06)};sim=aggregate.simulation;physicsIds=[];physicsEdges=[];steps=0;applyForces();
     }
-    const anchor=sim.nodes().find(p=>p.id===seed);if(anchor&&force){anchor.fx=force.x;anchor.fy=force.y;if(force.x!==null){anchor.x=force.x;anchor.y=force.y;}else{anchor.ax=anchor.x;anchor.ay=anchor.y;anchor.vx=anchor.vy=0;sim.force('x').x(p=>p.ax);sim.force('y').y(p=>p.ay);}}
-    for(const ei of physicsEdges)dirtyEdges.add(ei);repairList=[...dirtyEdges];repairCursor=0;sim.alpha(.4);stop();
-    indexUpdating=true;
-    const tick=()=>{sim.tick();steps++;const positions=new Float32Array(physicsIds.length*2);
-      sim.nodes().forEach((p,j)=>{const point=index.levels[3].points[p.id];point.x=p.x;point.y=p.y;index.data.nodes[p.id].x=p.x;index.data.nodes[p.id].y=p.y;index.levels[3].spatial.node(p.id);positions[j*2]=p.x;positions[j*2+1]=p.y;});
-      // During motion queries await an exact index; rebuild incident segments in bounded batches after cooling.
-      self.postMessage({type:'physics',ids:physicsIds.map(i=>'n'+i),buffer:positions.buffer,nodes:physicsIds.length,edges:physicsEdges.length,springs:physicsSprings,steps,settled:sim.alpha()<.005},[positions.buffer]);
-      if(sim.alpha()<.005){timer=null;repairCursor=0;repairEdges();return;}timer=setTimeout(tick,35);};timer=setTimeout(tick,0);
+    anchor(seed,force);
   }
-  self.onmessage=async event=>{const m=event.data;try {
-    if(m.type==='init'){stop();if(repairTimer!==null)clearTimeout(repairTimer);repairTimer=null;sim=null;aggregate=null;physicsIds=[];physicsEdges=[];dirtyEdges.clear();repairList=[];indexUpdating=false;const data=await unpack(m.compressed);index=ArchiveCore.create(data,p=>send('progress',p));send('ready',{source:data.source,bounds:data.bounds,roots:data.roots,indexStats:{...index.indexStats},levels:index.levels.map(s=>({points:s.points.length,edges:s.edges.length,internal:s.internal,spatialReady:!!s.spatial}))});}
-    else if(m.type==='viewport'){if(indexUpdating){for(const old of waitingViews)send('viewport',{cancelled:true},old.request);waitingViews=[m];}else send('viewport',index.viewport(m.level,m.rect,Math.max(100,Math.min(3500,Number(m.edgeBudget)||3500)),m.nodeBudget),m.request);}
-    else if(m.type==='search'){send('search',index.find(m.query,m.page),m.request);}
-    else if(m.type==='detail'){send('detail',index.neighbors(m.index,m.page),m.request);}
-    else if(m.type==='locate'){const n=index.data.nodes[m.index];send('locate',{index:m.index,x:n.x,y:n.y,parent:n.parent,raw_node_index:n.raw_node_index,raw_hyperedge_id:n.raw_hyperedge_id},m.request);}
-    else if(m.type==='raw-locator'){send('raw-locator',{index:index.data.edges[m.index][4]},m.request);}
+  function explicitReheat(id){
+    if(!index)return;
+    // Only the explicit layout command seeds a first local simulation. Initial
+    // configure messages retain the archived layout without starting any timer.
+    if(id===undefined&&sim){reheat();return;}
+    if(id===undefined){const primary=index.data.nodes.findIndex(n=>n.primary);id='n'+Math.max(0,primary);}
+    if(typeof id!=='string'||!/^[nc]\d+$/.test(id))throw Error('Invalid layout seed');
+    const seed=Number(id.slice(1));
+    if(id[0]==='n'){
+      const point=pendingPositions.get(seed)||index.levels[3].points[seed];if(!point)throw Error('Node index out of range');
+      physics(seed,{x:point.x,y:point.y});anchor(seed,{x:null,y:null});
+    }else{
+      const point=index.data.clusters[seed];if(!point)throw Error('Cluster index out of range');
+      aggregatePhysics(seed,{x:point.x,y:point.y});const local=index.levels[point.level].points.findIndex(p=>p.index===seed);anchor(local,{x:null,y:null});
+    }
+  }
+  self.onmessage=async event=>{const m=event.data;try{
+    if(commitJob&&['drag','resume','reheat'].includes(m.type)){deferredMotion=m;return;}
+    if(m.type==='init'){
+      stop();if(repairTimer!==null)clearTimeout(repairTimer);if(commitTimer!==null)clearTimeout(commitTimer);commitTimer=null;commitJob=null;deferredMotion=null;dirtyStageEdges.clear();dirtyStageNodes.clear();blockedLevels.clear();levelRemaining.clear();repairTimer=null;sim=null;aggregate=null;physicsIds=[];physicsEdges=[];physicsLinks=[];dirtyEdges.clear();pendingPositions.clear();repairList=[];repairCursor=0;waitingViews=[];paused=false;revision=0;
+      const data=await unpack(m.compressed);index=ArchiveCore.create(data,p=>send('progress',p));const catalog=new Map(),goals=new Set();for(const n of data.nodes)for(const [key,value] of Object.entries(n.goal_weights||{}))if(Number.isFinite(value)&&value>=0)goals.add(key);for(const e of data.edges){const semantic=data.semantics[e[2]],type=data.edge_types[e[3]],key=semantic+'|'+type;if(!catalog.has(key))catalog.set(key,{key,semantic,type,family:ArchiveCore.family(semantic,type),count:0});catalog.get(key).count++;}
+      send('ready',{source:data.source,bounds:data.bounds,roots:data.roots,relationCatalog:[...catalog.values()],goals:[...goals].map(id=>({id,label:data.goals?.find(g=>g.id===id)?.label||id})),options,indexStats:{...index.indexStats},levels:index.levels.map(s=>({points:s.points.length,edges:s.edges.length,internal:s.internal,spatialReady:!!s.spatial}))});
+    }else if(m.type==='viewport'){
+      if((repairTimer!==null||commitJob)&&blockedLevels.has(m.level)||commitJob&&m.level===3&&!index.levels[3].spatial){for(const old of waitingViews)send('viewport',{cancelled:true},old.request);waitingViews=[m];}else viewport(m);
+    }else if(m.type==='configure'){configure(m.options||{});send('configured',{options},m.request);
+    }else if(m.type==='search')send('search',index.find(m.query,m.page),m.request);
+    else if(m.type==='detail')send('detail',index.neighbors(m.index,m.page),m.request);
+    else if(m.type==='locate'){const n=index.data.nodes[m.index];let p=pendingPositions.get(m.index);if(commitJob){const old=index.levels[3].points[m.index],shift=commitJob.shifts.get(commitJob.stage.nodeMap[m.index]);p={x:old.x+(shift?.x||0),y:old.y+(shift?.y||0)};}else if(aggregate?.dirty){const old=index.levels[3].points[m.index],mapped=index.levels[aggregate.level].nodeMap[m.index],motion=aggregate.points.find(p=>p.id===mapped);if(motion)p={x:old.x+motion.x-motion.ox,y:old.y+motion.y-motion.oy};}send('locate',{index:m.index,x:p?.x??n.x,y:p?.y??n.y,parent:n.parent,raw_node_index:n.raw_node_index,raw_hyperedge_id:n.raw_hyperedge_id},m.request);}
+    else if(m.type==='raw-locator')send('raw-locator',{index:index.data.edges[m.index][4]},m.request);
     else if(m.type==='cluster'){const c=index.data.clusters[m.index];send('cluster',{index:m.index,cluster:c},m.request);}
     else if(m.type==='highlight'){const found=new Set([m.index]),edges=[];for(let j=index.counts[m.index];j<index.counts[m.index+1];j++){const ei=index.adjacency[j],e=index.data.edges[ei];found.add(e[0]);found.add(e[1]);edges.push(ei);}send('highlight',{nodes:[...found],edges},m.request);}
-    else if(m.type==='drag'&&m.id.startsWith('n')){physics(Number(m.id.slice(1)),{x:m.x,y:m.y});}
-    else if(m.type==='drag'&&m.id.startsWith('c')){aggregatePhysics(Number(m.id.slice(1)),{x:m.x,y:m.y});}
-    else if(m.type==='pause'){stop();if(aggregate?.dirty)commitAggregate();else if(indexUpdating){repairCursor=0;repairEdges();}send('physics',{settled:true,nodes:physicsIds.length,steps});}
+    else if(m.type==='drag'&&m.id.startsWith('n'))physics(Number(m.id.slice(1)),{x:m.x,y:m.y});
+    else if(m.type==='drag'&&m.id.startsWith('c'))aggregatePhysics(Number(m.id.slice(1)),{x:m.x,y:m.y});
+    else if(m.type==='pause'){deferredMotion=null;paused=true;stop();if(sim){for(const p of sim.nodes()){p.fx=p.fy=null;p.ax=p.x;p.ay=p.y;}sim.force('x').x(p=>p.ax);sim.force('y').y(p=>p.ay);}emitPhysics(true);if(aggregate?.dirty)commitAggregate();else commitRaw();}
+    else if(m.type==='resume'){paused=false;reheat();}
+    else if(m.type==='reheat'){paused=false;explicitReheat(m.id);}
     else if(m.type==='raw-init'){raw=await unpack(m.compressed);send('raw-ready',{});}
-    else if(m.type==='raw-node'){send('raw-result',{value:(raw.nodes||raw.dependency_map?.nodes||[])[m.index]},m.request);}
-    else if(m.type==='raw-hyperedge'){send('raw-result',{value:(raw.hyperedges||raw.dependency_map?.hyperedges||[]).find(e=>e.id===m.id)},m.request);}
-    else if(m.type==='raw-edge'){send('raw-result',{value:(raw.edges||raw.hyperedges||raw.dependency_map?.hyperedges||[])[m.index]},m.request);}
+    else if(m.type==='raw-node')send('raw-result',{value:(raw.nodes||raw.dependency_map?.nodes||[])[m.index]},m.request);
+    else if(m.type==='raw-hyperedge')send('raw-result',{value:(raw.hyperedges||raw.dependency_map?.hyperedges||[]).find(e=>e.id===m.id)},m.request);
+    else if(m.type==='raw-edge')send('raw-result',{value:(raw.edges||raw.hyperedges||raw.dependency_map?.hyperedges||[])[m.index]},m.request);
   }catch(error){send('error',{message:String(error.message||error)},m.request);}};
 }
