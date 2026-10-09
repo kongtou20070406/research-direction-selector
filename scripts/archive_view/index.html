@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'"
+    />
+    <title>RDS · 研究星图</title>
+    <style>
+      /*ARCHIVE_CSS*/
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">RDS<span>研究星图</span></div>
+      <div id="total">正在载入完整档案…</div>
+      <div class="tools">
+        <button id="home">一级星图</button><button id="all">全量视图</button
+        ><button id="fit">适应画布</button>
+      </div>
+    </header>
+    <main>
+      <section id="workspace">
+        <div class="heading">
+          <nav id="crumb" aria-label="当前位置"></nav>
+          <h1 id="title">研究星图</h1>
+          <p id="summary">点击研究簇进入，逐层查看实验与原始证据。</p>
+        </div>
+        <div id="plot">
+          <canvas id="canvas" aria-label="研究关系画布"></canvas>
+          <div id="labels" aria-label="图中节点"></div>
+        </div>
+        <div id="view-status" role="status"></div>
+        <div id="pager"></div>
+      </section>
+      <aside>
+        <label class="search-label" for="search">查找任意节点</label
+        ><input
+          id="search"
+          type="search"
+          placeholder="实验编号、结论、来源…"
+          autocomplete="off"
+        />
+        <div id="search-meta"></div>
+        <div id="search-results"></div>
+        <article id="detail">
+          <p class="empty">
+            先选择一个研究簇。<br />点击节点后，在这里阅读结论、失败和证据。
+          </p>
+        </article>
+      </aside>
+    </main>
+    <div id="error" role="alert" hidden></div>
+    <script id="archive" type="application/octet-stream">
+      ARCHIVE_PAYLOAD
+    </script>
+    <script>
+      /*ARCHIVE_JS*/
+    </script>
+  </body>
+</html>

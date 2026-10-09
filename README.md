@@ -20,6 +20,8 @@ A local research kernel for academic research and agent-driven experiment workfl
 
 [RDS in autoresearch workflows](docs/autoresearch.md) · [CPU receipt and recovery example](examples/autoresearch-receipts/README.md) · [Cite this software](CITATION.cff)
 
+[Read-only archive constellation explorer](docs/archive-explorer.md): browse complete research archives by group, then inspect experiments, relationships and original evidence.
+
 **English** · [Simplified Chinese](README.zh-CN.md) · [Japanese](README.ja-JP.md)
 
 </div>
