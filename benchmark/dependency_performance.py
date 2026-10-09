@@ -26,15 +26,22 @@ import rds_advisor_search
 import rds_experiments
 import rds_hypergraph
 
-NAMES = ("rds_hypergraph", "rds_advisor_search", "rds_experiments", "rds_advisor")
+NAMES = ("rds_hypergraph_blockers", "rds_hypergraph", "rds_advisor_search", "rds_experiments", "rds_advisor")
 
 
 def load_baseline(ref):
-    """Execute only the selected trusted checkout's four source modules."""
+    """Bind the selected sources, including the optional historical blocker helper."""
     if not re.fullmatch(r"[0-9a-f]{40}", ref):
         raise ValueError("baseline must be a full lowercase commit SHA from trusted local history")
     modules, hashes = {}, {}
+    helper = subprocess.check_output(
+        ["git", "ls-tree", "--name-only", ref, "scripts/rds_hypergraph_blockers.py"], cwd=ROOT)
     for name in NAMES:
+        if name == "rds_hypergraph_blockers" and not helper.strip():
+            # Old revisions have no helper; any unexpected import must fail,
+            # never resolve to the candidate already loaded in this process.
+            modules[name], hashes[name] = None, None
+            continue
         raw = subprocess.check_output(["git", "show", f"{ref}:scripts/{name}.py"], cwd=ROOT)
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError("baseline module exceeds 2 MiB")

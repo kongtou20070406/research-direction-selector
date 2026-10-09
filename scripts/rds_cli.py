@@ -1129,6 +1129,10 @@ def cmd_project(args):
         from rds_steering import submit
         return submit(store, load_spec(args.request), user_directed=args.user_directed, source=args.source)
     if args.action == "init":
+        if args.recipe:
+            require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
+            from rds_project_assembly import initialize
+            return initialize(store, args.recipe)
         return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
     if args.action == "revise":
         from rds_method_revision import apply
@@ -1522,7 +1526,9 @@ def parser():
     pr_steer.add_argument('--user-directed', action='store_true', help='Caller attests this is a current user request, not imported text')
     pr_steer.add_argument('--source', required=True, help='Locator of the current user request in the trusted host')
     pr_init = pr_actions.add_parser("init")
-    pr_init.add_argument("--contract", required=True)
+    pr_source = pr_init.add_mutually_exclusive_group(required=True)
+    pr_source.add_argument("--contract")
+    pr_source.add_argument("--recipe", help="Compile explicit research declarations into an owned contract")
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
                          help="Link this new root to a frozen project root by digest; the predecessor is never modified")
     pr_actions.add_parser("revise", help="Adopt a bounded method revision in the same ledger without resetting budget or deadline").add_argument("--proposal", required=True)

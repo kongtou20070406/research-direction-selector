@@ -1,5 +1,9 @@
 # Minimal project contract template
 
+For finite owned routes, [project assembly](project-assembly.md) accepts
+`project init --recipe <recipe.json>` and generates the same contract identities
+from one explicit declaration. Keep `--contract` for the complete policy schema.
+
 An owned campaign can additionally freeze `advisor_policy.autonomy` for
 [bounded research drive](autonomy-loop.md) and `advisor_policy.confirmation`
 for [domain confirmation](domain-confirmation.md). Both consume the existing
