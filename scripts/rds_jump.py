@@ -338,8 +338,9 @@ def _ruby_script_operand(argv):
             offset += 1
             require(flag not in 'CXS' and not (flag == 'x' and offset < len(option)),
                     'Ruby script lookup cwd/PATH options are unsupported for Jump')
-            if flag in 'eh':
-                return None  # Inline code/help does not name a main file.
+            require(flag != 'e', 'Ruby inline execution is unsupported for frozen Jump code')
+            if flag == 'h':
+                return None  # Help exits; inline execution can keep parsing.
             require(flag != 'r', 'Ruby preloads are unsupported for frozen Jump code')
             if flag in 'rIE':
                 if offset == len(option):
@@ -392,9 +393,11 @@ def _perl_script_operand(argv):
             if flag == 'x':
                 require(offset == len(option), 'Perl lookup cwd/PATH options are unsupported')
                 break  # Bare -x strips the script prefix; no directory argument.
-            if flag in 'eEVhv?':
-                return None  # Inline/configuration/help has no main file.
-            if flag in 'ImM':
+            require(flag not in 'mMd', 'Perl module/debugger startup is unsupported for frozen Jump code')
+            require(flag not in 'eEV', 'Perl inline/configuration execution is unsupported for frozen Jump code')
+            if flag in 'hv?':
+                return None  # These options exit rather than continue startup.
+            if flag == 'I':
                 if offset == len(option):
                     require(index + 1 < len(argv), 'Perl option value is missing')
                     index += 1
@@ -419,11 +422,6 @@ def _perl_script_operand(argv):
                 rest = option[offset:]
                 value = re.match(r'[0-7]{0,' + ('4' if rest.startswith('0') else '3') + '}', rest)
                 offset += len(value.group())
-            elif flag == 'd':
-                if option[offset:offset + 1] == 't' and not re.match(r'\w', option[offset + 1:offset + 2]):
-                    offset += 1
-                if option[offset:offset + 1] in {':', '='}:
-                    break  # Debugger module and arguments consume the remainder.
             elif flag == 'D':
                 value = re.match(r'\w*', option[offset:])
                 offset += len(value.group())
@@ -463,6 +461,9 @@ def _interpreter_script_operand(argv):
         return _node_arguments(argv)[0]
     if re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', name):
         name = 'php'  # Kernel resolution can turn a php alias into php8.3.
+    for family in ('julia', 'lua'):
+        if re.fullmatch(family + r'(?:\d+(?:\.\d+)*)?', name):
+            name = family  # Apply the same guard to resolved numeric versions.
     shells = {'sh', 'bash', 'dash', 'ksh', 'zsh'}
     if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:
         return None
@@ -476,6 +477,8 @@ def _interpreter_script_operand(argv):
         if not option.startswith(('-', '+')):
             return file_at(index)
         if name in shells:
+            require(option.split('=', 1)[0] not in {'--rcfile', '--init-file'},
+                    'Shell explicit startup files are unsupported for frozen Jump code')
             if option.startswith('-') and not option.startswith('--') and any(c in option[1:] for c in 'cs'):
                 return None  # Inline command or stdin, not a main script file.
             if option in {'-o', '+o', '--rcfile', '--init-file'} or (
@@ -484,6 +487,14 @@ def _interpreter_script_operand(argv):
             else:
                 index += 1
         else:
+            if name == 'julia':
+                # Match effective names/short selectors, never their consumed values.
+                require(option.split('=', 1)[0] not in {'--load', '--sysimage', '--module'}
+                        and not (not option.startswith('--') and option[:2] in {'-L', '-J', '-m'}),
+                        'Julia explicit startup code is unsupported for frozen Jump code')
+            if name == 'lua':
+                require(not option.startswith('-l'),
+                        'Lua module startup is unsupported for frozen Jump code')
             if name == 'php':
                 require(option in {'-n', '--no-php-ini', '-q', '-f', '--file', '-F', '--process-file'}
                         or option.startswith(('--file=', '--process-file='))
@@ -498,6 +509,7 @@ def _interpreter_script_operand(argv):
             if any(option == flag or option.startswith(flag + '=')
                    or (len(flag) == 2 and option.startswith(flag) and len(option) > 2)
                    for flag in inline):
+                require(name != 'julia', 'Julia inline execution is unsupported for frozen Jump code')
                 return None
             values = {'node': {'-r', '--require', '--loader', '--experimental-loader', '--import', '--title', '--input-type'},
                       'nodejs': {'-r', '--require', '--loader', '--experimental-loader', '--import', '--title', '--input-type'},
@@ -669,7 +681,12 @@ def load_plan(store, state):
     require(path.stat().st_size <= 32768, 'Jump plan exceeds 32 KiB')
     raw = path.read_bytes()
     require(hashlib.sha256(raw).hexdigest() == bindings[0]['sha256'], 'Jump plan binding changed')
-    plan = strict_json(raw.decode('utf-8-sig'))
+    try:
+        plan = strict_json(raw.decode('utf-8-sig'))
+    except RecursionError as exc:
+        # json.loads can fail before strict_json's finite depth guard runs.
+        # Retain the existing ValueError rejection/unavailable paths and limits.
+        raise ValueError('Jump plan JSON nesting exceeds parser limit') from exc
     require(isinstance(plan, dict) and {'schema', 'stages'} <= set(plan)
             and set(plan) <= {'schema', 'stages', 'generator_code_paths'} and type(plan['schema']) is int
             and plan['schema'] == 1, 'Unsupported jump plan')

@@ -606,7 +606,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
             for executable, option in [(entry, option) for entry in executables for option in options]:
                 argv = [executable, *option, 'worker.pl']
                 with self.subTest(executable=executable, option=option, boundary='parser'):
-                    with self.assertRaisesRegex(ValueError, 'lookup cwd'):
+                    with self.assertRaisesRegex(ValueError, 'lookup cwd|Perl module/debugger startup'):
                         jump._interpreter_script_operand(argv)
                 for declaration in ('explicit', 'legacy'):
                     with self.subTest(executable=executable, option=option, boundary='binding', declaration=declaration):
@@ -618,14 +618,16 @@ class InterpreterBoundaryTests(unittest.TestCase):
                         for stage in plan['stages']:
                             stage['run']['argv'] = argv
                         if executable in available:
-                            with self.assertRaisesRegex(ValueError, 'lookup cwd'):
+                            with self.assertRaisesRegex(ValueError, 'lookup cwd|Perl module/debugger startup'):
                                 jump._generator_bindings(store, contract, plan)
                         else:
                             with patch.object(store, '_command', return_value=executable):
-                                with self.assertRaisesRegex(ValueError, 'lookup cwd'):
+                                with self.assertRaisesRegex(ValueError, 'lookup cwd|Perl module/debugger startup'):
                                     jump._generator_bindings(store, contract, plan)
-            for options in (['-we', '1'], ['-nE1'], ['-V:S'], ['--help']):
-                self.assertIsNone(jump._interpreter_script_operand([executables[0], *options, 'worker.pl']))
+            for options in (['-we', '1'], ['-nE1'], ['-V:S']):
+                with self.assertRaisesRegex(ValueError, 'Perl inline/configuration execution is unsupported'):
+                    jump._interpreter_script_operand([executables[0], *options, 'worker.pl'])
+            self.assertIsNone(jump._interpreter_script_operand([executables[0], '--help', 'worker.pl']))
             self.assertEqual(store.snapshot(), before)
 
     def test_perl_literal_main_and_option_values_preserve_frozen_identity(self):
@@ -641,15 +643,12 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                         for name in ('perl5.42', 'Perl5.44.exe')]]
             cases = [('worker.pl', []), ('worker.pl', ['-w']),
                      ('worker.pl', ['-I', 'Sdirectory']), ('worker.pl', ['-ISdirectory']), ('worker.pl', ['-IS directory']),
-                     ('worker.pl', ['-m', 'Shelper']), ('worker.pl', ['-mShelper']),
-                     ('worker.pl', ['-M', 'Shelper']), ('worker.pl', ['-MShelper']),
                      ('worker.pl', ['-FS']), ('worker.pl', ['-F']),
                      ('worker.pl', ['-iSbackup']), ('worker.pl', ['-iS']), ('worker.pl', ['-i']),
                      ('worker.pl', ['-CS']), ('worker.pl', ['-CSDL']),
                      ('worker.pl', ['-0x53']), ('worker.pl', ['-0777']),
                      ('worker.pl', ['-l0777']), ('worker.pl', ['-x']),
-                     ('worker.pl', ['-wx']), ('worker.pl', ['-d:Shelper']), ('worker.pl', ['-dt:Shelper']),
-                     ('worker.pl', ['-d:Module=argument with space']),
+                     ('worker.pl', ['-wx']),
                      ('worker.pl', ['-DS']), ('-Sworker.pl', ['--']),
                      ('-xworker.pl', ['--']), ('worker with space.pl', ['--'])]
             for executable, (filename, options) in [(entry, case) for entry in executables for case in cases]:
