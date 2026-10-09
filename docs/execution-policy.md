@@ -11,7 +11,7 @@ An existing project contract can opt into a bounded execution policy before init
 Include this field in the original contract passed to the existing entry point:
 
 ```text
-python -B scripts/rds_cli.py --root path/to/project project init --contract path/to/contract.json
+python -B scripts/rds_cli.py --root path/to/project project init --mode quick --contract path/to/contract.json
 ```
 
 The usual `project create` and `project execute` commands then enforce it. Quick `exec` from that configured source root also consumes its policy without requiring research context. An already initialized contract cannot be retrofitted with this field; configure an explicit new project instead.

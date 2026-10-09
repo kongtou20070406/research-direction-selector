@@ -162,7 +162,7 @@ git clone https://github.com/kongtou20070406/research-direction-selector.git "$e
 python -B examples/project-runner/prepare.py --root ./my-project
 
 # 1. 契約から研究状態を初期化
-python -B scripts/rds_cli.py --root ./my-project project init --contract ./my-project/contract.json
+python -B scripts/rds_cli.py --root ./my-project project init --mode quick --contract ./my-project/contract.json
 
 # 2. トランザクションによる予算管理のもとで両群を作成・実行
 python -B scripts/rds_cli.py --root ./my-project project create --manifest ./my-project/control.json

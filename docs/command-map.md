@@ -25,6 +25,7 @@ CLI := python -B "<skill_dir>/scripts/rds_cli.py" --root "<user-project>"
 REBIND printed scripts/rds_cli.py command prefixes TO CLI; preserve remaining arguments
 SELECT one relevant entry; READ its linked guide and CLI <command path> --help
 SUPPLY the actual project inputs, authorized budget, and required installed backend
+BEFORE every experiment: project discover; REUSE returned project_root and its ledger
 KEEP records in user-project; never initialize a ledger in the installation/cache
 IF unavailable or unsupported: report that boundary; do not substitute a claimed result
 ```
@@ -49,7 +50,9 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | Command | Purpose | Inputs and prerequisites | Guide |
 | --- | --- | --- | --- |
 | `exec` | Freeze and run one authorized tool job | Explicit command after `--`, bounded `--timeout`, inputs and expected `--output`; prospective selection pairs `--context` with `--ledger` | [Command wrapper](agent-entry.md), [Execution policy](execution-policy.md) |
-| `project init` | Lock a project execution contract | `--contract` with real bindings, commands, outputs and authorized budget | [Contract](project-contract.md), [Project runner](development-loop.md) |
+| `project discover` | Read requested root and ancestors and return the existing project root, mode and next action | Existing requested directory; no sibling search or state creation; reuse the returned ledger for each experiment | [Project lifecycle](project-lifecycle.md) |
+| `project init` | Lock a project execution contract; default FULL owns collection and selection | Valid explicit `--contract` with `advisor_policy` or finite `--recipe`; limited non-policy contracts need `--mode quick`; independent nesting needs `--separate-project REASON` | [Project lifecycle](project-lifecycle.md), [Assembly](project-assembly.md), [Contract](project-contract.md) |
+| `project enable-advisor` | Preview or atomically enable owned Advisor in the same legacy ledger | Basic five-field `--policy`; apply requires `--apply --expected-snapshot SHA`, idle attempts, unchanged manifests and original bindings; preserves genesis/history/budget | [Owned Advisor](program-owned-advisor.md#enable-advisor-in-an-existing-quick-project) |
 | `project plan` | Form an inspectable draft with grouped missing inputs | Optional `--intent`; `--output` never overwrites; `--save-as` uses an initialized project's checkpoints | [Planning and steering](planning-and-steering.md) |
 | `project steering` | Inspect current direction, resources and active-work dispositions | Initialized project | [Planning and steering](planning-and-steering.md) |
 | `project steer` | Receive current-user pause, route priority, hypothesis or material-change request | Exact current contract/revision in `--request`; host attestation `--user-directed --source` | [Planning and steering](planning-and-steering.md) |
@@ -65,6 +68,14 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `project status` | Inspect current runs, budget and receipts | Existing project; `--brief` gives bounded state plus a saved-record locator | [Output](agent-entry.md) |
 | `project costs` | Inspect measured costs and charged estimates | Existing project records; failed attempts and unknown resource values remain visible | [Cost accounting](development-loop.md) |
 | `project control-check` | Check whether a completed control is reusable | `--candidate` receipt and `--current` expected operation/protocol; source and output identity must match | [Control reuse](../examples/project-runner/README.md) |
+
+FULL and QUICK are workflow modes, shown by the stderr `[RDS]` banner and
+nonhashed `workflow` metadata with available capabilities. FULL does not enable
+optional autonomy or confirmation automatically. Both modes require complete
+analysis of every declared active direction graph and current saved TMS before
+selection; `analysis_coverage` records scope, graph identities, counts and
+completeness. Incomplete computation blocks selection and dispatch. This is
+registered graph coverage, not arbitrary-file coverage or scientific validation.
 
 ## Native mathematical assets and local tools
 

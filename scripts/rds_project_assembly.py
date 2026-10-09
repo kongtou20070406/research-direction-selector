@@ -191,8 +191,10 @@ def compile_recipe(store, recipe):
         'execution_started': False, 'scientific_support': 'UNKNOWN', 'llm_tokens': 'NOT_MEASURED'}
 
 
-def initialize(store, recipe_path):
+def initialize(store, recipe_path, *, separate_reason=None):
     """Prepare an immutable protocol, then use the original initializer."""
+    from rds_project_lifecycle import check_root
+    check_root(store.root, separate_reason=separate_reason)
     source = Path(recipe_path).resolve()
     raw = _read(source)
     recipe = strict_json(raw.decode('utf-8-sig'))
@@ -218,7 +220,8 @@ def initialize(store, recipe_path):
     except FileExistsError:
         require(protocol.is_file() and _read(protocol) == protocol_raw,
                 'Generated protocol would overwrite different content')
-    result = store.initialize(contract)
+    from rds_project_lifecycle import initialize as initialize_project
+    result = initialize_project(store, contract, mode='full', separate_reason=separate_reason)
     result['assembly'] = {**summary, 'recipe': {'path': str(source), 'sha256': hashlib.sha256(raw).hexdigest()},
                           'contract_sha256': digest(contract)}
     return result

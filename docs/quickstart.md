@@ -24,6 +24,15 @@ Replace the bracketed text with your actual question or file path. If the projec
 
 ## Try the CLI without writing a contract by hand
 
+The Agent performs the backend preparation. Before every experiment it runs
+`project discover` with the requested `--root`, then reuses the returned
+`project_root` and its cumulative ledger, completed runs and remaining budget.
+Discovery reads the requested directory and its ancestors; it does not search
+sibling projects or create state. Add successive experiments as runs in the
+same project. Nested initialization is rejected unless a deliberately independent
+project supplies `--separate-project "<explicit reason>"`; a child `exec` cannot
+bypass its parent project.
+
 For a first plan, the Agent can use `project plan` before project initialization.
 It returns the known goal, evaluation, resources and next action, grouping missing
 information without inventing an execution budget. A small `--intent` file can
@@ -32,19 +41,52 @@ contract and receipt locators. The draft starts no experiment. See
 [planning and steering](planning-and-steering.md) for examples and for pausing or
 redirecting an existing project from the current user request.
 
-Requires Python 3.11 or later. From a repository checkout, choose a **new, empty** directory. The preparation script creates a small synthetic dataset and matching code, evaluator, protocol, and file hashes. It refuses to reuse a non-empty directory.
+Requires Python 3.11 or later. The normal new project defaults to **FULL**, with
+a valid explicit `advisor_policy` or an explicit finite [recipe](project-assembly.md).
+The preparation script below creates a complete synthetic owned-policy example
+in a new empty directory. The Agent must discover the intended location before
+creating a project and reuse an existing project when one is found.
 
 ```powershell
-python -B examples/project-runner/prepare.py --root ./my-project
+python -B scripts/rds_cli.py --root . project discover
+python -B examples/owned-advisor/prepare.py --root ./my-project
+python -B scripts/rds_cli.py --root ./my-project project discover
 python -B scripts/rds_cli.py --root ./my-project project init --contract ./my-project/contract.json
-python -B scripts/rds_cli.py --root ./my-project project status --brief
+python -B scripts/rds_cli.py --root ./my-project project next --brief
 ```
 
-These commands prepare and inspect a local project; they do not run the two experiments. To execute the complete CPU demonstration, use the [project runner example](../examples/project-runner/README.md) and the command sequence in the [repository quick-start](../README.md#deterministic-execution--acceptance-kernel). The demonstration uses synthetic data and does not establish scientific confirmation or generalization.
+These commands prepare and inspect a local project; they do not execute its
+experiments. Use `project advance --brief` for one selected authorized step.
+The [owned Advisor example](program-owned-advisor.md) uses synthetic data and
+does not establish scientific confirmation or generalization. FULL supplies the
+owned workflow; optional autonomy, domain confirmation and tool integrations
+remain disabled unless explicitly declared. The stderr
+`[RDS] mode=FULL|QUICK advisor=...` banner and nonhashed `workflow` metadata show the current mode and
+supported capabilities without changing the original receipt body.
 
-### Minimal contract template
+QUICK is an explicit limited route: an intentionally non-policy contract uses
+`project init --mode quick --contract <contract.json>`. Existing exact retries of
+legacy projects retain their original QUICK behavior. To enable owned Advisor
+later, use `project enable-advisor --policy <policy.json>` to preview, then apply
+that same policy with `--apply --expected-snapshot <snapshot_sha256>`. Activation
+retains the genesis contract, history and budget in the same ledger; it does not
+grant new commands or resources. See [project lifecycle](project-lifecycle.md).
 
-If you cannot run `prepare.py`, `project init` accepts a hand-written contract with this exact shape: each `sha256` must be the real hex SHA-256 of the bound file, paths are relative to the project root, `min_useful_delta` is an exact rational string, and optional fields (`objective_sha256`, `execution_policy`, `stop_policy`, `maintenance_allowance`) are documented in [stop policy](stop-policy.md) and [native research](native-research.md). A contract with guessed hashes is rejected.
+In both modes, direction selection analyzes all declared active direction graphs
+and the current saved TMS. `analysis_coverage` records the scope, identities,
+counts and completeness; incomplete computation blocks selection. This covers
+registered project graphs, not arbitrary files, and does not turn unknown
+evidence into a fact.
+
+### Explicit QUICK contract template
+
+The limited template below has no Advisor policy and therefore requires
+`project init --mode quick --contract <contract.json>`. For the default FULL
+workflow use the complete example above or a [recipe](project-assembly.md).
+Each `sha256` must be the real file hash, paths are relative to the project root,
+and `min_useful_delta` is an exact rational string. Optional fields are documented
+in [stop policy](stop-policy.md) and [native research](native-research.md).
+Guessed hashes are rejected.
 
 ```json
 {

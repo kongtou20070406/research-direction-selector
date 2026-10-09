@@ -136,7 +136,9 @@ class OwnedAdvisorCLITests(unittest.TestCase):
             mutate_policy(self.policy)
         if include_policy:
             self.contract['advisor_policy'] = self.policy
-        return self.call('project', 'init', '--contract', self.write_json('contract.json', self.contract), ok=ok)
+        # Only the deliberate legacy fixture opts out of the new FULL default.
+        mode_args = () if include_policy else ('--mode', 'quick')
+        return self.call('project', 'init', *mode_args, '--contract', self.write_json('contract.json', self.contract), ok=ok)
 
     def create(self, run_id='baseline', *, spec=None, ok=True):
         return self.call('project', 'create', '--manifest',
@@ -198,9 +200,12 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.snapshot()['budget'], state['budget'])
         self.assertEqual(self.starts(), ['baseline'])
 
-    def test_candidate_limit_counts_pending_routes_without_erasing_completed_dependency(self):
+    # Full-analysis admission now needs room for all configured conditional routes.
+    # Cap refusal is tested separately in test_rds_advisor_coverage; these cases
+    # preserve the original execution, race, history and budget assertions.
+    def test_complete_search_retains_pending_routes_and_completed_dependencies(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             value['graph']['nodes'][0]['executable']['satisfied_when'] = [
                 {'fact': 'baseline.score', 'op': 'lt', 'value': 0}]
             value['graph']['edges'] = [{'from': 'baseline', 'to': 'repair', 'relation': 'prerequisite_for'}]
@@ -208,12 +213,12 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         frozen = deepcopy(self.snapshot()['contract']['advisor_policy'])
         first = self.output('project', 'next')
         search = next(row['search'] for row in first['recommendations'] if 'search' in row)
-        self.assertTrue(search['truncation']['truncated'])
-        self.assertIn('candidate limit', search['truncation']['reasons'])
+        self.assertFalse(search['truncation']['truncated'])
+        self.assertTrue(search['analysis_coverage']['full'])
         completed = self.output('project', 'advance')
         self.assertEqual(completed['advisor']['selected_run'], 'repair')
         search = next(row['search'] for row in completed['advisor']['recommendations'] if 'search' in row)
-        self.assertEqual(search['truncation']['limits']['max_candidates'], 1)
+        self.assertEqual(search['truncation']['limits']['max_candidates'], 2)
         self.assertFalse(search['truncation']['truncated'])
         self.assertEqual([row['action']['id'] for row in search['candidates']], ['repair'])
         self.assertTrue(any(step.get('step') == 'dependency' and step.get('from') == 'baseline'
@@ -237,9 +242,9 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertIsNone(self.output('project', 'advance')['selected_run'])
         self.assertEqual(self.snapshot()['budget'], final['budget'])
 
-    def test_active_reservation_precedes_newly_ready_earlier_route_under_candidate_limit(self):
+    def test_active_reservation_precedes_newly_ready_route_within_complete_search(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             value['graph']['nodes'][0]['executable']['preconditions'] = [
                 {'fact': 'run.repair.status', 'value': 'RESERVED'}]
             value['graph']['nodes'][1]['executable']['preconditions'] = []
@@ -250,8 +255,8 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         advice = self.output('project', 'next')
         self.assertEqual(advice['selected_run'], 'repair')
         search = next(row['search'] for row in advice['recommendations'] if 'search' in row)
-        self.assertEqual([row['action']['id'] for row in search['candidates']], ['repair'])
-        self.assertTrue(search['truncation']['truncated'])
+        self.assertEqual([row['action']['id'] for row in search['candidates']], ['baseline', 'repair'])
+        self.assertFalse(search['truncation']['truncated'])
         self.assertEqual(self.snapshot()['budget'], reserved['budget'])
         completed = self.output('project', 'advance')
         self.assert_owned_receipt(completed['receipt'], 'repair', 'SUCCEEDED')
@@ -265,7 +270,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
 
     def test_active_fallback_keeps_its_slot_before_a_new_reservation(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             baseline, trigger = value['graph']['nodes']
             spare = deepcopy(trigger)
             spare['id'] = 'spare'
@@ -289,9 +294,9 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         advice = self.output('project', 'next')
         self.assertEqual(advice['selected_run'], 'spare')
         search = next(row['search'] for row in advice['recommendations'] if 'search' in row)
-        self.assertEqual([row['action']['id'] for row in search['candidates']], ['spare'])
-        self.assertTrue(search['truncation']['truncated'])
-        self.assertEqual(search['truncation']['limits']['max_candidates'], 1)
+        self.assertEqual([row['action']['id'] for row in search['candidates']], ['baseline', 'spare'])
+        self.assertFalse(search['truncation']['truncated'])
+        self.assertEqual(search['truncation']['limits']['max_candidates'], 2)
         self.assertNotEqual(self.create('baseline', ok=False).returncode, 0)
         self.assertEqual(self.snapshot()['budget'], reserved['budget'])
         self.assertEqual(self.snapshot()['runs'], reserved['runs'])
@@ -307,7 +312,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
 
     def test_terminal_fallback_cannot_consume_pending_candidate_slot(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 3
             baseline, repair = value['graph']['nodes']
             diagnosis = deepcopy(repair)
             diagnosis['id'] = 'diagnosis'
@@ -334,7 +339,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
 
     def test_candidate_limit_does_not_reopen_exhausted_resource_budget(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             self.contract['budget']['cpu_seconds'] = 1
         self.initialize(mutate_policy=policy)
         completed = self.output('project', 'advance')
@@ -348,7 +353,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.starts(), ['baseline'])
 
     def test_positive_result_closes_declared_goal_without_repair_launch(self):
-        self.initialize('positive', mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize('positive', mutate_policy=lambda value: value['context'].update(max_candidates=2))
         result = self.output('project', 'advance')
         self.assert_owned_receipt(result['receipt'], 'baseline', 'SUCCEEDED')
         self.assertIsNone(result['advisor']['selected_run'])
@@ -475,7 +480,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.starts(), ['baseline'])
 
     def test_missing_or_changed_negative_artifact_blocks_dispatch_and_can_be_recovered(self):
-        self.initialize(mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize(mutate_policy=lambda value: value['context'].update(max_candidates=2))
         self.output('project', 'advance')
         path = self.root / 'outputs/baseline.json'
         original = path.read_bytes()
@@ -770,7 +775,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assert_owned_checkpoint_rejected('contract', 'Checkpoint contract mismatch')
 
     def test_concurrent_advance_cannot_launch_the_same_attempt_twice(self):
-        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=2))
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: self.call('project', 'advance', ok=False), range(2)))
         self.assertTrue(any(result.returncode == 0 for result in results),
@@ -783,7 +788,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.output('advise')['selected_run'], 'repair')
 
     def test_late_duplicate_registration_cannot_block_identical_reserved_map_execution(self):
-        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=2))
         gates = self.root / 'gates'
         gates.mkdir()
         wrapper = gates / 'advance.py'

@@ -185,7 +185,9 @@ class SuccessorTests(unittest.TestCase):
         # The frozen-contract rejection names the link that keeps the next phase in one study ledger.
         with self.assertRaises(ValueError) as caught:
             ProjectStore(root).initialize(dict(contract, description="changed"))
-        self.assertTrue(str(caught.exception).startswith("Contract is frozen; use a new project root"))
+        self.assertTrue(str(caught.exception).startswith("Contract is frozen; reuse this project for additional runs."))
+        self.assertIn("project enable-advisor", str(caught.exception))
+        self.assertIn("project revise", str(caught.exception))
         self.assertIn("project init --supersedes", str(caught.exception))
         self.assertIn(str(root.resolve()), str(caught.exception))
 
@@ -424,14 +426,14 @@ class SuccessorTests(unittest.TestCase):
         root, contract = self.phase("second")
         (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
         completed = subprocess.run([sys.executable, "-B", str(ROOT / "scripts" / "rds_cli.py"), "--root", str(root),
-                                    "project", "init", "--contract", str(root / "contract.json"),
+                                    "project", "init", "--mode", "quick", "--contract", str(root / "contract.json"),
                                     "--supersedes", str(self.first)], capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(completed.stdout)["predecessor_chain"][0]["status"], "VERIFIED")
         missing, contract = self.phase("third")
         (missing / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
         completed = subprocess.run([sys.executable, "-B", str(ROOT / "scripts" / "rds_cli.py"), "--root", str(missing),
-                                    "project", "init", "--contract", str(missing / "contract.json"),
+                                    "project", "init", "--mode", "quick", "--contract", str(missing / "contract.json"),
                                     "--supersedes", str(Path(self.tmp.name) / "nowhere")],
                                    capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(completed.returncode, 1)
@@ -470,7 +472,7 @@ class SuccessorTests(unittest.TestCase):
         def init(root, contract, predecessor):
             (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
             completed = subprocess.run([sys.executable, "-B", str(ROOT / "scripts" / "rds_cli.py"), "--root", str(root),
-                                        "project", "init", "--contract", str(root / "contract.json"),
+                                        "project", "init", "--mode", "quick", "--contract", str(root / "contract.json"),
                                         "--supersedes", str(predecessor)], capture_output=True, encoding="utf-8", timeout=30)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             chain = json.loads(completed.stdout)["predecessor_chain"]

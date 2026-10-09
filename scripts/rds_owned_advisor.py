@@ -49,7 +49,9 @@ def validate_policy(store, contract):
     goals = decision.get('goal_conditions')
     require(isinstance(goals, list) and 1 <= len(goals) <= 32, 'Owned Advisor needs explicit goal_conditions')
     require(all(isinstance(g, dict) and set(g) <= {'fact', 'op', 'value'} and _text(g.get('fact'))
-                and 'value' in g for g in goals), 'Invalid owned goal condition')
+                and 'value' in g and isinstance(g.get('op', 'eq'), str)
+                and g.get('op', 'eq') in {'eq', 'ne', 'in', 'lt', 'lte', 'gt', 'gte'}
+                for g in goals), 'Invalid owned goal condition')
     require(isinstance(graph, dict) and set(graph) <= {'nodes', 'edges', 'schema'}, 'Invalid owned judgment graph')
     require(isinstance(graph.get('nodes'), list) and len(graph['nodes']) <= 128
             and isinstance(graph.get('edges'), list) and len(graph['edges']) <= 512, 'Owned graph limits exceeded')
@@ -180,10 +182,8 @@ def _state(store, db):
                 'Owned receipt has no matching completion event')
         completed.append(receipt['sha256'])
     campaign = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED' ORDER BY id LIMIT 1").fetchone()
-    history = [{'sha256': digest(contract), 'contract': contract}]
-    if 'method_evolution' in contract:
-        from rds_method_revision import contract_history
-        history = contract_history(db)
+    from rds_method_revision import contract_history
+    history = contract_history(db)
     from rds_owned_history import history_cut
     try:
         verified_history = history_cut(store, db)
@@ -543,6 +543,11 @@ def review(store, persist=True):
             context['decision']['goal_conditions'] = effective_goals
         context['facts'] = _facts(spec)
         context['dependency_map'] = spec
+        # The same snapshot identity is consumed by direct API and CLI callers.
+        # A nonpersistent diagnostic is scoped to its supplied collected map.
+        if persist:
+            from rds_advisor_coverage import project_context
+            context = project_context(store.root, context)
         budget = {r['resource']: max(0, r['cap'] - r['spent'] - r['charged'] - r['reserved']) for r in state['budget']}
         identity = {'resource': 'wall_seconds', 'unit': 'seconds', 'comparison_group': 'owned-project',
                     'source': {'locator': 'owned project budget'}}
@@ -573,6 +578,8 @@ def review(store, persist=True):
         result.update(advice=advice, recommendations=recommendations, context=context)
         searches = [r['search'] for r in recommendations if r.get('type') == 'EXECUTABLE_DIRECTION_SEARCH']
         selection = searches[0]['selection_review'] if searches else {}
+        result['analysis_coverage'] = deepcopy(searches[0].get('analysis_coverage', {})) if searches else {}
+        complete = result['analysis_coverage'].get('full') is True
         if policy.get('tool_bindings'):
             from rds_owned_tools import consumption
             result['tool_utilization'] = consumption(store, state, context['facts'], tool_reports, selection, searches)
@@ -661,7 +668,7 @@ def review(store, persist=True):
                                                 frontier, precedence=precedence)
             if result['graph_ranker']['selection_applied']:
                 chosen = ranked
-        if not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
+        if complete and not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
             route = chosen[0]
             # Every dispatch, including a reservation, must still satisfy the
             # ordinary method, history and current evidence checks.
@@ -673,6 +680,10 @@ def review(store, persist=True):
         if coverage['errors']:
             result['status'] = 'COLLECTION_FAILED'
             result['warnings'].append({'kind': 'OWNED_EVIDENCE_INCOMPLETE', 'errors': deepcopy(coverage['errors'])})
+        elif not complete:
+            result.update(status='INCOMPLETE_ANALYSIS', selected_run=None, selected_manifest=None,
+                          next_move={'kind': 'COMPLETE_GRAPH_ANALYSIS', 'authorization': 'UNCHANGED',
+                                     'reason': 'Resolve incomplete graph analysis before dispatch; retain every active graph record'})
         if 'confirmation' in policy:
             from rds_domain_confirmation import inspect_confirmation
             try:
@@ -693,6 +704,7 @@ def review(store, persist=True):
 def prepare_admission(store, spec):
     report = review(store)
     require(report['status'] == 'REVIEWED' and report['selected_run'] == spec.get('id')
+            and report.get('analysis_coverage', {}).get('full') is True
             and report['selected_manifest'] == spec, 'Owned Advisor did not select this frozen manifest; inspect project next')
     from rds_owned_history import prepare_decision
     with store._db(True) as db:
@@ -700,12 +712,14 @@ def prepare_admission(store, spec):
     return {'fingerprint': report['fingerprint'], 'selected_run': report['selected_run'],
             'manifest_sha256': digest(spec), 'evidence_files': report['evidence_files'],
             'decision': prepare_decision(store, report, contract),
-            'snapshot_sha256': report['snapshot_sha256'], 'telemetry': deepcopy(report['telemetry'])}
+            'snapshot_sha256': report['snapshot_sha256'], 'telemetry': deepcopy(report['telemetry']),
+            'analysis_coverage': deepcopy(report['analysis_coverage'])}
 
 
 def check_admission(store, db, spec, token):
     """No nested write connection: called under the caller's BEGIN IMMEDIATE."""
     require(isinstance(token, dict) and token.get('selected_run') == spec.get('id')
+            and token.get('analysis_coverage', {}).get('full') is True
             and token.get('manifest_sha256') == digest(spec), 'Owned admission manifest binding mismatch')
     _reconcile(_state(store, db), token['fingerprint'], token.get('telemetry'),
                'Owned state changed after Advisor selection; retry admission')

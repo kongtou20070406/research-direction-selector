@@ -1545,7 +1545,7 @@ class ProtocolIdentityMessageTests(unittest.TestCase):
             (root / name).write_text(json.dumps(body), encoding="utf-8")
 
     def init(self, root):
-        return self.cli(root, "project", "init", "--contract", str(root / "contract.json"))
+        return self.cli(root, "project", "init", "--mode", "quick", "--contract", str(root / "contract.json"))
 
     def test_multi_file_conflict_is_refused_before_the_contract_freezes_and_is_fixable_in_place(self):
         root = self.project("multi", extra_code=True)

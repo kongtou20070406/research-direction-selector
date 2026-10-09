@@ -364,7 +364,7 @@ def _dependency_review(context, *, audit_receipts=False, audit_files=False, read
         spec = context["dependency_map"]
         raw = json.dumps(spec, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
         if len(raw) > 128 * 1024:
-            raise ValueError("dependency_map exceeds 128 KiB; retain only the current decision map")
+            raise ValueError("dependency_map exceeds 128 KiB; complete analysis is unavailable within this input bound")
         from rds_hypergraph import _validate, analyze_hypergraph
         # Existing internal maps stay strict. The compact declaration adapter
         # and program-owned snapshots let agents avoid writing these rows.
@@ -379,11 +379,13 @@ def _dependency_review(context, *, audit_receipts=False, audit_files=False, read
             raise ValueError('; '.join(row['path'] + ': ' + row['reason'] for row in input_review['errors']))
         try:
             shared = {}
+            if 'analysis_targets' in inspect.signature(analyze_hypergraph).parameters:
+                shared['analysis_targets'] = 'all'
             if read_receipt is not None and "read_receipt" in inspect.signature(analyze_hypergraph).parameters:
                 # An analyzer without the shared lookup still audits, reading on its own.
                 shared["read_receipt"] = read_receipt
             result = analyze_hypergraph(spec, audit_receipts_enabled=audit_receipts, **shared) if audit_receipts \
-                else analyze_hypergraph(spec)
+                else analyze_hypergraph(spec, **shared)
         except TypeError:
             # Analyzer without the receipts slice: no receipt audit is possible,
             # and a binding it cannot check must not be silently trusted.
@@ -408,7 +410,7 @@ def _dependency_review(context, *, audit_receipts=False, audit_files=False, read
             result.update(input_review=input_review, dependency_map=spec,
                           dependency_map_sha256=hashlib.sha256(normalized).hexdigest())
         return {**result, "input_sha256": hashlib.sha256(raw).hexdigest(),
-                "status": "INCOMPLETE" if result["truncated"] else "ANALYZED",
+                "status": "INCOMPLETE" if result["truncated"] or result.get('coverage', {}).get('full') is not True else "ANALYZED",
                 "authorization": "UNCHANGED"}
     except (ValueError, TypeError, KeyError) as exc:
         return {"status": UNKNOWN, "reason": str(exc), "authorization": "UNCHANGED",
@@ -955,11 +957,19 @@ def _next_move(review, search):
 def review_selection(search, context, *, _dependency=None, audit_receipts=False, audit_files=False,
                      _read_receipt=None):
     """Expose what the supplied directions can decide; never invent utility."""
-    ready = [c for c in search.get("candidates", []) if c.get("status") == "READY"]
     flags, candidates = [], []
     dependency = _dependency() if _dependency is not None else \
         _dependency_review(context, audit_receipts=audit_receipts, audit_files=audit_files,
                            read_receipt=_read_receipt)
+    from rds_advisor_coverage import assess
+    search['analysis_coverage'] = assess(search, dependency)
+    if not search['analysis_coverage']['full']:
+        flags.append({'kind': 'COMPLETE_GRAPH_ANALYSIS_REQUIRED',
+                      'next': 'Resolve analysis_coverage before choosing or dispatching any experiment; preserve all project graph records.'})
+        for candidate in search.get('candidates', []):
+            if candidate.get('status') == 'READY':
+                candidate.update(status='NEEDS_COMPLETE_ANALYSIS', local_status='READY')
+    ready = [c for c in search.get('candidates', []) if c.get('status') == 'READY']
     if search.get("truncation", {}).get("truncated"):
         flags.append({"kind": "SEARCH_TRUNCATED", "next": "Review the omitted search scope before claiming a best route."})
     obligations = all(c.get("action", {}).get("kind") == "OBLIGATION_CHECK" for c in ready)
@@ -994,11 +1004,7 @@ def review_selection(search, context, *, _dependency=None, audit_receipts=False,
                 flags.append({"kind": "GOAL_CONTRIBUTION_UNDECLARED" if contribution["status"] == "UNDECLARED" else "GOAL_CONTRIBUTION_INVALID",
                               "candidate": c["id"], "next": contribution["reason"]})
         candidates.append(report)
-    mapped = [c.get("goal_contribution", {}).get("graph_path", {}) for c in candidates]
-    healthy_mapped = any(p.get('status') == 'DECLARED_CONNECTED_PATH'
-                         and p.get('goal_review', {}).get('blocker_sets_complete') is True for p in mapped)
-    if dependency is not None and (dependency["status"] == UNKNOWN or
-            dependency["status"] == "INCOMPLETE" and not healthy_mapped):
+    if dependency is not None and dependency['status'] != 'ANALYZED':
         flags.append({"kind": "DEPENDENCY_MAP_INCOMPLETE",
                       "next": "Repair the map or inspect its truncated scope; missing blocker sets do not close the goal."})
     basis = "NO_READY_DIRECTION" if not ready else "SCOPED_OBLIGATION" if obligations else "REVIEW_ONLY"
@@ -1070,6 +1076,18 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
     raw_nodes, raw_edges = graph.get("nodes", []), graph.get("edges", [])
     if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
         raise ValueError("Graph nodes/edges must be lists")
+    # Validate the whole input before honoring any computation bound. Invalid
+    # records beyond a prefix are not silently omitted from the review.
+    nodes = {}
+    for node in raw_nodes:
+        if not isinstance(node, dict) or not isinstance(node.get('id'), str) or not node['id'] or node['id'] in nodes:
+            raise ValueError('Each graph node needs a unique nonempty string id')
+        nodes[node['id']] = node
+    for edge in raw_edges:
+        if (not isinstance(edge, dict) or not isinstance(edge.get('relation'), str)
+                or not edge['relation'] or not isinstance(edge.get('from'), str)
+                or not isinstance(edge.get('to'), str)):
+            raise ValueError('Each graph edge needs explicit from/to/relation strings')
     decision = context.get("decision")
     decision_id = decision.get("id") if isinstance(decision, dict) else decision
     targets = decision.get("target_rules") if isinstance(decision, dict) else None
@@ -1082,6 +1100,12 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
               "limitations": ["Derivations are reasoning dependencies, not causal proof. Imported source labels do not certify causal claims.",
                                "Only explicit executable configuration is searched; text triggers and unconfigured rules are not evaluated.",
                                "Dominance requires valid same-scope rival predictions; decision labels alone do not establish scientific value."]}
+    graph_sha = hashlib.sha256(json.dumps(graph, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    from rds_project import digest
+    result['context_sha256'] = digest(context)
+    result['graph_coverage'] = {'status': 'INCOMPLETE', 'full': False, 'input_sha256': graph_sha,
+                              'node_count': len(nodes), 'edge_count': len(raw_edges),
+                              'analyzed_nodes': [], 'analyzed_edges': [], 'reasons': []}
     def finish():
         chosen_templates = templates if templates is not None else context.get("templates")
         dependency = _dependency
@@ -1097,21 +1121,18 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             result["selection_review"] = review_selection(result, context, _dependency=dependency,
                                                           audit_receipts=audit_receipts, audit_files=audit_files)
         return result
-    if len(raw_nodes) > max_nodes:
+    if len(raw_nodes) > max_nodes or len(raw_edges) > 4096:
         result["truncation"].update(truncated=True)
-        result["truncation"]["reasons"].append("node limit")
+        reason = 'node limit' if len(raw_nodes) > max_nodes else 'edge limit'
+        result["truncation"]["reasons"].append(reason)
+        result['graph_coverage']['reasons'].append(reason)
+        return finish()
     if not isinstance(decision_id, str) or not decision_id.strip():
         result["limitations"].append("No next decision supplied; no test was inferred.")
-        return finish()
     facts, costs = context.get("facts", {}), context.get("costs", {})
     if not isinstance(facts, dict) or not isinstance(costs, dict):
         raise ValueError("Context facts/costs must be objects")
     budget = context.get("budget", {})
-    nodes = {}
-    for node in raw_nodes[:max_nodes]:
-        if not isinstance(node, dict) or not isinstance(node.get("id"), str) or node["id"] in nodes:
-            raise ValueError("Each graph node needs a unique string id")
-        nodes[node["id"]] = node
     parents = {n: [] for n in nodes}
     for edge in raw_edges:
         if isinstance(edge, dict) and edge.get("relation") == "prerequisite_for" and edge.get("to") in nodes:
@@ -1146,12 +1167,6 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
         if candidate_id in candidates:
             return
         full = len(candidates) >= max_candidates
-        if full:
-            result["truncation"].update(truncated=True)
-            if "candidate limit" not in result["truncation"]["reasons"]:
-                result["truncation"]["reasons"].append("candidate limit")
-            if action['id'] not in priority_action_ids:
-                return
         steps = [deepcopy(queries[q]) for q in dict.fromkeys(pending)]
         steps.append({"id": action["id"], "rule_id": rule_id, "kind": action.get("kind", "BOUNDED_CHECK"),
                       "description": action["description"], "conditional": status != "READY",
@@ -1180,6 +1195,11 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             result["blocked_candidates"].append(candidate)
         else:
             if full:
+                result['truncation']['truncated'] = True
+                if 'candidate limit' not in result['truncation']['reasons']:
+                    result['truncation']['reasons'].append('candidate limit')
+                if action['id'] not in priority_action_ids:
+                    return
                 # An owned active route may be emitted by any root or fallback.
                 # It can replace a nonpriority slot only after the same method,
                 # budget and prerequisite checks establish current readiness.
@@ -1196,6 +1216,8 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             raise ValueError(f"{rule_id}.{key} must be up to 32 explicit fact conditions")
         reports = []
         for condition in items:
+            if not isinstance(condition.get('op', 'eq'), str) or condition.get('op', 'eq') not in {'eq', 'ne', 'in', 'lt', 'lte', 'gt', 'gte'}:
+                raise ValueError(f'{rule_id}.{key} has an unsupported condition operator')
             report = evaluate_condition(condition, facts)
             derivation.append({"step": "fact_to_rule", "rule_id": rule_id, "role": key, **report})
             reports.append(report)
@@ -1230,6 +1252,9 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             return UNKNOWN
         applicability = conditions(rule_id, cfg, "preconditions", derivation, pending, fallbacks)
         if applicability == FALSE:
+            # Exact conjunction short-circuit. The whole-graph pass still
+            # evaluates every parent independently; irrelevant fallback actions
+            # must not become candidates for a disabled child.
             memo[rule_id] = FALSE
             return FALSE
         statuses = [applicability]
@@ -1246,7 +1271,42 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
         memo[rule_id] = truth
         return truth
 
-    roots = [rid for rid, node in nodes.items() if isinstance(node.get("executable"), dict)
+    # Evaluate every node, including disconnected and nonselected directions.
+    # Candidate generation remains scoped to the declared decision below.
+    coverage = result['graph_coverage']
+    for rid in nodes:
+        memo.clear()
+        derivation, pending, fallbacks = [], [], []
+        truth = visit(rid, [], derivation, pending, fallbacks, as_prerequisite=False)
+        cfg = nodes[rid].get('executable')
+        completion = []
+        satisfaction = UNKNOWN
+        if isinstance(cfg, dict):
+            satisfaction = conditions(rid, cfg, 'satisfied_when', completion, [], [])
+            if not completion:
+                satisfaction = UNKNOWN
+        action = cfg.get('action') if isinstance(cfg, dict) else None
+        valid, reason = _action_valid(action, current_choice)
+        coverage['analyzed_nodes'].append({'id': rid, 'action_readiness': truth, 'satisfaction': satisfaction,
+                                          'disposition': 'EVALUATED' if isinstance(nodes[rid].get('executable'), dict)
+                                                         else 'UNCONFIGURED_UNKNOWN',
+                                          'derivation': derivation, 'completion_conditions': completion,
+                                          'action_validation': {'valid': valid, 'reason': reason},
+                                          'discrimination': _discrimination(action, facts) if isinstance(action, dict)
+                                              and 'discrimination' in action else None})
+    for index, edge in enumerate(raw_edges):
+        missing = [edge[k] for k in ('from', 'to') if edge[k] not in nodes]
+        coverage['analyzed_edges'].append({'index': index, 'from': edge['from'], 'to': edge['to'],
+            'relation': edge['relation'], 'disposition': 'MISSING_ENDPOINT' if missing else
+                'PREREQUISITE_EVALUATED' if edge['relation'] == 'prerequisite_for' else 'DESCRIPTIVE_ONLY',
+            'reason': 'Missing endpoint: ' + ', '.join(missing) if missing else
+                'Explicit prerequisite relation' if edge['relation'] == 'prerequisite_for' else
+                'Declared descriptive relation; supplies no executable inference'})
+        if missing:
+            coverage['reasons'].append('Graph edge has missing endpoint: ' + ', '.join(missing))
+    coverage['reasons'].extend(result['truncation']['reasons'])
+    coverage.update(full=not coverage['reasons'], status='INCOMPLETE' if coverage['reasons'] else 'FULL')
+    roots = [rid for rid, node in nodes.items() if isinstance(decision_id, str) and isinstance(node.get("executable"), dict)
              and decision_id in node["executable"].get("decisions", []) and (targets is None or rid in targets)]
     for rid in roots:
         memo.clear()

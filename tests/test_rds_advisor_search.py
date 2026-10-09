@@ -122,7 +122,9 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([row['action']['id'] for row in ordinary['candidates']], ['first-test'])
         prioritized = search_directions(graph, context, max_candidates=1, priority_action_ids=('active-test',))
         self.assertEqual([row['id'] for row in prioritized['candidates']], ['trigger:active-test'])
-        self.assertEqual(prioritized['candidates'][0]['status'], 'READY')
+        # Retention priority cannot authorize a route from a partial comparison.
+        self.assertEqual(prioritized['candidates'][0]['status'], 'NEEDS_COMPLETE_ANALYSIS')
+        self.assertFalse(prioritized['analysis_coverage']['full'])
         self.assertEqual(prioritized['truncation']['limits']['max_candidates'], 1)
         self.assertIn('candidate limit', prioritized['truncation']['reasons'])
         self.assertTrue(prioritized['truncation']['truncated'])
@@ -146,11 +148,14 @@ class SearchTests(unittest.TestCase):
                     graph['nodes'][1]['executable']['preconditions'] = [{'fact': 'unread', 'value': True}]
                 result = search_directions(graph, context, max_candidates=1, priority_action_ids=('active-test',))
                 self.assertEqual([row['action']['id'] for row in result['candidates']], ['first-test'])
-                self.assertEqual(result['candidates'][0]['status'], 'READY')
+                self.assertEqual(result['candidates'][0]['status'],
+                                 'NEEDS_COMPLETE_ANALYSIS' if blocker == 'unknown-premise' else 'READY')
                 if blocker != 'unknown-premise':
                     self.assertEqual(result['blocked_candidates'][0]['status'],
                                      'BLOCKED_BUDGET' if blocker == 'budget' else 'BLOCKED_METHOD')
-                self.assertTrue(result['truncation']['truncated'])
+                # Budget/method refusals are fully evaluated and reported; an
+                # omitted conditional candidate is still a truncated comparison.
+                self.assertEqual(result['truncation']['truncated'], blocker == 'unknown-premise')
 
     def test_unrelated_actions_with_matching_decision_text_do_not_compete_on_cost(self):
         graph = {"nodes": [node("cheap"), node("important")], "edges": []}

@@ -995,6 +995,8 @@ def cmd_advise(args, rds):
     if getattr(args, 'saved_dependencies', False):
         from rds_tms_store import with_saved_dependencies
         state['advisor_context'] = with_saved_dependencies(args.root, state.get('advisor_context', {}))
+    from rds_advisor_coverage import project_context
+    state['advisor_context'] = project_context(args.root, state.get('advisor_context', {}))
     if getattr(args, "frontier", None):
         context = state.setdefault("advisor_context", {})
         require(isinstance(context, dict), "Research context must be an object")
@@ -1114,7 +1116,15 @@ def cmd_advise(args, rds):
 def cmd_project(args):
     """Run a locked external project without claiming task or mechanism gains."""
     from rds_project import ProjectStore
+    from rds_project_lifecycle import check_root, discover, enable_advisor, initialize
     store = ProjectStore(args.root)
+    if args.action == 'discover':
+        return discover(args.root)
+    if args.action != 'init':
+        check_root(args.root)
+    if args.action == 'enable-advisor':
+        return enable_advisor(store, load_spec(args.policy), apply=args.apply,
+                              expected_snapshot=args.expected_snapshot)
     if args.action == 'plan':
         from rds_steering import plan
         return plan(store, load_spec(args.intent) if args.intent else None,
@@ -1128,9 +1138,12 @@ def cmd_project(args):
     if args.action == "init":
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
-            from rds_project_assembly import initialize
-            return initialize(store, args.recipe)
-        return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
+            require(args.mode != 'quick', 'A recipe creates a FULL project with program-owned Advisor')
+            check_root(args.root, separate_reason=args.separate_project)
+            from rds_project_assembly import initialize as assemble
+            return assemble(store, args.recipe, separate_reason=args.separate_project)
+        return initialize(store, load_spec(args.contract), mode=args.mode, supersedes=args.supersedes,
+                          separate_reason=args.separate_project)
     if args.action == "revise":
         from rds_method_revision import apply
         return apply(store, load_spec(args.proposal))
@@ -1513,6 +1526,11 @@ def parser():
 
     project = commands.add_parser("project", help="Locked local project runner with receipts and resource accounting")
     pr_actions = project.add_subparsers(dest="action", required=True)
+    pr_actions.add_parser('discover', help='Find the existing project in this root/ancestors; report mode and next capabilities without execution')
+    pr_enable = pr_actions.add_parser('enable-advisor', help='Preview or atomically enable Advisor in this same ledger; preserve history and budget')
+    pr_enable.add_argument('--policy', required=True, help='Explicit basic owned Advisor policy JSON')
+    pr_enable.add_argument('--apply', action='store_true', help='Apply the exact reviewed snapshot; preview by default')
+    pr_enable.add_argument('--expected-snapshot', help='Snapshot SHA256 from the activation preview; required with --apply')
     pr_plan = pr_actions.add_parser('plan', help='Prepare a minimal draft with explicit unknowns; never authorize or launch work')
     pr_plan.add_argument('--intent', help='Optional declared goal/scope/budget/evaluation JSON')
     pr_plan.add_argument('--output', help='Write a new project-relative proposal artifact')
@@ -1526,6 +1544,8 @@ def parser():
     pr_source = pr_init.add_mutually_exclusive_group(required=True)
     pr_source.add_argument("--contract")
     pr_source.add_argument("--recipe", help="Compile explicit research declarations into an owned contract")
+    pr_init.add_argument('--mode', choices=['full', 'quick'], help='New projects default to FULL with Advisor; QUICK is explicitly limited. Existing exact retries retain their mode')
+    pr_init.add_argument('--separate-project', metavar='REASON', help='Explicitly declare an independent project; required under an existing research root')
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
                          help="Link this new root to a frozen project root by digest; the predecessor is never modified")
     pr_actions.add_parser("revise", help="Adopt a bounded method revision in the same ledger without resetting budget or deadline").add_argument("--proposal", required=True)
@@ -1837,6 +1857,8 @@ def _main():
                 if args.saved_dependencies:
                     from rds_tms_store import with_saved_dependencies
                     context = with_saved_dependencies(args.ledger, context)
+                from rds_advisor_coverage import project_context
+                context = project_context(args.ledger, context)
                 review = (advice, context)
             result = execute(args, review=review)
         elif args.command == "reject":
@@ -1895,10 +1917,18 @@ def _main():
             result = cmd_decide(args, rds)
         else:
             result = cmd_status(args, rds)
+        workflow = None
+        if args.command in {'project', 'exec', 'advise', 'init'}:
+            from rds_project_lifecycle import describe
+            workflow = result.get('workflow') or describe(args.root, quick=args.command in {'exec', 'init'})
+            print('[RDS] mode=' + workflow['mode'] + ' advisor=' + workflow['advisor'] +
+                  ' root=' + workflow['project_root'], file=sys.stderr)
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json
         if compact:
             from rds_quick import brief
             summary = brief(args.root, result, VERSION)
+            if workflow is not None:
+                summary['workflow'] = {key: workflow[key] for key in ('mode', 'advisor', 'next_action')}
             if args.command == 'rsi' and args.action == 'compare':
                 summary.update({k: result[k] for k in ('correctness', 'comparable_context', 'speedup_ratio',
                                                       'precision', 'precision_key', 'case_count', 'samples_per_tool',
@@ -1907,7 +1937,10 @@ def _main():
                 summary['reasons'] = result['reasons']
             print(json.dumps(summary, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
         else:
-            print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+            # Hashed receipts/events keep their exact body; the mode banner is
+            # separate. Operational un-hashed responses can carry discovery data.
+            shown = {**result, 'workflow': workflow} if workflow is not None and 'sha256' not in result else result
+            print(json.dumps(shown, ensure_ascii=False, indent=2, allow_nan=False))
         if args.command == "exec" and (result.get("receipt") or {}).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
         if args.command == 'guard' or args.command == 'exec' and 'regression_review' in result:
@@ -1923,7 +1956,7 @@ def _main():
             return 1 if result['correctness'] == 'FAIL' else 2 if result['status'] == 'UNKNOWN' else 0
         if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and result.get('receipt', result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
-        if result.get('status') == 'COLLECTION_FAILED' or (result.get('advisor') or {}).get('status') == 'COLLECTION_FAILED':
+        if result.get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'} or (result.get('advisor') or {}).get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'}:
             return 2  # The receipt is retained; collection needs attention, never a training retry.
         if args.command == "meta" and args.action == "evaluate-rule" and not result.get("adoption_eligible"):
             return 1
@@ -1933,8 +1966,9 @@ def _main():
         # KeyError/TypeError also come from unvalidated user specs, so they stay rejections.
         print("[RDS-REJECT] " + str(exc), file=sys.stderr)
         if args.command == "init" or args.command == "project" and args.action == "init":
-            # Point at a command that produces a valid, bound contract from scratch (#72).
-            print("[RDS-HINT] python -B examples/project-runner/prepare.py --root ./my-project", file=sys.stderr)
+            from rds_project import _shell_argument
+            print('[RDS-HINT] Inspect the existing project first: python -B scripts/rds_cli.py --root ' +
+                  _shell_argument(str(args.root)) + ' project discover; see docs/project-lifecycle.md', file=sys.stderr)
         return 1
     except (sqlite3.Error, ImportError, subprocess.SubprocessError) as exc:
         # Nothing in the request was refused: the state database, a dependency or a subprocess failed.

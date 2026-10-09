@@ -164,7 +164,7 @@ Run the following CPU demonstration from the repository root, using a new empty 
 python -B examples/project-runner/prepare.py --root ./my-project
 
 # 1. Initialize research state from contract
-python -B scripts/rds_cli.py --root ./my-project project init --contract ./my-project/contract.json
+python -B scripts/rds_cli.py --root ./my-project project init --mode quick --contract ./my-project/contract.json
 
 # 2. Create and execute both arms with transactional budget
 python -B scripts/rds_cli.py --root ./my-project project create --manifest ./my-project/control.json

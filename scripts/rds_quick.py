@@ -92,6 +92,10 @@ def choice(advice, context, candidate_id=None):
             raise ValueError('No READY candidate; configured actions were discarded: ' + _discarded_choice_hint(discarded))
     if not matches and len(discarded_matches) == 1:
         raise ValueError('Selected candidate was discarded: ' + _discarded_choice_hint(discarded_matches))
+    from rds_advisor_coverage import require_complete
+    require_complete(searches)
+    require(all(search.get('context_sha256') == digest(context) for search in searches),
+            'Advisor context changed after complete graph analysis; review the current graph and facts again')
     require(len(matches) == 1, 'Choose one returned candidate ID; missing, pruned or ambiguous candidate')
     candidate = deepcopy(matches[0])
     from rds_methods import review_candidate
@@ -237,6 +241,15 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         contract = store._contract(db)
+        if dispatch and request.get('research_context'):
+            # Bind allowance admission to the graph revision reviewed by the
+            # caller. The final launch path also rechecks the current snapshot.
+            reviewed = request['research_context'].get('dependency_snapshot_sha256')
+            snapshot = None
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+                snapshot = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+            require((snapshot['sha256'] if snapshot else None) == reviewed,
+                    'Dependency snapshot changed before execution allowance; review the complete graph again')
         require('advisor_policy' not in contract,
                 'Program-owned Advisor requires project advance/create/execute; quick child allowance cannot bypass it')
         require('stop_policy' not in contract and 'maintenance_allowance' not in contract,
@@ -391,6 +404,8 @@ def _inputs(root, argv, binds):
 def execute(args, review=None):
     """Create one frozen normal ProjectStore per named job, without JSON boilerplate."""
     root = Path(args.root).resolve()
+    from rds_project_lifecycle import check_root
+    check_root(root)
     require(root.is_dir(), 'Source root must exist')
     owner = Path(args.ledger).resolve() if review is not None else None
     source_store = ProjectStore(root)
@@ -487,6 +502,7 @@ def execute(args, review=None):
     if review is not None:
         request['research_context'] = {'sha256': digest(review[1]), 'candidate': args.choose,
                                        'ledger': str(Path(args.ledger).resolve())}
+        request['research_context']['dependency_snapshot_sha256'] = review[1].get('dependency_snapshot_sha256')
     execution_policy, executor_sha256 = None, None
     if owner is not None:
         parent = ProjectStore(owner)
@@ -530,6 +546,9 @@ def execute(args, review=None):
             result['regression_review'] = read(report_path)[0]
         return result
     if owner is not None:
+        if review is not None:
+            from rds_advisor_coverage import project_context
+            choice(review[0], project_context(args.ledger, review[1]), args.choose)
         from rds_advisor import _loop_route
         observation = _charge_ledger(owner, workspace, request, timeout,
             route=_loop_route(selected['candidate']) if review is not None else None, source_root=root,
@@ -595,6 +614,9 @@ def execute(args, review=None):
         store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
+    if review is not None:
+        from rds_advisor_coverage import project_context
+        choice(review[0], project_context(args.ledger, review[1]), args.choose)
     receipt = store.execute(args.name, background=args.background)
     regression = None
     if guard_path is not None:
@@ -696,6 +718,16 @@ def brief(root, value, version, formal=False):
         flags = relevant + [kind for kind in flags if kind not in advisory_moves]
         summary['flags'] = list(dict.fromkeys(flags))[:3]
     owned = value.get('advisor') or value
+    graph_reviews = [r['search'].get('analysis_coverage') for r in owned.get('recommendations', [])
+                     if 'search' in r]
+    analysis = owned.get('analysis_coverage') or next((r for r in graph_reviews if r), None)
+    if analysis:
+        summary['analysis_coverage'] = {key: analysis[key] for key in ('status', 'full', 'scope')}
+        summary['analysis_coverage']['graphs'] = [
+            {key: graph.get(key) for key in ('kind', 'input_sha256', 'node_count', 'edge_count', 'full')}
+            for graph in analysis['graphs']]
+        summary['analysis_coverage']['reasons'] = analysis['reasons'][:3]
+        summary['analysis_coverage']['omitted_reasons'] = max(0, len(analysis['reasons']) - 3)
     if 'steering' in owned:
         state = owned['steering']
         summary['steering'] = {key: state.get(key) for key in ('revision', 'paused', 'kind', 'instruction_id')}

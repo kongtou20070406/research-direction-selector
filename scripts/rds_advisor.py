@@ -500,6 +500,10 @@ class RDSAdvisor:
         """Read real state and supplied graph; recommend a review, never a causal ranking."""
         recommendations = []
         context = state.get("advisor_context", {})
+        if isinstance(context, dict):
+            from rds_advisor_coverage import project_context
+            context = project_context(self.root_dir, context)
+            state = {**state, 'advisor_context': context}
         research_mode = context.get("research_mode") if isinstance(context, dict) else None
         if research_mode is not None and research_mode not in ("theory", "empirical", "mixed"):
             raise ValueError("research_mode must be theory, empirical or mixed")
@@ -517,16 +521,16 @@ class RDSAdvisor:
                     from rds_advisor_search import _obstruction_records
                     _obstruction_records(context)
                 return recommendations  # Pure frontier queries do not need unrelated ML advice or rule libraries.
-        if context and (not isinstance(context, dict) or "decision" in context or "frontier" not in context):
+        if not isinstance(context, dict) or "decision" in context or "frontier" not in context:
             from rds_advisor_search import search_directions, review_selection
             options = {"templates": state["advisor_templates"]} if state.get("advisor_templates") else {}
             if priority_action_ids:
                 options['priority_action_ids'] = priority_action_ids
-            if isinstance(state["advisor_context"], dict):
-                options.update({key: state["advisor_context"][key] for key in ("max_depth", "max_candidates")
-                                if key in state["advisor_context"]})
+            if isinstance(context, dict):
+                options.update({key: context[key] for key in ("max_depth", "max_candidates")
+                                if key in context})
                 for key in ("audit_receipts", "audit_files"):
-                    if state["advisor_context"].get(key) is True:
+                    if context.get(key) is True:
                         options[key] = True
             read_receipt = None
             if options.get("audit_receipts"):
@@ -537,14 +541,13 @@ class RDSAdvisor:
             if isinstance(context, dict) and "dependency_map" in context:
                 # History filters candidates, then the final review evaluates them.
                 options["_defer_selection_review"] = True
-                if options.get("templates", context.get("templates")) is not None:
-                    from rds_advisor_search import _operation_dependency
-                    dependency = _operation_dependency(context,
-                                                       audit_receipts=options.get("audit_receipts", False),
-                                                       audit_files=options.get("audit_files", False),
-                                                       read_receipt=read_receipt)
-                    options["_dependency"] = dependency
-            search = search_directions(judgment_graph, state["advisor_context"], **options)
+                from rds_advisor_search import _operation_dependency
+                dependency = _operation_dependency(context,
+                                                   audit_receipts=options.get("audit_receipts", False),
+                                                   audit_files=options.get("audit_files", False),
+                                                   read_receipt=read_receipt)
+                options["_dependency"] = dependency
+            search = search_directions(judgment_graph, context, **options)
             loop_review = self._review_loop_history(state, context, search)
             search["selection_review"] = review_selection(search, context, _dependency=dependency,
                                                           audit_receipts=options.get("audit_receipts", False),

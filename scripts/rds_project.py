@@ -623,7 +623,7 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
-    def initialize(self, contract, supersedes=None):
+    def initialize(self, contract, supersedes=None, *, scope_declaration=None):
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
@@ -766,8 +766,10 @@ class ProjectStore:
             db.execute("BEGIN IMMEDIATE")
             old = db.execute("SELECT sha256 FROM contract WHERE id=1").fetchone()
             if old:
-                require(old["sha256"] == digest(contract), "Contract is frozen; use a new project root"
-                        f" (project init --supersedes {_shell_argument(str(self.root))} links it to this root's ledger)")
+                require(old["sha256"] == digest(contract), "Contract is frozen; reuse this project for additional runs. "
+                        "Use project enable-advisor for same-ledger activation, or project revise for authorized method changes. "
+                        "A genuinely changed research contract needs an explicit successor "
+                        f"(project init --supersedes {_shell_argument(str(self.root))})")
                 if predecessor is not None:
                     recorded = self._link_record(db)[0] or {}
                     require(recorded.get("root_path") == predecessor["root_path"]
@@ -786,6 +788,12 @@ class ProjectStore:
                         db.execute(f"CREATE TRIGGER predecessor_no_{action.lower()} BEFORE {action} ON predecessor "
                                    "BEGIN SELECT RAISE(ABORT,'predecessor is append-only'); END")
                     db.execute("INSERT INTO predecessor VALUES (1,?,?)", (digest(predecessor), canonical(predecessor)))
+            if scope_declaration is not None:
+                row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='PROJECT_SCOPE_DECLARED' LIMIT 1").fetchone()
+                require(row is None or json.loads(row['body']) == scope_declaration,
+                        'Independent project declaration is already recorded')
+                if row is None:
+                    db.execute('INSERT INTO events(body) VALUES (?)', (canonical(scope_declaration),))
         return self.snapshot()
 
     @staticmethod
@@ -1459,9 +1467,10 @@ class ProjectStore:
             steering = current(db)
             if steering is not None:
                 snapshot['steering'] = view(steering)
-            if 'method_evolution' in contract:
-                from rds_method_revision import contract_history, pending_revision
-                snapshot['contract_history'] = contract_history(db)
+            from rds_method_revision import contract_history, pending_revision
+            history = contract_history(db)
+            if 'method_evolution' in contract or len(history) > 1:
+                snapshot['contract_history'] = history
                 pending = pending_revision(db)
                 snapshot['method_revision_pending'] = ({'id': pending['id'], 'sha256': pending['sha256']}
                                                        if pending else None)
