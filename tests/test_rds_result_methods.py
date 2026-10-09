@@ -1,5 +1,7 @@
 """Finite independent method oracles; no scientific uncertainty from correlated rows."""
 from copy import deepcopy
+from fractions import Fraction
+from itertools import permutations
 from pathlib import Path
 import sys
 import unittest
@@ -26,6 +28,30 @@ DOMAIN = {'domain': 'four explicitly supplied points', 'precision': 'float64',
 
 
 class PairedMethodTests(unittest.TestCase):
+    def test_cancellation_permutations_keep_exact_mean_and_direction(self):
+        values = [1e16, 1.0, -1e16]
+        expected = float(sum(map(Fraction, values)) / len(values))
+        for ordered in permutations(values):
+            for direction in ('minimize', 'maximize'):
+                c, b = points(list(ordered), True), points([0.0] * 3)
+                c['identity']['direction'] = b['identity']['direction'] = direction
+                original = deepcopy([c, b])
+                result = compare_paired_metrics(c, b, dict(SAMPLING, independent=True))
+                self.assertEqual(result['status'], 'COMPARABLE')
+                self.assertEqual(result['mean_delta'], expected)
+                self.assertEqual(result['mean_improvement'], -expected if direction == 'minimize' else expected)
+                self.assertAlmostEqual(result['standard_error'] / 1e16, (1 / 3) ** 0.5)
+                self.assertEqual(result['uncertainty_status'], 'ESTIMATED_UNDER_CALLER_IID_PREMISE')
+                self.assertEqual(result['scientific_support'], 'UNKNOWN')
+                self.assertEqual([c, b], original)
+
+    def test_finite_values_with_unrepresentable_total_remain_unknown(self):
+        result = compare_paired_metrics(points([1e308, 1e308], True), points([0.0, 0.0]), SAMPLING)
+        self.assertEqual(result['status'], 'UNKNOWN')
+        self.assertEqual(result['reason'], 'UNREPRESENTABLE_DIFFERENCE')
+        self.assertIsNone(result['mean_delta'])
+        self.assertIsNone(result['standard_error'])
+
     def test_descriptive_pairs_and_iid_standard_error_are_distinct(self):
         result = compare_paired_metrics(points([0, 2], True), points([1, 1]), SAMPLING)
         self.assertEqual(result['status'], 'COMPARABLE')
@@ -116,6 +142,12 @@ class ResidualMethodTests(unittest.TestCase):
             exec(compile(code, '<extracted-method>', 'exec'), namespace)
             self.assertEqual(namespace[entry](*args)[key], expected)
             self.assertIn('_paired_points', included)
+        code, _ = extract_function(source, 'compare_paired_metrics')
+        namespace = {}
+        exec(compile(code, '<extracted-cancellation>', 'exec'), namespace)
+        result = namespace['compare_paired_metrics'](points([1e16, 1.0, -1e16], True),
+                                                    points([0.0] * 3), SAMPLING)
+        self.assertEqual(result['mean_delta'], 1 / 3)
 
 
 if __name__ == '__main__':

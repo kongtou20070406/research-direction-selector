@@ -6,7 +6,7 @@ input and receipt bytes. Arithmetic and inventory do not establish scientific
 support. Extract the selected function with the existing ``rsi extract`` entry.
 """
 from json import loads
-from math import isfinite
+from math import isfinite, fsum
 from fractions import Fraction
 
 MAX_BYTES = 2097152
@@ -526,7 +526,7 @@ def compare_paired_metrics(candidate, baseline, sampling):
         return result
     try:
         differences = [c - b for c, b in zip(cv, bv)]
-        mean = sum(differences) / len(differences)
+        mean = fsum(differences) / len(differences)
         improvement = -mean if report['candidate']['identity']['direction'] == 'minimize' else mean
         _require(_numeric(mean) and _numeric(improvement), 'Unrepresentable paired difference')
     except (ArithmeticError, ValueError):
@@ -538,7 +538,7 @@ def compare_paired_metrics(candidate, baseline, sampling):
             centered = [v - mean for v in differences]
             _require(all(_numeric(v) for v in centered), 'Unrepresentable centered differences')
             scale = max(abs(v) for v in centered)
-            se = (scale * (sum((v / scale) ** 2 for v in centered)
+            se = (scale * (fsum((v / scale) ** 2 for v in centered)
                           / (len(differences) - 1) / len(differences)) ** 0.5) if scale else 0.0
             _require(_numeric(se) and (not scale or se > 0), 'Unrepresentable uncertainty')
         except (ArithmeticError, ValueError):

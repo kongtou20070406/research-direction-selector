@@ -29,6 +29,7 @@ MAX_RECORDS = 2048
 MAX_DIRECTORIES = 4096
 MAX_ENTRIES = 32768
 MAX_DEPTH = 32
+WINDOWS = os.name == 'nt'
 FIELDS = {'schema', 'kind', 'binding_id', 'workspace_root', 'project_root',
           'ledger_kind', 'genesis_sha256', 'event_sha256'}
 
@@ -659,8 +660,33 @@ def _quiescent(db, project, workspace=None):
                 pending.extend(_retained_targets(root, child, inventory, workspace=workspace))
 
 
+def _sync_directory(path):
+    """Persist POSIX publication and temporary-name removal, or refuse success."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _move_write_through(source, destination):
+    """Publish on Windows without replacement or cross-volume copy fallback."""
+    import ctypes
+    from ctypes import wintypes
+    move = ctypes.WinDLL('kernel32', use_last_error=True).MoveFileExW
+    move.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD)
+    move.restype = wintypes.BOOL
+    if not move(str(source), str(destination), 0x8):  # MOVEFILE_WRITE_THROUGH
+        error = ctypes.get_last_error()
+        if error in (80, 183):  # ERROR_FILE_EXISTS / ERROR_ALREADY_EXISTS
+            raise FileExistsError(error, 'Campaign marker already exists', str(destination))
+        raise ctypes.WinError(error)
+
+
 def _publish(path, value):
-    """Hard-link a complete same-directory file; never overwrite another marker."""
+    """Publish complete same-directory bytes with an OS durability barrier."""
+    require(WINDOWS or hasattr(os, 'O_DIRECTORY'),
+            'Durable campaign publication is unsupported on this platform')
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.rds-campaign-', delete=False) as stream:
@@ -669,12 +695,17 @@ def _publish(path, value):
             stream.flush()
             os.fsync(stream.fileno())
         try:
-            os.link(temporary, path)
+            if WINDOWS:
+                _move_write_through(temporary, path)
+            else:
+                os.link(temporary, path)
         except FileExistsError:
             require(_read(path) == value, 'Campaign marker already has a different binding')
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+            if not WINDOWS:
+                _sync_directory(path.parent)
 
 
 def bind(store, workspace):
