@@ -264,7 +264,10 @@ class Wheel:
         require(not any(evaluator == p or evaluator.is_relative_to(p) for p in writable),
                 "evaluator is in an agent-writable tree")
         require(evaluator.is_file() and sha(evaluator) == contract["evaluator_sha256"], "evaluator hash mismatch", 3)
-        require(sha(self.path(setup["data_path"])) == contract["data_slice_sha256"], "data slice hash mismatch", 3)
+        data = self.path(setup["data_path"])
+        require(not any(data == p or data.is_relative_to(p) for p in writable),
+                "data slice is in an agent-writable tree")
+        require(sha(data) == contract["data_slice_sha256"], "data slice hash mismatch", 3)
         for role, path, expected in (("evaluator", setup["evaluator_path"], contract["evaluator_sha256"]),
                                      ("data", setup["data_path"], contract["data_slice_sha256"])):
             require(any(b.get("role") == role and b.get("path") == path and b.get("sha256") == expected
@@ -448,7 +451,8 @@ class Wheel:
                 row = decode(raw.decode("utf-8"))
                 require(isinstance(row, dict) and set(row) == {"proposal_id", "proposer_id", "kind", "factor", "parent_contract_id", "ts"},
                         "invalid proposal schema")
-                require(str(uuid.UUID(row["proposal_id"])) == row["proposal_id"], "invalid proposal UUID")
+                require(isinstance(row["proposal_id"], str)
+                        and str(uuid.UUID(row["proposal_id"])) == row["proposal_id"], "invalid proposal UUID")
                 require(isinstance(row["proposer_id"], str) and row["proposer_id"]
                         and len(row["proposer_id"].encode("utf-8")) <= MAX_PROPOSER_BYTES, "invalid proposer_id")
                 require(row["kind"] == "factor" and isinstance(row["factor"], str) and TOKEN.fullmatch(row["factor"]), "invalid factor")
@@ -492,6 +496,49 @@ class Wheel:
         self.project("execute", "--id", manifest["id"])
         return 0
 
+    def resume_pending(self, state, snapshot):
+        """Finish only a journaled manifest with no native execution attempt."""
+        pending = state["pending"]
+        manifest, kind = pending["manifest"], pending["kind"]
+        require(kind in {"main", "screen"}, "invalid pending dispatch kind", 3)
+        if kind == "screen":
+            seconds = manifest.get("resource_estimates", {}).get("wall_seconds")
+            require(finite(seconds), "invalid pending screen reservation", 3)
+            milliseconds = Fraction(str(seconds)) * 1000
+            require(milliseconds.denominator == 1 and 0 < milliseconds <= self.contract["screen_wall_ms"],
+                    "invalid pending screen reservation", 3)
+            expected = self.manifest(pending["factor"], kind, int(milliseconds))
+        else:
+            expected = self.manifest(pending["factor"], kind)
+        require(manifest == expected, "pending manifest differs from frozen mapping", 3)
+        relative = ("screen/" if kind == "screen" else "manifests/") + manifest["id"] + ".json"
+        if self.state_path(relative).exists():
+            require(read_json(self.state_path(relative)) == manifest, "retained pending manifest changed", 3)
+        else:
+            self.write(relative, manifest, once=True)
+        runs = [r for r in snapshot.get("runs", []) if r.get("id") == manifest["id"]]
+        require(len(runs) <= 1, "ambiguous pending run identity", 4)
+        if not runs:
+            self.project("create", "--manifest", str(self.state_path(relative)))
+            snapshot = self.project("status")
+            runs = [r for r in snapshot.get("runs", []) if r.get("id") == manifest["id"]]
+        require(len(runs) == 1, "pending run registration is unknown", 4)
+        run = runs[0]
+        effective = run.get("effective_contract_sha256")
+        require(run.get("manifest") == manifest and run.get("manifest_sha256") == digest(manifest)
+                and isinstance(effective, str) and HEX.fullmatch(effective)
+                and effective == snapshot.get("contract_sha256"),
+                "pending run belongs to another manifest or contract", 4)
+        require(run.get("status") == "RESERVED" and "attempt_id" in run and run["attempt_id"] is None
+                and all(run.get(k) is None for k in ("worker_pid", "pid", "started_at", "scheduler")),
+                "pending execution has an attempt or unknown state; inspect original project status", 4)
+        # The kernel claims the attempt atomically. A concurrent caller cannot
+        # launch the same run again even if it passed the preceding read.
+        pending["submitted"] = True
+        self.write("state.json", state)
+        self.project("execute", "--id", manifest["id"])
+        return 0
+
     def next_factor(self, state, snapshot):
         dead = set(self.tokens("dead.txt"))
         factor = next((f for f in self.tokens("factors.txt") if f not in dead), None)
@@ -530,7 +577,8 @@ class Wheel:
             require(all(self.mapping[k]["id"] in receipts for k in ("control", "initial")), "missing tick-0 paired receipts", 4)
             if pending:
                 execute_id, factor = pending["manifest"]["id"], pending["factor"]
-                require(execute_id in receipts, "pending execution has no receipt; inspect original project status", 4)
+                if execute_id not in receipts:
+                    return self.resume_pending(state, snapshot)
                 treatment = receipts[execute_id]
                 expected = pending["manifest"]
             else:

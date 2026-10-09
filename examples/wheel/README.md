@@ -67,6 +67,8 @@ recovery, not a cross-storage power-loss transaction.
 Metric direction and useful-delta threshold come from the frozen project
 contract; the wheel contract must agree. Receipt bindings, output hashes and
 the pre-registered slice are checked. Exit code does not determine the cell.
+Both the evaluator and declared data slice must be outside every declared
+agent-writable root and project output root before initialization.
 Either absent/nonfinite metric yields UNKNOWN; threshold equality qualifies.
 `cell changed` compares the new TRUE/FALSE with the preceding processed cell;
 the first known cell changes from the initial unset state.
@@ -78,6 +80,13 @@ processed transitions and pending execution are retained separately. A nonzero,
 unchanged cell with live factors idles. With no live factors, the wheel tries
 SCREEN before pausing for lack of eligible proposals. It pauses before exceeding
 the next reservation, and never widens `band.json` from `{"width":"narrow"}`.
+
+If a process stops after journaling dispatch but before a native attempt, the
+next tick retains that same manifest and completes its remaining registration
+and execution. It requires the exact frozen manifest and native contract, and
+only executes an unstarted RESERVED run with no attempt or worker identity.
+An existing attempt, terminal run without a receipt, mismatched manifest or
+unknown native state requires inspection; a tick never redispatches it.
 
 SCREEN selects the oldest unprocessed eligible inbox row, with default quota 1
 keyed by proposer ID. Its budget is `min(screen_wall_ms, remaining_wall // 10)`.
