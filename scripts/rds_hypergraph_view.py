@@ -249,7 +249,7 @@ function startGraph(){
  const pastels=['#a9c8ec','#d4c0e8','#b3d8cd','#e5c4b0','#cad4a4','#d3bfce'];
  const relations=new Map([...new Set(graph.hyperedges.map(relation))].map((type,i)=>[type,{style:['solid','dashed','dotted','dashdot'][i%4],color:pastels[i%pastels.length],width:.65,mode:/竞争|冲突|反驳|contradict|conflict|excludes/i.test(type)?'repel':'attract',strength:type==='主题关联'?.55:1,distance:/竞争|冲突|反驳|contradict|conflict|excludes/i.test(type)?180:65}]));
  const canvas=$('canvas');canvas.id='hg-canvas';canvas.tabIndex=0;canvas.setAttribute('role','img');canvas.setAttribute('aria-label','可交互研究超图。方向键平移，加减号缩放，0 适应全图。可通过搜索选择节点。');shell.append(canvas);const ctx=canvas.getContext('2d');
- const top=$('div',undefined,'hg-top'),title=$('h1',undefined,'hg-title');title.append($('span','RDS'),'研究超图');top.append(title);
+ const top=$('div',undefined,'hg-top'),title=$('h1',undefined,'hg-title');title.append($('span','RDS'),data.readable?.graph?.title?.trim()||'研究超图');top.append(title);
  const counts=$('div',`${graph.nodes.length.toLocaleString()} 个节点  ·  ${graph.hyperedges.length.toLocaleString()} 条超边  ·  ${links.length.toLocaleString()} 条连接`,'hg-counts');if(data.demo)counts.append($('span','合成示例','hg-demo'));top.append(counts);shell.append(top);
  const actions=$('div',undefined,'hg-actions'),searchWrap=$('div',undefined,'hg-search-wrap'),search=$('input',undefined,'hg-search'),results=$('div',undefined,'hg-results');search.id='hg-search';search.type='search';search.placeholder='搜索节点或关系…';search.setAttribute('aria-label','搜索节点或关系');results.hidden=true;results.id='hg-search-results';searchWrap.append(search,results);actions.append(searchWrap);
  const settings=$('aside',undefined,'hg-panel'),detail=$('aside',undefined,'hg-panel');settings.id='hg-settings';detail.id='hg-detail';settings.hidden=detail.hidden=true;settings.setAttribute('aria-label','图谱设置');detail.setAttribute('aria-label','节点与关系详情');
@@ -324,18 +324,19 @@ function startGraph(){
  function drawMini(){const w=minimap.width,h=minimap.height;mini.clearRect(0,0,w,h);const k=Math.min((w-16)/bounds.w,(h-16)/bounds.h),ox=(w-bounds.w*k)/2,oy=(h-bounds.h*k)/2;mini.fillStyle=light?'#898990':'#98989f';mini.globalAlpha=.7;for(const item of items){if(item.kind==='edge')continue;mini.fillRect(ox+(positions[item.index*2]-bounds.x)*k,oy+(positions[item.index*2+1]-bounds.y)*k,2,2)}mini.globalAlpha=1;mini.strokeStyle='#aa99cf';mini.lineWidth=1.5;mini.strokeRect(ox+(view.x-width/(2*view.k)-bounds.x)*k,oy+(view.y-height/(2*view.k)-bounds.y)*k,width/view.k*k,height/view.k*k)}
  minimap.addEventListener('pointerdown',e=>{const box=minimap.getBoundingClientRect(),w=minimap.width,h=minimap.height,k=Math.min((w-16)/bounds.w,(h-16)/bounds.h);view.x=bounds.x+((e.clientX-box.left)*w/box.width-(w-bounds.w*k)/2)/k;view.y=bounds.y+((e.clientY-box.top)*h/box.height-(h-bounds.h*k)/2)/k;userMoved=true;requestDraw()});
  function inspect(i,center=false){selected=i;const item=items[i],r=item.record;updateFocus();detail.replaceChildren();const head=$('header');head.append($('strong',item.kind==='edge'?'超边详情':'节点详情'),button('×','关闭详情',()=>{detail.hidden=true;selected=null;updateFocus();requestDraw()},'hg-close'));detail.append(head,$('h3',label(r)),$('span',display(r)?.kind||(item.kind==='edge'?'超边':'声明'),'hg-tag'),$('span',stateText(r),'hg-tag'));
+  if(display(r)?.summary)detail.append($('p',display(r).summary,'readable-summary'));
   function linked(title,indices){if(!indices.length)return;detail.append($('h4',title));const ul=$('ul');for(const target of indices.slice(0,150)){const li=$('li'),b=button(label(items[target].record),'查看 '+label(items[target].record),()=>inspect(target,true),'hg-close');b.style.fontSize='12px';b.style.lineHeight='1.6';li.append(b);ul.append(li)}detail.append(ul);if(indices.length>150)detail.append($('p',`前 150 项，共 ${indices.length} 项`,'hg-hint'))}
   if(item.kind==='node'){linked('推导路线 · OR',incoming.get(i));linked('关联节点',neighbors[i].filter(target=>!incoming.get(i).includes(target)));}
   else{linked('共同前提 · AND',r.premises.map(id=>byKey.get('n:'+id).index));linked('结论',[byKey.get('n:'+r.conclusion).index]);}
   detail.hidden=false;settings.hidden=true;results.hidden=true;
   if(center){view.x=positions[i*2];view.y=positions[i*2+1];view.k=Math.max(view.k,1.3);userMoved=true}requestDraw();
  }
- function searchNodes(){query=search.value.trim().toLocaleLowerCase();matches=new Set();results.replaceChildren();if(!query){results.hidden=true;requestDraw();return}for(const item of items)if((label(item.record)+' '+item.record.id+' '+relation(item.record)).toLocaleLowerCase().includes(query))matches.add(item.index);results.append($('div',`${matches.size} 项匹配${matches.size>40?' · 显示前 40 项':''}`,'hg-result-count'));for(const i of [...matches].slice(0,40)){const item=items[i],b=button(label(item.record),'查看 '+label(item.record),()=>inspect(i,true),'');b.append($('small',(display(item.record)?.kind||(item.kind==='node'?'声明':'超边'))+' · '+stateText(item.record)));results.append(b)}results.hidden=false;requestDraw()}
+ function searchNodes(){query=search.value.trim().toLocaleLowerCase();matches=new Set();results.replaceChildren();if(!query){results.hidden=true;requestDraw();return}for(const item of items)if((label(item.record)+' '+(display(item.record)?.summary||'')+' '+item.record.id+' '+relation(item.record)).toLocaleLowerCase().includes(query))matches.add(item.index);results.append($('div',`${matches.size} 项匹配${matches.size>40?' · 显示前 40 项':''}`,'hg-result-count'));for(const i of [...matches].slice(0,40)){const item=items[i],b=button(label(item.record),'查看 '+label(item.record),()=>inspect(i,true),'');b.append($('small',(display(item.record)?.kind||(item.kind==='node'?'声明':'超边'))+' · '+stateText(item.record)));results.append(b)}results.hidden=false;requestDraw()}
  search.addEventListener('input',searchNodes);search.addEventListener('keydown',e=>{if(e.key==='Escape'){search.value='';searchNodes()}if(e.key==='Enter'&&matches.size)inspect(matches.values().next().value,true)});
  function hit(x,y){let best=null,distance=Infinity;const gx=Math.floor(x/40),gy=Math.floor(y/40);for(let dx=-2;dx<=2;dx++)for(let dy=-2;dy<=2;dy++)for(const p of hitGrid.get((gx+dx)+','+(gy+dy))||[]){const d=(p.x-x)**2+(p.y-y)**2;if(d<p.r*p.r&&d<distance){best=p.i;distance=d}}return best}
  canvas.addEventListener('wheel',e=>{e.preventDefault();const b=canvas.getBoundingClientRect();zoom(Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.0025),e.clientX-b.left,e.clientY-b.top)},{passive:false});
  canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;drag={id:hit(x,y),x:e.clientX,y:e.clientY,vx:view.x,vy:view.y,moved:false};canvas.setPointerCapture(e.pointerId);results.hidden=true});
- canvas.addEventListener('pointermove',e=>{const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4){drag.moved=true;userMoved=true;view.x=drag.vx-dx/view.k;view.y=drag.vy-dy/view.k;requestDraw()}tip.hidden=true;return}pointer={x,y};if(hoverFrame)return;hoverFrame=true;requestAnimationFrame(()=>{hoverFrame=false;const {x,y}=pointer,next=hit(x,y);if(next!==hovered){hovered=next;requestDraw()}tip.hidden=next===null;if(next!==null){const r=items[next].record;tip.textContent=label(r)+'\n'+stateText(r);tip.style.left=Math.max(10,Math.min(width-285,x+14))+'px';tip.style.top=Math.min(height-50,y+14)+'px'}})});
+ canvas.addEventListener('pointermove',e=>{const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4){drag.moved=true;userMoved=true;view.x=drag.vx-dx/view.k;view.y=drag.vy-dy/view.k;requestDraw()}tip.hidden=true;return}pointer={x,y};if(hoverFrame)return;hoverFrame=true;requestAnimationFrame(()=>{hoverFrame=false;const {x,y}=pointer,next=hit(x,y);if(next!==hovered){hovered=next;requestDraw()}tip.hidden=next===null;if(next!==null){const r=items[next].record;tip.textContent=label(r)+'\n'+stateText(r)+(display(r)?.summary?'\n'+display(r).summary.slice(0,140):'');tip.style.left=Math.max(10,Math.min(width-285,x+14))+'px';tip.style.top=Math.min(height-50,y+14)+'px'}})});
  canvas.addEventListener('pointerup',()=>{if(drag&&!drag.moved&&drag.id!==null)inspect(drag.id);drag=null});canvas.addEventListener('pointercancel',()=>drag=null);canvas.addEventListener('lostpointercapture',()=>drag=null);canvas.addEventListener('pointerleave',()=>{tip.hidden=true;hovered=null;requestDraw()});
  canvas.addEventListener('keydown',e=>{const delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(delta){e.preventDefault();view.x+=delta[0]*60/view.k;view.y+=delta[1]*60/view.k;userMoved=true;requestDraw()}else if(['+','=','-','0'].includes(e.key)){e.preventDefault();if(e.key==='0'){userMoved=false;fit()}else zoom(e.key==='-'?.8:1.25)}else if(e.key==='Escape'){detail.hidden=settings.hidden=results.hidden=true;selected=null;focus=false;focusButton.setAttribute('aria-pressed','false');updateFocus();requestDraw()}});
  function stopLayout(){if(worker){worker.terminate();worker=null}if(workerURL){URL.revokeObjectURL(workerURL);workerURL=null}layoutRunning=false}
@@ -766,8 +767,21 @@ def display_record(row, *, edge=False):
 
 def display_records(result):
     spec = result.get("graph") or {}
-    return {key: {row["id"]: display_record(row, edge=key == "hyperedges") for row in spec.get(key, [])}
-            for key in ("nodes", "hyperedges")}
+    readable = result.get("readable")
+    if readable is not None:
+        from rds_hypergraph_readable import validate_readable
+        readable = validate_readable(readable, result)
+    presentation = {}
+    for key in ("nodes", "hyperedges"):
+        presentation[key] = {}
+        for row in spec.get(key, []):
+            info = display_record(row, edge=key == "hyperedges")
+            entry = (readable or {}).get(key, {}).get(row["id"], {})
+            if entry.get("title", "").strip():
+                info["label"] = entry["title"].strip()
+            info["summary"] = entry.get("summary", "").strip()
+            presentation[key][row["id"]] = info
+    return presentation
 
 
 def replica_view(result):
@@ -780,6 +794,7 @@ def replica_view(result):
     if not spec:
         return {"nodes": {}, "links": [], "provenance_count": 0, "relations": []}
     nodes, links, groups = {}, [], {}
+    presentation = display_records(result)
     ids = {n["id"]: f"c{i}" for i, n in enumerate(spec["nodes"])}
     goals = set(spec["goals"])
     palette = {"声明": "#c2c8d2", "执行": "#b39ddb", "回执": "#82c4af", "产物": "#82b6d4", "观测": "#d5c17e"}
@@ -789,7 +804,7 @@ def replica_view(result):
                or n["id"].startswith("owned:run:") and isinstance(n.get("manifest_sha256"), str)}
     for i, row in enumerate(spec["nodes"]):
         ident = row["id"]
-        display = display_record(row)
+        display = presentation["nodes"][ident]
         kind, label = display["kind"], display["label"]
         nodes[f"c{i}"] = {"type": "", "label": label, "color": {"rgb": int(palette[kind][1:], 16), "a": 1},
                             "rds": {"record": ident, "kind": kind, "size": 1.5 if ident in goals else 1,
@@ -798,10 +813,12 @@ def replica_view(result):
         hub = f"h{i}"
         relation = edge.get("relation") if isinstance(edge.get("relation"), str) and edge["relation"].strip() else "依赖"
         members = [ids[p] for p in edge["premises"]] + [ids[edge["conclusion"]]]
-        nodes[hub] = {"type": "hyperedge", "label": ("AND" if len(edge["premises"]) > 1 else "") + " ◇",
+        edge_display = presentation["hyperedges"][edge["id"]]
+        edge_title = (result.get("readable") or {}).get("hyperedges", {}).get(edge["id"], {}).get("title", "").strip()
+        nodes[hub] = {"type": "hyperedge", "label": edge_title or ("AND" if len(edge["premises"]) > 1 else "") + " ◇",
                       "color": {"rgb": 0x9c95af, "a": 1},
                       "rds": {"edge": i, "kind": "超边", "members": members, "size": .65, "group": None,
-                              "outline": display_record(edge, edge=True)["outline"], "status_text": display_record(edge, edge=True)["status_text"]}}
+                              "outline": edge_display["outline"], "status_text": edge_display["status_text"]}}
         style = {"relation": relation, "family": "dependency", "hyperedge": hub, "color": "#bdc2d2",
                  "width": 1.25, "opacity": .55, "dash": edge["status"] != "SUPPORTED", "arrow": False}
         links.extend([[ids[p], hub, dict(style)] for p in edge["premises"]])
@@ -1140,10 +1157,10 @@ function goalCredits(spec,goal) {
  const data=JSON.parse(document.getElementById('snapshot').textContent), view=data.replica_view;
  const $=id=>document.getElementById(id), panel=$('controls'), card=$('note-card');
  const source=(data.source || '').split(/[\\/]/).filter(Boolean);
- $('source-name').textContent=data.demo?'演示':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13':'RDS';
+ $('source-name').textContent=data.readable?.graph?.title?.trim()||(data.demo?'演示':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13':'RDS');
  if(!data.graph){$('state').textContent=data.reason || data.status;return;}
  const baseLinks=view.links;
- if(view.scope){view.nodes.scope=view.scope.node;view.links=[...baseLinks,...view.scope.links];}
+ if(view.scope){view.nodes.scope=view.scope.node;if(data.readable?.graph?.title?.trim())view.nodes.scope.label=data.readable.graph.title.trim();view.links=[...baseLinks,...view.scope.links];}
  const g=new GraphRenderer($('graph'),SIM_WORKER_MAIN), recordById=new Map(data.graph.nodes.map(n=>[n.id,n]));
  const key='rds-replica-v2:'+ (data.snapshot_sha256 || data.source);
  const defaults={search:'',colors:true,orphans:true,scope:true,sizeMode:'goal',goal:data.graph.goals[0]||'',nodeStyles:{},arrows:true,nodeSize:1,lineSize:1,textFade:0,damping:.4,growth:true,growthSeconds:12,flowStrength:.025,groupStrength:.035,edgeRepulsion:.25,edgeClearance:45,centerStrength:.055,repelStrength:1000,linkStrength:1,linkDistance:180,relations:{}};
@@ -1176,6 +1193,7 @@ function goalCredits(spec,goal) {
  function applyForces(){g.setForces({damping:opts.damping,flowStrength:opts.flowStrength,groupStrength:opts.groupStrength,edgeRepulsion:opts.edgeRepulsion,edgeClearance:opts.edgeClearance,centerStrength:opts.centerStrength,repelStrength:opts.repelStrength,linkStrength:opts.linkStrength,linkDistance:opts.linkDistance,relations:opts.relations});$('state').textContent='布局收敛中…';}
  function restyle(){for(const l of g.links){const cfg=opts.relations[l.rds.relation];Object.assign(l.rds,{color:cfg.color,width:cfg.width,dash:cfg.dash});if(l.rendered)l.line.texture=cfg.dash?g.rdsDashTexture:PIXI.Texture.WHITE;}g.changed();}
  function recordFor(n){return n.rds.virtual?{id:'display:project-snapshot',status:'显示层',source:data.source,snapshot_sha256:data.snapshot_sha256,meaning:'同一快照的项目归属；不是原始科研节点',components:view.scope.components,unlinked_records:view.scope.unlinked_records}:n.rds.edge!==undefined?data.graph.hyperedges[n.rds.edge]:recordById.get(n.rds.record);}
+ function summaryFor(n){if(n.rds.virtual)return data.readable?.graph?.summary?.trim()||'';const key=n.rds.edge!==undefined?'hyperedges':'nodes',id=recordFor(n).id,map=data.display?.[key];return map&&Object.hasOwn(map,id)?map[id].summary||'':'';}
  let lastTargets='';
  function nodeAppearance(force=false){for(const n of g.nodes){const style=opts.nodeStyles[n.rds.kind],weight=n.rds.edge!==undefined?credits.edges.get(data.graph.hyperedges[n.rds.edge].id):credits.nodes.get(n.rds.record);n.rds.shape=style.shape;n.rds.size=style.size*(n.type==='hyperedge'?.65:opts.sizeMode==='degree'?view.nodes[n.id].rds.size:1);n.rds.radius=opts.sizeMode==='goal'?(n.rds.virtual?12:6+20*Math.sqrt(Math.min(1,weight||0))):undefined;n.rds.chargeWeight=n.rds.virtual?1:1+2*Math.sqrt(Math.min(1,weight||0));n.rds.collisionRadius=Math.max(24,Math.min(120,24+n.getSize()*1.8));n.color=opts.colors?{rgb:parseInt(style.color.slice(1),16),a:1}:null;if(n.rendered){n.text.style=n.textStyle();}}
   const targets=Object.fromEntries(g.nodes.map(n=>[n.id,{flowX:n.rds.flowX,group:n.rds.group,members:n.rds.members,chargeWeight:n.rds.chargeWeight,collisionRadius:n.rds.collisionRadius}])),signature=JSON.stringify(targets);if(force||signature!==lastTargets){lastTargets=signature;g.worker.postMessage({layoutTargets:targets,alpha:.3,run:true});}paintLegend();g.changed();}
@@ -1184,7 +1202,7 @@ function goalCredits(spec,goal) {
   const query=opts.search.trim().toLowerCase(),nodes=Object.create(null),selected=new Set(),found=[],degree=new Set(baseLinks.flatMap(([s,t])=>[s,t]));
   for(const [id,n] of Object.entries(view.nodes)){
    if(n.rds.virtual&&!opts.scope)continue;const row=recordFor(n);
-   if((!query||JSON.stringify(row).toLowerCase().includes(query)||n.label.toLowerCase().includes(query))&&(n.rds.virtual||opts.orphans||degree.has(id))){selected.add(id);if(query)found.push(id);}
+   if((!query||JSON.stringify(row).toLowerCase().includes(query)||n.label.toLowerCase().includes(query)||summaryFor(n).toLowerCase().includes(query))&&(n.rds.virtual||opts.orphans||degree.has(id))){selected.add(id);if(query)found.push(id);}
   }
   if(query)for(const [id,n] of Object.entries(view.nodes))if(n.rds.members&&(selected.has(id)||n.rds.members.some(m=>found.includes(m)))){selected.add(id);for(const m of n.rds.members)selected.add(m);}
   for(const [id,n] of Object.entries(view.nodes))if(n.type==='hyperedge'&&!n.rds.members.every(x=>selected.has(x)))selected.delete(id);
@@ -1201,12 +1219,13 @@ function goalCredits(spec,goal) {
  function inspect(id){
   const n=g.nodeLookup.get(id);if(!n)return;finishGrowth();g.rdsPinned=n;g.rdsLastHL=undefined;g.changed();card.replaceChildren();card.classList.add('show');
   const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.label),el('span',n.rds.virtual?'归属':n.rds.kind,'tag'),el('span',stateText(n),'tag result-tag'));
+  if(summaryFor(n))card.append(el('p',summaryFor(n),'readable-summary'));
   function linked(title,ids){if(!ids.length)return;card.append(el('h4',title));for(const target of ids){const v=view.nodes[target];card.append(button(v.label,()=>navigate(target),'record-link'));}}
   if(n.rds.edge!==undefined){linked('共同前提 · AND',n.rds.members.slice(0,-1));linked('结论',n.rds.members.slice(-1));}
   else{const related=view.links.filter(([s,t,meta])=>(s===id||t===id)&&(opts.scope||meta.family!=='membership'));const routes=related.filter(([,t,meta])=>t===id&&meta.family==='dependency').map(([s])=>s);linked('推导路线 · OR',routes);const others=new Set(related.map(([s,t])=>s===id?t:s).filter(other=>!routes.includes(other)));linked('关联节点',[...others]);}
  }
  g.onNodeClick=n=>inspect(n.id);
- g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;tip.textContent=n.label+' · '+stateText(n);if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent+=`\n${e.premises.length} 个共同前提 → ${target.label}`;}else tip.textContent+=' · '+(n.rds.virtual?'归属':n.rds.kind);};
+ g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;tip.textContent=n.label+' · '+stateText(n);if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent+=`\n${e.premises.length} 个共同前提 → ${target.label}`;}else tip.textContent+=' · '+(n.rds.virtual?'归属':n.rds.kind);if(summaryFor(n))tip.textContent+='\n'+summaryFor(n).slice(0,140);};
  let growing=false,growthTimer=null,growthOrder=[],growthStart=0;
  function finishGrowth(){clearInterval(growthTimer);growthTimer=null;growing=false;for(const n of g.nodes)n.rdsHidden=false;$('growth-info').textContent='';$('skip-growth').hidden=true;g.changed();}
  function playGrowth(){finishGrowth();g.highlightNode=g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');$('hover-info').hidden=true;growthOrder=[...g.nodes].sort((a,b)=>(a.rds.flowX??1e8)-(b.rds.flowX??1e8));if(!growthOrder.length)return;growing=true;growthStart=performance.now();for(const n of growthOrder)n.rdsHidden=true;$('state').textContent='';$('skip-growth').hidden=false;let shown=0;const advance=()=>{const desired=Math.min(growthOrder.length,Math.max(1,Math.ceil((performance.now()-growthStart)/(opts.growthSeconds*1000)*growthOrder.length)));while(shown<desired){const n=growthOrder[shown++];n.rdsHidden=false;n.fadeAlpha=0;}g.changed();$('growth-info').textContent=`展开 · ${shown} / ${growthOrder.length}`;if(shown===growthOrder.length)finishGrowth();};advance();growthTimer=setInterval(advance,60);}
@@ -1233,22 +1252,36 @@ def main(argv=None):
     parser.add_argument("--output", default="rds-hypergraph.html")
     parser.add_argument("--replica-root", help="Local checkout of the pinned runningZ1/obsidian-graph-replica")
     parser.add_argument("--pixi-js", help="Official pixi.js 7.4.3 dist/pixi.min.js (required with --replica-root)")
+    parser.add_argument("--export-agent-input", action="store_true", help="Print separate raw/readable JSON layers to stdout; no HTML is written")
+    parser.add_argument("--readable-json", help="Agent-authored readable object bound to this raw graph and snapshot")
     args = parser.parse_args(argv)
     root, output = Path(args.root).resolve(), Path(args.output).resolve()
     try:
-        if output.suffix.lower() != ".html" or output.is_relative_to(root / ".rds"):
+        if args.export_agent_input and args.readable_json:
+            raise ValueError("Export fresh agent input or consume --readable-json, not both")
+        if not args.export_agent_input and (output.suffix.lower() != ".html" or output.is_relative_to(root / ".rds")):
             raise ValueError("Output must be an .html file outside the .rds ledger")
         if args.demo and args.hypergraph or args.large and not args.demo:
             raise ValueError("Use --large only with --demo, and --demo without --hypergraph")
         if bool(args.replica_root) != bool(args.pixi_js):
             raise ValueError("Use --replica-root and --pixi-js together")
-        if args.hypergraph:
+        if args.hypergraph and not args.export_agent_input:
             source = Path(args.hypergraph).resolve()
             if output == source or output.exists() and source.exists() and output.samefile(source):
                 raise ValueError("Output must not overwrite the hypergraph input")
         result = read_graph(root, args.hypergraph, demo=args.demo, large=args.large)
         if args.hypergraph and result["status"] == "UNAVAILABLE":
             raise ValueError(result["reason"])
+        if args.export_agent_input:
+            from rds_hypergraph_readable import agent_input
+            print(json.dumps(agent_input(result), ensure_ascii=False, allow_nan=False))
+            return 0
+        if args.readable_json:
+            from rds_hypergraph_readable import load_readable, with_readable
+            readable_path = Path(args.readable_json).resolve()
+            if output == readable_path or output.exists() and output.samefile(readable_path):
+                raise ValueError("Output must not overwrite readable information")
+            result = with_readable(result, load_readable(readable_path, result))
         output.parent.mkdir(parents=True, exist_ok=True)
         page = render_replica_html(result, args.replica_root, args.pixi_js) if args.replica_root else render_html(result)
         output.write_text(page, encoding="utf-8")

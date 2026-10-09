@@ -125,6 +125,34 @@ Canvas 无前提超边与结论保持可选中的稳定偏移。Worker 不可用
 
 状态描边不会改写原图、ID、声明状态、来源、推理或目标权重。Replica 使用独立的外圈 Graphics，位于选中/悬停高亮之上、文字之下；位置、大小、缩放、淡化及隐藏状态跟随现有节点，形状改变才重建外圈几何，清除节点时一并销毁。Canvas 使用相同显示元数据批绘轮廓。力学 Worker 保持原样。
 
+## Agent 可读信息接口
+
+为人解释节点用途，使用独立的可读信息层。原始超图继续保存 ID、状态、完整 AND 前提、结论、权重和来源；可读层只提供名称和简短用途，以及超边含义。它不改变科学判断、执行结果、推理、布局规则或节点权重。
+
+先导出 agent 输入（stdout 是单个 UTF8 JSON 对象，不生成 HTML 或新账本）：
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --export-agent-input
+```
+
+输出包含两个分开的字段：`raw` 是完整规范化图；`readable` 是绑定原图和快照的填写模板。将这个对象与已有源码、manifest 或证据交给 agent。Agent 只返回 `readable` 对象，保存为 `readable.json`，再导出页面：
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --readable-json readable.json --output dist\hypergraph.html
+```
+
+也适用于 `--hypergraph map.json`；Replica 可追加既有 `--replica-root` / `--pixi-js` 参数。Python 接口是 `rds_hypergraph_readable.agent_input(result)`、`validate_readable(value, result)` 和 `with_readable(result, value)`，返回新展示层，原记录保持原样。
+
+Agent 可直接采用以下指令：
+
+> 阅读 raw 和已有源文件，返回完整 readable 对象。保持 schema、graph_sha256、snapshot_sha256 与 ID 键原样，只填写 graph、nodes、hyperedges 下的 title 和 summary。title 用简短自然语言描述对象；summary 用一两句解释用途、输入输出或既有关系。成功、失败、缺失与未判定依据原始证据，运行成功不称为科研证明。未知用途留空，不依据文件名猜结论。不添加状态、权重、来源或关系成员，不新增节点或边。不要返回 raw、Markdown 或脚本。
+
+例如，原节点 ID `owned:run:comparison_trial` 对应的条目可以是 `{"title":"方法对比试验","summary":"在相同预算下比较候选方法与对照，结果供下一轮选择使用。"}`；该说明需有真实 manifest 或源码依据。节点和超边使用各自的 ID 映射，允许只填写一部分，空文本沿用默认名称／不显示说明。同名条目仍保持独立，不会按标题合并。
+
+契约见 [hypergraph-readable.schema.json](../schemas/hypergraph-readable.schema.json)。读取上限 8 MiB，名称最多 120 字符，说明最多 600 字符；仅接受 `title` 和 `summary`。CLI 另外拒绝重复 JSON 键、非有限数、控制字符、未知 ID、错误版本、额外字段及过期绑定。`graph_sha256` 覆盖规范化原图全部字段与数组顺序；`snapshot_sha256` 绑定保存的快照，显式输入图为 `null`。图变化后重新导出模板，由 agent 更新说明。任一错误均停止导出，不部分应用旧说明。输出禁止覆盖可读文件，包括硬链接／符号链接别名。
+
+网页使用可读名称、用途与关系说明；原始图通过 agent 输入或原有 TMS 接口供程序查询，不在页面转储。所有说明按纯文本显示，搜索支持名称、用途和原始 ID，导航与 AND／OR 语义仍按原始图。说明由 agent 撰写，应由其依据源证据核对；本接口验证结构和绑定，不验证自然语言真实性。分享 HTML 或 agent 输入也会分享其中的原始研究信息。
+
 ## 载入诊断
 
 可以传入 advisor 返回的 JSON 对象或对象数组：
