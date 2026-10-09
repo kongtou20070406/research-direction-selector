@@ -93,7 +93,7 @@ RDS is an Advisor-centered research decision system with two cooperating sides a
 
 The loop is **goal and constraints → Advisor decision → constrained execution → results and receipts → updated research state → Advisor**. Project records live in `.rds/`; `references/judgment-graph.yaml` supplies scoped methodology rules, not an automatically rewritten collection of proven causal laws.
 
-5.8.0 remains the latest stable release. The current 5.9 preview is `5.9.0-rc.1`; see the [preview notes](docs/releases/5.9.0-rc.1-preview.md). Its research-capability claims remain unproven; see the [5.9 evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166).
+5.8.0 remains the latest stable release. The next 5.9 preview is `5.9.0-rc.2`; see the [preview notes](docs/releases/5.9.0-rc.2-preview.md) for scope and release validation. Its research-capability claims remain unproven; see the [5.9 evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166).
 
 ---
 

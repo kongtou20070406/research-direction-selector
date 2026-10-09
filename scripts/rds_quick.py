@@ -748,6 +748,26 @@ def execute(args, review=None, *, _native_preparation_root=None):
     return result
 
 
+def _brief_move(summary, move):
+    """Retain a bounded explanation while keeping the historical next_move string."""
+    if not isinstance(move, dict):
+        summary['next_move'] = move
+        summary.pop('next_move_detail', None)
+        return
+    summary['next_move'] = move.get('kind', move)
+    detail = {}
+    for key in ('reason', 'basis', 'source'):
+        if isinstance(move.get(key), str):
+            limit = 512 if key == 'reason' else 128
+            detail[key] = move[key][:limit]
+            if len(move[key]) > limit:
+                detail[key + '_truncated'] = True
+    if detail:
+        summary['next_move_detail'] = detail
+    else:
+        summary.pop('next_move_detail', None)
+
+
 def brief(root, value, version, formal=False):
     """Persist full output and expose a bounded, truthful operational digest."""
     ref = cas_json(root, value)
@@ -810,7 +830,7 @@ def brief(root, value, version, formal=False):
             summary['selection_basis'] = selection['basis']
             flags += [f['kind'] for f in selection['flags']]
             if 'next_move' in selection:
-                summary['next_move'] = selection['next_move']['kind']
+                _brief_move(summary, selection['next_move'])
             if 'goal' in selection:
                 summary['goal_input_status'] = selection['goal']['status']
         advisory_moves = {'GOAL_CONTRIBUTION_UNDECLARED': 'REVIEW_GOAL_LINK',
@@ -823,12 +843,16 @@ def brief(root, value, version, formal=False):
                      if 'search' in r]
     analysis = owned.get('analysis_coverage') or next((r for r in graph_reviews if r), None)
     if analysis:
-        summary['analysis_coverage'] = {key: analysis[key] for key in ('status', 'full', 'scope')}
-        summary['analysis_coverage']['graphs'] = [
-            {key: graph.get(key) for key in ('kind', 'input_sha256', 'node_count', 'edge_count', 'full')}
-            for graph in analysis['graphs']]
-        summary['analysis_coverage']['reasons'] = analysis['reasons'][:3]
-        summary['analysis_coverage']['omitted_reasons'] = max(0, len(analysis['reasons']) - 3)
+        # Per-graph identities and diagnostics remain in the hashed full record.
+        # Keep coverage visible without repeating hashes alongside decision detail.
+        summary['analysis_coverage'] = {key: analysis[key] for key in ('status', 'full')}
+        summary['analysis_coverage']['graph_count'] = len(analysis['graphs'])
+        for key in ('node_count', 'edge_count'):
+            counts = [graph.get(key) for graph in analysis['graphs']]
+            summary['analysis_coverage'][key] = sum(counts) if all(type(n) is int for n in counts) else None
+        if analysis['reasons']:
+            summary['analysis_coverage']['reasons'] = analysis['reasons'][:3]
+            summary['analysis_coverage']['omitted_reasons'] = max(0, len(analysis['reasons']) - 3)
     if 'steering' in owned:
         state = owned['steering']
         summary['steering'] = {key: state.get(key) for key in ('revision', 'paused', 'kind', 'instruction_id')}
@@ -854,7 +878,7 @@ def brief(root, value, version, formal=False):
             summary['graph_ranker']['scope_count'] = len(ranker.get('scope', []))
         if owned.get('next_move'):
             move = owned['next_move']
-            summary['next_move'] = move.get('kind', move) if isinstance(move, dict) else move
+            _brief_move(summary, move)
         if owned.get('feasibility'):
             forecast = owned['feasibility']
             summary['feasibility'] = {'next_action':forecast['next_action'],

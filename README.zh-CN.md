@@ -93,7 +93,7 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 闭环为 **目标与约束 → Advisor 决策 → 受约束执行 → 结果与回执 → 更新研究状态 → Advisor**。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
-5.8.0 仍是最新稳定版。当前 5.9 预览版为 `5.9.0-rc.1`，见[预览说明](docs/releases/5.9.0-rc.1-preview.md)。它尚未证明科研能力提升；验证方案见 [5.9 评估计划 #166](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
+5.8.0 仍是最新稳定版。下一份 5.9 预览版为 `5.9.0-rc.2`，范围及发布验证见[预览说明](docs/releases/5.9.0-rc.2-preview.md)。它尚未证明科研能力提升；验证方案见 [5.9 评估计划 #166](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
 ---
 

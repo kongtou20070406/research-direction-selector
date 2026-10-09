@@ -1602,14 +1602,23 @@ class ProjectStore:
         arms = {rid: (receipts[rid].get("arm"), receipts[rid].get("control_id")) for rid in executed}
         control_id = next((rid for rid, (arm, _) in arms.items() if arm == "control"), None)
         treatment_id = next((rid for rid, (_, cid) in arms.items() if cid is not None), None)
-        if failed:
-            run = failed[0]
+        unresolved = [run for run in failed if run['id'] not in receipts]
+        if unresolved:
+            run = unresolved[0]
             return {"next_move": "recover the failed run to a terminal recorded state",
                     "command": f"{command} project recover --id={_shell_argument(run['id'])}"}
         if live:
             run = live[0]
             return {"next_move": "wait for the running attempt, then re-check status",
                     "command": f"{command} project status --brief"}
+        if failed:
+            run = failed[0]
+            receipt = receipts[run['id']]
+            return {'next_move': 'review the recorded execution failure and its original evidence before proposing an authorized repair',
+                    'command': f'{command} project status --brief',
+                    'disposition': 'REVIEW_EXECUTION_FAILURE', 'run_id': run['id'],
+                    'run_status': receipt['run_status'], 'receipt_sha256': receipt['sha256'],
+                    'task_gain': 'UNKNOWN', 'mechanism': 'UNKNOWN'}
         if not executed:
             if not runs:
                 return {"next_move": "register the control arm from its manifest",
