@@ -24,6 +24,8 @@ import time
 import uuid
 from rds_mutation import mutation
 
+from rds_mutation import mutation
+
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
 ROLES = {"code", "config", "data", "evaluator", "protocol"}

@@ -179,6 +179,18 @@ The public Advisor API also rejects replacing an owned project's frozen directio
 graph and collects the project's actual evidence. Frontier analysis retains its
 explicit date cutoff; excluded future records are visible in the report.
 
+Python callers use the same FULL project root check as the CLI. For a QUICK
+Advisor, `context = advisor.effective_context(raw_context)` returns an independent
+copy with the current saved dependency map and its identity. Pass this context as
+the snapshot's `advisor_context` and reuse it for `choice()`; recommendations keep
+their list return type. `record_choice(root, advice, raw_context, ...)` also loads
+the current dependencies, and rejects advice if its analyzed context is stale.
+
+QUICK command preparation validates reserved input names and the complete
+input/output/generated-file layout before charging an allowance or recording a
+prospective choice. Correcting a rejected layout can reuse the same job name.
+An actual execution or filesystem failure retains its original record.
+
 `analysis_coverage` reports FULL or INCOMPLETE, input identities, node/edge counts
 and reasons. Detailed reports retain node conditions and edge dispositions.
 Dependency analysis computes blocker alternatives for all nodes while preserving

@@ -500,9 +500,19 @@ class RDSAdvisor:
             limitations=["rules_extracted 是兼容字段，计数匹配的未审查摘录；rules_added 计数本次实际新增行，包括显式迁移。",
                          "关键词命中不会自动成为可执行原则；legacy_bundle_sha256 不代表源文档身份。"])
 
+    def effective_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Read caller-directed recommendation inputs; confer no owned execution authority."""
+        from copy import deepcopy
+        from rds_project_lifecycle import require_advisor_root
+        from rds_advisor_coverage import project_context
+        require_advisor_root(self.root_dir)
+        return deepcopy(project_context(self.root_dir, context))
+
     def recommend_next_directions(self, state: Dict[str, Any], judgment_graph: Dict[str, Any],
                                   *, priority_action_ids=()) -> List[Dict[str, Any]]:
         """Public recommendations retain the registered owned project graph."""
+        from rds_project_lifecycle import require_advisor_root
+        require_advisor_root(self.root_dir)
         from rds_project import ProjectStore, require
         store = ProjectStore(self.root_dir)
         if store.path.is_file():
@@ -518,7 +528,9 @@ class RDSAdvisor:
                 # path invokes the private analysis method after collection.
                 from rds_owned_advisor import review
                 return review(store)['recommendations']
-        return self._recommend_next_directions(state, judgment_graph, priority_action_ids=priority_action_ids)
+        context = self.effective_context(state.get('advisor_context', {}))
+        return self._recommend_next_directions({**state, 'advisor_context': context}, judgment_graph,
+                                              priority_action_ids=priority_action_ids, _collected_context=True)
 
     def _recommend_next_directions(self, state: Dict[str, Any], judgment_graph: Dict[str, Any],
                                    *, priority_action_ids=(), _collected_context=False) -> List[Dict[str, Any]]:
