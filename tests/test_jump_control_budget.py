@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts'))
@@ -135,13 +136,35 @@ class JumpControlBudgetTests(unittest.TestCase):
                 self.assertEqual(structure.recover_control(store.root)['reconciled_controls'], 0)
 
     def test_independent_meter_keeps_original_reservation_and_settlement(self):
-        store = self.build()
-        with structure._meter(store, 'direct-cli'):
-            self.assertEqual(self.budget(store)['reserved'], 2.)
-        after = self.budget(store)
-        self.assertEqual(after['reserved'], 0.)
-        self.assertGreater(after['spent_measured'], 0.)
-        self.assertNotIn('budget_owner', structure._events(store)[-1])
+        for elapsed in (0.25, 0.):
+            with self.subTest(elapsed=elapsed):
+                store = self.build()
+                before = self.budget(store)
+                clock = Mock(side_effect=(10., 10. + elapsed))
+                # Replace only this adapter's clock binding. The real project
+                # ledger and its deadlines keep their original time module.
+                with patch.object(structure, 'time', SimpleNamespace(monotonic=clock)):
+                    with structure._meter(store, 'direct-cli'):
+                        inside = self.budget(store)
+                        self.assertEqual(inside['reserved'], 2.)
+                        self.assertEqual(inside['spent_measured'], before['spent_measured'])
+                self.assertEqual(clock.call_count, 2)
+                self.assertIs(structure.time, time)
+                after = self.budget(store)
+                self.assertEqual(after['reserved'], 0.)
+                self.assertEqual(after['spent_measured'] - before['spent_measured'], elapsed)
+                self.assertEqual(after['charged_estimate'], before['charged_estimate'])
+                self.assertEqual(after['remaining'], before['remaining'] - elapsed)
+                started, finished = structure._events(store)[-2:]
+                self.assertEqual(started['kind'], 'STRUCTURE_CONTROL_STARTED')
+                self.assertEqual(started['operation'], 'direct-cli')
+                self.assertEqual(started['cap'], 2.)
+                self.assertEqual(finished['kind'], 'STRUCTURE_CONTROL_FINISHED')
+                self.assertEqual(finished['id'], started['id'])
+                self.assertEqual(finished['wall_seconds'], elapsed)
+                self.assertFalse(finished['over_cap'])
+                for event in (started, finished):
+                    self.assertNotIn('budget_owner', event)
 
     def test_independent_interrupted_meter_keeps_original_unknown_charge(self):
         store = self.build()
