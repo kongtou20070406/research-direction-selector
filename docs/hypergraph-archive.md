@@ -18,10 +18,29 @@ indexes for the visible region, including links crossing the viewport. Original
 nodes, edges, versions and hyperedge memberships remain in the complete data
 layer. Aggregation is a display operation, never a merged scientific conclusion.
 
+The page keeps the compact Obsidian-style canvas and controls. Search, display
+levels, node and line sizes, and optional names are in the collapsed settings
+panel. Record types use distinct colors and shapes; hovering or clicking shows
+their readable names and details. The overview includes at most 32 actual
+representative records per visible research group, without inventing connections.
+Representatives also share the overall 3,500-point drawing budget. Larger group
+views are binned transparently; their counts describe groups at that zoom level.
+The slow reveal button replays the current display; reset view returns to the
+overview without changing the archived records.
+
 Dense views progressively coarsen connection bundles until they fit the display
 budget of 3,500 lines. Every bundle retains its represented relation count; node
 details and agent queries still access the complete relations. Lines crossing
 the visible area remain queryable even when both endpoints are outside it.
+
+Raw record views also aggregate when their drawing points exceed 3,500. Their
+counts account for every visible original record, including isolated records.
+Search and paginated details still use the full identities and relationships.
+Only coarse spatial indexes are built at startup; the raw spatial index is built
+on the first record viewport or record drag. That first request can still take
+longer on a large archive. Viewport requests are sent one at a time, with only the
+latest pending camera view retained. Reused scenes avoid rebuilding unchanged
+renderer topology, and raster labels are created only when needed.
 
 Dragging a node reheats a bounded neighborhood with damping; dragging the
 background pans the view. Dependency, source and history links use different
