@@ -83,6 +83,28 @@ class NeighborhoodTests(unittest.TestCase):
         self.assertEqual(plan['selected_parent'], 'p2')
         self.assertEqual(plan['neighborhood']['trials'][0]['outcome'], 'STAGNANT')
 
+    def test_declared_decimal_feedback_at_threshold_and_either_side(self):
+        self.incumbent()
+        self.execute('p3', 'overshoot', 'refine')
+        self.execute('p4', 'overshoot', 'evidence')
+        rows, original_feedback, state = self.inputs()
+        for direction in ('min', 'max'):
+            for value, expected in ((.1, 'GAIN'), (.10000000000000002, 'STAGNANT'), (.09999999999999999, 'GAIN')):
+                with self.subTest(direction=direction, value=value):
+                    # Pure-function numeric fixtures, not new original receipts.
+                    feedback = deepcopy(original_feedback)
+                    for item in feedback:
+                        ident = item['id']
+                        measured = 1 if ident == 'baseline' else .3 if ident in ('p1', 'p2') else value
+                        item['discrimination']['measured']['value'] = measured if direction == 'min' else -measured
+                    policy = {**self.policy, 'metric': {**self.policy['metric'], 'direction': direction, 'min_improvement': '1/5'}}
+                    plan = allocation.build(policy, rows, feedback, state)
+                    comparisons = plan['neighborhood']['comparisons'][-2:]
+                    self.assertTrue(all(item['reason'] == ('OBSERVED_LOCAL_GAIN' if expected == 'GAIN' else 'NO_USEFUL_LOCAL_GAIN') for item in comparisons))
+                    self.assertEqual(plan['neighborhood']['trials'][0]['outcome'], expected)
+                    if value == .1:
+                        self.assertTrue(all(item['parent_improvement'] == '1/5' for item in comparisons))
+
     def test_bad_point_good_direction_via_public_cli(self):
         self.execute(public=True)
         self.execute('p1', 'steeper-negative', public=True)

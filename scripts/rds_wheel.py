@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import uuid
 
 
@@ -24,6 +25,10 @@ HEX = re.compile(r"[0-9a-f]{64}\Z")
 CONTRACT_KEYS = {"contract_id", "metric", "threshold", "evaluator_sha256",
                  "data_slice_sha256", "wall_ms", "screen_wall_ms"}
 CLI = Path(__file__).with_name("rds_cli.py")
+MAX_PROPOSER_BYTES = 256
+MAX_INBOX_ROW_BYTES = 4096
+MAX_INBOX_BYTES = 1024 * 1024
+MAX_INBOX_ROWS = 1024
 
 
 class WheelError(ValueError):
@@ -100,7 +105,8 @@ def rsi_gate(old, new, delta, paired_receipts=None):
              and all(finite(item.get(key)) and item[key] >= 0 for item in (old, new)
                      for key in ("violations", "spin_count", "budget_to_true_cell")))
     eligible = bool(valid and new["violations"] == 0 and new["spin_count"] <= old["spin_count"]
-                    and new["budget_to_true_cell"] <= old["budget_to_true_cell"] - delta)
+                    and Fraction(str(new["budget_to_true_cell"])) <=
+                    Fraction(str(old["budget_to_true_cell"])) - Fraction(str(delta)))
     # This change does not implement a paired rule-evaluation protocol. Even an
     # unverified caller-supplied number cannot establish measured regret.
     return {"adoption_eligible": eligible, "regret": "UNKNOWN", "rule_edits": False,
@@ -201,9 +207,9 @@ class Wheel:
         self.write("state.json", state)
 
     @contextmanager
-    def lock(self):
+    def lock(self, path=None):
         # OS locks disappear on process exit; no stale PID lease can authorize work.
-        stream = self.state_path("writer.lock").open("r+b")
+        stream = (path or self.state_path("writer.lock")).open("r+b")
         acquired = False
         try:
             if os.name == "nt":
@@ -296,7 +302,6 @@ class Wheel:
             seen.add(manifest["id"])
 
     def initialize(self, project_contract_path):
-        require(not self.directory.exists(), "wheel is already initialized")
         contract = read_json(project_contract_path)
         setup = self.setup(contract, initialized=False)
         factors = setup.get("factors")
@@ -306,9 +311,40 @@ class Wheel:
             self.manifest(factor, "main")
         self.manifest(setup["initial"]["factor"], "initial")
         self.manifest(setup["control"]["factor"], "control")
-        # Kernel validation can reject a contract that passed the wheel checks.
-        # Publish wheel state only after the project contract is accepted.
-        self.project("init", "--contract", str(project_contract_path))
+        # A stable lock outside the final directory serializes first publication.
+        # Never unlink it: concurrent initializers must lock the same inode.
+        init_lock = self.path(".rds/wheel-init.lock")
+        init_lock.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with init_lock.open("xb") as stream:
+                stream.write(b"0")
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError:
+            pass
+        with self.lock(init_lock) as acquired:
+            require(acquired, "wheel initialization is busy")
+            require(not self.directory.exists(), "wheel is already initialized")
+            final = self.directory
+            require(final.resolve().is_relative_to(self.root), "wheel directory escapes project")
+            with tempfile.TemporaryDirectory(prefix="wheel-init-", dir=init_lock.parent) as staged:
+                self.directory = Path(staged)
+                try:
+                    self.initial_state(factors)
+                finally:
+                    self.directory = final
+                # The native kernel validates all bindings and is idempotent for
+                # the same genesis contract; retry never resets its actual ledger.
+                self.project("init", "--contract", str(project_contract_path))
+                snapshot = self.project("status")
+                require(snapshot.get("contract") == contract
+                        and snapshot.get("contract_sha256") == digest(contract),
+                        "accepted project contract differs", 3)
+                # Same-filesystem rename publishes all initial files at once.
+                # A crash beforehand leaves only an untrusted staging directory.
+                os.rename(staged, final)
+
+    def initial_state(self, factors):
         self.write("contract.json", self.contract, once=True)
         self.write("factors.txt", "".join(f + "\n" for f in factors), text=True, once=True)
         self.write("dead.txt", "", text=True, once=True)
@@ -382,8 +418,9 @@ class Wheel:
             require(len(artifacts) == 1, "one recorded metric output required")
             artifact = artifacts[0]
             path = self.path(artifact["path"])
-            require(sha(path) == artifact["sha256"], "metric artifact hash mismatch")
-            output = read_json(path)
+            raw = path.read_bytes()
+            require(hashlib.sha256(raw).hexdigest() == artifact["sha256"], "metric artifact hash mismatch")
+            output = decode(raw.decode("utf-8"))
             value = output.get(self.contract["metric"]) if isinstance(output, dict) else None
             return value if finite(value) else None
         except (ValueError, OSError, KeyError, TypeError):
@@ -405,13 +442,15 @@ class Wheel:
         quota = read_json(self.state_path("quota.json"))
         require(isinstance(quota, dict) and all(type(v) is int and 0 <= v <= 2 for v in quota.values()), "invalid proposer quota")
         dead = set(self.tokens("dead.txt"))
-        for line in self.state_path("inbox.jsonl").read_text(encoding="utf-8").splitlines():
+        for raw in self.inbox_contents()[1]:
             try:
-                row = decode(line)
+                require(len(raw) <= MAX_INBOX_ROW_BYTES, "proposal row exceeds byte limit")
+                row = decode(raw.decode("utf-8"))
                 require(isinstance(row, dict) and set(row) == {"proposal_id", "proposer_id", "kind", "factor", "parent_contract_id", "ts"},
                         "invalid proposal schema")
                 require(str(uuid.UUID(row["proposal_id"])) == row["proposal_id"], "invalid proposal UUID")
-                require(isinstance(row["proposer_id"], str) and row["proposer_id"], "missing proposer")
+                require(isinstance(row["proposer_id"], str) and row["proposer_id"]
+                        and len(row["proposer_id"].encode("utf-8")) <= MAX_PROPOSER_BYTES, "invalid proposer_id")
                 require(row["kind"] == "factor" and isinstance(row["factor"], str) and TOKEN.fullmatch(row["factor"]), "invalid factor")
                 require(row["parent_contract_id"] == self.contract["contract_id"], "proposal contract differs")
                 require(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)", row["ts"]), "invalid RFC3339")
@@ -422,9 +461,17 @@ class Wheel:
                     if isinstance(template, dict) and self.mapping_consumed(template.get("id"), "screen", snapshot):
                         continue  # Keep duplicate rows and their proposers' quota unchanged.
                     return row
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError, RecursionError):
                 continue  # Append-only inbox retains rejected original rows.
         return None
+
+    def inbox_contents(self):
+        with self.state_path("inbox.jsonl").open("rb") as stream:
+            raw = stream.read(MAX_INBOX_BYTES + 1)
+        require(len(raw) <= MAX_INBOX_BYTES, "proposal inbox exceeds byte limit")
+        rows = raw.splitlines()
+        require(len(rows) <= MAX_INBOX_ROWS, "proposal inbox exceeds row limit")
+        return raw, rows
 
     def dispatch(self, state, manifest, factor, kind, snapshot, proposal=None):
         relative = ("screen/" if kind == "screen" else "manifests/") + manifest["id"] + ".json"
@@ -568,11 +615,21 @@ class Wheel:
                 token = token[:-1]
             if not TOKEN.fullmatch(token) or token in self.tokens("dead.txt"):
                 return False
-            require(isinstance(proposer_id, str) and proposer_id, "proposer_id required")
+            require(isinstance(proposer_id, str) and proposer_id
+                    and len(proposer_id.encode("utf-8")) <= MAX_PROPOSER_BYTES, "bounded proposer_id required")
             require(sha(self.path(self.mapping["evaluator_path"])) == self.contract["evaluator_sha256"], "evaluator changed", 3)
-            self.append("inbox.jsonl", canonical({"proposal_id": str(uuid.uuid4()), "proposer_id": proposer_id,
+            raw = canonical({"proposal_id": str(uuid.uuid4()), "proposer_id": proposer_id,
                         "kind": "factor", "factor": token, "parent_contract_id": self.contract["contract_id"],
-                        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}) + "\n")
+                        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}) + "\n"
+            require(len(raw.encode("utf-8")) <= MAX_INBOX_ROW_BYTES, "proposal row exceeds byte limit")
+            before, rows = self.inbox_contents()
+            separator = "\n" if before and not before.endswith((b"\n", b"\r")) else ""
+            require(len(rows) < MAX_INBOX_ROWS
+                    and len(before) + len((separator + raw).encode("utf-8")) <= MAX_INBOX_BYTES,
+                    "proposal inbox is full")
+            # Preserve a crash-truncated row as an invalid original line;
+            # the accepted row must start separately, never be swallowed by it.
+            self.append("inbox.jsonl", separator + raw)
             return True
 
 

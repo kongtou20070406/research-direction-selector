@@ -104,7 +104,7 @@ def _measurement(policy, row, observed):
                          'conditions': sorted(discriminator['conditions'], key=lambda x: x['path']),
                          'protocol': verifier['protocol'],
                          'evaluator_argv': [locators.get(a, a) for a in verifier['argv']]})
-    return Fraction(value), comparable, None
+    return Fraction(str(value)) if type(value) is float else Fraction(value), comparable, None
 
 
 def build(policy, rows, feedback, state, *, scope_feedback=None):

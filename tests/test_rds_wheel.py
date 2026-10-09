@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import uuid
@@ -346,6 +347,27 @@ class WheelTests(unittest.TestCase):
         self.assertEqual(self.tick(), 2)
         self.assertEqual(self.executed(), [])
 
+    def test_metric_parses_the_same_original_bytes_it_hashes(self):
+        self.prepare()
+        receipt = self.project.receipts['treatment']
+        target = self.root / receipt['artifacts'][0]['path']
+        original = target.read_bytes()
+        reads = []
+        read_bytes = Path.read_bytes
+        read_text = Path.read_text
+        def changing_read(path):
+            if path == target:
+                reads.append(path)
+                return original if len(reads) == 1 else b'{"loss":-1000}'
+            return read_bytes(path)
+        def changed_text(path, *args, **kwargs):
+            return '{"loss":-1000}' if path == target else read_text(path, *args, **kwargs)
+        with patch.object(Path, 'read_bytes', autospec=True, side_effect=changing_read), \
+                patch.object(Path, 'read_text', autospec=True, side_effect=changed_text):
+            value = self.wheel.metric(receipt, self.wheel.manifest('seed', 'initial'))
+        self.assertEqual(value, json.loads(original)['loss'])
+        self.assertEqual(len(reads), 1)
+
     def test_receipt_from_a_different_manifest_is_unknown(self):
         self.prepare()
         receipt = self.project.receipts["treatment"]
@@ -464,8 +486,174 @@ class WheelTests(unittest.TestCase):
         self.assertFalse(rsi_gate(old, new, 4)["adoption_eligible"])
         self.assertEqual(rsi_gate(old, new, 2, {"regret": 0})["regret"], "UNKNOWN")
 
+    def test_rsi_decimal_boundary_is_exact_without_epsilon(self):
+        old = {"violations": 0, "spin_count": 3, "budget_to_true_cell": .3}
+        for new_value, expected in ((.1, True), (.10000000000000002, False), (.09999999999999999, True)):
+            with self.subTest(new_value=new_value):
+                result = rsi_gate(old, {**old, "spin_count": 2, "budget_to_true_cell": new_value}, .2)
+                self.assertEqual(result["adoption_eligible"], expected)
+                self.assertEqual(result["regret"], "UNKNOWN")
+
+    def handoff_ready(self):
+        self.prepare(factors=["flat"])
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.tick(), 0)
+
+    def test_proposal_inbox_limits_preserve_originals_and_quota(self):
+        self.handoff_ready()
+        inbox = self.wheel.state_path("inbox.jsonl")
+        quota = self.wheel.state_path("quota.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "proposer_id"):
+            self.wheel.propose("汉" * 1000, "screen_change")
+        self.assertEqual(inbox.read_bytes(), b'')
+        with patch.object(wheel_module, "MAX_INBOX_ROWS", 2):
+            self.assertTrue(self.wheel.propose("one", "screen_change"))
+            self.assertTrue(self.wheel.propose("two", "screen_change"))
+            before = inbox.read_bytes()
+            with self.assertRaisesRegex(ValueError, "inbox"):
+                self.wheel.propose("three", "screen_change")
+            self.assertEqual(inbox.read_bytes(), before)
+        with patch.object(wheel_module, "MAX_INBOX_BYTES", len(before)):
+            with self.assertRaisesRegex(ValueError, "inbox"):
+                self.wheel.propose("four", "screen_change")
+            self.assertEqual(inbox.read_bytes(), before)
+        self.assertEqual(self.wheel.state_path("quota.json").read_bytes(), quota)
+        self.assertEqual(self.executed(), ["flat"])
+
+    def test_oversized_and_deep_inbox_scan_is_bounded_without_execution(self):
+        self.prepare(factors=[])
+        inbox = self.wheel.state_path("inbox.jsonl")
+        inbox.write_bytes(b'x' * (1024 * 1024 + 1))
+        before = inbox.read_bytes()
+        self.assertEqual(self.tick(), 2)
+        self.assertEqual(inbox.read_bytes(), before)
+        self.assertEqual(self.executed(), [])
+        # A bounded malformed row must not obstruct a later valid proposal.
+        inbox.write_text('[' * 1500 + '0' + ']' * 1500 + '\n', encoding='utf-8')
+        self.inbox(self.row('screen_change'))
+        before = inbox.read_bytes()
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.executed(), ['screen_screen_change'])
+        self.assertEqual(inbox.read_bytes(), before)
+
+    def test_accepted_proposal_after_partial_append_keeps_prefix_and_is_selectable(self):
+        self.handoff_ready()
+        inbox = self.wheel.state_path('inbox.jsonl')
+        partial = b'{"partial":'
+        inbox.write_bytes(partial)
+        # The separator is part of the append allowance, never a rewrite.
+        with patch.object(wheel_module, 'MAX_INBOX_BYTES', len(partial) + 1):
+            with self.assertRaisesRegex(ValueError, 'inbox'):
+                self.wheel.propose('one', 'screen_change')
+            self.assertEqual(inbox.read_bytes(), partial)
+        self.assertTrue(self.wheel.propose('one', 'screen_change'))
+        self.assertTrue(inbox.read_bytes().startswith(partial))
+        state = read_json(self.wheel.state_path('state.json'))
+        selected = self.wheel.eligible_proposal(state, self.project('status'))
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected['proposer_id'], 'one')
+        self.assertEqual(selected['factor'], 'screen_change')
+        self.assertEqual(self.executed(), ['flat'])
+
 
 class RealWheelTests(unittest.TestCase):
+    def test_concurrent_initializer_keeps_one_stable_lock_and_publication(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-concurrent-') as directory:
+            root = Path(directory) / 'project'
+            def prepare_only(wheel, contract_path):
+                wheel.setup(read_json(contract_path), initialized=False)
+            with patch.object(Wheel, 'initialize', autospec=True, side_effect=prepare_only):
+                fixture.prepare(root)
+            code = ("import sys,time; from pathlib import Path; "
+                    "sys.path.insert(0,sys.argv[1]+'/scripts'); from rds_wheel import Wheel; "
+                    "root=Path(sys.argv[2]); original=Wheel.initial_state; "
+                    "exec('def staged(self, factors):\\n original(self, factors)\\n (root/\"staging-ready\").touch()\\n deadline=time.monotonic()+15\\n while not (root/\"release-staging\").exists():\\n  assert time.monotonic()<deadline, \"test publication barrier timed out\"\\n  time.sleep(.02)'); "
+                    "Wheel.initial_state=staged; Wheel(root).initialize(root/'project-contract.json')")
+            process = subprocess.Popen([sys.executable, '-B', '-c', code, str(REPO), str(root)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 10
+                while not (root / 'staging-ready').exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertTrue((root / 'staging-ready').exists(), 'first initializer must hold the actual OS lock')
+                self.assertFalse((root / '.rds/wheel').exists())
+                lock_path = root / '.rds/wheel-init.lock'
+                identity = (lock_path.stat().st_dev, lock_path.stat().st_ino)
+                with self.assertRaisesRegex(ValueError, 'initialization is busy'):
+                    Wheel(root).initialize(root / 'project-contract.json')
+                self.assertEqual(identity, (lock_path.stat().st_dev, lock_path.stat().st_ino))
+                (root / 'release-staging').touch()
+                out, err = process.communicate(timeout=20)
+                self.assertEqual(process.returncode, 0, err.decode('utf-8', errors='replace'))
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+            wheel = Wheel(root)
+            self.assertEqual(lock_path.read_bytes(), b'0')
+            self.assertEqual(len(list(wheel.directory.iterdir())), 10)
+            self.assertEqual(wheel.project('status')['runs'], [])
+            before = {p.name: p.read_bytes() for p in wheel.directory.iterdir()}
+            with self.assertRaisesRegex(ValueError, 'already initialized'):
+                wheel.initialize(root / 'project-contract.json')
+            self.assertEqual(before, {p.name: p.read_bytes() for p in wheel.directory.iterdir()})
+
+    def test_initialization_write_and_publish_failures_retry_same_native_project(self):
+        for point in ('staging', 'publish'):
+            with self.subTest(point=point), tempfile.TemporaryDirectory(prefix='rds-wheel-stage-') as directory:
+                root = Path(directory) / 'project'
+                if point == 'staging':
+                    write = Wheel.write
+                    def fail_write(wheel, name, value, **kwargs):
+                        write(wheel, name, value, **kwargs)
+                        if name == 'band.json':
+                            raise OSError('injected staging write failure')
+                    injection = patch.object(Wheel, 'write', autospec=True, side_effect=fail_write)
+                else:
+                    injection = patch.object(wheel_module.os, 'rename', side_effect=OSError('injected publish failure'))
+                with injection, self.assertRaisesRegex(OSError, 'injected'):
+                    fixture.prepare(root)
+                self.assertFalse((root / '.rds/wheel').exists())
+                wheel = Wheel(root)
+                before = wheel.project('status') if point == 'publish' else None
+                wheel.initialize(root / 'project-contract.json')
+                after = wheel.project('status')
+                if before:
+                    self.assertEqual(after, before, 'matching init retry must preserve the actual ledger and budget')
+                self.assertEqual(after['runs'], [])
+                self.assertEqual(after['receipts'], [])
+                self.assertEqual(after['contract_sha256'], digest(read_json(root / 'project-contract.json')))
+                files = {p.name: p.read_bytes() for p in wheel.directory.iterdir() if p.is_file()}
+                self.assertEqual(len(files), 10)
+                with self.assertRaisesRegex(ValueError, 'already initialized'):
+                    wheel.initialize(root / 'project-contract.json')
+                self.assertEqual(files, {p.name: p.read_bytes() for p in wheel.directory.iterdir() if p.is_file()})
+
+    def test_process_exit_after_native_init_allows_matching_retry_only(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-crash-') as directory:
+            root = Path(directory) / 'project'
+            code = ("import sys,os,importlib.util; from pathlib import Path; from unittest.mock import patch; "
+                    "sys.path.insert(0,sys.argv[1]+'/scripts'); import rds_wheel; "
+                    "s=importlib.util.spec_from_file_location('f',sys.argv[1]+'/examples/wheel/prepare.py'); "
+                    "f=importlib.util.module_from_spec(s); s.loader.exec_module(f); "
+                    "p=patch.object(rds_wheel.os,'rename',side_effect=lambda *a:os._exit(73)); p.start(); "
+                    "f.prepare(Path(sys.argv[2]))")
+            result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(root)], capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+            self.assertFalse((root / '.rds/wheel').exists())
+            wheel = Wheel(root)
+            before = wheel.project('status')
+            contract_path = root / 'project-contract.json'
+            original = read_json(contract_path)
+            contract_path.write_text(canonical({**original, 'description': 'different contract'}), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'Contract is frozen'):
+                wheel.initialize(contract_path)
+            self.assertFalse(wheel.directory.exists())
+            self.assertEqual(before, wheel.project('status'))
+            contract_path.write_text(canonical(original), encoding='utf-8')
+            wheel.initialize(contract_path)
+            self.assertEqual(before, wheel.project('status'))
+            self.assertEqual(read_json(wheel.state_path('state.json'))['ticks'], 0)
+
     def test_project_init_rejection_leaves_wheel_uninitialized_for_corrected_retry(self):
         with tempfile.TemporaryDirectory(prefix="rds-wheel-init-retry-") as directory:
             root = Path(directory) / "project"
