@@ -4,10 +4,12 @@ import argparse
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
 import sys
+import tempfile
 
 from rds_hypergraph import ASSURANCE, _validate, analyze_hypergraph
 from rds_hypergraph_input import load_input, prepare_input
@@ -23,6 +25,8 @@ def graph_view(value, source, *, snapshot_sha256=None, demo=False):
     if review["errors"]:
         raise ValueError("Hypergraph input: " + json.dumps(review["errors"], ensure_ascii=False))
     validation = deepcopy(spec)
+    if "limits" in validation and not isinstance(validation["limits"], dict):
+        raise ValueError("Hypergraph limits must be an object")
     validation_limits = validation.setdefault("limits", {})
     validation_limits.setdefault("max_nodes", VIEW_LIMITS["nodes"])
     validation_limits.setdefault("max_hyperedges", 16384)
@@ -250,7 +254,8 @@ function startGraph(){
  const relations=new Map([...new Set(graph.hyperedges.map(relation))].map((type,i)=>[type,{style:['solid','dashed','dotted','dashdot'][i%4],color:pastels[i%pastels.length],width:.65,mode:/竞争|冲突|反驳|contradict|conflict|excludes/i.test(type)?'repel':'attract',strength:type==='主题关联'?.55:1,distance:/竞争|冲突|反驳|contradict|conflict|excludes/i.test(type)?180:65}]));
  const canvas=$('canvas');canvas.id='hg-canvas';canvas.tabIndex=0;canvas.setAttribute('role','img');canvas.setAttribute('aria-label','可交互研究超图。方向键平移，加减号缩放，0 适应全图。可通过搜索选择节点。');shell.append(canvas);const ctx=canvas.getContext('2d');
  const top=$('div',undefined,'hg-top'),title=$('h1',undefined,'hg-title');title.append($('span','RDS'),data.readable?.graph?.title?.trim()||'研究超图');top.append(title);
- if(data.readable?.graph?.summary?.trim()){const info=button('ⓘ','研究说明',()=>{detail.replaceChildren();const head=$('header');head.append($('strong','研究说明'),button('×','关闭详情',()=>{detail.hidden=true},'hg-close'));detail.append(head,$('h3',data.readable.graph.title?.trim()||'研究超图'),$('p',data.readable.graph.summary.trim(),'readable-summary'));detail.hidden=false;settings.hidden=results.hidden=true;},'hg-close');info.style.pointerEvents='auto';title.append(info);}
+ function diagnostics(parent,info){if(!info?.count)return;parent.append($('h4','来源待核对'));for(const item of info.items)parent.append($('p',item.message,'source-diagnostic'));if(info.omitted)parent.append($('p',`另有 ${info.omitted} 项待核对`,'hg-hint'));}
+ if(data.readable?.graph?.summary?.trim()||data.display?.diagnostics?.count){const info=button('ⓘ','研究说明',()=>{detail.replaceChildren();const head=$('header');head.append($('strong','研究说明'),button('×','关闭详情',()=>{detail.hidden=true},'hg-close'));detail.append(head,$('h3',data.readable?.graph?.title?.trim()||'研究超图'));if(data.readable?.graph?.summary?.trim())detail.append($('p',data.readable.graph.summary.trim(),'readable-summary'));diagnostics(detail,data.display?.diagnostics);detail.hidden=false;settings.hidden=results.hidden=true;},'hg-close');info.style.pointerEvents='auto';title.append(info);}
  const counts=$('div',`${graph.nodes.length.toLocaleString()} 个节点  ·  ${graph.hyperedges.length.toLocaleString()} 条超边  ·  ${links.length.toLocaleString()} 条连接`,'hg-counts');if(data.demo)counts.append($('span','合成示例','hg-demo'));top.append(counts);shell.append(top);
  const actions=$('div',undefined,'hg-actions'),searchWrap=$('div',undefined,'hg-search-wrap'),search=$('input',undefined,'hg-search'),results=$('div',undefined,'hg-results');search.id='hg-search';search.type='search';search.placeholder='搜索节点或关系…';search.setAttribute('aria-label','搜索节点或关系');results.hidden=true;results.id='hg-search-results';searchWrap.append(search,results);actions.append(searchWrap);
  const settings=$('aside',undefined,'hg-panel'),detail=$('aside',undefined,'hg-panel');settings.id='hg-settings';detail.id='hg-detail';settings.hidden=detail.hidden=true;settings.setAttribute('aria-label','图谱设置');detail.setAttribute('aria-label','节点与关系详情');
@@ -327,6 +332,7 @@ function startGraph(){
  function inspect(i,center=false){selected=i;const item=items[i],r=item.record;updateFocus();detail.replaceChildren();const head=$('header');head.append($('strong',item.kind==='edge'?'超边详情':'节点详情'),button('×','关闭详情',()=>{detail.hidden=true;selected=null;updateFocus();requestDraw()},'hg-close'));detail.append(head,$('h3',label(r)),$('span',display(r)?.kind||(item.kind==='edge'?'超边':'声明'),'hg-tag'),$('span',stateText(r),'hg-tag'));
   if(display(r)?.summary)detail.append($('p',display(r).summary,'readable-summary'));
   function linked(title,indices){if(!indices.length)return;detail.append($('h4',title));const ul=$('ul');for(const target of indices.slice(0,150)){const li=$('li'),b=button(label(items[target].record),'查看 '+label(items[target].record),()=>inspect(target,true),'hg-close');b.style.fontSize='12px';b.style.lineHeight='1.6';li.append(b);ul.append(li)}detail.append(ul);if(indices.length>150)detail.append($('p',`前 150 项，共 ${indices.length} 项`,'hg-hint'))}
+  const info=display(r)?.diagnostics;diagnostics(detail,info);for(const issue of info?.items||[]){linked('候选来源',issue.candidates.map(id=>byKey.get('n:'+id)?.index).filter(index=>index!==undefined));if(issue.omitted_candidates)detail.append($('p',`另有 ${issue.omitted_candidates} 个候选`,'hg-hint'));}
   if(item.kind==='node'){linked('推导路线 · OR',incoming.get(i));linked('关联节点',neighbors[i].filter(target=>!incoming.get(i).includes(target)));}
   else{linked('共同前提 · AND',r.premises.map(id=>byKey.get('n:'+id).index));linked('结论',[byKey.get('n:'+r.conclusion).index]);}
   detail.hidden=false;settings.hidden=true;results.hidden=true;
@@ -449,7 +455,7 @@ def dependency_levels(ids, links):
     return {i: (rank[component[i]] - center) * 160 if adj[i] or rev[i] else None for i in ids}
 
 
-def _record_view_report(spec):
+def _adapt_record_view(spec):
     """Resolve reported identities without running inference or auditing research.
 
     Older owned snapshots predate record_kind. Adapt only reserved run/receipt
@@ -506,6 +512,11 @@ def _record_view_report(spec):
             candidates = by_run.get(row.get("run_id"), [])
             if len(candidates) == 1:
                 row["receipt_id"] = candidates[0]
+    return adapted
+
+
+def _record_view_report(spec, *, adapted=None):
+    adapted = _adapt_record_view(spec) if adapted is None else adapted
     import rds_hypergraph
     if callable(getattr(rds_hypergraph, "record_topology", None)):
         return rds_hypergraph.record_topology(adapted)
@@ -766,8 +777,15 @@ def display_record(row, *, edge=False):
     return {"label": label, "kind": kind, "color": color, "shape": shape, "outline": outline, "status_text": status_text}
 
 
-def display_records(result):
+def display_records(result, *, adapted=None, report=None):
     spec = result.get("graph") or {}
+    adapted = (_adapt_record_view(spec) if spec else spec) if adapted is None else adapted
+    report = (_record_view_report(spec, adapted=adapted) if spec else {"record_topology": {"issues": []}}) if report is None else report
+    issues = report["record_topology"]["issues"]
+    effective = {row["id"]: row for row in adapted.get("nodes", [])}
+    by_node = {}
+    for issue in issues:
+        by_node.setdefault(issue.get("node_id"), []).append(issue)
     readable = result.get("readable")
     if readable is not None:
         from rds_hypergraph_readable import validate_readable
@@ -776,16 +794,50 @@ def display_records(result):
     for key in ("nodes", "hyperedges"):
         presentation[key] = {}
         for row in spec.get(key, []):
-            info = display_record(row, edge=key == "hyperedges")
+            info = display_record(effective.get(row["id"], row), edge=key == "hyperedges")
             entry = (readable or {}).get(key, {}).get(row["id"], {})
             if entry.get("title", "").strip():
                 info["label"] = entry["title"].strip()
             info["summary"] = entry.get("summary", "").strip()
+            scoped = by_node.get(row["id"], []) if key == "nodes" else []
+            info["diagnostics"] = readable_diagnostics(scoped)
             presentation[key][row["id"]] = info
+    presentation["diagnostics"] = readable_diagnostics(issues, graph=True)
     return presentation
 
 
-def replica_view(result):
+def readable_diagnostics(issues, *, graph=False):
+    """Bounded human explanations; raw resolver evidence stays in the payload."""
+    reasons = {"MISSING_BINDING": "未记录", "UNMATCHED_BINDING": "未找到匹配",
+               "AMBIGUOUS_BINDING": "有多个匹配", "CONFLICTING_BINDINGS": "记录冲突",
+               "INVALID_BINDING": "记录无效", "RUN_NOT_REGISTERED": "执行尚未登记"}
+    messages = []
+    for issue in issues:
+        field = issue.get("field", "")
+        subject = "执行来源" if "run" in field else "回执来源" if "receipt" in field else "产物来源" if "artifact" in field else "来源"
+        message = subject + "：" + reasons.get(issue.get("reason"), "待核对") + "。"
+        if not any(item["message"] == message for item in messages) or not graph:
+            candidates = issue.get("candidates", [])
+            messages.append({"message": message, "candidates": candidates[:8],
+                             "omitted_candidates": issue.get("omitted_candidates", 0) + max(0, len(candidates) - 8)})
+    return {"items": messages[:8], "omitted": max(0, len(messages) - 8), "count": len(issues)}
+
+
+def write_html_atomic(output, page):
+    """Replace the output directory entry without writing through input aliases."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
+                                         prefix=".rds-hypergraph-", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(page)
+        os.replace(temporary, output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def replica_view(result, *, presentation=None, report=None):
     """Incidence geometry plus explicitly bound provenance; never alter the map.
 
     Provenance is a separate view relation, not an inference or scientific edge.
@@ -795,11 +847,12 @@ def replica_view(result):
     if not spec:
         return {"nodes": {}, "links": [], "provenance_count": 0, "relations": []}
     nodes, links, groups = {}, [], {}
-    presentation = display_records(result)
+    adapted = _adapt_record_view(spec) if presentation is None or report is None else None
+    report = _record_view_report(spec, adapted=adapted) if report is None else report
+    presentation = display_records(result, adapted=adapted, report=report) if presentation is None else presentation
     ids = {n["id"]: f"c{i}" for i, n in enumerate(spec["nodes"])}
     goals = set(spec["goals"])
     palette = {"声明": "#c2c8d2", "执行": "#b39ddb", "回执": "#82c4af", "产物": "#82b6d4", "观测": "#d5c17e"}
-    report = _record_view_report(spec)
     run_ids = {n["id"]: n.get("run_id", n["id"].removeprefix("owned:run:")) for n in spec["nodes"]
                if n.get("record_kind") == "run" and isinstance(n.get("run_id"), str) and n["run_id"]
                or n["id"].startswith("owned:run:") and isinstance(n.get("manifest_sha256"), str)}
@@ -1062,7 +1115,11 @@ def render_replica_html(result, replica_root, pixi_js):
     pixi = Path(pixi_js).read_bytes()
     if hashlib.sha256(pixi).hexdigest() != PIXI_SHA256:
         raise ValueError("PixiJS must be the official 7.4.3 dist/pixi.min.js")
-    payload = {**result, "display": display_records(result), "replica_view": replica_view(result),
+    spec = result.get("graph") or {}
+    adapted = _adapt_record_view(spec) if spec else spec
+    report = _record_view_report(spec, adapted=adapted) if spec else {"record_topology": {"issues": []}}
+    presentation = display_records(result, adapted=adapted, report=report)
+    payload = {**result, "display": presentation, "replica_view": replica_view(result, presentation=presentation, report=report),
                "renderer": {"repository": "https://github.com/runningZ1/obsidian-graph-replica", "commit": REPLICA_COMMIT,
                             "pixi": "7.4.3", "runtime_network": False}}
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
@@ -1144,15 +1201,32 @@ function goalCredits(spec,goal) {
  const ids=new Set(spec.nodes.map(n=>n.id)),incoming=new Map(),distance=new Map(),nodes=new Map(),edges=new Map();
  if(!ids.has(goal))return {nodes,edges,distance};
  for(const e of spec.hyperedges)if(e.status!=='CONTRADICTED'){
-  const w=e.weight===undefined?1:typeof e.weight==='number'&&Number.isFinite(e.weight)?Math.min(1e6,Math.max(0,e.weight)):0;
+  const w=e.weight===undefined?1:typeof e.weight==='number'&&Number.isFinite(e.weight)?Math.max(0,e.weight):0;
   if(!w)continue;const list=incoming.get(e.conclusion)||[];list.push({e,w});incoming.set(e.conclusion,list);
  }
  const queue=[goal];distance.set(goal,0);nodes.set(goal,1);
  for(let i=0;i<queue.length;i++){const id=queue[i],d=distance.get(id);for(const {e} of incoming.get(id)||[])for(const p of e.premises)if(!distance.has(p)){distance.set(p,d+1);queue.push(p);}}
- for(const id of queue){const d=distance.get(id),credit=nodes.get(id)||0,routes=(incoming.get(id)||[]).filter(({e})=>e.premises.every(p=>distance.get(p)===d+1)),total=routes.reduce((sum,r)=>sum+r.w,0);
-  for(const {e,w} of routes){const share=credit*w/total;edges.set(e.id,share);for(const p of e.premises)nodes.set(p,(nodes.get(p)||0)+share/e.premises.length);}
+ for(const id of queue){const d=distance.get(id),credit=nodes.get(id)||0,routes=(incoming.get(id)||[]).filter(({e})=>e.premises.every(p=>distance.get(p)===d+1)),max=routes.reduce((m,r)=>Math.max(m,r.w),0),total=routes.reduce((sum,r)=>sum+r.w/max,0);
+  for(const {e,w} of routes){const share=credit*(w/max)/total;edges.set(e.id,share);for(const p of e.premises)nodes.set(p,(nodes.get(p)||0)+share/e.premises.length);}
  }
  return {nodes,edges,distance};
+}
+// Current display incidences only; these ranks do not infer support or goal credit.
+function activeDependencyLevels(ids,links,relations) {
+ const adj=new Map(ids.map(id=>[id,[]])),rev=new Map(ids.map(id=>[id,[]])),active=[];
+ for(const [s,t,meta] of links){const cfg=relations[meta.relation];if(meta.family==='membership'||cfg&&(cfg.mode==='none'||cfg.strength===0)||!adj.has(s)||!adj.has(t))continue;adj.get(s).push(t);rev.get(t).push(s);active.push([s,t]);}
+ const seen=new Set(),order=[];
+ for(const first of ids){if(seen.has(first))continue;seen.add(first);const stack=[[first,0]];
+  while(stack.length){const frame=stack[stack.length-1],neighbors=adj.get(frame[0]);if(frame[1]===neighbors.length){order.push(frame[0]);stack.pop();continue;}const next=neighbors[frame[1]++];if(!seen.has(next)){seen.add(next);stack.push([next,0]);}}
+ }
+ const component=new Map();let cid=-1;
+ for(let i=order.length-1;i>=0;i--){const first=order[i];if(component.has(first))continue;component.set(first,++cid);const stack=[first];while(stack.length)for(const next of rev.get(stack.pop()))if(!component.has(next)){component.set(next,cid);stack.push(next);}}
+ const out=Array.from({length:cid+1},()=>new Set()),indegree=out.map(()=>0),rank=out.map(()=>0);
+ for(const [s,t] of active){const a=component.get(s),b=component.get(t);if(a!==b&&!out[a].has(b)){out[a].add(b);indegree[b]++;}}
+ const queue=[];for(let i=0;i<indegree.length;i++)if(!indegree[i])queue.push(i);
+ for(let i=0;i<queue.length;i++)for(const next of out[queue[i]]){rank[next]=Math.max(rank[next],rank[queue[i]]+1);if(!--indegree[next])queue.push(next);}
+ const center=rank.reduce((m,r)=>Math.max(m,r),0)/2;
+ return new Map(ids.map(id=>[id,adj.get(id).length||rev.get(id).length?(rank[component.get(id)]-center)*160:null]));
 }
 (() => {
  'use strict';
@@ -1192,11 +1266,13 @@ function goalCredits(spec,goal) {
  renderRelationControls();
  const close=button('收起设置',()=>panel.classList.add('is-close'));const actions=el('div',undefined,'gc-actions');actions.append(close);panel.append(actions);
  function displayOptions(){g.setOptions({nodeSize:opts.nodeSize,lineSize:opts.lineSize,textFade:opts.textFade,showArrow:opts.arrows});nodeAppearance();}
- function applyForces(){g.setForces({damping:opts.damping,flowStrength:opts.flowStrength,groupStrength:opts.groupStrength,edgeRepulsion:opts.edgeRepulsion,edgeClearance:opts.edgeClearance,centerStrength:opts.centerStrength,repelStrength:opts.repelStrength,linkStrength:opts.linkStrength,linkDistance:opts.linkDistance,relations:opts.relations});$('state').textContent='布局收敛中…';}
+ function refreshFlow(){const levels=activeDependencyLevels(g.nodes.map(n=>n.id),g.links.map(l=>[l.source.id,l.target.id,l.rds]),opts.relations);for(const n of g.nodes)n.rds.flowX=levels.get(n.id);}
+ function applyForces(){g.setForces({damping:opts.damping,flowStrength:opts.flowStrength,groupStrength:opts.groupStrength,edgeRepulsion:opts.edgeRepulsion,edgeClearance:opts.edgeClearance,centerStrength:opts.centerStrength,repelStrength:opts.repelStrength,linkStrength:opts.linkStrength,linkDistance:opts.linkDistance,relations:opts.relations});refreshFlow();nodeAppearance();$('state').textContent='布局收敛中…';}
  function restyle(){for(const l of g.links){const cfg=opts.relations[l.rds.relation];Object.assign(l.rds,{color:cfg.color,width:cfg.width,dash:cfg.dash});if(l.rendered)l.line.texture=cfg.dash?g.rdsDashTexture:PIXI.Texture.WHITE;}g.changed();}
  function recordFor(n){return n.rds.virtual?{id:'display:project-snapshot',status:'显示层',source:data.source,snapshot_sha256:data.snapshot_sha256,meaning:'同一快照的项目归属；不是原始科研节点',components:view.scope.components,unlinked_records:view.scope.unlinked_records}:n.rds.edge!==undefined?data.graph.hyperedges[n.rds.edge]:recordById.get(n.rds.record);}
  function summaryFor(n){if(n.rds.virtual)return data.readable?.graph?.summary?.trim()||'';const key=n.rds.edge!==undefined?'hyperedges':'nodes',id=recordFor(n).id,map=data.display?.[key];return map&&Object.hasOwn(map,id)?map[id].summary||'':'';}
- $('graph-info').hidden=!data.readable?.graph?.summary?.trim();$('graph-info').addEventListener('click',()=>{finishGrowth();card.replaceChildren();card.classList.add('show');const close=button('×',()=>card.classList.remove('show'),'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',data.readable.graph.title?.trim()||'研究说明'),el('p',data.readable.graph.summary.trim(),'readable-summary'));});
+ function diagnostics(parent,info){if(!info?.count)return;parent.append(el('h4','来源待核对'));for(const item of info.items)parent.append(el('p',item.message,'source-diagnostic'));if(info.omitted)parent.append(el('p',`另有 ${info.omitted} 项待核对`,'hint'));}
+ $('graph-info').hidden=!(data.readable?.graph?.summary?.trim()||data.display?.diagnostics?.count);$('graph-info').addEventListener('click',()=>{finishGrowth();card.replaceChildren();card.classList.add('show');const close=button('×',()=>card.classList.remove('show'),'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',data.readable?.graph?.title?.trim()||'研究说明'));if(data.readable?.graph?.summary?.trim())card.append(el('p',data.readable.graph.summary.trim(),'readable-summary'));diagnostics(card,data.display?.diagnostics);});
  let lastTargets='';
  function nodeAppearance(force=false){for(const n of g.nodes){const style=opts.nodeStyles[n.rds.kind],weight=n.rds.edge!==undefined?credits.edges.get(data.graph.hyperedges[n.rds.edge].id):credits.nodes.get(n.rds.record);n.rds.shape=style.shape;n.rds.size=style.size*(n.type==='hyperedge'?.65:opts.sizeMode==='degree'?view.nodes[n.id].rds.size:1);n.rds.radius=opts.sizeMode==='goal'?(n.rds.virtual?12:6+20*Math.sqrt(Math.min(1,weight||0))):undefined;n.rds.chargeWeight=n.rds.virtual?1:1+2*Math.sqrt(Math.min(1,weight||0));n.rds.collisionRadius=Math.max(24,Math.min(120,24+n.getSize()*1.8));n.color=opts.colors?{rgb:parseInt(style.color.slice(1),16),a:1}:null;if(n.rendered){n.text.style=n.textStyle();}}
   const targets=Object.fromEntries(g.nodes.map(n=>[n.id,{flowX:n.rds.flowX,group:n.rds.group,members:n.rds.members,chargeWeight:n.rds.chargeWeight,collisionRadius:n.rds.collisionRadius}])),signature=JSON.stringify(targets);if(force||signature!==lastTargets){lastTargets=signature;g.worker.postMessage({layoutTargets:targets,alpha:.3,run:true});}paintLegend();g.changed();}
@@ -1211,7 +1287,7 @@ function goalCredits(spec,goal) {
   for(const [id,n] of Object.entries(view.nodes))if(n.type==='hyperedge'&&!n.rds.members.every(x=>selected.has(x)))selected.delete(id);
   for(const id of selected){const n=view.nodes[id];nodes[id]={...n,rds:{...n.rds},color:opts.colors?n.color:null};}
   const links=view.links.filter(([s,t,meta])=>(opts.scope||meta.family!=='membership')&&selected.has(s)&&selected.has(t)).map(([s,t,meta])=>[s,t,{...meta,...opts.relations[meta.relation]}]);
-  g.setData({nodes,links});restyle();nodeAppearance(true);
+  g.setData({nodes,links});refreshFlow();restyle();nodeAppearance(true);
   $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边${query?' · '+nodesCount(nodes)+' 个匹配':''}`;$('state').textContent='布局收敛中…';
   if(query){matches.append(el('p',`${found.length} 个匹配`,'hint'));for(const id of found.slice(0,20)){const n=view.nodes[id],b=button(n.label,()=>inspect(id),'record-link');b.title=n.rds.kind+' · '+stateText(n);matches.append(b);}}
   if(opts.growth && !query)playGrowth();
@@ -1224,6 +1300,7 @@ function goalCredits(spec,goal) {
   const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.label),el('span',n.rds.virtual?'归属':n.rds.kind,'tag'),el('span',stateText(n),'tag result-tag'));
   if(summaryFor(n))card.append(el('p',summaryFor(n),'readable-summary'));
   function linked(title,ids){if(!ids.length)return;card.append(el('h4',title));for(const target of ids){const v=view.nodes[target];card.append(button(v.label,()=>navigate(target),'record-link'));}}
+  const map=data.display?.nodes,info=n.rds.record&&map&&Object.hasOwn(map,n.rds.record)?map[n.rds.record].diagnostics:null;diagnostics(card,info);for(const issue of info?.items||[]){const candidates=new Set(issue.candidates);linked('候选来源',Object.keys(view.nodes).filter(id=>candidates.has(view.nodes[id].rds.record)));if(issue.omitted_candidates)card.append(el('p',`另有 ${issue.omitted_candidates} 个候选`,'hint'));}
   if(n.rds.edge!==undefined){linked('共同前提 · AND',n.rds.members.slice(0,-1));linked('结论',n.rds.members.slice(-1));}
   else{const related=view.links.filter(([s,t,meta])=>(s===id||t===id)&&(opts.scope||meta.family!=='membership'));const routes=related.filter(([,t,meta])=>t===id&&meta.family==='dependency').map(([s])=>s);linked('推导路线 · OR',routes);const others=new Set(related.map(([s,t])=>s===id?t:s).filter(other=>!routes.includes(other)));linked('关联节点',[...others]);}
  }
@@ -1287,7 +1364,7 @@ def main(argv=None):
             result = with_readable(result, load_readable(readable_path, result))
         output.parent.mkdir(parents=True, exist_ok=True)
         page = render_replica_html(result, args.replica_root, args.pixi_js) if args.replica_root else render_html(result)
-        output.write_text(page, encoding="utf-8")
+        write_html_atomic(output, page)
     except (OSError, ValueError, sqlite3.Error) as exc:
         parser.error(str(exc))
     print(json.dumps({"output": str(output), "status": result["status"], "source": result["source"],

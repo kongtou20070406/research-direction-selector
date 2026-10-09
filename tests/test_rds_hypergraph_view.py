@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rds_hypergraph_view import (JS, D3_BUNDLE, graph_view, read_graph, render_html, large_demo,
     replica_view, dependency_levels, render_replica_html, patch_replica_worker, _legacy_record_report,
-    patch_replica_renderer, REPLICA_APP, REPLICA_FILES, display_record, display_records)
+    patch_replica_renderer, REPLICA_APP, REPLICA_FILES, display_record, display_records,
+    readable_diagnostics, write_html_atomic)
 from rds_tms_store import current, save
 
 
@@ -206,6 +207,46 @@ class HypergraphViewTests(unittest.TestCase):
         self.assertEqual(result["status"], "UNAVAILABLE")
         self.assertIn("integrity failure", result["reason"].lower())
         self.assertEqual(cas.read_bytes(), b"corrupt synthetic CAS")
+
+    def test_saved_export_replaces_hardlink_without_writing_ledger_or_cas(self):
+        save(self.root, example(), expected=None)
+        saved = current(self.root)
+        for source in (self.root / ".rds/project.sqlite3", self.root / saved["map"]["path"]):
+            with self.subTest(source=source.name):
+                output = self.root / "alias.html"
+                output.unlink(missing_ok=True)
+                os.link(source, output)
+                before = source.read_bytes()
+                result = self.export("--output", output)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(source.read_bytes(), before)
+                self.assertFalse(source.samefile(output))
+                self.assertEqual(self.payload(output.read_text(encoding="utf-8"))["graph"], example())
+                self.assertFalse(list(self.root.glob(".rds-hypergraph-*.tmp")))
+
+    def test_atomic_export_failure_preserves_output_and_cleans_temporary(self):
+        output = self.root / "existing.html"
+        output.write_bytes(b"original")
+        with patch("rds_hypergraph_view.os.replace", side_effect=OSError("replace unavailable")):
+            with self.assertRaisesRegex(OSError, "replace unavailable"):
+                write_html_atomic(output, "new page")
+        self.assertEqual(output.read_bytes(), b"original")
+        self.assertFalse(list(self.root.glob(".rds-hypergraph-*.tmp")))
+
+    def test_malformed_limits_fail_cleanly_without_output(self):
+        source, output = self.root / "invalid.json", self.root / "invalid.html"
+        for limits in (None, [], "invalid", 1, True):
+            with self.subTest(limits=limits):
+                spec = {**example(), "limits": limits}
+                source.write_text(json.dumps(spec), encoding="utf-8")
+                result = read_graph(self.root, source)
+                self.assertEqual(result["status"], "UNAVAILABLE")
+                self.assertIn("limits must be an object", result["reason"])
+                cli = self.export("--hypergraph", source, "--output", output)
+                self.assertNotEqual(cli.returncode, 0)
+                self.assertNotIn("Traceback", cli.stderr)
+                self.assertFalse(output.exists())
+                self.assertEqual(json.loads(source.read_text(encoding="utf-8")), spec)
 
     def test_missing_and_malformed_graph_never_become_synthetic_data(self):
         self.assertEqual(read_graph(self.root)["status"], "MISSING")
@@ -503,6 +544,48 @@ console.log('Production outline methods: independent Graphics transport, cached 
                 self.assertIsNone(view["nodes"]["h0"]["rds"]["group"])
                 self.assertEqual(result, before)
                 self.assertNotIn("observation:a", result["analysis"]["declared_supported_closure"])
+
+    def test_legacy_display_uses_effective_kind_without_rewriting_raw_records(self):
+        from rds_hypergraph_readable import agent_input, with_readable
+        spec = self.record_fixture(legacy=True)
+        result = graph_view(spec, "fixture")
+        before = deepcopy(result)
+        display = display_records(result)
+        expected = {"artifact:a": "产物", "artifact:b": "产物", "observation:a": "观测", "declared:a": "产物"}
+        for ident, kind in expected.items():
+            self.assertEqual(display["nodes"][ident]["kind"], kind)
+        self.assertEqual(result, before)
+        readable = agent_input(result)["readable"]
+        readable["nodes"]["artifact:a"] = {"title": "消元步骤输出", "summary": "记录候选计算。"}
+        annotated = with_readable(result, readable)
+        self.assertEqual(display_records(annotated)["nodes"]["artifact:a"]["label"], "消元步骤输出")
+        for ident, kind in expected.items():
+            visual = next(n for n in replica_view(annotated)["nodes"].values() if n["rds"].get("record") == ident)
+            self.assertEqual(visual["rds"]["kind"], kind)
+        payload = HypergraphViewTests.payload(render_html(annotated))
+        self.assertEqual(payload["display"]["nodes"]["observation:a"]["kind"], "观测")
+        self.assertEqual(payload["graph"], before["graph"])
+
+    def test_rejected_provenance_keeps_type_and_human_diagnostics(self):
+        spec = self.record_fixture(legacy=True)
+        duplicate = deepcopy(spec["nodes"][1])
+        duplicate["id"] = "receipt-duplicate"
+        duplicate["record_kind"] = "receipt"
+        duplicate["run_id"] = "a"
+        spec["nodes"].append(duplicate)
+        result = graph_view(spec, "fixture")
+        before = deepcopy(result)
+        display = display_records(result)
+        info = display["nodes"]["observation:a"]
+        self.assertEqual(info["kind"], "观测")
+        self.assertGreater(info["diagnostics"]["count"], 0)
+        self.assertIn("多个匹配", str(info["diagnostics"]))
+        self.assertGreater(display["diagnostics"]["count"], 0)
+        self.assertEqual(result, before)
+        bounded = readable_diagnostics([{"field": "run_id", "reason": "AMBIGUOUS_BINDING", "candidates": [str(i) for i in range(12)]} for _ in range(11)])
+        self.assertEqual(len(bounded["items"]), 8)
+        self.assertEqual(bounded["omitted"], 3)
+        self.assertEqual(bounded["items"][0]["omitted_candidates"], 4)
 
     def test_fallback_diagnoses_missing_required_record_identities(self):
         required = {"run": {"run_id"}, "receipt": {"run_id", "receipt_id"},
@@ -918,11 +1001,17 @@ const m=scope.goalCredits(mixed,'goal');eq(m.edges.get('main'),.5);eq(m.nodes.ge
 if(m.edges.has('mixed-depth')||m.nodes.has('s'))throw Error('A partially shortest AND route lost a premise share');
 const empty={nodes:['goal','p','q'].map(id=>({id})),goals:['goal'],hyperedges:[edge('assumption',[],'goal'),edge('and',['p','q'],'goal',3)]};
 const a=scope.goalCredits(empty,'goal');eq(a.edges.get('assumption'),.25);eq(a.edges.get('and'),.75);eq(a.nodes.get('p'),.375);eq(a.nodes.get('q'),.375);
+const huge={nodes:['goal','p','q'].map(id=>({id})),hyperedges:[edge('large',['p'],'goal',1e9),edge('small',['q'],'goal',1e8)]};
+const h=scope.goalCredits(huge,'goal');eq(h.edges.get('large'),10/11);eq(h.nodes.get('q'),1/11);
+huge.hyperedges[0].weight=1e308;huge.hyperedges[1].weight=1e308;
+const overflow=scope.goalCredits(huge,'goal');eq(overflow.edges.get('large'),.5);eq(overflow.edges.get('small'),.5);
+mixed.hyperedges[0].weight=1e9;mixed.hyperedges[1].weight=1e8;mixed.hyperedges[2].weight=1e308;
+const excluded=scope.goalCredits(mixed,'goal');eq(excluded.edges.get('main'),10/11);if(excluded.edges.has('mixed-depth'))throw Error('Ineligible huge route entered normalization');
 const tricky={nodes:[{id:'__proto__'},{id:'constructor'}],hyperedges:[edge('toString',['constructor'],'__proto__')],goals:['__proto__']};
 eq(scope.goalCredits(tricky,'__proto__').nodes.get('constructor'),1);
 const chain={nodes:Array.from({length:4096},(_,i)=>({id:String(i)})),hyperedges:Array.from({length:4095},(_,i)=>edge(String(i),[String(i)],String(i+1))),goals:['4095']};
 eq(scope.goalCredits(chain,'4095').nodes.get('0'),1);
-console.log('AND/OR credit, whole-route mixed-depth eligibility, assumption-free route, shared premise, contradicted/zero route, cycle, missing goal, prototype IDs and long chain PASS');
+console.log('AND/OR credit, huge ratios and overflow, whole-route mixed-depth eligibility, assumption-free route, shared premise, contradicted/zero route, cycle, missing goal, prototype IDs and long chain PASS');
 '''
         with tempfile.TemporaryDirectory() as tmp:
             script=Path(tmp)/"weights.cjs";script.write_text(driver,encoding="utf-8")
@@ -1140,6 +1229,99 @@ console.log('Canvas: 8192 relation editors bounded on first/last page and tail r
 
 @unittest.skipUnless(shutil.which("node"), "Node required for actual Replica interaction boundaries")
 class ReplicaBoundaryTests(_JSBoundaryTests):
+    def test_actual_both_renderers_show_bounded_diagnostics_and_safe_candidates(self):
+        from rds_hypergraph_view import readable_diagnostics
+        digest = "a" * 64
+        target = "private:" + digest
+        candidate_ids = ["candidate:" + str(i) for i in range(10)]
+        unsafe_label = '<img src=x onerror="throw Error(1)"> & candidate'
+        spec = {"schema": 1, "nodes": [
+            {"id": target, "label": "Target", "status": "UNKNOWN", "source": "private:" + digest},
+            *[{"id": id, "label": unsafe_label if i == 0 else "Candidate " + str(i),
+               "status": "UNKNOWN", "source": "fixture"} for i, id in enumerate(candidate_ids)]
+        ], "hyperedges": [], "goals": [target]}
+        result = graph_view(spec, "synthetic:diagnostics")
+        reasons = ["MISSING_BINDING", "UNMATCHED_BINDING", "AMBIGUOUS_BINDING",
+                   "CONFLICTING_BINDINGS", "INVALID_BINDING", "RUN_NOT_REGISTERED"]
+        issues = [{"node_id": target, "field": "run_id" if i < 6 else "receipt_id",
+                   "reason": reasons[i % 6], "candidates": candidate_ids,
+                   "raw_sha256": digest, "raw_value": '<script>throw Error(2)</script>'}
+                  for i in range(10)]
+        result["display"] = display_records(result)
+        result["display"]["nodes"][target]["diagnostics"] = readable_diagnostics(issues)
+        result["display"]["diagnostics"] = readable_diagnostics(issues, graph=True)
+        result["replica_view"] = replica_view(result)
+        common = "const payload=" + json.dumps(result) + ";const target=" + json.dumps(target) + ";const unsafeLabel=" + json.dumps(unsafe_label) + ";\n" + r'''
+const before=JSON.stringify(payload.graph),b=browser(payload);
+function verify(card){const text=b.text(card);assert.match(text,/来源待核对/);assert.match(text,/另有 2 项待核对/);assert.ok(b.descendants(card).filter(e=>e.className==='source-diagnostic').length<=8);assert.ok(!text.includes('a'.repeat(64)),'raw digest stays out of human diagnostics');assert.ok(!text.includes('raw_sha256')&&!text.includes('<script>'),'raw resolver JSON is not rendered');assert.ok(!b.descendants(card).some(e=>['IMG','SCRIPT','PRE'].includes(e.tagName)),'candidate text cannot create HTML or raw JSON nodes');}
+'''
+        self.run_js(JS, common + r'''
+vm.runInContext(production,b.scope,{timeout:10000});b.flush();
+const search=b.ids['hg-search'];search.value=target;search.events.input();b.flush();
+b.ids['hg-search-results'].children.find(e=>e.tagName==='BUTTON').events.click();b.flush();
+const detail=b.ids['hg-detail'];verify(detail);assert.match(b.text(detail),/另有 2 个候选/);
+assert.equal(b.descendants(detail).filter(e=>e.tagName==='BUTTON'&&e['aria-label']?.startsWith('查看 ')).length,8*8,'bounded candidates retained for each visible diagnostic');
+const candidate=b.descendants(detail).find(e=>e.tagName==='BUTTON'&&e.textContent===unsafeLabel);assert.ok(candidate);candidate.events.click();b.flush();assert.ok(b.text(detail).includes(unsafeLabel),'candidate navigation retains literal label');assert.ok(!b.descendants(detail).some(e=>e.tagName==='IMG'));
+b.created.find(e=>e.tagName==='BUTTON'&&e['aria-label']==='研究说明').events.click();verify(detail);
+assert.equal(JSON.stringify(payload.graph),before);console.log('Actual Canvas diagnostics: scoped/graph visibility, bounded omissions, candidate navigation and literal text safety PASS');
+''')
+        self.run_js(REPLICA_APP, common + r'''
+b.scope.localStorage={getItem:()=>JSON.stringify({growth:false,search:'Target'}),setItem(){}};b.scope.SIM_WORKER_MAIN='';b.scope.PIXI={Texture:{WHITE:{}}};
+b.scope.GraphRenderer=class{
+ constructor(){b.renderer=this;this.nodes=[];this.links=[];this.nodeLookup=new Map();this.width=1000;this.height=700;this.worker={onmessage(){},postMessage(){},terminate(){}};}
+ setData({nodes,links}){this.nodes=Object.entries(nodes).map(([id,n])=>({...n,id,x:0,y:0,getSize(){return 10}}));this.nodeLookup=new Map(this.nodes.map(n=>[n.id,n]));this.links=links.map(([s,t,rds])=>({source:this.nodeLookup.get(s),target:this.nodeLookup.get(t),rds}));}
+ setForces(){}setOptions(){}changed(){}resetPan(){}zoomTo(){}setScale(){}setPan(){}
+};
+vm.runInContext(production,b.scope,{timeout:10000});const card=b.ids['note-card'];assert.equal(b.renderer.nodes.length,1,'candidate starts outside filtered graph');
+b.renderer.onNodeClick(b.renderer.nodes[0]);verify(card);assert.match(b.text(card),/另有 2 个候选/);
+const candidate=b.descendants(card).find(e=>e.tagName==='BUTTON'&&e.textContent===unsafeLabel);assert.ok(candidate);candidate.events.click();assert.ok(b.renderer.nodes.some(n=>n.label===unsafeLabel),'candidate navigation rebuilds filtered graph');assert.ok(b.text(card).includes(unsafeLabel));assert.ok(!b.descendants(card).some(e=>e.tagName==='IMG'));
+assert.equal(b.ids['graph-info'].hidden,false,'diagnostics alone expose graph information');b.ids['graph-info'].events.click();verify(card);
+assert.equal(JSON.stringify(payload.graph),before);console.log('Actual Replica diagnostics: scoped/graph visibility, bounded omissions, filtered candidate navigation and literal text safety PASS');
+''')
+
+    def test_active_ranks_follow_relation_options_and_filtered_display(self):
+        self.run_js(REPLICA_APP, r'''
+const records=['a','b','c','orphan'].map((id,i)=>({id,label:['Alpha','Beta','Gamma','Lonely'][i],status:'UNKNOWN',source:'fixture'}));
+const nodes=Object.fromEntries(records.map(r=>[r.id,{label:r.label,type:'claim',rds:{record:r.id,kind:'声明',size:1}}]));
+const link=(s,t,relation,family='provenance')=>[s,t,{relation,family,color:'#aabbcc',width:1}];
+const payload={status:'AVAILABLE',source:'synthetic',counts:{nodes:4,hyperedges:0},graph:{nodes:records,hyperedges:[],goals:[]},replica_view:{nodes,links:[link('a','b','forward'),link('b','a','back'),link('b','c','next'),link('c','orphan','scope','membership')],relations:['forward','back','next','scope'],provenance_count:3}};
+const before=JSON.stringify(payload),b=browser(payload);b.scope.localStorage={getItem:()=>JSON.stringify({growth:false}),setItem(){}};b.scope.SIM_WORKER_MAIN='';b.scope.PIXI={Texture:{WHITE:{}}};b.scope.setTimeout=f=>{f();return 1};
+b.scope.GraphRenderer=class{
+ constructor(){b.renderer=this;this.nodes=[];this.links=[];this.nodeLookup=new Map();this.width=1000;this.height=700;this.messages=[];this.worker={onmessage(){},postMessage:d=>this.messages.push(structuredClone(d)),terminate(){}};}
+ setData({nodes,links}){this.nodes=Object.entries(nodes).map(([id,n])=>({...n,id,x:0,y:0,getSize(){return 10}}));this.nodeLookup=new Map(this.nodes.map(n=>[n.id,n]));this.links=links.map(([s,t,rds])=>({source:this.nodeLookup.get(s),target:this.nodeLookup.get(t),rds}));}
+ setForces(p){this.forces=structuredClone(p)}setOptions(){}changed(){}resetPan(){}zoomTo(){}setScale(){}setPan(){}
+};
+vm.runInContext(production,b.scope,{timeout:5000});
+const rank=id=>b.renderer.nodeLookup.get(id).rds.flowX,mode=(name,value)=>{const e=b.created.find(e=>e['aria-label']===name+' 力学');e.value=value;e.events.change();};
+assert.equal(rank('a'),rank('b'));assert.ok(rank('c')>rank('b'));assert.equal(rank('orphan'),null,'membership must not supply a direction');
+mode('back','none');assert.ok(rank('a')<rank('b')&&rank('b')<rank('c'),'disabled return edge splits the SCC');
+let targets=b.renderer.messages.at(-1).layoutTargets;assert.equal(targets.a.flowX,rank('a'));assert.equal(targets.c.flowX,rank('c'),'fresh ranks reach the worker');
+mode('back','repel');assert.equal(rank('a'),rank('b'),'active signed relation retains its directed structure');mode('back','none');mode('forward','none');assert.equal(rank('a'),null);
+const search=b.created.find(e=>e['aria-label']==='搜索节点');search.value='Alpha';search.events.input();assert.equal(b.renderer.nodes.length,1);assert.equal(rank('a'),null,'filtered neighbors do not leave stale ranks');
+assert.equal(JSON.stringify(payload),before,'display ranks do not mutate the source snapshot');
+console.log('Actual Replica options: SCC split/restore, signed relation, membership exclusion, worker targets, filtered ranks and source immutability PASS');
+''')
+
+    def test_active_rank_hubs_long_chain_and_reachability_oracle(self):
+        self.run_js(REPLICA_APP.split("(() => {",1)[0], r'''
+const scope={};vm.createContext(scope);vm.runInContext(production,scope);
+const ids=['a','hub','b','c','isolated'],base=[['a','hub'],['hub','b'],['b','c'],['c','a'],['b','hub'],['a','b'],['c','hub']];
+for(let mask=0;mask<128;mask++){
+ const pairs=base.filter((p,i)=>mask&(1<<i)),links=pairs.map(([s,t])=>[s,t,{relation:'active',family:'incidence'}]);
+ const levels=scope.activeDependencyLevels(ids,links,{active:{mode:'attract'}});
+ // Independent small transitive-closure oracle checks SCC equality and DAG direction.
+ const reach=new Map(ids.map(id=>[id,new Set([id])]));for(const [s,t] of pairs)reach.get(s).add(t);
+ for(const k of ids)for(const s of ids)if(reach.get(s).has(k))for(const t of reach.get(k))reach.get(s).add(t);
+ for(const s of ids)for(const t of ids)if(s!==t&&reach.get(s).has(t)){if(reach.get(t).has(s))assert.equal(levels.get(s),levels.get(t));else assert.ok(levels.get(s)<levels.get(t));}
+ assert.equal(levels.get('isolated'),null);
+}
+const links=[['a','hub',{relation:'on',family:'incidence'}],['hub','b',{relation:'off',family:'incidence'}],['b','c',{relation:'zero',family:'provenance'}]];
+const ranks=scope.activeDependencyLevels(ids,links,{on:{mode:'attract'},off:{mode:'none'},zero:{mode:'attract',strength:0}});assert.ok(ranks.get('a')<ranks.get('hub'));assert.equal(ranks.get('b'),null);assert.equal(ranks.get('c'),null);
+const chain=Array.from({length:4096},(_,i)=>String(i)),chainLinks=chain.slice(1).map((id,i)=>[String(i),id,{relation:'r',family:'incidence'}]);
+const long=scope.activeDependencyLevels(chain,chainLinks,{r:{mode:'attract'}});assert.equal(long.get('4095')-long.get('0'),4095*160);
+console.log('Actual rank function: 128 independent reachability cases, incidence hubs, none/zero gate and 4096-node iterative chain PASS');
+''')
+
     def test_proto_settings_clone_reload_and_filtered_related_navigation(self):
         self.run_js(REPLICA_APP, r'''
 const binding={run_id:'owned-run',receipt_id:'receipt-1'},records=[{id:'fact',label:'needle fact',status:'UNKNOWN',source:'fixture'},{id:'run',label:'Owned execution',status:'UNKNOWN',source:'fixture'}];
