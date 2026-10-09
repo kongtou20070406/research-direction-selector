@@ -790,7 +790,8 @@ console.log('Production outline methods: independent Graphics transport, cached 
                  (9, "output_path", [], {"run_lifecycle_fact"}),
                  (2, "artifact_path", "bad\0path", {"run_artifact", "receipt_artifact"}),
                  *((position, "run_id", [], set()) for position in (1, 2, 6, 7, 9)))
-        baseline = graph_view(self.field_fixture(), "fixture")
+        with patch("rds_hypergraph.record_topology", None, create=True):
+            baseline = graph_view(self.field_fixture(), "fixture")
         for position, field, value, expected in cases:
             with self.subTest(position=position, field=field), patch("rds_hypergraph.record_topology", None, create=True):
                 spec = self.field_fixture()
@@ -976,7 +977,8 @@ console.log('Production outline methods: independent Graphics transport, cached 
     def test_fallback_invalid_reported_base_is_diagnostic_without_inference_changes(self):
         spec = self.record_fixture()
         expected = _legacy_record_report(spec)["record_relations"]
-        baseline = graph_view(spec, "fixture")
+        with patch("rds_hypergraph.record_topology", None, create=True):
+            baseline = graph_view(spec, "fixture")
         for base in ("relative/source", [], "Z:\\invalid\0base"):
             with self.subTest(base=base), patch("rds_hypergraph.record_topology", None, create=True):
                 value = {**deepcopy(spec), "record_source_base_dir": base}

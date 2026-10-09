@@ -132,7 +132,10 @@ class ContinuationTests(unittest.TestCase):
         def expire_after_baseline(current, run_id, *args, **kwargs):
             receipt = real_execute(current, run_id, *args, **kwargs)
             self.assertEqual(run_id, 'baseline')
-            ticks[0] = 9.
+            # drive subtracts original worker time from controller time. Force
+            # nine controller seconds after that subtraction on any host.
+            wall = receipt.get('resources', {}).get('wall_seconds', {})
+            ticks[0] = 9. + (wall.get('measured') or wall.get('charged_estimate') or 0.)
             return receipt
 
         def controlled_driver():
