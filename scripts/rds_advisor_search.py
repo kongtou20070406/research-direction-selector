@@ -252,7 +252,7 @@ def _affirmative_move(triple):
             "prompt": AFFIRMATIVE_MOVE_TEXT + (GOAL_GAP_TEXT if failed else "") + MOVE_PRESERVE_CLAUSES}
 
 
-def _action_valid(action, current_choice):
+def _action_valid(action, current_choice, *, _check_current_choice=True):
     if not isinstance(action, dict) or not isinstance(action.get("id"), str):
         return False, "missing action identity"
     outcomes = action.get("outcomes", [])
@@ -260,8 +260,11 @@ def _action_valid(action, current_choice):
             and isinstance(o.get("next_decision"), str) and o["next_decision"].strip() for o in outcomes):
         return False, "outcomes must bind observations to next decisions"
     decisions = {o["next_decision"] for o in outcomes}
-    if len(decisions) < 2 and not (action.get("kind") == "INTERPRETATION_UPDATE" and current_choice
-                                 and decisions and current_choice not in decisions):
+    # A different decision's interpretation is checked structurally; its
+    # current choice is not supplied here. Candidate emission stays strict.
+    if len(decisions) < 2 and not (action.get("kind") == "INTERPRETATION_UPDATE" and decisions
+                                 and (not _check_current_choice
+                                      or current_choice and current_choice not in decisions)):
         return False, "no outcome can distinguish next decisions"
     if action.get("kind") == "OBLIGATION_CHECK":
         if not all(isinstance(action.get(k), str) and action[k].strip() for k in ("description", "target", "claim")):
@@ -1325,7 +1328,14 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             if not completion:
                 satisfaction = UNKNOWN
         action = cfg.get('action') if isinstance(cfg, dict) else None
-        valid, reason = _action_valid(action, current_choice)
+        matches_decision = isinstance(cfg, dict) and isinstance(decision_id, str) \
+            and decision_id in cfg.get('decisions', [])
+        valid, reason = _action_valid(action, current_choice, _check_current_choice=matches_decision)
+        # Declared actions are part of full graph analysis even off the chosen
+        # route. Actionless prerequisites remain UNKNOWN; a selected rule must
+        # provide its primary action rather than hiding behind another route.
+        if isinstance(cfg, dict) and ('action' in cfg or matches_decision) and not valid:
+            coverage['reasons'].append('Invalid declared primary action for ' + rid + ': ' + reason)
         fallback_actions = []
         for fallback_rid, fallback, chain in fallbacks:
             fallback_valid, fallback_reason = _action_valid(fallback, current_choice)
