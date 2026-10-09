@@ -359,6 +359,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
         self.fixture.ledger = helper.root
         parent = helper.store
         before = parent.snapshot()
+        activation_preview = enable_advisor(parent, helper.policy)
         args, reviewed, workspace = self.reviewed_job('terminal-activation')
         original_execute = ProjectStore.execute
         observed = {}
@@ -368,22 +369,45 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
             self.assertEqual(receipt['run_status'], 'SUCCEEDED')
             observed['child'] = store.snapshot()
             observed['charged'] = parent.snapshot()
-            preview = enable_advisor(parent, helper.policy)
-            observed['activation'] = enable_advisor(parent, helper.policy, apply=True,
-                                                    expected_snapshot=preview['snapshot_sha256'])
-            observed['parent'] = parent.snapshot()
+            # A terminal worker receipt is not a completed prospective QUICK
+            # operation. Both activation entrances must retain the old owner
+            # until the original before decision has its matching after record.
+            for apply in (False, True):
+                with self.subTest(apply=apply), self.assertRaisesRegex(
+                        ValueError, 'resolved prospective QUICK checkpoint settlement'):
+                    enable_advisor(parent, helper.policy, apply=apply,
+                                   expected_snapshot=activation_preview['snapshot_sha256'] if apply else None)
+                self.assertEqual(parent.snapshot(), observed['charged'])
+            with parent._db(True) as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM events WHERE json_extract(body,'$.kind')="
+                                            "'ADVISOR_POLICY_ENABLED'").fetchone()[0], 0)
+                self.assertEqual([row[0] for row in db.execute('SELECT id FROM checkpoints ORDER BY id')],
+                                 [rds_quick._checkpoint_name('before', args.name)])
             return receipt
 
         with mock.patch.object(ProjectStore, 'execute', new=activate_after_receipt):
-            with self.assertRaisesRegex(ValueError, 'Quick parent contract changed before checkpoint publication'):
-                rds_quick.execute(args, review=reviewed)
+            result = rds_quick.execute(args, review=reviewed)
         self.assertEqual(ProjectStore(workspace).snapshot(), observed['child'])
-        self.assertEqual(parent.snapshot(), observed['parent'])
         child = observed['child']
         self.assertEqual(len(child['runs']), 1)
         self.assertIsNotNone(child['runs'][0]['attempt_id'])
         self.assertEqual(child['receipts'][0]['run_status'], 'SUCCEEDED')
+        self.assertEqual(result['receipt'], child['receipts'][0])
         self.assertTrue((workspace / 'launch-marker').is_file())
+        from rds_checkpoints import read_checkpoint
+        with parent._db(True) as db:
+            prior = read_checkpoint(db, rds_quick._checkpoint_name('before', args.name), root=helper.root)
+            completed = read_checkpoint(db, rds_quick._checkpoint_name('after', args.name), root=helper.root)
+        self.assertEqual(completed['record']['contract_sha256'], prior['record']['contract_sha256'])
+        self.assertEqual(completed['record']['decision']['execution'],
+                         {'job_root': str(workspace), 'receipt_sha256': result['receipt']['sha256'],
+                          'run_status': result['receipt']['run_status']})
+        self.assertEqual(parent.snapshot()['contract_sha256'], before['contract_sha256'])
+        preview = enable_advisor(parent, helper.policy)
+        observed['activation'] = enable_advisor(parent, helper.policy, apply=True,
+                                                expected_snapshot=preview['snapshot_sha256'])
+        observed['parent'] = parent.snapshot()
+        self.assertEqual(ProjectStore(workspace).snapshot(), observed['child'])
         self.assertEqual(observed['parent']['budget'], observed['charged']['budget'])
         self.assertEqual(observed['charged']['budget']['wall_seconds']['charged_estimate'],
                          before['budget']['wall_seconds']['charged_estimate'] + 5)
@@ -398,7 +422,8 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                                     _expected_contract_sha256=expected)
         with parent._db(True) as db:
             ids = [row[0] for row in db.execute('SELECT id FROM checkpoints ORDER BY id')]
-        self.assertEqual(ids, [rds_quick._checkpoint_name('before', args.name)])
+        self.assertEqual(ids, sorted([rds_quick._checkpoint_name('before', args.name),
+                                     rds_quick._checkpoint_name('after', args.name)]))
 
     def test_accounted_parent_pause_locks_out_child_materialization(self):
         import test_rds_project_lifecycle as lifecycle_fixture

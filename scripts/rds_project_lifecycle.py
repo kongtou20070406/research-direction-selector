@@ -266,6 +266,8 @@ def _activation_children(store, db, locks, *, apply=False):
                 receipts.append(receipt)
             budget = [dict(row) for row in child_db.execute('SELECT * FROM budget ORDER BY resource')]
             require(all(row['reserved'] == 0 for row in budget), 'Retained child has outstanding reservations')
+            from rds_campaign import _guard_quiescent
+            _guard_quiescent(root, child_db, contract)
             last = child_db.execute('SELECT id,body FROM events ORDER BY id DESC LIMIT 1').fetchone()
             snapshots.append({'root': str(root), 'contract_sha256': digest(contract), 'runs': runs,
                               'receipts': receipts, 'budget': budget, 'last_event': dict(last) if last else None})

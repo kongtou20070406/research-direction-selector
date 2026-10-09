@@ -22,7 +22,6 @@ import subprocess
 import sys
 import time
 import uuid
-from rds_mutation import mutation
 
 from rds_mutation import mutation
 
@@ -1508,6 +1507,8 @@ class ProjectStore:
             receipt = self._receipt(old) if old else None
         if receipt is not None:
             self._advisor_finished(contract)
+            from rds_quick import _recover_prospective
+            _recover_prospective(self, contract, receipt)
             return receipt
         if run["attempt_id"] is None:
             return {**run, "recovery": "Unstarted reservation; no process to restart"}
@@ -1515,8 +1516,11 @@ class ProjectStore:
             return {**run, "recovery": "Dispatched scheduler task; do not start another process"}
         if _alive(run["worker_pid"]) is not False or _alive(run["pid"]) is not False:
             return {**run, "recovery": "Process may still be active; no rerun or termination"}
-        return self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
-                            ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
+        receipt = self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
+                              ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
+        from rds_quick import _recover_prospective
+        _recover_prospective(self, contract, receipt)
+        return receipt
 
     def snapshot(self, check_bindings=False):
         require(isinstance(check_bindings, bool), "check_bindings must be Boolean")

@@ -233,9 +233,14 @@ class CampaignBindingTests(unittest.TestCase):
         with patch.object(campaign, '_publish', side_effect=OSError('publication stopped')):
             with self.assertRaises(OSError):
                 campaign.bind(self.store, self.workspace)
-        with self.assertRaisesRegex(ValueError, 'another identity'):
+        original, snapshot = self.events(), self.store.snapshot()
+        self.assertEqual(len(original), 1)
+        with self.assertRaisesRegex(ValueError, 'Conflicting foreign campaign binding intent'):
             campaign.bind(self.store, self.root)
         self.assertFalse((self.root / campaign.MARKER).exists())
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.events(), original)
+        self.assertEqual(self.store.snapshot(), snapshot)
 
     def test_workspace_must_be_existing_project_ancestor(self):
         sibling = self.workspace / 'sibling'
@@ -408,20 +413,47 @@ class CampaignBindingTests(unittest.TestCase):
             db.execute('INSERT INTO events(body) VALUES (?)',
                        (canonical({'kind': kind, 'job_root': str(target), **fields}),))
 
+    def settle_job(self, store):
+        """Execute at this actual child root; retain its original native receipt."""
+        original = store.snapshot()
+        store.register(self.helper.spec())
+        receipt = store.execute('r1')
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+        settled = store.snapshot()
+        run = next(run for run in settled['runs'] if run['id'] == 'r1')
+        self.assertEqual(run['status'], 'COMPLETED')
+        self.assertEqual(receipt['attempt_id'], run['attempt_id'])
+        self.assertEqual(receipt['manifest_sha256'], run['manifest_sha256'])
+        self.assertEqual(receipt, next(row for row in settled['receipts'] if row['run_id'] == 'r1'))
+        for resource, budget in settled['budget'].items():
+            self.assertEqual(budget['reserved'], 0)
+            self.assertEqual(budget['cap'], original['budget'][resource]['cap'])
+        return settled
+
     def test_65_unique_jobs_are_not_counted_twice_by_events_and_directories(self):
+        retained = []
         for index in range(65):
             target = self.root / '.rds/exec' / ('settled-' + str(index))
             shutil.copytree(self.helper.root, target)
+            child = ProjectStore(target)
+            retained.append((child, self.settle_job(child)))
             self.append_pointer(self.store, target)
         bound = campaign.bind(self.store, self.workspace)
         self.assertEqual(campaign.binding(self.root), bound)
         self.assertEqual(len(self.events()), 1)
+        for child, before in retained:
+            after = child.snapshot()
+            for key in ('budget', 'runs', 'receipts'):
+                self.assertEqual(after[key], before[key])
 
     def test_actual_job_pointer_does_not_redirect_to_nested_tool_check(self):
         outer = self.helper.root / 'external-job'
         shutil.copytree(self.root, outer)
         nested = outer / '.rds/exec/tool-check'
         shutil.copytree(self.root, nested)
+        # An incorrect redirect would now see a genuinely settled nested job;
+        # the required rejection must come from the actual RESERVED outer job.
+        self.settle_job(ProjectStore(nested))
         child = ProjectStore(outer)
         child.register(self.helper.spec())
         self.append_pointer(self.store, outer)
@@ -433,35 +465,53 @@ class CampaignBindingTests(unittest.TestCase):
     def test_recursive_external_retained_jobs_require_nested_settlement(self):
         outer = self.helper.root / 'external-job'
         shutil.copytree(self.root, outer)
+        parent = ProjectStore(outer)
+        parent_before = self.settle_job(parent)
         nested = outer / '.rds/exec/nested'
         shutil.copytree(self.root, nested)
         child = ProjectStore(nested)
         child.register(self.helper.spec())
-        self.append_pointer(ProjectStore(outer), nested)
+        self.append_pointer(parent, nested)
         self.append_pointer(self.store, outer)
         with self.assertRaisesRegex(ValueError, 'settled retained child'):
             campaign.bind(self.store, self.workspace)
         self.assertEqual(child.execute('r1')['run_status'], 'SUCCEEDED')
+        child_before = child.snapshot()
         campaign.bind(self.store, self.workspace)
+        for store, before in ((parent, parent_before), (child, child_before)):
+            after = store.snapshot()
+            for key in ('budget', 'runs', 'receipts'):
+                self.assertEqual(after[key], before[key])
 
     def test_retained_self_reference_and_cycle_are_checked_once(self):
         outer = self.helper.root / 'external-job'
         shutil.copytree(self.root, outer)
         child = ProjectStore(outer)
+        child_before = self.settle_job(child)
+        parent_before = self.settle_job(self.store)
         self.append_pointer(self.store, outer)
         self.append_pointer(child, outer, kind='EXTERNAL_RUN_ALLOWANCE')
         self.append_pointer(child, self.root)
         campaign.bind(self.store, self.workspace)
         self.assertEqual(len(self.events()), 1)
+        for store, before in ((self.store, parent_before), (child, child_before)):
+            after = store.snapshot()
+            for key in ('budget', 'runs', 'receipts'):
+                self.assertEqual(after[key], before[key])
 
     def test_legacy_tool_allowance_redirects_only_its_authenticated_workspace_shape(self):
         token = 'a' * 32
         source = self.helper.root / '.rds/rsi/tool-checks' / token
         target = source / '.rds/exec/tool-check'
         shutil.copytree(self.root, target)
+        child = ProjectStore(target)
+        before = self.settle_job(child)
         self.append_pointer(self.store, source, kind='EXTERNAL_RUN_ALLOWANCE',
                             request_sha256=digest({'tool_validation': token}))
         campaign.bind(self.store, self.workspace)
+        after = child.snapshot()
+        for key in ('budget', 'runs', 'receipts'):
+            self.assertEqual(after[key], before[key])
 
     def test_workspace_sibling_reservation_blocks_binding_without_mutation(self):
         root = self.workspace / 'sibling'

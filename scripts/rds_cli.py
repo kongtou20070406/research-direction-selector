@@ -196,10 +196,10 @@ class RDSState:
         self.db_path = self.directory / "state.sqlite3"
 
     def connect(self, create=False, readonly=False):
-        if readonly:
-            return self._connect(create, readonly=True)
-        with mutation():
-            return self._connect(create)
+        """Return a reader; native writers must use the complete transaction scope."""
+        require(readonly, 'Writable reference connections require RDSState.transaction()')
+        require(not create, 'Readonly reference connections cannot create state; use RDSState.transaction()')
+        return self._connect(readonly=True)
 
     def _connect(self, create=False, readonly=False):
         if not readonly:
@@ -275,7 +275,7 @@ class RDSState:
 
     @contextmanager
     def _transaction(self, create=False):
-        db = self.connect(create)
+        db = self._connect(create)
         try:
             db.execute("BEGIN IMMEDIATE")
             state = self.read_state(db)

@@ -178,10 +178,13 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
                          else _expected_contract_sha256)
     context = project_context(root, context)
     record = choice(advice, context, candidate_id)
-    record['advice'] = cas_json(root, advice)
-    saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
-                            _expected_contract_sha256=expected_contract,
-                            _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
+    # Analysis stays outside the gate; its original snapshot guards are checked
+    # again while publishing the CAS and checkpoint as one bounded operation.
+    with mutation():
+        record['advice'] = cas_json(root, advice)
+        saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
+                                _expected_contract_sha256=expected_contract,
+                                _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
     saved['candidate_id'] = record['candidate']['id']
     return saved
 
@@ -207,23 +210,16 @@ def reject_route(args):
     require(len(raw) <= MAX_INPUT_BYTES, 'Evidence exceeds 2 MiB; supply a bounded witness or certificate')
     witness = {'source_path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(),
                'size': len(raw), 'assurance': 'RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION'}
-    directory = Path(args.root).resolve() / '.rds' / 'cas'
-    require(directory.resolve().is_relative_to(Path(args.root).resolve()), 'CAS escapes project root')
-    directory.mkdir(parents=True, exist_ok=True)
-    copy = directory / (witness['sha256'] + '.bin')
-    try:
-        with copy.open('xb') as handle:
-            handle.write(raw)
-    except FileExistsError:
-        require(file_sha(copy) == witness['sha256'], 'Witness CAS integrity failure')
-    witness['path'] = str(copy)
-    decision = {**decision, 'outcome': 'rejected', 'reason': args.reason,
-                'falsification': witness, 'previous_checkpoint': previous['id']}
-    if domain is not None:
-        decision['rejected_domain'] = domain
-    checkpoint_id = args.id or 'reject-' + str(time.time_ns())
-    saved = save_checkpoint(args.root, checkpoint_id, ProjectStore(args.root).snapshot(check_bindings=True),
-                            kind='project', decision=decision)
+    with mutation():
+        # Use the original guarded CAS producer, including binding-first checks.
+        witness['path'] = cas_bytes(args.root, raw)['path']
+        decision = {**decision, 'outcome': 'rejected', 'reason': args.reason,
+                    'falsification': witness, 'previous_checkpoint': previous['id']}
+        if domain is not None:
+            decision['rejected_domain'] = domain
+        checkpoint_id = args.id or 'reject-' + str(time.time_ns())
+        saved = save_checkpoint(args.root, checkpoint_id, ProjectStore(args.root).snapshot(check_bindings=True),
+                                kind='project', decision=decision)
     return {'status': 'RECORDED_REJECTION', 'route': route, 'checkpoint': saved,
             'evidence': witness, 'scientific_support': 'UNKNOWN', 'execution_started': False}
 
@@ -237,9 +233,10 @@ def record_falsification(root, *, witness, reason, route=None, domain=None):
         from rds_guard import validate_domain
         decision, _ = latest_decision(root)
         validate_domain(domain, decision['candidate'])
-    ref = cas_json(root, witness)
-    return reject_route(SimpleNamespace(root=root, route=route, reason=reason, evidence=ref['path'], id=None,
-                                       domain=cas_json(root, domain)['path'] if domain is not None else None))
+    with mutation():
+        ref = cas_json(root, witness)
+        return reject_route(SimpleNamespace(root=root, route=route, reason=reason, evidence=ref['path'], id=None,
+                                           domain=cas_json(root, domain)['path'] if domain is not None else None))
 
 
 def _policy_route(request, route):
@@ -354,6 +351,90 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
 def _checkpoint_name(stage, name):
     value = 'exec-' + stage + '-' + name
     return value if len(value) <= 64 else 'exec-' + stage + '-' + digest(name)[:48]
+
+
+def _prospective_completion(workspace, request, receipt, regression=None, guard_ref=None, *, parent_db=None):
+    """Read the original decision and exact completion; never choose a new route."""
+    context = request.get('research_context')
+    if context is None or receipt is None:
+        return None
+    from rds_checkpoints import read_checkpoint
+    workspace = Path(workspace).resolve()
+    ledger = Path(context['ledger'])
+    require(ledger.is_absolute(), 'Prospective completion ledger must be absolute')
+    ledger = ledger.resolve()
+    require(receipt.get('run_id') == workspace.name and isinstance(receipt.get('sha256'), str),
+            'Prospective completion requires the original terminal receipt')
+    if parent_db is None:
+        with ProjectStore(ledger)._db(True) as db:
+            db.execute('BEGIN')
+            return _prospective_completion(workspace, request, receipt, regression, guard_ref, parent_db=db)
+    filename = parent_db.execute('PRAGMA database_list').fetchone()[2]
+    require(Path(filename).resolve() == ProjectStore(ledger).path,
+            'Prospective completion transaction belongs to another ledger')
+    before = read_checkpoint(parent_db, _checkpoint_name('before', workspace.name), root=ledger)
+    require(before is not None and before['record']['kind'] == 'project', 'Original prospective before checkpoint is missing')
+    original = before['record']['decision']
+    require(original.get('outcome') == 'plan_locked' and original.get('candidate', {}).get('id') == context['candidate'],
+            'Original prospective decision differs from the frozen request')
+    decision = {**original, 'execution': {'job_root': str(workspace), 'receipt_sha256': receipt['sha256'],
+                'run_status': receipt.get('run_status', 'UNKNOWN')},
+                'pending_evidence': ['Assess the original output; completion alone does not reject or prove a hypothesis']}
+    if request.get('guard') is not None:
+        require(regression is not None and guard_ref is not None, 'Prospective guard completion is unfinished')
+        decision['regression_review'] = {'status': regression['status'], 'report': guard_ref, 'scientific_support': 'UNKNOWN'}
+    else:
+        require(regression is None and guard_ref is None, 'Unexpected prospective guard completion')
+    identity = _checkpoint_name('after', workspace.name)
+    after = read_checkpoint(parent_db, identity, root=ledger)
+    if after is not None:
+        require(after['record']['kind'] == 'project' and after['record']['decision'] == decision
+                and after['record']['contract_sha256'] == before['record']['contract_sha256'],
+                'Original prospective after checkpoint conflicts with the retained completion')
+    return {'ledger_root': str(ledger), 'contract_sha256': before['record']['contract_sha256'],
+            'decision': decision, 'id': identity, 'after_checkpoint': after}
+
+
+@mutation()
+def _complete_prospective(workspace, request, receipt, regression=None, guard_ref=None):
+    if receipt is None or receipt.get('sha256') is None:
+        return  # A still-live background attempt has no completion to record.
+    tail = _prospective_completion(workspace, request, receipt, regression, guard_ref)
+    if tail is not None and tail['after_checkpoint'] is None:
+        from rds_checkpoints import save_checkpoint
+        save_checkpoint(tail['ledger_root'], tail['id'], ProjectStore(tail['ledger_root']).snapshot(),
+                        kind='project', decision=tail['decision'],
+                        _expected_contract_sha256=tail['contract_sha256'])
+
+
+def _recover_prospective(store, contract, receipt):
+    """Finish a frozen QUICK tail through the existing public recover boundary."""
+    if receipt is None or receipt.get('sha256') is None:
+        return
+    entries = [entry for entry in contract['bindings']
+               if entry['path'] == 'rds-exec-request.json' and entry['role'] == 'config']
+    if not entries:
+        return
+    require(len(entries) == 1, 'Retained QUICK request binding is ambiguous')
+    from rds_project import load_json
+    path = store.root / entries[0]['path']
+    require(path.resolve().is_relative_to(store.root) and file_sha(path) == entries[0]['sha256'],
+            'Retained QUICK request differs from its original binding')
+    request = load_json(path)
+    if request.get('research_context') is None:
+        return
+    regression, ref = None, None
+    if request.get('guard') is not None:
+        with store._db(True) as db:
+            rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' LIMIT 2").fetchall()
+        require(len(rows) == 1, 'Guard review is unfinished or ambiguous; inspect the retained job and allowance')
+        ref = json.loads(rows[0]['body'])['report']
+        report_path = Path(ref['path']).resolve()
+        require(report_path.is_relative_to((store.root / '.rds/cas').resolve()) and file_sha(report_path) == ref['sha256'],
+                'Guard report CAS integrity failure')
+        from rds_guard import read
+        regression = read(report_path)[0]
+    _complete_prospective(store.root, request, receipt, regression, ref)
 
 
 def _inputs(root, argv, binds):
@@ -504,8 +585,18 @@ def execute(args, review=None, *, _native_preparation_root=None):
         if binding is not None:
             context = {**deepcopy(review[1]), 'objective_binding': binding}
             review = (review[0], context)
-        selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
-        args.choose = selected['candidate']['id']
+        retained = (root / '.rds/exec' / args.name
+                    if args.name and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args.name) else None)
+        if retained is not None and retained.exists():
+            require(retained.resolve().is_relative_to(root), 'Exec workspace escapes root')
+            from rds_project import load_json
+            frozen_context = load_json(retained / 'rds-exec-request.json').get('research_context')
+            require(frozen_context is not None and args.choose in (None, frozen_context['candidate']),
+                    'Job identity is frozen; changed choice needs a new --name')
+            args.choose = frozen_context['candidate']
+        else:
+            selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
+            args.choose = selected['candidate']['id']
     argv[0] = ProjectStore._command(argv)
     from rds_math import bind_objective, blob, objective, objective_spec, read_bytes
     goal = objective(root)
@@ -663,13 +754,21 @@ def execute(args, review=None, *, _native_preparation_root=None):
         previous = load_json(workspace / 'rds-exec-request.json')
         require(previous == request, 'Job identity is frozen; changed inputs need a new --name')
         if execution_policy is not None:
-            return _charge_ledger(owner, workspace, request, timeout, source_root=root,
-                                  executor_sha256=executor_sha256, existing_only=True)
+            result = _charge_ledger(owner, workspace, request, timeout, source_root=root,
+                                   executor_sha256=executor_sha256, existing_only=True)
+            guard_ref = None
+            if guard_path is not None:
+                with ProjectStore(workspace)._db(True) as db:
+                    event = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' ORDER BY id DESC LIMIT 1").fetchone()
+                guard_ref = json.loads(event['body'])['report'] if event is not None else None
+            _complete_prospective(workspace, request, result['receipt'], result.get('regression_review'), guard_ref)
+            return result
         state = ProjectStore(workspace).snapshot(check_bindings=True)
         require(not state['binding_check']['errors'], 'Frozen job bindings changed')
         receipt = next((r for r in state['receipts'] if r['run_id'] == args.name), None)
         result = {'status': 'EXISTING_JOB', 'job_root': str(workspace), 'ledger_root': str(Path(args.ledger).resolve()) if review is not None else str(workspace), 'receipt': receipt,
                   'execution_started': False, 'scientific_support': 'UNKNOWN'}
+        ref = None
         if guard_path is not None:
             store = ProjectStore(workspace)
             with store._db(True) as db:
@@ -680,6 +779,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
             require(report_path.is_relative_to((workspace / '.rds' / 'cas').resolve()) and file_sha(report_path) == ref['sha256'], 'Guard report CAS integrity failure')
             from rds_guard import read
             result['regression_review'] = read(report_path)[0]
+        _complete_prospective(workspace, request, receipt, result.get('regression_review'), ref)
         return result
     if owner is not None:
         if review is not None:
@@ -776,17 +876,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
         ref = cas_json(workspace, regression)
         with store._db() as db:
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': 'QUICK_EXEC_REGRESSION_REVIEW', 'report': ref}),))
-    if review is not None:
-        from rds_checkpoints import save_checkpoint
-        decision, _ = latest_decision(args.ledger, _checkpoint_name('before', args.name))
-        decision = {**decision, 'execution': {'job_root': str(workspace), 'receipt_sha256': receipt.get('sha256'),
-                                            'run_status': receipt.get('run_status', 'UNKNOWN')},
-                    'pending_evidence': ['Assess the original output; completion alone does not reject or prove a hypothesis']}
-        if regression is not None:
-            decision['regression_review'] = {'status': regression['status'], 'report': ref, 'scientific_support': 'UNKNOWN'}
-        save_checkpoint(args.ledger, _checkpoint_name('after', args.name), ProjectStore(args.ledger).snapshot(),
-                        kind='project', decision=decision,
-                        _expected_contract_sha256=parent_contracts[Path(args.ledger).resolve()])
+    _complete_prospective(workspace, request, receipt, regression, ref if regression is not None else None)
     result = {'status': receipt.get('run_status', 'UNKNOWN'), 'job_root': str(workspace),
             'ledger_root': str(Path(args.ledger).resolve()) if review is not None else str(workspace),
             'receipt': receipt, 'execution_started': True, 'scientific_support': 'UNKNOWN'}
