@@ -43,6 +43,41 @@ without overwriting an existing file. `--save-as first-plan` retains the draft i
 the initialized project's existing CAS and checkpoint ledger. There is no second
 research state for cold starts.
 
+### Explain a retained decision together
+
+Add `--dialogue` to `project plan` when the person needs to understand or redirect
+the research decision. The optional `dialogue` object is a host-facing projection;
+the Agent should explain it in a short connected response: current understanding,
+why the recorded step follows, what each declared observation would change, and
+how the person can redirect the work. Do not paste hashes or technical cards into
+the ordinary conversation, invent competing explanations, or require confirmation
+each round. For fixed requested work, retain its scope.
+
+The view reads only the latest owned Advisor event and its hash-bound CAS report.
+It checks current contract, budget, steering, dependency snapshot, frozen inputs
+and original report evidence. `COMPATIBLE_RECORDED_ADVICE` means the saved selection
+has compatible records; dispatch still requires normal admission checks. The
+actual `selected_run` is separate from advisory candidates. Original action
+descriptions, explanation declarations, observation-to-next-decision outcomes,
+costs, warnings and search truncation retain their original meaning and locators.
+Unknown fields remain `UNKNOWN`; a saved heuristic ranking is not a measured
+research recommendation or a global optimum.
+
+Missing, corrupt or stale advice yields no selection. An intact old report keeps
+its historical selection separately, with a reason and an explicit refresh step.
+The latest human instruction and original active-work dispositions remain visible
+even then. Reads do not collect evidence, search, buy a model call, reserve/run a
+job, create events, or write CAS objects. Large sections show at most four entries;
+details over 2048 bytes are omitted with original locators. Read omitted records
+before a consequential choice. Plain `project plan` keeps its existing cheap read
+and avoids this additional source audit. CLI usage accounting still applies.
+
+`project steer ... --dialogue` records the original instruction once, then returns
+the same view explaining affected frozen routes, original active work and whether
+continuation requires recovery, a hypothesis check or material revision. A new
+instruction usually makes prior advice stale. This optional presentation does not
+change steering dispatch semantics or create another research ledger.
+
 Once explicit predicates, actions, actual files, evaluators and authorized
 resources are available, [project assembly](project-assembly.md) can compile one
 structured recipe into the existing owned contract. `project init --recipe`

@@ -178,7 +178,7 @@ def submit(store, request, *, user_directed=False, source=None):
                 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}
 
 
-def plan(store, intent=None, *, output=None, save_as=None):
+def plan(store, intent=None, *, output=None, save_as=None, dialogue=False):
     """Build a small inspectable draft without selecting, hashing or launching jobs."""
     intent = {} if intent is None else intent
     require(isinstance(intent, dict) and set(intent) <= {
@@ -250,6 +250,9 @@ def plan(store, intent=None, *, output=None, save_as=None):
     if snap is not None:
         result['snapshot_sha256'] = digest({'contract': snap['contract_sha256'], 'budget': snap['budget'],
                                            'runs': snap['runs'], 'receipts': evidence, 'steering': steering})
+    if dialogue:
+        from rds_dialogue import build
+        result['dialogue'] = build(store, result)
     if save_as is not None:
         require(snap is not None, 'Initialize the project before retaining a plan in its existing checkpoint ledger')
         from rds_checkpoints import save_checkpoint
