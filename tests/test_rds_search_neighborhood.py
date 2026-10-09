@@ -197,7 +197,10 @@ class NeighborhoodTests(unittest.TestCase):
                 gain = allocation.build(policy, rows, observed, state)
                 self.assertEqual(gain['neighborhood']['trials'][-1]['outcome'], 'GAIN')
                 self.assertEqual(gain['neighborhood']['paused_parents'], [])
-                self.assertEqual(gain['selected_parent'], 'mixed-repeat')
+                # Reopening restores the anchor with its larger observed gain;
+                # a positive child trial need not become the selected parent.
+                self.assertEqual(gain['selected_parent'], 'p2')
+                self.assertIn('mixed-repeat', [q['parent_proposal_id'] for q in gain['qualified']])
                 self.assertEqual(len(gain['slots']), sum(self.policy['slots'].values()))
 
     def test_explore_trigger_is_not_an_implicit_neighborhood(self):
