@@ -320,6 +320,7 @@ def _guard_quiescent(root, db, contract):
             'Retained QUICK request differs from its original binding')
     guard = request.get('guard')
     if guard is None:
+        _prospective_quiescent(root, db, request)
         return
     require(isinstance(guard, dict) and isinstance(guard.get('path'), str), 'Retained QUICK guard identity is invalid')
     policy = [entry for entry in contract['bindings'] if entry['path'] == guard['path']]
@@ -348,6 +349,130 @@ def _guard_quiescent(root, db, contract):
                 and report.get('scientific_support') == 'UNKNOWN'
                 and isinstance(report.get('reason'), str)
                 and 'policy_sha256' not in report), 'Guard report differs from its frozen policy')
+    _prospective_quiescent(root, db, request, report, ref)
+
+
+def _prospective_quiescent(root, db, request, regression=None, guard_ref=None):
+    if request.get('research_context') is None:
+        return
+    from rds_project import ProjectStore, TERMINAL
+    from rds_quick import _prospective_completion
+    require(db.execute('SELECT count(*) FROM runs').fetchone()[0] == 1,
+            'Prospective QUICK settlement requires exactly one original run')
+    runs = ProjectStore._runs(db)
+    require(len(runs) == 1 and runs[0]['status'] in TERMINAL,
+            'Prospective QUICK settlement requires its original terminal run')
+    row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (runs[0]['id'],)).fetchone()
+    receipt = ProjectStore._receipt(row) if row is not None else None
+    require(receipt is not None and receipt['attempt_id'] == runs[0]['attempt_id']
+            and receipt['manifest_sha256'] == runs[0]['manifest_sha256']
+            and receipt['process_status'] == runs[0]['status'],
+            'Prospective QUICK settlement requires its original terminal receipt')
+    completion = _prospective_completion(root, request, receipt, regression=regression, guard_ref=guard_ref)
+    require(completion is not None and completion['after_checkpoint'] is not None,
+            'Campaign binding requires resolved prospective QUICK checkpoint settlement')
+
+
+def _json_cas(root, ref):
+    from rds_math import read_bytes
+    require(isinstance(ref, dict) and isinstance(ref.get('path'), str)
+            and isinstance(ref.get('sha256'), str) and re.fullmatch('[0-9a-f]{64}', ref['sha256'])
+            and type(ref.get('bytes')) is int, 'Native settlement report binding is invalid')
+    path = (root / ref['path']).resolve()
+    require(path.parent == (root / '.rds/cas').resolve() and path.name == ref['sha256'] + '.json',
+            'Native settlement report is outside its original CAS')
+    raw = read_bytes(path)
+    from hashlib import sha256
+    require(sha256(raw).hexdigest() == ref['sha256'] and len(raw) == ref['bytes'],
+            'Native settlement report CAS integrity failure')
+    return strict_json(raw.decode('utf-8-sig'))
+
+
+def _native_tails_quiescent(root, db, contract, runs, receipts):
+    """Foreign producers must settle their original native obligations.
+
+    A canonical project retains these exact recovery APIs after binding. A
+    terminal worker is only one part of the producer; no successful business
+    verdict, fresh model request, or current-budget fingerprint is required.
+    """
+    from rds_project import ProjectStore
+    store = ProjectStore(root)
+    policy = contract.get('advisor_policy', {})
+    if policy.get('autonomy'):
+        from rds_autonomy import records, REQUESTED, PROCESSED
+        events = records(store, db, contract)
+        require({event['run_id'] for event in events if event['kind'] == REQUESTED}
+                == {event['run_id'] for event in events if event['kind'] == PROCESSED},
+                'Campaign binding requires processed original model outcomes')
+    if not policy or not receipts:
+        return
+    from rds_owned_advisor import _state, OWNED_PREFIX
+    # Validate original owned history/attempt/completion identities, without
+    # treating mutable controller accounting as a new collection obligation.
+    _state(store, db)
+    last_finished = 0
+    for receipt in receipts:
+        rows = db.execute("SELECT id FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                          "AND json_extract(body,'$.run_id')=? AND json_extract(body,'$.sha256')=? LIMIT 2",
+                          (receipt['run_id'], receipt['sha256'])).fetchall()
+        require(len(rows) == 1, 'Owned Advisor settlement requires original completion identity')
+        last_finished = max(last_finished, rows[0]['id'])
+    row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
+                     'ORDER BY id DESC LIMIT 1').fetchone()
+    require(row is not None and row['id'] > last_finished,
+            'Campaign binding requires completed owned Advisor review settlement')
+    require(len(row['body'].encode('utf-8')) <= MAX_BYTES, 'Owned Advisor review event exceeds its bound')
+    event = strict_json(row['body'])
+    report = _json_cas(root, event.get('report'))
+    require(isinstance(report, dict) and report.get('fingerprint') == event.get('fingerprint')
+            and isinstance(event.get('fingerprint'), str) and re.fullmatch('[0-9a-f]{64}', event['fingerprint'])
+            and report.get('status') == event.get('status')
+            and report.get('selected_run') == event.get('selected_run')
+            and report.get('snapshot_sha256') == event.get('snapshot_sha256')
+            and report.get('coverage', {}).get('runs') == len(runs)
+            and report.get('coverage', {}).get('receipts') == len(receipts),
+            'Owned Advisor settlement report differs from its original event/receipt inventory')
+    require(_table(db, 'dependency_snapshots'), 'Owned Advisor settlement has no original dependency snapshot')
+    row = db.execute('SELECT sha256,body FROM dependency_snapshots WHERE sha256=?',
+                     (event['snapshot_sha256'],)).fetchone()
+    from rds_math import MAX_BYTES as SNAPSHOT_BYTES, blob
+    require(row is not None and len(row['body'].encode('utf-8')) <= SNAPSHOT_BYTES,
+            'Owned Advisor settlement dependency snapshot is missing or exceeds its bound')
+    snapshot = strict_json(row['body'])
+    require(digest(snapshot) == row['sha256'], 'Owned Advisor settlement snapshot integrity failure')
+    graph = strict_json(blob(root, snapshot['map']).decode('utf-8-sig'))
+    from rds_hypergraph import _validate
+    _validate(graph)
+    nodes = {node['id']: node for node in graph['nodes']}
+    edges = {edge['id']: edge for edge in graph['hyperedges']}
+    for receipt, run in zip(receipts, runs):
+        require(receipt['run_id'] == run['id'], 'Owned Advisor settlement run/receipt inventory differs')
+        run_node, receipt_node = nodes.get(OWNED_PREFIX + 'run:' + run['id']), nodes.get(OWNED_PREFIX + 'receipt:' + run['id'])
+        edge = edges.get(OWNED_PREFIX + 'completion:' + run['id'])
+        source = {'locator': 'owned receipt ' + receipt['sha256']}
+        require(isinstance(run_node, dict) and run_node.get('status') == 'SUPPORTED'
+                and run_node.get('manifest_sha256') == run['manifest_sha256']
+                and run_node.get('lifecycle_status') == run['status']
+                and isinstance(receipt_node, dict) and receipt_node.get('status') == 'SUPPORTED'
+                and receipt_node.get('receipt_sha256') == receipt['sha256']
+                and receipt_node.get('outcome') == receipt['run_status'] and receipt_node.get('source') == source
+                and isinstance(edge, dict) and edge.get('status') == 'SUPPORTED' and edge.get('source') == source
+                and edge.get('premises') == [run_node['id']] and edge.get('conclusion') == receipt_node['id'],
+                'Owned Advisor settlement dependency map differs from original terminal receipts')
+
+
+def _intent_quiescent(root, db, project, workspace):
+    if not _table(db, 'events'):
+        return
+    value = _event(db)
+    if value is None:
+        return
+    require(_path(value['project_root']) == root and _lineage(db)[0]['sha256'] == value['genesis_sha256'],
+            'Retained campaign binding intent has changed its original ledger identity')
+    scope = _path(value['workspace_root'])
+    overlap = scope.is_relative_to(workspace) or workspace.is_relative_to(scope)
+    require(not overlap or (root == project and scope == workspace),
+            'Conflicting foreign campaign binding intent; recover its original marker first')
 
 
 def _comparisons_quiescent(root, db, inventory):
@@ -418,14 +543,16 @@ def _theory_quiescent(db, inventory):
     require(allowances == outcomes, 'Campaign binding requires resolved theory allowances with exact outcomes')
 
 
-def _ledger_quiescent(root, db, inventory, *, allow_pending_revision=False):
+def _ledger_quiescent(root, db, inventory, *, allow_pending_revision=False, canonical_project=False):
     from rds_project import ProjectStore, TERMINAL
+    contract = None
     if _table(db, 'contract') and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
         from rds_method_revision import pending_revision
         lineage = _lineage(db)
         require(allow_pending_revision or pending_revision(db) is None,
                 'Campaign binding requires resolved method revision')
-        _guard_quiescent(root, db, lineage[-1]['contract'])
+        contract = lineage[-1]['contract']
+        _guard_quiescent(root, db, contract)
     _comparisons_quiescent(root, db, inventory)
     _theory_quiescent(db, inventory)
     if _table(db, 'runs'):
@@ -435,6 +562,7 @@ def _ledger_quiescent(root, db, inventory, *, allow_pending_revision=False):
         runs = ProjectStore._runs(db)
         require(all(run['status'] in TERMINAL for run in runs),
                 'Campaign binding requires no active runs or reserved resources; settled retained child jobs required')
+        receipts = []
         for run in runs:
             row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
             receipt = ProjectStore._receipt(row) if row is not None else None
@@ -443,6 +571,9 @@ def _ledger_quiescent(root, db, inventory, *, allow_pending_revision=False):
                     and receipt['manifest_sha256'] == run['manifest_sha256']
                     and receipt['process_status'] == run['status'],
                     'Retained child has no verified terminal receipt')
+            receipts.append(receipt)
+        if contract is not None and not canonical_project:
+            _native_tails_quiescent(root, db, contract, runs, receipts)
     if _table(db, 'budget'):
         require(not db.execute('SELECT 1 FROM budget WHERE reserved!=0 LIMIT 1').fetchone(),
                 'Retained child has reserved resources')
@@ -469,6 +600,7 @@ def _reference_quiescent(root):
 
 
 def _quiescent(db, project, workspace=None):
+    workspace = (workspace or project).resolve()
     inventory, pending, visited = _Inventory(), deque([project]), set()
     for root, name in _workspace_roots(workspace or project, inventory):
         if name == 'project.sqlite3':
@@ -482,10 +614,12 @@ def _quiescent(db, project, workspace=None):
         visited.add(root)
         require(len(visited) <= MAX_JOBS + 1, 'Campaign retained-job bound exceeded; inventory is incomplete')
         if root == project:
-            _ledger_quiescent(root, db, inventory, allow_pending_revision=True)
+            _intent_quiescent(root, db, project, workspace)
+            _ledger_quiescent(root, db, inventory, allow_pending_revision=True, canonical_project=True)
             pending.extend(_retained_targets(root, db, inventory))
         else:
             with _database(root) as child:
+                _intent_quiescent(root, child, project, workspace)
                 _ledger_quiescent(root, child, inventory)
                 pending.extend(_retained_targets(root, child, inventory))
 

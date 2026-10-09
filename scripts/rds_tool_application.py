@@ -79,6 +79,14 @@ def driver_sha256():
 
 def prepare(args):
     """Export existing qualified code and a driver; never authorize or run it."""
+    from rds_campaign import enforce
+    from rds_mutation import mutation
+    with mutation():
+        enforce(args.root)
+        return _prepare(args)
+
+
+def _prepare(args):
     from rds_math import blob, get, read_bytes
     from rds_tools import _cases, _check_validation, _name, command
     store = ProjectStore(args.root)

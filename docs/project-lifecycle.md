@@ -35,7 +35,15 @@ their original command, budget, evidence and recovery gates still apply.
 Binding requires all native ledgers in the explicit workspace, including sibling
 projects, reference plans, preparation intents and recursively retained QUICK
 jobs, to settle first. An incomplete or over-limit inventory refuses publication.
-Native ledger, CAS, tool qualification and owned-dispatch writers share a
+For a ledger that would lose write access, a terminal experiment receipt alone
+is insufficient: its owned Advisor collection, model-result processing and any
+prospective QUICK completion checkpoint must also be recorded by the original
+producer. Completed failure or UNKNOWN outcomes remain valid history, not
+scientific success. Resume the original operation to finish its bookkeeping;
+`project recover --id <original-run>` at the original QUICK job root completes
+its missing checkpoint without selecting again or launching another worker.
+
+Native ledger, CAS, tool qualification, application/workbench export and owned-dispatch writers share a
 cross-process mutation lock with binding publication,
 even before a marker exists. The lock covers short writes and admission; it is
 released during experiment execution. Finish or recover pending original work,
@@ -49,6 +57,8 @@ the explicit `project bind-workspace` command can restore it. The requested
 workspace must match that exact required path and the original ledger's unique
 verified binding event. Restoration republishes the original nonce; a missing
 native event, conflicting marker or changed identity remains an error.
+If publication was interrupted after that native event committed, another
+ledger cannot claim the same workspace before the original marker is restored.
 
 Previously registered tools retain their existing read-only qualification and
 receipt checks. Public `rsi validate` and comparison cannot create new
