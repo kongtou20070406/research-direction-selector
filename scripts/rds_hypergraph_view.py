@@ -794,7 +794,7 @@ def display_records(result, *, adapted=None, report=None):
     for key in ("nodes", "hyperedges"):
         presentation[key] = {}
         for row in spec.get(key, []):
-            info = display_record(effective.get(row["id"], row), edge=key == "hyperedges")
+            info = display_record(effective.get(row["id"], row) if key == "nodes" else row, edge=key == "hyperedges")
             entry = (readable or {}).get(key, {}).get(row["id"], {})
             if entry.get("title", "").strip():
                 info["label"] = entry["title"].strip()

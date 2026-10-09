@@ -587,6 +587,31 @@ console.log('Production outline methods: independent Graphics transport, cached 
         self.assertEqual(bounded["omitted"], 3)
         self.assertEqual(bounded["items"][0]["omitted_candidates"], 4)
 
+    def test_node_and_edge_same_id_keep_independent_status_and_readable_text(self):
+        from rds_hypergraph_readable import agent_input, with_readable
+        for node_status, edge_status, outline, status_text in (("SUPPORTED", "CONTRADICTED", "failure", "声明反驳"), ("CONTRADICTED", "PROPOSED", "neutral", "候选")):
+            with self.subTest(node_status=node_status):
+                spec = {"nodes": [{"id": "same", "status": node_status, "source": "fixture"}, {"id": "goal", "status": "UNKNOWN", "source": "fixture"}],
+                        "hyperedges": [{"id": "same", "premises": ["same"], "conclusion": "goal", "status": edge_status, "source": "fixture"}], "goals": ["goal"]}
+                result = graph_view(spec, "fixture")
+                readable = agent_input(result)["readable"]
+                readable["nodes"]["same"] = {"title": "前提声明"}
+                readable["hyperedges"]["same"] = {"title": "推导关系"}
+                result = with_readable(result, readable)
+                before = deepcopy(result)
+                display = display_records(result)
+                self.assertEqual(display["nodes"]["same"]["label"], "前提声明")
+                self.assertEqual(display["hyperedges"]["same"]["label"], "推导关系")
+                self.assertEqual(display["hyperedges"]["same"]["outline"]["state"], outline)
+                self.assertEqual(display["hyperedges"]["same"]["status_text"], status_text)
+                hub = replica_view(result)["nodes"]["h0"]["rds"]
+                self.assertEqual(hub["outline"]["state"], outline)
+                self.assertEqual(hub["status_text"], status_text)
+                payload = HypergraphViewTests.payload(render_html(result))
+                self.assertEqual(payload["display"]["hyperedges"]["same"]["outline"]["state"], outline)
+                self.assertEqual(payload["graph"], spec)
+                self.assertEqual(result, before)
+
     def test_fallback_diagnoses_missing_required_record_identities(self):
         required = {"run": {"run_id"}, "receipt": {"run_id", "receipt_id"},
                     "artifact": {"run_id", "path", "sha256"}, "declared_output": {"run_id", "path"},
