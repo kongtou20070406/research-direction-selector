@@ -182,7 +182,16 @@ class ToolComparisonTests(unittest.TestCase):
 
     def test_retained_reserved_job_stays_unknown_without_new_attempt_or_immutable_validation(self):
         parent = self.parent(5)
-        with patch.object(ProjectStore, 'execute', side_effect=RuntimeError('interrupted after reservation')):
+
+        def interrupt_registered_job(store, run_id, **kwargs):
+            with store._db(True) as db:
+                run = store._run(db, run_id)
+            self.assertEqual(run['status'], 'RESERVED')
+            self.assertIsNone(run['attempt_id'])
+            self.assertIsNone(run['started_at'])
+            raise RuntimeError('interrupted after reservation')
+
+        with patch.object(ProjectStore, '_advisor_prepare_run', interrupt_registered_job):
             with self.assertRaisesRegex(RuntimeError, 'after reservation'):
                 self.compare(timeout=2, ledger=parent)
         resumed = self.compare(timeout=2, ledger=parent)

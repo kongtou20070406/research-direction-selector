@@ -7,7 +7,7 @@ own writes and declared artifacts, not every write performed by that code.
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, ExitStack
 import ctypes
 import hashlib
 import json
@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import uuid
+from rds_mutation import mutation
 
 from rds_mutation import mutation
 
@@ -432,18 +433,36 @@ class ProjectStore:
         return len(prior), used
 
     @contextmanager
-    def _db(self, readonly=False):
+    def _db(self, readonly=False, *, settlement=None):
+        from rds_mutation import mutation
+        with (nullcontext() if readonly else mutation()):
+            with self._open_db(readonly, settlement=settlement) as db:
+                yield db
+
+    @contextmanager
+    def _open_db(self, readonly=False, *, settlement=None):
         if readonly:
             if not self.path.is_file():
                 raise FileNotFoundError("Project contract has not been initialized")
             db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=10)
             db.execute("PRAGMA query_only=ON")
         else:
+            from rds_campaign import binding, enforce
+            # A binding can appear while an already admitted foreign attempt is
+            # running. Its exact attempt may retain progress/settle costs, but
+            # cannot initialize, reserve, change policy or dispatch again.
+            bound = enforce(self.root) if settlement is None else binding(self.root)
             require(self.path.resolve().is_relative_to(self.root), "Project database escapes root")
-            db = sqlite3.connect(self.path, timeout=10)
+            existing = bound is not None or settlement is not None
+            target = self.path.as_uri() + '?mode=rw' if existing else self.path
+            db = sqlite3.connect(target, uri=existing, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
         try:
+            if settlement is not None:
+                run_id, attempt_id = settlement
+                require(attempt_id is not None and self._run(db, run_id)['attempt_id'] == attempt_id,
+                        'Settlement requires the original admitted attempt')
             with db:
                 yield db
         finally:
@@ -627,6 +646,12 @@ class ProjectStore:
 
     @mutation()
     def initialize(self, contract, supersedes=None, *, scope_declaration=None):
+        from rds_campaign import binding, enforce
+        enforce(self.root)
+        if supersedes is not None:
+            inherited = binding(supersedes)
+            require(inherited is None, 'A bound research campaign cannot be superseded into a new ledger; '
+                    'continue or revise the canonical project')
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
@@ -813,6 +838,8 @@ class ProjectStore:
     @contextmanager
     def theory_allowance(self, spec, request, allowance):
         """Precharge bounded controller work; unused allowances are not refunded."""
+        from rds_campaign import enforce
+        enforce(self.root)
         started = time.monotonic()
         require(isinstance(spec, dict), "Run manifest must be an object")
         run_id = spec.get("id", "")
@@ -875,6 +902,8 @@ class ProjectStore:
             return json.loads(row["body"])
 
     def register(self, spec, *, executor_sha256=None):
+        from rds_campaign import enforce
+        enforce(self.root)
         require(isinstance(spec, dict) and type(spec.get("schema")) is int
                 and spec["schema"] == 1, "Run manifest schema must be 1")
         require(set(spec) <= {"schema", "id", "arm", "control_id", "protocol", "argv", "outpaths", "resource_estimates",
@@ -1107,6 +1136,8 @@ class ProjectStore:
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
     def execute(self, run_id, background=False, *, admission_guard=None, admission_context=None):
+        from rds_campaign import enforce
+        enforce(self.root)
         # An internal caller may restrict admission after all ordinary checks.
         # This callback grants no authority and is never supplied by the CLI.
         require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
@@ -1114,10 +1145,12 @@ class ProjectStore:
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
-        advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
         # Parents must be acquired before this child write transaction. Exit
         # order commits the attempt before releasing the admission context.
-        with (admission_context() if admission_context is not None else nullcontext()), self._db() as db:
+        with ExitStack() as context:
+            context.enter_context(admission_context() if admission_context is not None else nullcontext())
+            advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
+            db = context.enter_context(self._db())
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
             self._runs(db)
@@ -1200,6 +1233,27 @@ class ProjectStore:
         return {**receipt, **observation}
 
     def _execute_claim(self, run_id, attempt_id):
+        try:
+            return self._execute_admitted(run_id, attempt_id)
+        except ValueError as exc:
+            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)):
+                raise
+            from rds_campaign import binding
+            bound = binding(self.root)
+            if bound is None or Path(bound['project_root']) == self.root:
+                raise
+            with self._db(True) as db:
+                retained = self._run(db, run_id)
+                if retained['status'] != 'RESERVED' or retained['attempt_id'] != attempt_id:
+                    raise
+            # A binding installed after admission may stop startup. Keep the
+            # exact attempt and conservatively settle its original reservation.
+            return self._finish(run_id, attempt_id, 'FAILED', None, None, None,
+                                ['Campaign changed before launch: ' + str(exc)], only_unstarted=True)
+
+    def _execute_admitted(self, run_id, attempt_id):
+        from rds_campaign import enforce
+        enforce(self.root)
         attempt_start = time.monotonic()
         admission_error = None
         advisor_token = self._advisor_prepare_run(run_id)
@@ -1276,15 +1330,23 @@ class ProjectStore:
                     deadline = self._campaign_deadline(db, contract)
                     if deadline is not None:
                         policy_deadline = time.monotonic() + max(0.0, deadline - time.time())
+                    worker_options = {}
+                    if 'autonomy_request' in current:
+                        # The frozen copied adapter uses the same kernel guard.
+                        # Only an admitted native model route receives this path;
+                        # it is not taken from the experiment's request fields.
+                        worker_options['env'] = {**os.environ,
+                            'RDS_RUNTIME_SCRIPTS': str(Path(__file__).resolve().parent)}
                     process = subprocess.Popen(argv, cwd=self.root, shell=False, stdin=subprocess.DEVNULL,
-                                               stdout=out, stderr=err, creationflags=flags, start_new_session=os.name != "nt")
+                                               stdout=out, stderr=err, creationflags=flags,
+                                               start_new_session=os.name != "nt", **worker_options)
                     started = True
                     job = _Job(process)
                     current["pid"] = process.pid
                     self._save(db, current)
                 while process.poll() is None:
                     elapsed = time.monotonic() - start
-                    with self._db() as db:
+                    with self._db(settlement=(run_id, attempt_id)) as db:
                         current = self._run(db, run_id)
                         current["observed_wall_seconds"] = elapsed
                         self._save(db, current)
@@ -1344,7 +1406,7 @@ class ProjectStore:
 
     def _finish(self, run_id, attempt_id, status, exit_code, wall, started, errors, before=None, timeout=False,
                 only_unstarted=False, recovering=False, stop_reason=None):
-        with self._db() as db:
+        with self._db(True) as db:
             run = self._run(db, run_id)
             contract = self._contract(db)
         require(run["attempt_id"] == attempt_id, "Attempt mismatch")
@@ -1407,7 +1469,7 @@ class ProjectStore:
             receipt['maintenance_review'] = run['maintenance_review']
             receipt["assessment"] = {"task_gain": "UNKNOWN", "mechanism": "UNKNOWN", "purpose": "MAINTENANCE"}
         receipt["sha256"] = digest(receipt)
-        with self._db() as db:
+        with self._db(settlement=(run_id, attempt_id)) as db:
             db.execute("BEGIN IMMEDIATE")
             self._runs(db)
             old = db.execute("SELECT run_id,sha256,body FROM receipts WHERE run_id=?", (run_id,)).fetchone()

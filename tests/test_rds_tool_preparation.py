@@ -188,12 +188,27 @@ class ToolPreparationTests(unittest.TestCase):
         self.write('bad.py', 'def wrong(a, b):\n    return 0\n')
         tools.extract(self.root, self.root / 'bad.py', 'wrong', 'wrong-v1')
         self.assertEqual(self.qualify('wrong-v1')['status'], 'FAILED')
-        def interrupted(store, run_id, **kwargs):
-            return store._finish(run_id, None, 'INTERRUPTED', None, None, False,
+        observed = {}
+
+        def interrupted(store, run_id, attempt_id):
+            with store._db(True) as db:
+                run = store._run(db, run_id)
+            self.assertEqual(run['attempt_id'], attempt_id)
+            self.assertIsNotNone(attempt_id)
+            self.assertEqual(run['status'], 'RESERVED')
+            self.assertIsNone(run['started_at'])
+            observed['attempt_id'] = attempt_id
+            return store._finish(run_id, attempt_id, 'INTERRUPTED', None, None, False,
                                  ['Synthetic unavailable dispatch; wall cost unknown'], only_unstarted=True)
-        with patch.object(ProjectStore, 'execute', interrupted):
+        with patch.object(ProjectStore, '_execute_claim', interrupted):
             unknown = self.qualify()
         self.assertEqual(unknown['status'], 'UNKNOWN')
+        receipt = ProjectStore(unknown['job_root']).snapshot()['receipts'][0]
+        self.assertEqual(receipt['attempt_id'], observed['attempt_id'])
+        self.assertFalse(receipt['process_started'])
+        self.assertIsNone(receipt['resources']['wall_seconds']['measured'])
+        self.assertTrue(receipt['resources']['wall_seconds']['unknown'])
+        self.assertEqual(receipt['resources']['wall_seconds']['charged_estimate'], 3)
         state = self.store.initialize(self.contract)
         with self.store._db(True) as db:
             charge = json.loads(db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_COST'").fetchone()['body'])
@@ -231,7 +246,15 @@ class ToolPreparationTests(unittest.TestCase):
             return compare(self.root, 'before', 'after', self.root / 'comparison-cases.json',
                            'precision', 12, timeout=3)
 
-        with patch.object(ProjectStore, 'execute', side_effect=RuntimeError('interrupted after reservation')):
+        def interrupt_registered_job(store, run_id, **kwargs):
+            with store._db(True) as db:
+                run = store._run(db, run_id)
+            self.assertEqual(run['status'], 'RESERVED')
+            self.assertIsNone(run['attempt_id'])
+            self.assertIsNone(run['started_at'])
+            raise RuntimeError('interrupted after reservation')
+
+        with patch.object(ProjectStore, '_advisor_prepare_run', interrupt_registered_job):
             with self.assertRaisesRegex(RuntimeError, 'after reservation'):
                 check()
         unresolved = check()

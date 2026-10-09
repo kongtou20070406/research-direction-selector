@@ -24,6 +24,7 @@ import uuid
 
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
+from rds_mutation import mutation
 
 VERSION = "5.9.0-rc.2"
 # Reading an explicitly supported ledger does not grant execution admission;
@@ -195,6 +196,15 @@ class RDSState:
         self.db_path = self.directory / "state.sqlite3"
 
     def connect(self, create=False, readonly=False):
+        if readonly:
+            return self._connect(create, readonly=True)
+        with mutation():
+            return self._connect(create)
+
+    def _connect(self, create=False, readonly=False):
+        if not readonly:
+            from rds_campaign import enforce
+            enforce(self.root, kind='reference')
         if create:
             require(not (self.directory / "contract.json").exists(),
                     "Legacy v5 JSON state found; preserve it and initialize a new root")
@@ -259,6 +269,12 @@ class RDSState:
 
     @contextmanager
     def transaction(self, create=False):
+        from rds_mutation import mutation
+        with mutation(), self._transaction(create) as pair:
+            yield pair
+
+    @contextmanager
+    def _transaction(self, create=False):
         db = self.connect(create)
         try:
             db.execute("BEGIN IMMEDIATE")
@@ -1131,10 +1147,13 @@ def cmd_project(args):
         return compose(args.root, args.request)
     from rds_project import ProjectStore
     from rds_project_lifecycle import check_root, discover, enable_advisor, initialize
-    store = ProjectStore(args.root)
     if args.action == 'discover':
         return discover(args.root)
-    if args.action != 'init':
+    store = ProjectStore(args.root)
+    if args.action == 'bind-workspace':
+        from rds_campaign import bind
+        return {'status': 'BOUND', 'binding': bind(store, args.workspace_root), 'execution_started': False}
+    if args.action not in {'init', 'recover'}:
         check_root(args.root)
     if args.action == 'enable-advisor':
         return enable_advisor(store, load_spec(args.policy), apply=args.apply,
@@ -1547,6 +1566,8 @@ def parser():
     project = commands.add_parser("project", help="Locked local project runner with receipts and resource accounting")
     pr_actions = project.add_subparsers(dest="action", required=True)
     pr_actions.add_parser('discover', help='Find the existing project in this root/ancestors; report mode and next capabilities without execution')
+    pr_bind = pr_actions.add_parser('bind-workspace', help='Bind this workspace to the existing canonical research ledger; preserve history and budget')
+    pr_bind.add_argument('--workspace-root', required=True, help='Existing workspace containing this project and its experiment directories')
     pr_enable = pr_actions.add_parser('enable-advisor', help='Preview or atomically enable Advisor in this same ledger; preserve history and budget')
     pr_enable.add_argument('--policy', required=True, help='Explicit basic owned Advisor policy JSON')
     pr_enable.add_argument('--apply', action='store_true', help='Apply the exact reviewed snapshot; preview by default')
@@ -1775,6 +1796,9 @@ def _main():
         print("[RDS-HINT] python -B scripts/rds_cli.py --root \"" + str(args.root) + "\" project next", file=sys.stderr)
         return 1
     try:
+        from rds_campaign import enforce
+        if not (args.command == 'project' and args.action in {'discover', 'recover', 'bind-workspace'}):
+            enforce(args.root)
         if args.command == "history":
             from rds_obelisk import history_command
             return history_command(args) or 0
@@ -1951,8 +1975,14 @@ def _main():
             from rds_project_lifecycle import describe
             workflow = result.get('workflow') or describe(args.root, quick=args.command == 'exec')
             print('[RDS] mode=' + workflow['mode'] + ' advisor=' + workflow['advisor'] +
+                  ' continuity=' + workflow['continuity']['status'] +
                   ' root=' + workflow['project_root'], file=sys.stderr)
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json
+        if args.command == 'project' and args.action == 'recover':
+            from rds_campaign import binding
+            scope = binding(args.root)
+            if scope is not None and Path(args.root).resolve() != Path(scope['project_root']):
+                compact = False  # Recovery may settle an old attempt; it cannot write a new CAS brief.
         if args.command == 'rsi' and args.action == 'discover':
             compact = False  # Discovery is already bounded and must expose the requested signatures.
         if compact:
@@ -1962,6 +1992,7 @@ def _main():
                 # Full commands remain in the saved report/discovery response;
                 # repeating an absolute-root command crowds out decision detail.
                 summary['workflow'] = {key: workflow[key] for key in ('mode', 'advisor')}
+                summary['workflow']['continuity'] = workflow['continuity']['status']
             if args.command == 'rsi' and args.action == 'compare':
                 summary.update({k: result[k] for k in ('correctness', 'comparable_context', 'speedup_ratio',
                                                       'precision', 'precision_key', 'case_count', 'samples_per_tool',

@@ -413,7 +413,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
         charged, held, attempting, release = (threading.Event() for _ in range(4))
         observed = {}
         original_charge, original_current = rds_quick._charge_ledger, steering.current
-        original_db = ProjectStore._db
+        original_mutation = rds_quick.mutation
 
         def charge_then_writer(*positional, **keywords):
             result = original_charge(*positional, **keywords)
@@ -437,16 +437,17 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 user_directed=True, source='current-user:preparation-race-test')
 
         @contextmanager
-        def observe_prepare_lock(store, readonly=False, *positional, **keywords):
-            if store.root == source.root and not readonly and held.is_set():
+        def observe_prepare_lock():
+            if held.is_set():
                 attempting.set()
-            with original_db(store, readonly, *positional, **keywords) as db:
-                yield db
+            # Production takes this shared gate before any parent DB lock.
+            with original_mutation():
+                yield
 
         with ThreadPoolExecutor(max_workers=2) as pool, \
                 mock.patch.object(rds_quick, '_charge_ledger', new=charge_then_writer), \
                 mock.patch.object(steering, 'current', new=current_then_hold), \
-                mock.patch.object(ProjectStore, '_db', new=observe_prepare_lock):
+                mock.patch.object(rds_quick, 'mutation', new=observe_prepare_lock):
             quick = pool.submit(rds_quick.execute, args)
             try:
                 self.assertTrue(charged.wait(5), 'Original allowance was not charged')
@@ -589,14 +590,13 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
 
         def update_before_real_admission(store, run_id, *positional, **keywords):
             # This is after quick.execute's final outer choice, but before the
-            # original execute method invokes its actual admission callback.
+            # parent admission locks and real child registration. Commit a
+            # legitimate new map here; inspect the actual registered run only
+            # when the original execute reaches its admission callback.
             self.assertEqual(store.root, workspace.resolve())
             self.assertEqual(run_id, 'coverage-race')
             self.assertTrue(callable(keywords.get('admission_guard')))
             self.assertEqual(observed, {})
-            at_entry = store.snapshot()['runs'][0]
-            self.assertEqual(at_entry['status'], 'RESERVED')
-            self.assertIsNone(at_entry['attempt_id'])
             observed['budget'] = parent.snapshot()['budget']
             changed = deepcopy(initial)
             changed['nodes'].append({'id': 'new-premise', 'status': 'UNKNOWN',
@@ -604,6 +604,18 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
             observed['map'] = changed
             observed['sha256'] = save(fixture.ledger, changed, expected=initial_sha,
                                      source_base=fixture.ledger)
+            original_guard = keywords['admission_guard']
+
+            def observe_registered_admission(db, run):
+                actual = store._run(db, run_id)
+                self.assertEqual(actual, run)
+                self.assertEqual(actual['status'], 'RESERVED')
+                self.assertIsNone(actual['attempt_id'])
+                self.assertIsNone(actual['started_at'])
+                observed['registered'] = actual['id']
+                return original_guard(db, run)
+
+            keywords['admission_guard'] = observe_registered_admission
             return original_execute(store, run_id, *positional, **keywords)
 
         with mock.patch.object(ProjectStore, 'execute', new=update_before_real_admission):
@@ -611,6 +623,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 rds_quick.execute(args, review=(advice, context))
 
         self.assertNotEqual(observed['sha256'], initial_sha)
+        self.assertEqual(observed['registered'], 'coverage-race')
         retained = ProjectStore(workspace).snapshot()
         self.assertEqual(len(retained['runs']), 1)
         self.assertEqual(retained['runs'][0]['status'], 'RESERVED')

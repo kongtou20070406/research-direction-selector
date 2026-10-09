@@ -27,7 +27,10 @@ def cas_json(root, value):
     return cas_bytes(root, canonical(value).encode('utf-8'), 'json')
 
 
+@mutation()
 def cas_bytes(root, raw, suffix='bin'):
+    from rds_campaign import enforce
+    enforce(root)
     require(isinstance(raw, bytes) and re.fullmatch(r'[a-z0-9]{1,12}', suffix), 'Invalid CAS bytes or suffix')
     sha = hashlib.sha256(raw).hexdigest()
     directory = Path(root).resolve() / '.rds' / 'cas'
@@ -256,6 +259,9 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
     store = ProjectStore(root)
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
+        if dispatch:
+            from rds_campaign import detached_admission
+            detached_admission(root, db)
         contract = store._contract(db)
         if dispatch and request.get('research_context'):
             # Bind allowance admission to the graph revision reviewed by the
@@ -436,6 +442,14 @@ def _parent_controls(root, *, db=None):
 def execute(args, review=None, *, _native_preparation_root=None):
     """Create one frozen normal ProjectStore per named job, without JSON boilerplate."""
     root = Path(args.root).resolve()
+    from rds_campaign import binding, enforce
+    enforce(root)
+    # A detached child ledger has its own contract/accounting. Bound campaigns
+    # use the original project's native run admission instead of minting one.
+    for scope in (root, getattr(args, 'ledger', None), _native_preparation_root):
+        if scope is not None:
+            require(binding(scope) is None,
+                    'Bound campaign refuses detached QUICK jobs; use the canonical project create/execute/advance')
     from rds_project_lifecycle import check_root
     def check_source_root():
         if _native_preparation_root is None:
@@ -598,6 +612,10 @@ def execute(args, review=None, *, _native_preparation_root=None):
         # order during preparation and through the child's attempt commit.
         with mutation(), ExitStack() as locks:
             try:
+                from rds_campaign import binding as campaign_binding
+                for scope in (root, getattr(args, 'ledger', None), _native_preparation_root):
+                    if scope is not None:
+                        require(campaign_binding(scope) is None, 'Bound campaign refuses detached QUICK preparation')
                 for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
                     parent = ProjectStore(parent_root)
                     create_anchor = not parent.path.is_file()
@@ -617,6 +635,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
         # Both materialization and attempt admission require these live checks.
         check_source_root()
         for parent_root, prepared_sha in parent_contracts.items():
+            from rds_campaign import detached_admission
+            detached_admission(parent_root, locked_parents[parent_root])
             current_contract, steering = _parent_controls(parent_root, db=locked_parents[parent_root])
             current_sha = digest(current_contract) if current_contract is not None else None
             require(current_sha == prepared_sha,
@@ -732,6 +752,11 @@ def execute(args, review=None, *, _native_preparation_root=None):
         store.register(manifest, executor_sha256=executor_sha256)
         for output in args.output:
             store._path(output, output=True, contract=contract).parent.mkdir(parents=True, exist_ok=True)
+        from rds_campaign import QUICK_JOB_KIND
+        for parent_db in locked_parents.values():
+            if parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+                parent_db.execute('INSERT INTO events(body) VALUES (?)',
+                    (canonical({'kind': QUICK_JOB_KIND, 'job_root': str(workspace)}),))
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
     if review is not None:

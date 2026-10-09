@@ -1,4 +1,4 @@
-"""Frozen stdlib model adapter executed as an ordinary owned project route.
+"""Frozen model adapter executed as an ordinary owned project route.
 
 It returns source as data. Only the existing method-revision gate can adopt it.
 No credentials, approval policy, sandbox settings or hooks are changed here.
@@ -102,46 +102,57 @@ def provider_command(provider, paths, root):
 
 
 def execute(root, rid):
+    runtime = os.environ.get('RDS_RUNTIME_SCRIPTS')
+    if runtime is not None:
+        runtime_path = Path(runtime)
+        if not runtime_path.is_absolute() or not runtime_path.is_dir():
+            raise ValueError('Owned worker runtime must be an absolute existing directory')
+        sys.path.insert(0, str(runtime_path))
+    from rds_campaign import enforce
+    enforce(root)
     root = Path(root).resolve()
-    with sqlite3.connect(root / '.rds/project.sqlite3') as db:
-        db.row_factory = sqlite3.Row
-        row = db.execute('SELECT status,body FROM runs WHERE id=?', (rid,)).fetchone()
-        if row is None or row['status'] != 'RUNNING':
-            raise ValueError('Model worker has no active owned attempt')
-        run = load(row['body'])
-        ref = run['autonomy_request']
-        requested = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='AUTONOMY_MODEL_REQUESTED' "
-                               "AND json_extract(body,'$.run_id')=?", (rid,)).fetchall()
-        if len(requested) != 1:
-            raise ValueError('Model request identity is missing or duplicated')
-        event = load(requested[0]['body'])
-        if event.get('sha256') != sha({k: v for k, v in event.items() if k != 'sha256'}) or event['request'] != ref:
-            raise ValueError('Model request event integrity failure')
-        request = original(root, ref)
-        if request['run_id'] != rid or request['parent_sha256'] != run['effective_contract_sha256']:
-            raise ValueError('Model request/run parent mismatch')
-        previous = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='AUTONOMY_MODEL_DISPATCH_INTENT' "
-                              "AND json_extract(body,'$.run_id')=?", (rid,)).fetchone()
-        if previous:
-            raise ValueError('Uncertain or completed dispatch; never retry a model request')
-        provider = request['provider']
-        if file_sha(provider['argv'][0]) != provider['executable_sha256']:
-            raise ValueError('Model provider executable changed')
-        paths = [(root / p).resolve() for p in output_paths(request['response_path'])]
-        if any(not p.is_relative_to(root) or p.exists() for p in paths):
-            raise ValueError('Model output path escapes root or exists')
-        for p in paths:
-            p.parent.mkdir(parents=True, exist_ok=True)
-        schema = reply_schema(request.get('jump_packet') is not None)
-        paths[3].write_text(canonical(schema), encoding='utf-8')
-        prompt = model_prompt(request)
-        argv = provider_command(provider, paths, root)
-        intent = {'kind': 'AUTONOMY_MODEL_DISPATCH_INTENT', 'run_id': rid, 'attempt_id': run['attempt_id'],
-                  'request': ref, 'provider': provider, 'argv': argv, 'started_at': time.time(),
-                  'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest()}
-        intent['sha256'] = sha(intent)
-        db.execute('INSERT INTO events(body) VALUES (?)', (canonical(intent),))
-        db.commit()  # Charge-owning run already RUNNING; delivery intent survives a crash.
+    from rds_mutation import mutation
+    with mutation():
+        enforce(root)
+        with sqlite3.connect(root / '.rds/project.sqlite3') as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute('SELECT status,body FROM runs WHERE id=?', (rid,)).fetchone()
+            if row is None or row['status'] != 'RUNNING':
+                raise ValueError('Model worker has no active owned attempt')
+            run = load(row['body'])
+            ref = run['autonomy_request']
+            requested = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='AUTONOMY_MODEL_REQUESTED' "
+                                   "AND json_extract(body,'$.run_id')=?", (rid,)).fetchall()
+            if len(requested) != 1:
+                raise ValueError('Model request identity is missing or duplicated')
+            event = load(requested[0]['body'])
+            if event.get('sha256') != sha({k: v for k, v in event.items() if k != 'sha256'}) or event['request'] != ref:
+                raise ValueError('Model request event integrity failure')
+            request = original(root, ref)
+            if request['run_id'] != rid or request['parent_sha256'] != run['effective_contract_sha256']:
+                raise ValueError('Model request/run parent mismatch')
+            previous = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='AUTONOMY_MODEL_DISPATCH_INTENT' "
+                                  "AND json_extract(body,'$.run_id')=?", (rid,)).fetchone()
+            if previous:
+                raise ValueError('Uncertain or completed dispatch; never retry a model request')
+            provider = request['provider']
+            if file_sha(provider['argv'][0]) != provider['executable_sha256']:
+                raise ValueError('Model provider executable changed')
+            paths = [(root / p).resolve() for p in output_paths(request['response_path'])]
+            if any(not p.is_relative_to(root) or p.exists() for p in paths):
+                raise ValueError('Model output path escapes root or exists')
+            for p in paths:
+                p.parent.mkdir(parents=True, exist_ok=True)
+            schema = reply_schema(request.get('jump_packet') is not None)
+            paths[3].write_text(canonical(schema), encoding='utf-8')
+            prompt = model_prompt(request)
+            argv = provider_command(provider, paths, root)
+            intent = {'kind': 'AUTONOMY_MODEL_DISPATCH_INTENT', 'run_id': rid, 'attempt_id': run['attempt_id'],
+                      'request': ref, 'provider': provider, 'argv': argv, 'started_at': time.time(),
+                      'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest()}
+            intent['sha256'] = sha(intent)
+            db.execute('INSERT INTO events(body) VALUES (?)', (canonical(intent),))
+            db.commit()  # Charge-owning run already RUNNING; delivery intent survives a crash.
     timed_out, returncode, error = False, None, None
     started = time.monotonic()
     with paths[1].open('xb') as trace, paths[2].open('xb') as stderr:
