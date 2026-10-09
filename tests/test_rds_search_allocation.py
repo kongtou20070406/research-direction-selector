@@ -81,6 +81,41 @@ class SearchAllocationTests(unittest.TestCase):
         self.assertIsNone(structure._find(self.store, 'PROPOSAL', 'alias'))
         self.assertEqual(self.store.snapshot()['receipts'], [])
 
+    def test_attached_output_arguments_preserve_repeat_qualification_and_semantic_flags(self):
+        self.improved()
+        self.execute('p2', 'linear', 'evidence')
+        task = self.request()
+        state = self.store.snapshot()
+        feedback = structure._verified_feedback(self.store, task['scope_sha256'])
+        rows = {r['id']: structure._find(self.store, 'PROPOSAL', r['id']) for r in feedback}
+        # Pure allocation fixtures over retained original observations; these
+        # changed argv are not claimed as newly executed commands/receipts.
+        attached = deepcopy(rows)
+        for row in attached.values():
+            run = row['proposal']['experiment']['runs'][0]
+            run['argv'] = ['--output=' + a if a in run['outpaths'] else a for a in run['argv']]
+        plan = allocation.build(fixture.policy(), attached, feedback, state)
+        self.assertEqual(plan['selected_parent'], 'p2')
+        self.assertEqual(plan['qualified'][0]['distinct_runs'], 2)
+        p1, p2 = attached['p1'], attached['p2']
+        self.assertEqual(allocation.experiment_key(p1), allocation.experiment_key(p2))
+        for change in ('flag', 'value', 'non-option', 'output-index', 'protocol'):
+            other = deepcopy(p2)
+            run = other['proposal']['experiment']['runs'][0]
+            if change == 'flag':
+                run['argv'][-1] = run['argv'][-1].replace('--output=', '--different-output=')
+            elif change == 'value':
+                run['argv'].append('--seed=2')
+            elif change == 'non-option':
+                run['argv'][-1] = run['argv'][-1].replace('--output=', 'output=')
+            elif change == 'output-index':
+                run['outpaths'].insert(0, 'out/additional-declared.json')
+            else:
+                run['protocol']['sha256'] = '0' * 64
+            with self.subTest(change=change):
+                self.assertNotEqual(allocation.experiment_key(p1), allocation.experiment_key(other))
+        self.assertEqual(self.store.snapshot(), state)
+
     def test_policy_is_opt_in_and_default_request_is_unchanged(self):
         root = fixture.prepare(Path(self.tmp.name) / 'legacy', enabled=False)
         task = structure.request(root)['tasks'][0]

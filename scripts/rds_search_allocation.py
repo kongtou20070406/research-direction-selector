@@ -75,8 +75,16 @@ def experiment_key(row):
     """
     run = row['proposal']['experiment']['runs'][0]
     outputs = run['outpaths']
+    def argument(value):
+        prefix, separator, tail = value.partition('=')
+        attached = separator and prefix.startswith('-')
+        token = tail if attached else value
+        if token not in outputs:
+            return value
+        normalized = '<output:' + str(outputs.index(token)) + '>'
+        return prefix + '=' + normalized if attached else normalized
     return digest({'hypothesis': hypothesis_key(row['discriminator']),
-                   'argv': ['<output:' + str(outputs.index(a)) + '>' if a in outputs else a for a in run['argv']],
+                   'argv': [argument(a) for a in run['argv']],
                    'protocol': run['protocol']})
 
 

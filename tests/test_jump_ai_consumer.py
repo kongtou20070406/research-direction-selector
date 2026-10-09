@@ -110,7 +110,11 @@ class JumpAiConsumerTests(unittest.TestCase):
             processed = self.case.events(autonomy.PROCESSED)
             self.assertEqual(len(processed), 1)
             self.assertEqual(processed[0]['outcome'], 'PROPOSAL_REJECTED')
-            self.assertIn('Jump-use JSON nesting', processed[0]['reason'])
+            # JSON decoders differ in whether the depth guard or native
+            # recursion limit rejects first. Both retain the paid result and
+            # must reach the same one-time rejection without another dispatch.
+            self.assertRegex(processed[0]['reason'],
+                             r'Jump-use JSON nesting exceeds parser limit|JSON nesting exceeds 32')
             self.assertEqual(processed[0]['receipt_sha256'], receipt['sha256'])
             self.assertEqual(autonomy.process_result(self.case.store, event, receipt), 'PROPOSAL_REJECTED')
             after = self.case.store.snapshot()

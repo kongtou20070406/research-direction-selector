@@ -1303,6 +1303,37 @@ function browser(payload,blocked=false){
 
 @unittest.skipUnless(shutil.which("node"), "Node required for actual Canvas interaction boundaries")
 class CanvasBoundaryTests(_JSBoundaryTests):
+    def test_empty_generated_canvas_keeps_empty_state_and_finite_view_boundary(self):
+        spec = {"schema": 1, "nodes": [], "hyperedges": [], "goals": []}
+        result = graph_view(spec, "synthetic:empty-canvas")
+        self.assertEqual(result["status"], "AVAILABLE")
+        page = render_html(result)
+        production = re.search(r"<script>(.*?)</script>", page, re.S).group(1)
+        payload = HypergraphViewTests.payload(page)
+        self.run_js(production, "const payload=" + json.dumps(payload) + ";\n" + r'''
+const original=JSON.stringify(payload.graph),b=browser(payload);
+vm.runInContext(production,b.scope,{timeout:5000});b.flush();
+assert.match(b.text(b.ids.app),/尚无超图/);
+assert.ok(!b.created.some(e=>e.tagName==='CANVAS'),'ordinary empty graph retains its empty state');
+assert.equal(b.workers.length,0,'ordinary empty graph does not start layout');
+// Exercise the production initializer's zero-item boundary explicitly. The
+// normal empty-state gate above is retained, and production source is unmodified.
+vm.runInContext('startGraph()',b.scope,{timeout:5000});
+const c=b.ids['hg-canvas'],mini=b.ids['hg-minimap'],rectangles=[];
+mini.ctx.strokeRect=(...args)=>{assert.ok(args.every(Number.isFinite),'minimap rectangle must be finite');rectangles.push(args);};
+let clock=1000;b.scope.performance.now=()=>clock+=400;
+function finite(){b.flush();assert.ok(c.dataset.center.split(',').map(Number).every(Number.isFinite),'center must be finite');const scale=Number(c.dataset.scale);assert.ok(Number.isFinite(scale)&&scale>0,'scale must be finite and positive');}
+finite();
+for(const id of ['hg-fit','hg-zoom-in','hg-zoom-out']){b.ids[id].events.click();finite();}
+c.events.keydown({key:'ArrowRight',preventDefault(){}});finite();
+mini.events.pointerdown({clientX:80,clientY:50});finite();
+c.events.keydown({key:'0',preventDefault(){}});finite();
+b.workers[0].onmessage({data:{positions:new Float32Array(0),ticks:180,ms:1,ready:true,done:true}});finite();
+assert.ok(rectangles.length>=7,'initialization and interactions actually draw the minimap');
+assert.equal(JSON.stringify(payload.graph),original);
+console.log('Generated Canvas: normal empty state preserved; explicit zero-item initializer, fit, zoom, pan, minimap and layout completion remain finite PASS');
+''')
+
     def test_parallel_or_routes_remain_pointer_selectable_after_layout_update(self):
         self.run_js(JS, r'''
 const graph={nodes:[{id:'p',label:'Premise',status:'UNKNOWN'},{id:'g',label:'Goal',status:'UNKNOWN'}],hyperedges:[{id:'a',label:'Route A',premises:['p'],conclusion:'g',relation:'R',status:'SUPPORTED',weight:1},{id:'b',label:'Route B',premises:['p'],conclusion:'g',relation:'R',status:'PROPOSED',weight:2}],goals:['g']};

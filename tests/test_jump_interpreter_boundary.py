@@ -1,5 +1,6 @@
 """Frozen interpreter operands and sealed parser failures over original records."""
 from copy import deepcopy
+from contextlib import nullcontext
 import importlib.util
 import hashlib
 import json
@@ -92,7 +93,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                     if role != 'missing':
                         frozen['bindings'].append({'path': 'loader.opaque', 'role': role, 'sha256': file_sha(loader)})
                     for options in (['-r', './loader.opaque'], ['-r./loader.opaque'],
-                                    ['--import=' + loader.as_uri()], ['--loader', str(loader)]):
+                                    ['--import=' + loader.as_uri()], ['--loader', loader.as_uri()]):
                         plan = make(options)
                         if role == 'code' and declaration == 'explicit':
                             with self.assertRaisesRegex(ValueError, 'preload.*generator dependencies'):
@@ -115,6 +116,107 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                            ([], ('-r', str(external)))):
                     self.assertTrue(jump._generator_bindings(store, contract, make(options, arguments)))
             self.assertEqual(store.snapshot(), before)
+
+    def test_node_shared_scan_consumes_values_aliases_and_rejects_esm_ambiguity(self):
+        node = shutil.which('node')
+        if node is None:
+            self.skipTest('Native Node interpreter unavailable')
+        with tempfile.TemporaryDirectory() as directory:
+            root, store = example.build(Path(directory) / 'project')
+            before = store.snapshot()
+            worker = root / 'worker.js'
+            worker.write_text('console.log(globalThis.preloadValue)', encoding='utf-8')
+            external = Path(directory) / 'external_hook.js'
+            external.write_text('globalThis.preloadValue="external-code";', encoding='utf-8')
+            warning = root / 'warnings.log'
+            warning.write_text('frozen nonexecuted root file', encoding='utf-8')
+            original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+            contract = deepcopy(before['contract'])
+            binding = next(b for b in contract['bindings'] if b['path'] == 'worker.py')
+            binding.update(path='worker.js', sha256=file_sha(worker))
+            contract['bindings'].append({'path':'warnings.log','role':'code','sha256':file_sha(warning)})
+            observed = subprocess.check_output([node, '--redirect-warnings', 'warnings.log', '--require',
+                                                str(external), 'worker.js'], cwd=root, text=True, timeout=5).strip()
+            self.assertEqual(observed, 'external-code')
+            inside = root / '_inside_hook.js'
+            inside.write_text('globalThis.preloadValue=7;', encoding='utf-8')
+            contract['bindings'].append({'path':inside.name,'role':'code','sha256':file_sha(inside)})
+            self.assertEqual(subprocess.check_output([node, '--redirect_warnings', 'warnings.log', '--require',
+                                                      './_inside_hook.js', 'worker.js'], cwd=root, text=True, timeout=5).strip(), '7')
+            for declaration in ('explicit', 'legacy'):
+                def make(options, arguments=()):
+                    plan = deepcopy(original)
+                    if declaration == 'legacy':
+                        plan.pop('generator_code_paths')
+                    else:
+                        plan['generator_code_paths'] = ['worker.js', 'warnings.log', inside.name]
+                    for stage in plan['stages']:
+                        stage['run']['argv'] = [node, *options, 'worker.js', *arguments]
+                    return plan
+                for options in (['--redirect-warnings','warnings.log','--require',str(external)],
+                                ['--redirect_warnings=warnings.log','--experimental_loader='+external.as_uri()],
+                                ['--title','--require','--import',external.as_uri()]):
+                    with self.subTest(declaration=declaration, options=options):
+                        with self.assertRaisesRegex(ValueError,'preload.*project-relative frozen code'):
+                            jump._generator_bindings(store, contract, make(options))
+                for options in (['--future-option','warnings.log','--require',str(external)],
+                                ['--future_option=warnings.log','--require',str(external)], ['--eval','1']):
+                    with self.assertRaisesRegex(ValueError,'Unsupported Node option'):
+                        jump._generator_bindings(store, contract, make(options))
+                for specifier in ('./%2e%2e/hook.js','./hook.js#shadow','./hook.js?version=1'):
+                    frozen = deepcopy(contract)
+                    if '?' not in specifier:
+                        fake = root / specifier[2:]
+                        fake.parent.mkdir(parents=True, exist_ok=True)
+                        fake.write_text('literal misleading frozen file', encoding='utf-8')
+                        frozen['bindings'].append({'path':specifier[2:],'role':'code','sha256':file_sha(fake)})
+                    # Query rejection is a parser boundary: '?' is not a valid
+                    # Windows filename, so no fictitious file/hash is invented.
+                    for flag in ('--import','--loader','--experimental_loader'):
+                        plan = make([flag,specifier])
+                        if declaration == 'explicit' and '?' not in specifier:
+                            plan['generator_code_paths'].append(specifier[2:])
+                        with self.assertRaisesRegex(ValueError,'ESM preload.*unambiguous'):
+                            jump._generator_bindings(store, frozen, plan)
+                for options, arguments in ((['--redirect_warnings','warnings.log','--require','./_inside_hook.js'],()),
+                                           (['--no_warnings','--require','node:fs'],()),
+                                           (['--title','--experimental_loader'],()),
+                                           (['--'],('--experimental_loader='+external.as_uri(),))):
+                    plan = make(options, arguments)
+                    argv = plan['stages'][0]['run']['argv']
+                    index = len(argv)-len(arguments)-1
+                    self.assertEqual(jump._interpreter_script_operand(argv),(index,'worker.js'))
+                    self.assertTrue(jump._generator_bindings(store,contract,plan))
+            self.assertEqual(store.snapshot(),before)
+
+    def test_php_startup_configuration_cannot_load_mutable_unbound_code(self):
+        # Parser/admission over a real ProjectStore; absent PHP metadata only is stubbed.
+        with tempfile.TemporaryDirectory() as directory:
+            root, store = example.build(Path(directory) / 'project')
+            before = store.snapshot()
+            worker = root / 'worker.php'
+            worker.write_text('<?php echo "frozen";', encoding='utf-8')
+            contract = deepcopy(before['contract'])
+            binding = next(b for b in contract['bindings'] if b['path']=='worker.py')
+            binding.update(path='worker.php',sha256=file_sha(worker))
+            original=json.loads((root/'jump-generation.json').read_text(encoding='utf-8'))
+            php=shutil.which('php')
+            executable=php or str(Path(sys.executable).with_name('php.exe' if sys.platform=='win32' else 'php'))
+            def make(options):
+                plan=deepcopy(original);plan['generator_code_paths']=['worker.php']
+                for stage in plan['stages']:stage['run']['argv']=[executable,*options,'worker.php']
+                return plan
+            options=[['-d','auto_prepend_file=/tmp/hook.php'],['-dauto_prepend_file=/tmp/hook.php'],
+                     ['--define=auto_prepend_file=/tmp/hook.php'],['-c','/tmp/php.ini'],['-c/tmp/php.ini'],
+                     ['--php-ini=/tmp/php.ini'],['-nc/tmp/php.ini']]
+            with patch.object(store,'_command',return_value=executable) if php is None else nullcontext():
+                for option in options:
+                    with self.subTest(option=option):
+                        with self.assertRaisesRegex(ValueError,'PHP startup configuration'):
+                            jump._generator_bindings(store,contract,make(option))
+                for option in ([],['-n'],['--no-php-ini'],['-n','-f']):
+                    self.assertTrue(jump._generator_bindings(store,contract,make(option)))
+            self.assertEqual(store.snapshot(),before)
 
     def freeze(self, root, change):
         initialize = ProjectStore.initialize

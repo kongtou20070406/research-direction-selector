@@ -10,13 +10,43 @@ from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts'))
-from rds_project import digest, canonical
+from rds_project import ProjectStore, digest, canonical, file_sha
 import rds_jump as jump
 import rds_structure as structure
 
 spec = importlib.util.spec_from_file_location('jump_packet_example', REPO / 'examples/jump-generation/run.py')
 example = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(example)
+
+
+def build_multi_proposal_example(root):
+    """Freeze original numeric oracle with explicit multi-proposal attribution.
+
+    The example verifier deliberately accepts one proposal. These concurrent
+    fixtures select an exact declared proposal/run, without changing its finite
+    table comparison, discriminator or receipt/output authentication.
+    """
+    initialize = ProjectStore.initialize
+    def frozen(store, contract):
+        contract = deepcopy(contract)
+        evaluator = store.root / 'evaluator.py'
+        raw = evaluator.read_text(encoding='utf-8')
+        raw = raw.replace("    if len(events) != 1:\n", "    if len(sys.argv) > 3:\n"
+                          "        events = [e for e in events if e['id'] == sys.argv[3]]\n"
+                          "    if len(events) != 1:\n")
+        raw = raw.replace("    receipt = json.loads(db.execute(\"SELECT body FROM receipts WHERE run_id='jump-candidate'\").fetchone()[0])",
+                          "    candidate_id = row['proposal']['experiment']['runs'][0]['id']\n"
+                          "    receipt = json.loads(db.execute('SELECT body FROM receipts WHERE run_id=?', (candidate_id,)).fetchone()[0])")
+        raw = raw.replace("'candidate_run_id': 'jump-candidate'", "'candidate_run_id': candidate_id")
+        evaluator.write_text(raw, encoding='utf-8')
+        next(b for b in contract['bindings'] if b['path'] == 'evaluator.py')['sha256'] = file_sha(evaluator)
+        verifier = next(a for a in contract['allowed_commands'] if 'evaluator.py' in a)
+        for ident in ('other-scoped-proposal', 'concurrent-refutation'):
+            contract['allowed_commands'].append([*verifier, ident])
+        (store.root / 'contract.json').write_text(canonical(contract), encoding='utf-8')
+        return initialize(store, contract)
+    with patch.object(ProjectStore, 'initialize', frozen):
+        return example.build(root)
 
 
 class JumpAiPacketTests(unittest.TestCase):
@@ -127,6 +157,62 @@ class JumpAiPacketTests(unittest.TestCase):
         changed['items'][0]['assumptions'].append('Changed after delivery')
         with self.assertRaisesRegex(ValueError, 'hash changed'):
             jump.validate_use(changed, good)
+
+    def test_same_scoped_hypothesis_refutation_retains_other_proposal_identity(self):
+        write = example.write
+        def rival_oracle(path, value):
+            if path.name == 'oracle.json':
+                value = [{'inputs': row['inputs'], 'value': row['inputs']['x'] + row['inputs']['y']}
+                         for row in value]
+            return write(path, value)
+        with patch.object(example, 'write', rival_oracle):
+            root, store = build_multi_proposal_example(self.root)
+        generated = jump.generate(root, 3)
+        ident = generated['proposal_ids'][0]
+        original = structure._find(store, 'PROPOSAL', ident)
+        alias = deepcopy(original['proposal'])
+        alias['id'] = 'other-scoped-proposal'
+        for run in alias['experiment']['runs']:
+            run['id'] += '-other'
+        alias['experiment']['runs'][1]['argv'].append(alias['id'])
+        structure.propose(root, alias)
+        feedback = structure.advance(root, alias['id'])
+        self.assertEqual(feedback['observation'], 'REFUTE')
+        self.assertIsNone(structure._find(store, 'FEEDBACK', ident))
+        before = store.snapshot(), structure._events(store)
+        context = jump.packet(store)
+        item = context['items'][0]
+        self.assertEqual(context['status'], 'CURRENT')
+        self.assertEqual(item['id'], ident)
+        self.assertEqual(item['proposal_sha256'], original['proposal_sha256'])
+        self.assertEqual(item['observation'], 'REFUTE')
+        self.assertEqual(item['feedback'], feedback)
+        self.assertEqual(item['feedback']['id'], alias['id'])
+        self.assertEqual(item['hypothesis_refutation'], structure._route_constraint(store, original))
+        self.assertEqual(item['hypothesis_refutation']['feedback_sha256'], digest(feedback))
+        self.assertEqual(item['scientific_support'], 'UNKNOWN')
+        self.assertEqual((store.snapshot(), structure._events(store)), before)
+        # A separately admitted unrelated hypothesis with authentic native
+        # feedback cannot refute this generated item merely by matching prose.
+        with patch.object(example, 'write', rival_oracle):
+            other_root, other_store = build_multi_proposal_example(self.root.with_name('unrelated'))
+        other_generated = jump.generate(other_root, 3)
+        other_ident = other_generated['proposal_ids'][0]
+        unrelated = deepcopy(structure._find(other_store, 'PROPOSAL', other_ident)['proposal'])
+        unrelated['id'] = alias['id']
+        unrelated['discriminator']['hypothesis_id'] = 'unrelated-hypothesis'
+        for run in unrelated['experiment']['runs']:
+            run['id'] += '-other'
+        unrelated['experiment']['runs'][1]['argv'].append(unrelated['id'])
+        structure.propose(other_root, unrelated)
+        other_feedback = structure.advance(other_root, unrelated['id'])
+        self.assertEqual(other_feedback['observation'], 'REFUTE')
+        other_before = other_store.snapshot(), structure._events(other_store)
+        unrelated_packet = jump.packet(other_store)
+        self.assertEqual(unrelated_packet['status'], 'CURRENT')
+        self.assertEqual(unrelated_packet['items'][0]['observation'], 'UNKNOWN')
+        self.assertNotIn('hypothesis_refutation', unrelated_packet['items'][0])
+        self.assertEqual((other_store.snapshot(), structure._events(other_store)), other_before)
 
     def test_no_candidate_is_exposed_to_ai_without_inventing_hypothesis(self):
         _, store, generated = self.build(corpus=[])

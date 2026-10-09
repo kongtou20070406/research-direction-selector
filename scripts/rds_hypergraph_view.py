@@ -312,7 +312,7 @@ function startGraph(){
  const help=$('div','拖动 · 缩放 · 点击详查','hg-help');shell.append(help);
  const minimap=$('canvas',undefined,'hg-minimap');minimap.id='hg-minimap';minimap.width=312;minimap.height=204;minimap.setAttribute('aria-label','全图位置小地图');shell.append(minimap);const mini=minimap.getContext('2d');
  const tip=$('div',undefined,'hg-tip');tip.hidden=true;shell.append(tip);const diagnostic=$('div',undefined,'hg-status');diagnostic.id='hg-performance';shell.append(diagnostic);
- function updateBounds(){let x=Infinity,y=Infinity,x2=-Infinity,y2=-Infinity;for(let i=0;i<n;i++){x=Math.min(x,positions[2*i]);y=Math.min(y,positions[2*i+1]);x2=Math.max(x2,positions[2*i]);y2=Math.max(y2,positions[2*i+1])}bounds={x:x-45,y:y-45,w:Math.max(90,x2-x+90),h:Math.max(90,y2-y+90)}}
+ function updateBounds(){if(!n){bounds={x:-45,y:-45,w:90,h:90};return}let x=Infinity,y=Infinity,x2=-Infinity,y2=-Infinity;for(let i=0;i<n;i++){x=Math.min(x,positions[2*i]);y=Math.min(y,positions[2*i+1]);x2=Math.max(x2,positions[2*i]);y2=Math.max(y2,positions[2*i+1])}bounds={x:x-45,y:y-45,w:Math.max(90,x2-x+90),h:Math.max(90,y2-y+90)}}
  function fit(){updateBounds();view.x=bounds.x+bounds.w/2;view.y=bounds.y+bounds.h/2;view.k=Math.max(.025,Math.min(2,(width-90)/bounds.w,(height-145)/bounds.h));requestDraw()}
  function resize(){const box=canvas.getBoundingClientRect();width=Math.max(1,box.width);height=Math.max(1,box.height);ratio=Math.min(devicePixelRatio||1,1.25);canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);if(!userMoved)fit();else requestDraw()}
  const observer=new ResizeObserver(resize);observer.observe(canvas);

@@ -2,6 +2,7 @@
 from copy import deepcopy
 import importlib.util
 import json
+import sqlite3
 from pathlib import Path
 import sys
 import tempfile
@@ -16,6 +17,7 @@ import rds_autonomy as autonomy
 import rds_jump as jump
 import rds_structure as structure
 from rds_project import ProjectStore, canonical, file_sha
+from test_jump_ai_packet import build_multi_proposal_example
 
 
 def load_example(name, path):
@@ -140,6 +142,65 @@ class JumpPublicationTests(unittest.TestCase):
             self.assertEqual(before['runs'], store.snapshot()['runs'])
             self.assertEqual(before['receipts'], store.snapshot()['receipts'])
             self.assertEqual(store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+
+    def test_new_scoped_refutation_after_preparation_prevents_atomic_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            write = example.write
+            def additive_oracle(path, value):
+                if path.name == 'oracle.json':
+                    value = [{'inputs': row['inputs'], 'value': row['inputs']['x'] + row['inputs']['y']}
+                             for row in value]
+                return write(path, value)
+            with patch.object(example, 'write', additive_oracle):
+                # The shared fixture freezes the same independent table
+                # evaluator with exact multi-proposal identity selection.
+                from test_jump_ai_packet import example as packet_example
+                with patch.object(packet_example, 'write', additive_oracle):
+                    root, store = build_multi_proposal_example(Path(directory) / 'project')
+            propose, route = structure.propose, structure._route_constraint
+            prepared, originals, locked_checks = [], [], []
+            def arriving(project, value, **kwargs):
+                result = propose(project, value, **kwargs)
+                if kwargs.get('_prepare_only'):
+                    prepared.append(result['record']['id'])
+                    originals.extend(store.snapshot()['receipts'])
+                    alias = deepcopy(value)
+                    alias['id'] = 'concurrent-refutation'
+                    for run in alias['experiment']['runs']:
+                        run['id'] += '-concurrent'
+                    alias['experiment']['runs'][1]['argv'].append(alias['id'])
+                    propose(project, alias)
+                    observed = structure.advance(project, alias['id'])
+                    self.assertEqual(observed['observation'], 'REFUTE')
+                return result
+            def locked(store, row):
+                constraint = route(store, row)
+                if constraint and constraint['kind'] == 'HYPOTHESIS_REFUTED' and row['id'] in prepared:
+                    # A separate real SQLite writer cannot publish more
+                    # feedback between this recheck and proposal insertion.
+                    with sqlite3.connect(store.path, timeout=0) as writer:
+                        with self.assertRaisesRegex(sqlite3.OperationalError, 'locked'):
+                            writer.execute('BEGIN IMMEDIATE')
+                    locked_checks.append(row['id'])
+                return constraint
+            with patch.object(structure, 'propose', arriving), patch.object(structure, '_route_constraint', locked):
+                with self.assertRaisesRegex(ValueError, 'feedback changed before publication.*HYPOTHESIS_REFUTED'):
+                    jump.generate(root, 3)
+            self.assertEqual(locked_checks, prepared)
+            self.assertEqual(len(prepared), 1)
+            self.assertTrue(all(structure._find(store, 'PROPOSAL', ident) is None for ident in prepared))
+            self.assertFalse(any(e['kind'] == 'STRUCTURE_JUMP_FINISHED' for e in structure._events(store)))
+            before = store.snapshot()
+            self.assertEqual(len(originals), 3)
+            self.assertTrue(all(r in before['receipts'] for r in originals))
+            self.assertEqual(len(before['receipts']), 5)
+            self.assertEqual(before['budget']['wall_seconds']['reserved'], 0)
+            with self.assertRaisesRegex(ValueError, 'HYPOTHESIS_REFUTED'):
+                jump.generate(root, 3)
+            after = store.snapshot()
+            self.assertEqual(before['runs'], after['runs'])
+            self.assertEqual(before['receipts'], after['receipts'])
+            self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
 
     def test_completed_refuted_proposals_return_new_exploration_tasks(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -148,6 +148,16 @@ def packet(store):
                 expected['exploration']['sources'].append({'kind': 'local_observation', 'source': deepcopy(ref)})
             require(expected == proposal, 'Retained explanation differs from original synthesis')
             feedback = structure._feedback_view(row, observed[raw['id']]) if raw['id'] in observed else None
+            constraint = structure._route_constraint(store, row)
+            refutation = None
+            if constraint and constraint['kind'] == 'HYPOTHESIS_REFUTED':
+                original = observed.get(constraint['feedback_id'])
+                require(original is not None and digest(original) == constraint['feedback_sha256'],
+                        'Scoped jump refutation changed during projection')
+                # Admission refutes a hypothesis across proposal IDs. Deliver
+                # that original verdict without rewriting its record identity.
+                feedback = original
+                refutation = deepcopy(constraint)
             exploration = proposal['exploration']
             items.append({'id': row['id'], 'kind': 'hypothesis', 'proposal_sha256': row['proposal_sha256'],
                 'explanation': '\n'.join(n['label'] for n in proposal.get('new_nodes', [])),
@@ -164,6 +174,8 @@ def packet(store):
                 'status': feedback['status'] if feedback else 'HYPOTHESIS_PENDING',
                 'feedback': deepcopy(feedback), 'scientific_support': 'UNKNOWN'})
             items[-1]['evidence_scope'] = value['evidence_scope']
+            if refutation is not None:
+                items[-1]['hypothesis_refutation'] = refutation
         if not items:
             items = [{'id': ident, 'kind': 'no_candidate', 'status': 'NO_CANDIDATE',
                       'observation': 'UNKNOWN', 'reason': source_result.get('reason'),
@@ -436,6 +448,8 @@ def _interpreter_script_operand(argv):
         return file_at(_ruby_script_operand(argv))
     if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', name):
         return file_at(_perl_script_operand(argv))
+    if name in {'node', 'nodejs'}:
+        return _node_arguments(argv)[0]
     shells = {'sh', 'bash', 'dash', 'ksh', 'zsh'}
     if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:
         return None
@@ -457,6 +471,11 @@ def _interpreter_script_operand(argv):
             else:
                 index += 1
         else:
+            if name == 'php':
+                require(option in {'-n', '--no-php-ini', '-q', '-f', '--file', '-F', '--process-file'}
+                        or option.startswith(('--file=', '--process-file='))
+                        or (option.startswith(('-f', '-F')) and len(option) > 2),
+                        'PHP startup configuration/unsupported options cannot bind frozen code')
             # Preload/loop flags are not interchangeable with inline execution.
             inline = {'node': ('-e', '-p', '--eval', '--print'),
                       'nodejs': ('-e', '-p', '--eval', '--print'),
@@ -484,36 +503,49 @@ def _interpreter_script_operand(argv):
     return None
 
 
-def _node_preload_operands(argv, script_operand):
-    """Explicit Node preloads before the main; imported dependency closure is separate."""
-    name = Path(argv[0]).name.casefold().removesuffix('.exe')
-    if name not in {'node', 'nodejs'}:
-        return {}
+def _node_arguments(argv):
+    """One restricted scan for literal main and explicit preload identities."""
     flags = {'-r', '--require', '--import', '--loader', '--experimental-loader'}
-    values = {'--title', '--input-type', '-e', '--eval', '-p', '--print'}
-    end = script_operand if script_operand is not None else len(argv)
+    values = {'--title', '--input-type', '--redirect-warnings', '--max-old-space-size',
+              '--max-semi-space-size', '--stack-size', '--unhandled-rejections'}
+    switches = {'--no-warnings', '--trace-warnings', '--no-deprecation', '--trace-deprecation',
+                '--throw-deprecation', '--enable-source-maps', '--trace-uncaught', '--trace-exit'}
     result, index = {}, 1
-    while index < end:
+    while index < len(argv):
         option = argv[index]
-        if option == '--' or not option.startswith('-'):
-            break
+        if option == '--':
+            return ((index + 1, argv[index + 1]) if index + 1 < len(argv) else None), result
+        if option == '-':
+            return None, result
+        if not option.startswith('-'):
+            return (index, option), result
+        flag, equal, attached = option.partition('=')
+        if flag.startswith('--'):
+            flag = flag.replace('_', '-')  # Node aliases only the option name.
         operand_index, value = index, None
-        if option in flags:
-            require(index + 1 < end, 'Node preload value is missing')
-            operand_index = index + 1
-            value = argv[operand_index]
-            index += 1
-        elif any(option.startswith(flag + '=') for flag in flags if flag.startswith('--')):
-            value = option.split('=', 1)[1]
+        if flag in flags:
+            if equal:
+                value = attached
+            else:
+                require(index + 1 < len(argv), 'Node preload value is missing')
+                operand_index = index + 1
+                value = argv[operand_index]
+                index += 1
         elif option.startswith('-r') and not option.startswith('--') and len(option) > 2:
             value = option[2:]
-        elif option in values:
-            index += 1  # A flag-looking title or inline source is still a value.
+        elif flag in values:
+            if not equal:
+                require(index + 1 < len(argv), 'Node option value is missing')
+                index += 1  # A flag-looking value is not an effective preload.
+        else:
+            require(not equal and flag in switches,
+                    'Unsupported Node option before frozen main script; entrypoint cannot bind frozen code: ' + flag)
         if value is not None:
             require(bool(value), 'Node preload value is missing')
             if value.startswith('node:'):
                 result[operand_index] = None  # Builtin module, not a mutable external file.
             else:
+                esm = flag in {'--import', '--loader', '--experimental-loader'}
                 if value.startswith('file:'):
                     url = urlsplit(value)
                     require(url.scheme == 'file' and url.netloc in {'', 'localhost'}
@@ -522,13 +554,26 @@ def _node_preload_operands(argv, script_operand):
                             'Node preload must be project-relative frozen code')
                     value = url2pathname(url.path)
                     require(Path(value).is_absolute(), 'Node preload file URI must be absolute')
+                elif esm:
+                    require(not any(c in value for c in '%?#') and '\\' not in value,
+                            'Node ESM preload must use an explicit frozen code file; '
+                            'project-relative frozen code requires an unambiguous specifier')
                 require('://' not in value and not value.startswith('data:'),
                         'Node preload must be project-relative frozen code')
                 require(Path(value).is_absolute() or value.startswith(('./', '../', '.\\', '..\\')),
                         'Node preload must use an explicit frozen code file, not module lookup')
                 result[operand_index] = value
         index += 1
-    return result
+    return None, result
+
+
+def _node_preload_operands(argv, script_operand):
+    name = Path(argv[0]).name.casefold().removesuffix('.exe')
+    if name not in {'node', 'nodejs'}:
+        return {}
+    main, preloads = _node_arguments(argv)
+    require((main[0] if main else None) == script_operand, 'Node main/preload scan differs')
+    return preloads
 
 
 def _generator_bindings(store, contract, plan):
@@ -928,6 +973,12 @@ def _finish_generated(store, root, ident, req, result, prior):
             db.execute('BEGIN IMMEDIATE')
             for item in prepared:
                 value = item['record']
+                # Hold the writer lock while replaying committed scoped
+                # feedback. A verdict arriving after preparation must prevent
+                # both proposal and completion publication in this transaction.
+                constraint = structure._route_constraint(store, value)
+                require(constraint is None,
+                        'Jump feedback changed before publication: ' + str(constraint))
                 structure._put(store, 'PROPOSAL', value['id'], value, expected=item['expected'],
                                check_snapshot=True, _db=db)
             finished = structure._put(store, 'JUMP_FINISHED', ident,
