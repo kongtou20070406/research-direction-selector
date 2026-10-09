@@ -1,6 +1,6 @@
 ---
 name: research-direction-selector
-description: Choose and audit theoretical or empirical research steps with scoped evidence, budgets and authorized execution. Supports proof obligations, experiment comparisons and native research records; domain-specific solvers and scientific evidence are still required.
+description: Choose and audit theoretical or empirical research steps with scoped evidence, budgets and authorized execution. Supports proof obligations, experiment comparisons, native research records and read-only hypergraph pages with readable explanations; domain-specific solvers and scientific evidence are still required.
 metadata:
   version: v5.9.0-rc.1
   engine: rds-cli-v5.9
@@ -28,6 +28,22 @@ ON applicable research request:
     RESOLVE bundled scripts/references/examples relative to skill_dir
     RESOLVE user inputs explicitly; NEVER create .rds in installation/plugin cache
     LOAD supporting resources only when the current decision needs them
+
+    IF user asks to show/open a hypergraph or explain its nodes:
+        LOAD docs/dashboard.md; use the user's actual project_root or explicit map
+        VIEW := python -B "<skill_dir>/scripts/rds_hypergraph_view.py" --root "<project_root>"
+        IF readable explanations are requested or existing record names lack meaning:
+            RUN VIEW --export-agent-input; keep raw and readable separate
+            INSPECT bound source/manifest/evidence; fill readable title/summary only
+            SAVE readable JSON in the user's project; leave unknown meanings blank
+            EXPORT with --readable-json <readable.json> --output <project_root>/dist/hypergraph.html
+        ELSE: EXPORT with --output <project_root>/dist/hypergraph.html
+        USE existing pinned Replica/Pixi assets when available; otherwise bundled Canvas
+        READ actual export status/output; missing/corrupt graph is not a new demo
+        OPEN the generated file through available host preview/browser tools
+        RETURN the verified clickable file or actual local URL; never guess a localhost port
+        KEEP graph display read-only; do not run research or change evidence status
+        END this display route without initiating a research execution plan
 
     INPUT := user request + current project evidence + authorized resources
     INFER goal, acceptance, evidence, budget FROM INPUT; NEVER invent them
@@ -155,6 +171,7 @@ All commands below use `CLI` above. Links load detail on demand.
 | Improve a blocked tool | `project improve --code-path <path> --id <revision>`, then `project revise --proposal <path>` | [Forecasts and tool improvement](docs/predictive-feasibility.md) |
 | Choose research direction | Policy-bound: `advise --brief`; legacy: `advise --context <context.json> --graph <graph.json> --brief`, then `--choose <candidate-id> --record <checkpoint-id>` | [Choice review](docs/agent-entry.md#review-the-research-choice), [research discipline](references/research-discipline.md) |
 | Audit evidence | `artifacts import --manifest <manifest.json>` | [Agent entry](docs/agent-entry.md) |
+| Show/open hypergraph; “打开超图”, “解释这个节点” | `python -B "<skill_dir>/scripts/rds_hypergraph_view.py" --root <user-project> --output <html>`; `--export-agent-input` and `--readable-json <file>` for agent explanations | [Graph page and readable interface](docs/dashboard.md#agent-可读信息接口) |
 | Explore a blocked problem model | `structure request --limit 3`, `structure propose --proposal <reply.json>`, `structure drive --steps 1` | [Problem structure](docs/problem-structure.md) |
 | Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md) |
 | Reuse/register local tool | `rsi extract --source <file> --entry <function> --name <id>`; `rsi validate --name <id> --cases <cases.json>`; `rsi register --name <id>` | [Native research](docs/native-research.md) |
