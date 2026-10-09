@@ -472,7 +472,8 @@ class ProjectTests(unittest.TestCase):
 
     def test_stale_recovery_cannot_settle_a_newly_claimed_worker(self):
         # An existing reservation may predate foreground controller identity.
-        self.store.register(self.spec())
+        # This checks claim ownership, not a two-second Windows launch deadline.
+        self.store.register(self.spec(timeout=10))
         with self.store._db() as db:
             run = self.store._run(db, "r1")
             run["attempt_id"] = "pending-attempt"
@@ -507,8 +508,8 @@ class ProjectTests(unittest.TestCase):
             finally:
                 resume_recovery.set()
                 resume_execution.set()
-            receipt = execution.result(timeout=5)
-        self.assertEqual(receipt["run_status"], "SUCCEEDED")
+            receipt = execution.result(timeout=20)
+        self.assertEqual(receipt["run_status"], "SUCCEEDED", receipt)
         self.assertEqual(receipt["exit_code"], 0)
         self.assertEqual(len(self.store.snapshot()["exposures"]), 1)
         self.assertEqual(self.store.snapshot()["budget"]["cpu_seconds"]["charged_estimate"], 1)

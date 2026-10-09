@@ -12,7 +12,8 @@ from pathlib import Path
 import sqlite3
 import time
 
-from rds_artifacts import ArtifactFact, _extract, strict_json
+from rds_artifacts import ArtifactFact
+from rds_source_documents import SourceDocument, strict_json
 from rds_project import canonical, digest, number, require
 
 OWNED_PREFIX = 'owned:'
@@ -356,7 +357,7 @@ def _collect(store, state):
                 raw = _read_original(store, item, keep=key in requested)
                 files.append({k: item[k] for k in ('path', 'sha256', 'size')})
                 if raw is not None:
-                    originals[key] = raw
+                    originals[key] = SourceDocument(raw)
                 elif key in requested:
                     oversized_json[key] = {k: item[k] for k in ('path', 'sha256', 'size')}
                 node_status = 'SUPPORTED'
@@ -394,7 +395,9 @@ def _collect(store, state):
             fact = {'id': fid, 'value': value, 'kind': 'DERIVED', 'source': {'locator': 'owned lifecycle ' + rid},
                     'reliable': True}
             nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], owned_fact=fact))
-    for obs in policy['observations'] if policy else []:
+    observations = policy['observations'] if policy else []
+    last_uses = {(obs['run_id'], obs['path']): i for i, obs in enumerate(observations)}
+    for position, obs in enumerate(observations):
         rid, relative, fid = obs['run_id'], obs['path'], obs['fact']
         receipt = receipts.get(rid)
         fact = {'id': fid, 'value': None, 'kind': 'UNKNOWN', 'reliable': False,
@@ -406,7 +409,7 @@ def _collect(store, state):
                                       'locator': 'verified original over JSON parse byte limit'}
                     raise ValueError('Verified original JSON exceeds the ' + str(MAX_JSON_BYTES) + '-byte parse limit')
                 require((rid, relative) in originals, 'Declared output missing, changed or over JSON byte limit')
-                value, locator, _ = _extract(strict_json(originals[rid, relative].decode('utf-8-sig')), obs['selector'], 'json')
+                value, locator, _ = originals[rid, relative].extract(obs['selector'], 'metric', 'json')
                 require(value is None or isinstance(value, (str, bool, int, float)), 'Owned observation must be a JSON scalar')
                 require(not isinstance(value, (int, float)) or math.isfinite(value), 'Owned observation must be finite')
                 reliable = receipt['run_status'] == 'SUCCEEDED'
@@ -429,6 +432,8 @@ def _collect(store, state):
                 destination = errors if receipt['run_status'] == 'SUCCEEDED' and (rid, relative) not in oversized_json else coverage['gaps']
                 destination.append({'run_id': rid, 'fact': fid, 'reason': str(exc)})
         nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'], owned_fact=fact))
+        if (rid, relative) in originals and position == last_uses[rid, relative]:
+            originals[rid, relative].clear()
     if policy and 'autonomy' in policy:
         from rds_autonomy import collect
         collect(store, state, nodes, files)
