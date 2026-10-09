@@ -215,12 +215,11 @@ JS = r'''
 const data=JSON.parse(document.getElementById('snapshot').textContent);
 const $=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);if(cls)el.className=cls;return el};
 const shell=$('section',undefined,'hg-shell');document.getElementById('app').append(shell);
-const statusNames={SUPPORTED:'声明支持',UNKNOWN:'未知',CONTRADICTED:'已反驳声明',PROPOSED:'候选关系'};
 const presentation=new WeakMap();if(data.graph){for(const key of ['nodes','hyperedges'])for(const r of data.graph[key])presentation.set(r,data.display?.[key]?.[r.id]);}
 const display=r=>presentation.get(r),label=r=>display(r)?.label||(typeof r.label==='object'?['zh','en'].map(k=>r.label?.[k]).find(v=>typeof v==='string'&&v)||String(r.id):typeof r.label==='string'&&r.label?r.label:String(r.id));
+const stateText=r=>display(r)?.status_text||({SUPPORTED:'声明支持',UNKNOWN:'待确认',CONTRADICTED:'声明反驳',PROPOSED:'候选'}[r.status]||'待确认');
 const relation=r=>String(r.relation||r.kind||r.type||'依赖关系');
 function button(text,title,action,cls='hg-button'){const b=$('button',text,cls);b.type='button';b.title=title;b.setAttribute('aria-label',title);b.addEventListener('click',action);return b}
-function raw(parent,value){const d=$('details');d.append($('summary','原始记录'),$('pre',JSON.stringify(value,null,2)));parent.append(d)}
 if(data.status!=='AVAILABLE'||!data.graph?.nodes.length){
  const empty=$('div',undefined,'hg-empty');empty.append($('h2',data.status==='DISPLAY_LIMIT'?'图超过当前显示上限':data.status==='UNAVAILABLE'?'超图不可用':'尚无超图'));
  empty.append($('p',data.reason||(data.status==='DISPLAY_LIMIT'?'最多 4,096 个主张、8,192 条超边、32,768 条关联。未截断原图。':'使用 --hypergraph 指定依赖文件，或读取项目中保存的 TMS 快照。')));shell.append(empty);
@@ -260,7 +259,7 @@ function startGraph(){
  const typeControls=$('div');
  selectControl('连线样式',[['uniform','统一细线'],['status','按声明状态'],['relation','按关系类型']],'relation',value=>{edgeMode=value;requestDraw()},'hg-edge-mode');
  const legend=$('p','实线：声明支持 · 虚线：候选 · 点线：已反驳','hg-hint');settings.append(legend);
- settings.append($('p','节点颜色 / 形状：声明 ○、执行 □、回执 ◎、产物 ⬡、观测 ○。外描边：绿 = 已记录执行成功 / 声明支持；红 = 已记录执行失败 / 反驳声明；灰 = 未知或待验证。执行成功不等于科研证明。','hg-hint'));
+ settings.append($('p','声明 ○ · 执行 □ · 回执 ◎ · 产物 ⬡ · 观测 ○ · 超边 ◇','hg-hint'),$('p','绿：成功 / 支持 · 红：失败 / 反驳 · 灰：未判定','hg-hint'));
  const relationNames=[...relations.keys()],relationPager=$('div',undefined,'hg-row'),relationPageText=$('span');let relationPage=0;
  const previousRelations=button('上一页','上一页关系设置',()=>{relationPage--;renderRelationControls()}),nextRelations=button('下一页','下一页关系设置',()=>{relationPage++;renderRelationControls()});relationPager.append(previousRelations,relationPageText,nextRelations);settings.append(relationPager);
  function renderRelationControls(){const start=relationPage*32;typeControls.replaceChildren();previousRelations.disabled=start===0;nextRelations.disabled=start+32>=relationNames.length;relationPageText.textContent=`${start+1}–${Math.min(start+32,relationNames.length)} / ${relationNames.length}`;
@@ -281,13 +280,12 @@ function startGraph(){
  const forceBox=$('details'),forceTitle=$('summary','力度与外观');forceBox.append(forceTitle);settings.append(forceBox);
  function slider(caption,key,min,max,step,layout){const lab=$('label'),text=$('span',caption),out=$('output',options[key]);lab.append(text,' · ',out);const input=$('input');input.type='range';input.id='hg-'+key;input.min=min;input.max=max;input.step=step;input.value=options[key];lab.htmlFor=input.id;input.addEventListener('input',()=>{options[key]=Number(input.value);out.textContent=input.value;if(!layout)requestDraw()});input.addEventListener('change',()=>{if(layout)runLayout()});forceBox.append(lab,input)}
  slider('图谱向心力','center',.01,.3,.01,true);slider('节点排斥力','repulsion',100,2200,50,true);slider('连接作用倍率','spring',.01,.2,.01,true);slider('整体距离倍率','length',15,160,5,true);slider('标签显示阈值','labels',.3,3,.1,false);slider('节点大小','nodeSize',.5,2,.1,false);slider('节点轮廓粗细','nodeBorder',0,2,.1,false);slider('全局线宽倍率','edgeWidth',.3,3,.1,false);
- settings.append($('p','圆点大小表示连接数；小菱形是超边汇合点。同一汇合点的前提为 AND，不同汇合点保留 OR 路线。','hg-hint'));
- const layoutButton=button('重新排布','重新运行有界预热并恢复动态布局',()=>runLayout(true));layoutButton.id='hg-relayout';settings.append(layoutButton,$('p','力学与颜色是显示偏好，不改写关系或证据状态。排斥仅在作用距离内生效。','hg-hint'));
+ const layoutButton=button('重新排布','重新排布',()=>runLayout(true));layoutButton.id='hg-relayout';settings.append(layoutButton);
  const controls=$('div',undefined,'hg-controls'),zoomText=$('output','100%');
  const zoomOut=button('−','缩小',()=>zoom(.8)),zoomIn=button('+','放大',()=>zoom(1.25)),fitButton=button('⊡','适应全图',()=>{userMoved=false;fit()}),focusButton=button('◎','聚焦选中节点的上游依赖',()=>{focus=!focus;focusButton.setAttribute('aria-pressed',String(focus));updateFocus();requestDraw()});
  const pauseButton=button('Ⅱ','暂停或继续布局',()=>{dynamic=!dynamic;pauseButton.textContent=dynamic?'Ⅱ':'▷';pauseButton.setAttribute('aria-pressed',String(!dynamic));if(dynamic)runLayout(false);else{stopLayout();targets.set(positions);interpolating=false;canvas.dataset.layoutState='paused'}requestDraw()});pauseButton.id='hg-pause';pauseButton.setAttribute('aria-pressed','false');
  zoomIn.id='hg-zoom-in';zoomOut.id='hg-zoom-out';fitButton.id='hg-fit';focusButton.id='hg-focus';focusButton.setAttribute('aria-pressed','false');controls.append(zoomOut,zoomText,zoomIn,fitButton,focusButton,pauseButton);shell.append(controls);
- const help=$('div','拖动整图 · 滚轮缩放 · 点击详查','hg-help');help.append($('span','只读 · 布局自然收敛'));shell.append(help);
+ const help=$('div','拖动 · 缩放 · 点击详查','hg-help');shell.append(help);
  const minimap=$('canvas',undefined,'hg-minimap');minimap.id='hg-minimap';minimap.width=312;minimap.height=204;minimap.setAttribute('aria-label','全图位置小地图');shell.append(minimap);const mini=minimap.getContext('2d');
  const tip=$('div',undefined,'hg-tip');tip.hidden=true;shell.append(tip);const diagnostic=$('div',undefined,'hg-status');diagnostic.id='hg-performance';shell.append(diagnostic);
  function updateBounds(){let x=Infinity,y=Infinity,x2=-Infinity,y2=-Infinity;for(let i=0;i<n;i++){x=Math.min(x,positions[2*i]);y=Math.min(y,positions[2*i+1]);x2=Math.max(x2,positions[2*i]);y2=Math.max(y2,positions[2*i+1])}bounds={x:x-45,y:y-45,w:Math.max(90,x2-x+90),h:Math.max(90,y2-y+90)}}
@@ -325,25 +323,19 @@ function startGraph(){
  }
  function drawMini(){const w=minimap.width,h=minimap.height;mini.clearRect(0,0,w,h);const k=Math.min((w-16)/bounds.w,(h-16)/bounds.h),ox=(w-bounds.w*k)/2,oy=(h-bounds.h*k)/2;mini.fillStyle=light?'#898990':'#98989f';mini.globalAlpha=.7;for(const item of items){if(item.kind==='edge')continue;mini.fillRect(ox+(positions[item.index*2]-bounds.x)*k,oy+(positions[item.index*2+1]-bounds.y)*k,2,2)}mini.globalAlpha=1;mini.strokeStyle='#aa99cf';mini.lineWidth=1.5;mini.strokeRect(ox+(view.x-width/(2*view.k)-bounds.x)*k,oy+(view.y-height/(2*view.k)-bounds.y)*k,width/view.k*k,height/view.k*k)}
  minimap.addEventListener('pointerdown',e=>{const box=minimap.getBoundingClientRect(),w=minimap.width,h=minimap.height,k=Math.min((w-16)/bounds.w,(h-16)/bounds.h);view.x=bounds.x+((e.clientX-box.left)*w/box.width-(w-bounds.w*k)/2)/k;view.y=bounds.y+((e.clientY-box.top)*h/box.height-(h-bounds.h*k)/2)/k;userMoved=true;requestDraw()});
- function inspect(i,center=false){selected=i;const item=items[i],r=item.record;updateFocus();detail.replaceChildren();const head=$('header');head.append($('strong',item.kind==='edge'?'超边详情 · AND':'节点详情'),button('×','关闭详情',()=>{detail.hidden=true;selected=null;updateFocus();requestDraw()},'hg-close'));detail.append(head,$('h3',label(r)),$('div',r.id,'hg-id'),$('span',statusNames[r.status]||r.status,'hg-tag'));detail.append($('p',`连接数 ${item.degree}`,'hg-hint'));
-  function field(title,text){detail.append($('h4',title),$('p',text))}
-  function linked(title,indices){detail.append($('h4',title));const ul=$('ul');for(const target of indices.slice(0,150)){const li=$('li'),b=button(label(items[target].record),'查看 '+items[target].record.id,()=>inspect(target,true),'hg-close');b.style.fontSize='12px';b.style.lineHeight='1.6';li.append(b);ul.append(li)}detail.append(ul);if(indices.length>150)detail.append($('p',`显示前 150 项，共 ${indices.length} 项；完整关系见原始记录。`,'hg-hint'))}
-  if(r.description)field('说明',r.description);
-  if(display(r))field('外描边依据',display(r).outline.basis);
-  if(item.kind==='node'){
-   if(data.analysis)field('依赖闭包',data.analysis.declared_supported_closure.includes(r.id)?'已进入声明支持闭包；原始声明状态保持不变。':'尚未进入声明支持闭包。');else field('依赖分析','此大图仅展示原始关系，未运行组合阻断分析。');
-   linked('进入该节点的路线 · OR',incoming.get(i));
-   const goal=data.analysis?.goals[r.id];if(goal){field('最小待补证据',goal.blocker_sets_complete?goal.minimal_missing_evidence_sets.map(x=>x.join(' + ')||'无缺失声明').join('\n')||'暂无完整集合':'分析达到上限，集合不完整。')}
-  }else{field('关系类型',relation(r));linked('共同前提 · AND',r.premises.map(id=>byKey.get('n:'+id).index));linked('结论',[byKey.get('n:'+r.conclusion).index])}
-  detail.append($('h4','来源'),$('pre',typeof r.source==='object'?JSON.stringify(r.source,null,2):r.source));detail.append($('p','依赖声明不等于科学确认或数学证明；本页未审计回执绑定。','hg-hint'));raw(detail,r);raw(detail,{source:data.source,snapshot_sha256:data.snapshot_sha256,assurance:data.assurance,analysis_status:data.analysis_status,receipt_audit:data.receipt_audit,input_review:data.input_review});detail.hidden=false;settings.hidden=true;results.hidden=true;
+ function inspect(i,center=false){selected=i;const item=items[i],r=item.record;updateFocus();detail.replaceChildren();const head=$('header');head.append($('strong',item.kind==='edge'?'超边详情':'节点详情'),button('×','关闭详情',()=>{detail.hidden=true;selected=null;updateFocus();requestDraw()},'hg-close'));detail.append(head,$('h3',label(r)),$('span',display(r)?.kind||(item.kind==='edge'?'超边':'声明'),'hg-tag'),$('span',stateText(r),'hg-tag'));
+  function linked(title,indices){if(!indices.length)return;detail.append($('h4',title));const ul=$('ul');for(const target of indices.slice(0,150)){const li=$('li'),b=button(label(items[target].record),'查看 '+label(items[target].record),()=>inspect(target,true),'hg-close');b.style.fontSize='12px';b.style.lineHeight='1.6';li.append(b);ul.append(li)}detail.append(ul);if(indices.length>150)detail.append($('p',`前 150 项，共 ${indices.length} 项`,'hg-hint'))}
+  if(item.kind==='node'){linked('推导路线 · OR',incoming.get(i));linked('关联节点',neighbors[i].filter(target=>!incoming.get(i).includes(target)));}
+  else{linked('共同前提 · AND',r.premises.map(id=>byKey.get('n:'+id).index));linked('结论',[byKey.get('n:'+r.conclusion).index]);}
+  detail.hidden=false;settings.hidden=true;results.hidden=true;
   if(center){view.x=positions[i*2];view.y=positions[i*2+1];view.k=Math.max(view.k,1.3);userMoved=true}requestDraw();
  }
- function searchNodes(){query=search.value.trim().toLocaleLowerCase();matches=new Set();results.replaceChildren();if(!query){results.hidden=true;requestDraw();return}for(const item of items)if((label(item.record)+' '+item.record.id+' '+relation(item.record)).toLocaleLowerCase().includes(query))matches.add(item.index);results.append($('div',`${matches.size} 项匹配${matches.size>40?' · 显示前 40 项':''}`,'hg-result-count'));for(const i of [...matches].slice(0,40)){const item=items[i],b=button(label(item.record),'查看 '+item.record.id,()=>inspect(i,true),'');b.append($('small',(item.kind==='node'?'节点':'超边')+' · '+item.record.id));results.append(b)}results.hidden=false;requestDraw()}
+ function searchNodes(){query=search.value.trim().toLocaleLowerCase();matches=new Set();results.replaceChildren();if(!query){results.hidden=true;requestDraw();return}for(const item of items)if((label(item.record)+' '+item.record.id+' '+relation(item.record)).toLocaleLowerCase().includes(query))matches.add(item.index);results.append($('div',`${matches.size} 项匹配${matches.size>40?' · 显示前 40 项':''}`,'hg-result-count'));for(const i of [...matches].slice(0,40)){const item=items[i],b=button(label(item.record),'查看 '+label(item.record),()=>inspect(i,true),'');b.append($('small',(display(item.record)?.kind||(item.kind==='node'?'声明':'超边'))+' · '+stateText(item.record)));results.append(b)}results.hidden=false;requestDraw()}
  search.addEventListener('input',searchNodes);search.addEventListener('keydown',e=>{if(e.key==='Escape'){search.value='';searchNodes()}if(e.key==='Enter'&&matches.size)inspect(matches.values().next().value,true)});
  function hit(x,y){let best=null,distance=Infinity;const gx=Math.floor(x/40),gy=Math.floor(y/40);for(let dx=-2;dx<=2;dx++)for(let dy=-2;dy<=2;dy++)for(const p of hitGrid.get((gx+dx)+','+(gy+dy))||[]){const d=(p.x-x)**2+(p.y-y)**2;if(d<p.r*p.r&&d<distance){best=p.i;distance=d}}return best}
  canvas.addEventListener('wheel',e=>{e.preventDefault();const b=canvas.getBoundingClientRect();zoom(Math.exp(-Math.max(-100,Math.min(100,e.deltaY))*.0025),e.clientX-b.left,e.clientY-b.top)},{passive:false});
  canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;drag={id:hit(x,y),x:e.clientX,y:e.clientY,vx:view.x,vy:view.y,moved:false};canvas.setPointerCapture(e.pointerId);results.hidden=true});
- canvas.addEventListener('pointermove',e=>{const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4){drag.moved=true;userMoved=true;view.x=drag.vx-dx/view.k;view.y=drag.vy-dy/view.k;requestDraw()}tip.hidden=true;return}pointer={x,y};if(hoverFrame)return;hoverFrame=true;requestAnimationFrame(()=>{hoverFrame=false;const {x,y}=pointer,next=hit(x,y);if(next!==hovered){hovered=next;requestDraw()}tip.hidden=next===null;if(next!==null){const r=items[next].record;tip.textContent=label(r)+'\n'+(display(r)?.outline.basis||statusNames[r.status]||'');tip.style.left=Math.max(10,Math.min(width-285,x+14))+'px';tip.style.top=Math.min(height-50,y+14)+'px'}})});
+ canvas.addEventListener('pointermove',e=>{const b=canvas.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4){drag.moved=true;userMoved=true;view.x=drag.vx-dx/view.k;view.y=drag.vy-dy/view.k;requestDraw()}tip.hidden=true;return}pointer={x,y};if(hoverFrame)return;hoverFrame=true;requestAnimationFrame(()=>{hoverFrame=false;const {x,y}=pointer,next=hit(x,y);if(next!==hovered){hovered=next;requestDraw()}tip.hidden=next===null;if(next!==null){const r=items[next].record;tip.textContent=label(r)+'\n'+stateText(r);tip.style.left=Math.max(10,Math.min(width-285,x+14))+'px';tip.style.top=Math.min(height-50,y+14)+'px'}})});
  canvas.addEventListener('pointerup',()=>{if(drag&&!drag.moved&&drag.id!==null)inspect(drag.id);drag=null});canvas.addEventListener('pointercancel',()=>drag=null);canvas.addEventListener('lostpointercapture',()=>drag=null);canvas.addEventListener('pointerleave',()=>{tip.hidden=true;hovered=null;requestDraw()});
  canvas.addEventListener('keydown',e=>{const delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(delta){e.preventDefault();view.x+=delta[0]*60/view.k;view.y+=delta[1]*60/view.k;userMoved=true;requestDraw()}else if(['+','=','-','0'].includes(e.key)){e.preventDefault();if(e.key==='0'){userMoved=false;fit()}else zoom(e.key==='-'?.8:1.25)}else if(e.key==='Escape'){detail.hidden=settings.hidden=results.hidden=true;selected=null;focus=false;focusButton.setAttribute('aria-pressed','false');updateFocus();requestDraw()}});
  function stopLayout(){if(worker){worker.terminate();worker=null}if(workerURL){URL.revokeObjectURL(workerURL);workerURL=null}layoutRunning=false}
@@ -658,6 +650,12 @@ DISPLAY_STYLES = {"声明": ("#c2c8d2", "circle"), "执行": ("#b39ddb", "square
                   "回执": ("#82c4af", "ring"), "产物": ("#82b6d4", "hexagon"),
                   "观测": ("#d5c17e", "circle"), "超边": ("#9c95af", "diamond")}
 LIFECYCLE_ID = re.compile(r"^(?:owned:fact:)?run\.(.+)\.(succeeded|failed|timed_out|status|completed|running|registered|not_registered)$")
+HASH_NAME_TOKEN = re.compile(r"(?<![a-zA-Z0-9])[0-9a-fA-F]{32,}(?![a-zA-Z0-9])")
+
+
+def readable_text(text, *, machine=False):
+    # Decimal quantities in human labels and filenames are not hash identities.
+    return HASH_NAME_TOKEN.sub(lambda m: "" if machine or re.search(r"[a-fA-F]", m[0]) else m[0], text)
 
 
 def display_record(row, *, edge=False):
@@ -673,7 +671,9 @@ def display_record(row, *, edge=False):
     lifecycle = LIFECYCLE_ID.fullmatch(ident) if isinstance(fact, dict) or typed == "lifecycle_fact" or ident.startswith("owned:fact:") else None
     kind = {"run": "执行", "receipt": "回执", "artifact": "产物", "declared_output": "产物",
             "fact": "观测", "observation": "观测", "lifecycle_fact": "观测"}.get(typed if isinstance(typed, str) else "")
+    missing_output = ident.startswith("owned:output:") and row.get("interpretation") == "MISSING"
     prefixes = (("owned:run:", "执行"), ("owned:receipt:", "回执"), ("owned:artifact:", "产物"),
+                ("owned:output:", "产物"),
                 ("owned:fact:", "观测"), ("observation.", "观测"), ("run.", "观测"),
                 ("receipt.", "回执"))
     observation_identity = typed == "observation" or isinstance(fact, dict) or (isinstance(src, dict) and
@@ -682,8 +682,9 @@ def display_record(row, *, edge=False):
                                                 for k in ("receipt_id", "receipt_sha256", "outcome", "run_status"))
     prefix = next(((p, k) for p, k in prefixes if ident.startswith(p) and
                    (p != "run." or lifecycle) and (p != "observation." or observation_identity) and
-                   (p != "receipt." or receipt_identity)), None)
+                   (p != "receipt." or receipt_identity) and (p != "owned:output:" or missing_output)), None)
     kind = "超边" if edge else kind or (prefix[1] if prefix else "声明")
+    machine_identity = bool(prefix or lifecycle or ident.startswith("owned:"))
     short = ident
     if lifecycle:
         short = lifecycle[1]
@@ -691,13 +692,30 @@ def display_record(row, *, edge=False):
         short = ident[len(prefix[0]):]
     if prefix or lifecycle or kind in {"执行", "回执"}:
         short = re.sub(r"[._:/\\-]+", " ", short).strip() or ident
+    path_name = False
     if kind == "产物":
         src = row.get("source")
         path = (src.get("file") or src.get("path")) if isinstance(src, dict) else None
+        if missing_output and isinstance(src, dict) and isinstance(row.get("run_id"), str):
+            locator = src.get("locator")
+            marker = "missing declared output " + row["run_id"] + ":"
+            if isinstance(locator, str) and locator.startswith(marker):
+                path = locator[len(marker):]
         if isinstance(path, str) and path:
             short = path.replace("\\", "/").rsplit("/", 1)[-1] or ident
+            path_name = True
+    short = readable_text(short, machine=machine_identity and not path_name)
+    if path_name and short.startswith("."):
+        short = kind + short
+    short = short.strip(" ._:/\\-")
+    if not short or short.startswith("owned:"):
+        run_name = row.get("run_id")
+        short = re.sub(r"[._:/\\-]+", " ", run_name).strip() + " · " + kind if isinstance(run_name, str) and run_name and not re.fullmatch(r"[0-9a-fA-F]{32,}", run_name) else kind
     claim = row.get("claim")
     label = _locale_label(row, claim if isinstance(claim, str) and claim else short)
+    if label == ident and machine_identity:
+        label = short
+    label = readable_text(label).strip() or kind
     outline = {"color": "#9299a6", "state": "neutral", "basis": "中性：UNKNOWN / 待验证；不表示科研证明"}
     execution = kind in {"执行", "回执"} or lifecycle is not None
     if execution:
@@ -735,7 +753,15 @@ def display_record(row, *, edge=False):
         if state:
             outline.update(state=state, color="#39b872" if state == "success" else "#e65b63")
     color, shape = DISPLAY_STYLES[kind]
-    return {"label": label, "kind": kind, "color": color, "shape": shape, "outline": outline}
+    if missing_output:
+        status_text = "输出缺失"
+    elif kind in {"声明", "超边"}:
+        status_text = {"SUPPORTED": "声明支持", "CONTRADICTED": "声明反驳", "PROPOSED": "候选", "UNKNOWN": "待确认"}.get(row.get("status"), "待确认")
+    elif execution:
+        status_text = {"success": "执行成功", "failure": "执行失败"}.get(outline["state"], "未判定")
+    else:
+        status_text = "已记录" if row.get("status") == "SUPPORTED" else "待确认"
+    return {"label": label, "kind": kind, "color": color, "shape": shape, "outline": outline, "status_text": status_text}
 
 
 def display_records(result):
@@ -767,7 +793,7 @@ def replica_view(result):
         kind, label = display["kind"], display["label"]
         nodes[f"c{i}"] = {"type": "", "label": label, "color": {"rgb": int(palette[kind][1:], 16), "a": 1},
                             "rds": {"record": ident, "kind": kind, "size": 1.5 if ident in goals else 1,
-                                    "group": None, "color": palette[kind], "outline": display["outline"]}}
+                                    "group": None, "color": palette[kind], "outline": display["outline"], "status_text": display["status_text"]}}
     for i, edge in enumerate(spec["hyperedges"]):
         hub = f"h{i}"
         relation = edge.get("relation") if isinstance(edge.get("relation"), str) and edge["relation"].strip() else "依赖"
@@ -775,7 +801,7 @@ def replica_view(result):
         nodes[hub] = {"type": "hyperedge", "label": ("AND" if len(edge["premises"]) > 1 else "") + " ◇",
                       "color": {"rgb": 0x9c95af, "a": 1},
                       "rds": {"edge": i, "kind": "超边", "members": members, "size": .65, "group": None,
-                              "outline": display_record(edge, edge=True)["outline"]}}
+                              "outline": display_record(edge, edge=True)["outline"], "status_text": display_record(edge, edge=True)["status_text"]}}
         style = {"relation": relation, "family": "dependency", "hyperedge": hub, "color": "#bdc2d2",
                  "width": 1.25, "opacity": .55, "dash": edge["status"] != "SUPPORTED", "arrow": False}
         links.extend([[ids[p], hub, dict(style)] for p in edge["premises"]])
@@ -1077,19 +1103,20 @@ REPLICA_HTML = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 REPLICA_EXTRA_CSS = '''
 #source-name{font-size:12px;color:var(--text-muted);max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #legend,#counts{position:absolute;bottom:12px;font-size:12px;color:var(--text-muted);z-index:1}
-#legend{left:12px;bottom:34px;max-width:calc(100% - 36px);border:1px solid var(--background-modifier-border);border-radius:6px;background:var(--background-primary);padding:8px 10px;line-height:1.7;pointer-events:none}
+#legend{left:12px;bottom:34px;max-width:calc(100% - 36px);border:1px solid var(--background-modifier-border);border-radius:6px;background:var(--background-primary);padding:6px 9px;line-height:1.6;pointer-events:none}
 #legend .legend-row{display:flex;flex-wrap:wrap;gap:2px 12px}#legend .symbol{font-size:14px;margin-right:4px}#legend .legend-note{font-size:11px;color:var(--text-muted)}
 #counts{right:16px;pointer-events:none}#state{position:absolute;left:16px;top:14px;font-size:12px;color:var(--text-muted);pointer-events:none;z-index:1}
 #hover-info{position:absolute;left:12px;top:35px;max-width:calc(100% - 36px);z-index:2;background:var(--background-secondary);border:1px solid var(--background-modifier-border);padding:7px 10px;border-radius:5px;color:var(--text-normal);font-size:12px;pointer-events:none;white-space:pre-line}
 #growth-info{position:absolute;left:16px;top:14px;color:var(--text-muted);font-size:12px;pointer-events:none;z-index:2}.icon-btn[hidden],#hover-info[hidden]{display:none}
-.note-card{width:370px;max-height:65%;bottom:132px}.note-card pre{white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.6;color:var(--text-muted)}
+.note-card{width:340px;max-height:65%;bottom:110px}
+.note-card .summary-text{line-height:1.6}.note-card .result-tag{color:var(--text-normal)}
 button.record-link{display:block;border:0;background:none;color:var(--text-normal);text-align:left;font:inherit;cursor:pointer;padding:4px;width:100%;border-radius:4px}
-.record-link:hover{background:var(--background-modifier-hover)}.note-card .path{color:var(--text-muted)}
+.record-link:hover{background:var(--background-modifier-hover)}
 .gc-head{border:0;background:none;width:calc(100% - 8px);color:inherit;font:inherit;text-align:left}.gc-head .chev{font-size:14px}
 .gc-body select{background:var(--background-primary);color:var(--text-normal);border:1px solid var(--background-modifier-border);border-radius:4px;padding:4px;font:inherit}
 .gc-item input[type=checkbox]{accent-color:var(--interactive-accent)}.gc-item input[type=color]{width:25px;height:23px;border:0;background:none}
 .relation-style{display:flex;gap:7px;align-items:center;margin:6px 0 10px}.relation-style input[type=range]{flex:1;width:70px}.relation-style select{width:70px}
-@media(max-width:600px){.view-header .title{display:none}.graph-controls{width:245px}.note-card{width:calc(100% - 24px);bottom:154px}#legend{font-size:11px}}
+@media(max-width:600px){.view-header .title{display:none}.graph-controls{width:245px}.note-card{width:calc(100% - 24px);bottom:118px}#legend{font-size:11px}}
 '''
 
 REPLICA_APP = r'''
@@ -1113,8 +1140,7 @@ function goalCredits(spec,goal) {
  const data=JSON.parse(document.getElementById('snapshot').textContent), view=data.replica_view;
  const $=id=>document.getElementById(id), panel=$('controls'), card=$('note-card');
  const source=(data.source || '').split(/[\\/]/).filter(Boolean);
- $('source-name').textContent=(data.demo?'演示数据':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13 · 本地 RDS':source.at(-1)||'RDS')+' · 只读';
- $('source-name').title=data.source || '';
+ $('source-name').textContent=data.demo?'演示':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13':'RDS';
  if(!data.graph){$('state').textContent=data.reason || data.status;return;}
  const baseLinks=view.links;
  if(view.scope){view.nodes.scope=view.scope.node;view.links=[...baseLinks,...view.scope.links];}
@@ -1132,20 +1158,19 @@ function goalCredits(spec,goal) {
  for(const r of view.relations) {const sample=relationSamples.get(r)||{};opts.relations[r]={mode:'attract',strength:r==='项目归属'?.12:r==='声明输出'?.2:r==='来源绑定'?.45:1,color:sample.color||'#bdc2d2',width:sample.width||1.25,dash:!!sample.dash,...opts.relations[r]};}
  function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
  function button(text,action,cls='btn'){const b=el('button',text,cls);b.type='button';b.addEventListener('click',action);return b;}
- function paintLegend(){const row=el('div',undefined,'legend-row');for(const [kind,style] of Object.entries(opts.nodeStyles)){if(kind==='项目'&&!opts.scope)continue;const chip=el('span'),dot=el('span',({circle:'●',square:'■',triangle:'▲',hexagon:'⬡',ring:'○',diamond:'◇'})[style.shape],'symbol');dot.style.color=opts.colors?style.color:'var(--text-muted)';chip.append(dot,el('span',kind==='超边'?'超边汇合点':kind==='项目'?'项目快照':kind));row.append(chip);}$('legend').replaceChildren(row,el('div','多个前提 → ◇ → 结论；不同菱形 = 不同路线','legend-note'),el('div','外描边：绿 = 已记录执行成功 / 声明支持；红 = 执行失败 / 反驳声明；灰 = 未知或待验证','legend-note'),el('div','执行成功不等于科研证明；具体依据见悬停 / 详查','legend-note'),el('div',opts.scope?'弱虚线：归属 / 来源 / 输出声明；不表示科研支持':'虚线：来源 / 输出声明 / 提议','legend-note'),el('div',opts.sizeMode==='goal'?'大小：目标相关权重（完整最短路线的结构估计）':'大小：连接度','legend-note'));}
+ function paintLegend(){const row=el('div',undefined,'legend-row');for(const [kind,style] of Object.entries(opts.nodeStyles)){if(kind==='项目'&&!opts.scope)continue;const chip=el('span'),dot=el('span',({circle:'●',square:'■',triangle:'▲',hexagon:'⬡',ring:'○',diamond:'◇'})[style.shape],'symbol');dot.style.color=opts.colors?style.color:'var(--text-muted)';chip.append(dot,el('span',kind==='项目'?'归属':kind));row.append(chip);}const status=el('div',undefined,'legend-row legend-note');for(const [color,text] of [['#39b872','成功 / 支持'],['#e65b63','失败 / 反驳'],['#9299a6','未判定']]){const chip=el('span'),dot=el('span','○','symbol');dot.style.color=color;chip.append(dot,el('span',text));status.append(chip);}status.append(el('span','虚线 · 来源 / 归属'));$('legend').replaceChildren(row,status);}
  function section(name,open=false){const box=el('div',undefined,'gc-section'+(open?'':' is-collapsed')), head=button('',()=>{box.classList.toggle('is-collapsed');},'gc-head');head.setAttribute('aria-expanded',String(open));head.addEventListener('click',()=>head.setAttribute('aria-expanded',String(!box.classList.contains('is-collapsed'))));head.append(el('span','⌄','chev'),el('span',name,'name'));const body=el('div',undefined,'gc-body');box.append(head,body);panel.append(box);return body;}
  function checkbox(body,label,key,change){const row=el('label',undefined,'gc-item');row.append(el('span',label));const i=el('input');i.type='checkbox';i.checked=opts[key];i.addEventListener('change',()=>{opts[key]=i.checked;persist();change();});row.append(i);body.append(row);}
  function slider(body,label,key,min,max,step,change){const wrap=el('label',undefined,'gc-item col'), row=el('span',undefined,'row'), value=el('span',undefined,'val'),i=el('input');row.append(el('span',label),value);i.type='range';i.min=min;i.max=max;i.step=step;i.value=opts[key];i.setAttribute('aria-label',label);const paint=()=>{value.textContent=Number(i.value).toFixed(step<1?2:0);i.style.setProperty('--p',((i.value-min)/(max-min)*100)+'%');};paint();i.addEventListener('input',()=>{opts[key]=+i.value;paint();persist();change();});wrap.append(row,i);body.append(wrap);}
- const filter=section('筛选');const search=el('input',undefined,'search-input');search.placeholder='搜索节点、记录或来源';search.setAttribute('aria-label','搜索节点');search.value=opts.search;const matches=el('div');matches.setAttribute('aria-label','搜索结果');filter.append(search,matches);let searchTimer;search.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{opts.search=search.value;persist();build();},180);});checkbox(filter,'显示原始未关联记录','orphans',build);checkbox(filter,'显示项目归属层（弱虚线）','scope',build);filter.append(el('p',`${view.scope?.unlinked_records||0} 个记录缺少科研依赖 / 来源关联。归属层只连接同一快照的分组，不补造支持关系。`,'hint'));
+ const filter=section('筛选');const search=el('input',undefined,'search-input');search.placeholder='搜索节点';search.setAttribute('aria-label','搜索节点');search.value=opts.search;const matches=el('div');matches.setAttribute('aria-label','搜索结果');filter.append(search,matches);let searchTimer;search.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{opts.search=search.value;persist();build();},180);});checkbox(filter,'显示孤立节点','orphans',build);checkbox(filter,'显示项目归属','scope',build);
  const groups=section('节点样式');checkbox(groups,'按记录类型着色','colors',nodeAppearance);for(const [name,cfg] of Object.entries(opts.nodeStyles)){const row=el('div',undefined,'gc-item');row.append(el('span',name));const color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 节点颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();nodeAppearance();});row.append(color);groups.append(row);const style=el('div',undefined,'relation-style'),shape=el('select');shape.setAttribute('aria-label',name+' 节点形状');for(const [v,t] of (name==='超边'?[['diamond','菱形']]:[['circle','圆点'],['ring','圆环'],['square','方形'],['triangle','三角'],['hexagon','六边形']])){const o=el('option',t);o.value=v;shape.append(o);}shape.value=cfg.shape;shape.addEventListener('change',()=>{cfg.shape=shape.value;persist();nodeAppearance();});const size=el('input');size.type='range';size.min=.5;size.max=2;size.step=.1;size.value=cfg.size;size.setAttribute('aria-label',name+' 节点倍率');size.addEventListener('input',()=>{cfg.size=+size.value;persist();nodeAppearance();});style.append(shape,size);groups.append(style);}
- const weights=section('目标权重');const sizeChoice=el('select');sizeChoice.setAttribute('aria-label','节点大小依据');for(const [v,t] of [['goal','目标相关权重'],['degree','连接度']]){const o=el('option',t);o.value=v;sizeChoice.append(o);}sizeChoice.value=opts.sizeMode;sizeChoice.addEventListener('change',()=>{opts.sizeMode=sizeChoice.value;persist();nodeAppearance();});const goalChoice=el('select');goalChoice.setAttribute('aria-label','研究目标');for(const id of data.graph.goals){const o=el('option',Object.values(view.nodes).find(n=>n.rds.record===id)?.label||id);o.value=id;goalChoice.append(o);}goalChoice.value=opts.goal;goalChoice.addEventListener('change',()=>{opts.goal=goalChoice.value;persist();credits=goalCredits(data.graph,opts.goal);nodeAppearance();if(g.rdsPinned)inspect(g.rdsPinned.id);});weights.append(sizeChoice,goalChoice,el('p','目标权重=1；OR 按正权重分配，AND 前提均分。仅纳入所有前提都位于下一最短依赖层的完整路线；混层或循环路线不分配，排除 CONTRADICTED 规则。来源与归属不计入。','hint'),el('p','这是结构相关性的显示估计，不能当作实际研究贡献。没有可分配目标路径表示关联未记录或不符合完整最短层条件，不表示贡献为零。','hint'));
- const display=section('外观');checkbox(display,'显示结论箭头','arrows',displayOptions);slider(display,'节点大小','nodeSize',.4,3,.1,displayOptions);slider(display,'连线粗细','lineSize',.2,4,.1,displayOptions);slider(display,'标签隐去阈值','textFade',-3,3,.1,displayOptions);checkbox(display,'刷新时逐步生长','growth',()=>opts.growth?playGrowth():finishGrowth());slider(display,'生长回放时长（秒）','growthSeconds',4,30,1,()=>{if(growing)playGrowth();});display.append(el('p','按依赖层次展开结构；不是科研发生的时间线。','hint'));
- const forces=section('力学');slider(forces,'运动阻尼','damping',.1,.85,.05,applyForces);slider(forces,'依赖流向（相对方向）','flowStrength',0,.08,.005,applyForces);slider(forces,'同次执行的记录凝聚','groupStrength',0,.15,.005,applyForces);slider(forces,'超边整线排斥','edgeRepulsion',0,.6,.025,applyForces);slider(forces,'超边留白距离','edgeClearance',15,100,5,applyForces);slider(forces,'图谱向心力','centerStrength',0,.3,.005,applyForces);slider(forces,'节点间排斥','repelStrength',1,3000,25,applyForces);slider(forces,'相连节点吸引','linkStrength',0,2,.05,applyForces);slider(forces,'连线距离','linkDistance',80,400,5,applyForces);forces.append(el('p','拖节点由力牵动邻居；拖背景平移视图。整条超边推开无关节点，自己的前提与结论不受该线排斥。相对流向不会把同层拉成固定竖列。','hint'));
+ const weights=section('目标权重');const sizeChoice=el('select');sizeChoice.setAttribute('aria-label','节点大小依据');for(const [v,t] of [['goal','目标权重'],['degree','连接度']]){const o=el('option',t);o.value=v;sizeChoice.append(o);}sizeChoice.value=opts.sizeMode;sizeChoice.addEventListener('change',()=>{opts.sizeMode=sizeChoice.value;persist();nodeAppearance();});const goalChoice=el('select');goalChoice.setAttribute('aria-label','研究目标');for(const id of data.graph.goals){const o=el('option',Object.values(view.nodes).find(n=>n.rds.record===id)?.label||'研究目标');o.value=id;goalChoice.append(o);}goalChoice.value=opts.goal;goalChoice.addEventListener('change',()=>{opts.goal=goalChoice.value;persist();credits=goalCredits(data.graph,opts.goal);nodeAppearance();if(g.rdsPinned)inspect(g.rdsPinned.id);});weights.append(sizeChoice,goalChoice);
+ const display=section('外观');checkbox(display,'显示结论箭头','arrows',displayOptions);slider(display,'节点大小','nodeSize',.4,3,.1,displayOptions);slider(display,'连线粗细','lineSize',.2,4,.1,displayOptions);slider(display,'标签隐去阈值','textFade',-3,3,.1,displayOptions);checkbox(display,'逐步展开','growth',()=>opts.growth?playGrowth():finishGrowth());slider(display,'展开时长（秒）','growthSeconds',4,30,1,()=>{if(growing)playGrowth();});
+ const forces=section('力学');slider(forces,'运动阻尼','damping',.1,.85,.05,applyForces);slider(forces,'依赖流向','flowStrength',0,.08,.005,applyForces);slider(forces,'同次执行凝聚','groupStrength',0,.15,.005,applyForces);slider(forces,'超边排斥','edgeRepulsion',0,.6,.025,applyForces);slider(forces,'超边留白','edgeClearance',15,100,5,applyForces);slider(forces,'向心力','centerStrength',0,.3,.005,applyForces);slider(forces,'节点排斥','repelStrength',1,3000,25,applyForces);slider(forces,'节点吸引','linkStrength',0,2,.05,applyForces);slider(forces,'连线距离','linkDistance',80,400,5,applyForces);
  const relations=section('关系'),relationControls=el('div'),relationPager=el('div',undefined,'gc-item'),relationPageText=el('span');let relationPage=0;
  const previousRelations=button('上一页',()=>{relationPage--;renderRelationControls()}),nextRelations=button('下一页',()=>{relationPage++;renderRelationControls()});relationPager.append(previousRelations,relationPageText,nextRelations);relations.append(relationPager,relationControls);
  function renderRelationControls(){const start=relationPage*32;relationControls.replaceChildren();previousRelations.disabled=start===0;nextRelations.disabled=start+32>=view.relations.length;relationPageText.textContent=`${start+1}–${Math.min(start+32,view.relations.length)} / ${view.relations.length}`;for(const name of view.relations.slice(start,start+32)){const cfg=opts.relations[name],row=el('div',undefined,'gc-item');row.append(el('span',name));const select=el('select');select.setAttribute('aria-label',name+' 力学');for(const [v,t] of [['attract','吸引'],['repel','排斥'],['none','无力']]){const o=el('option',t);o.value=v;select.append(o);}select.value=cfg.mode;select.addEventListener('change',()=>{cfg.mode=select.value;persist();applyForces();});row.append(select);relationControls.append(row);const style=el('div',undefined,'relation-style'),color=el('input');color.type='color';color.value=cfg.color;color.setAttribute('aria-label',name+' 颜色');color.addEventListener('input',()=>{cfg.color=color.value;persist();restyle();});const width=el('input');width.type='range';width.min=.3;width.max=3;width.step=.1;width.value=cfg.width;width.setAttribute('aria-label',name+' 粗细');width.addEventListener('input',()=>{cfg.width=+width.value;persist();restyle();});const dash=el('select');dash.setAttribute('aria-label',name+' 线型');for(const [v,t] of [['solid','实线'],['dash','虚线']]){const o=el('option',t);o.value=v;dash.append(o);}dash.value=cfg.dash?'dash':'solid';dash.addEventListener('change',()=>{cfg.dash=dash.value==='dash';persist();restyle();});style.append(color,width,dash);relationControls.append(style);}}
  renderRelationControls();
- const info=section('快照来源');info.append(el('p',data.source,'hint'),el('p','快照 SHA-256：'+(data.snapshot_sha256||'未绑定 TMS 快照'),'hint'),el('p','节点与超边保留原始状态；来源线是可视化绑定，不构成科学支持。','hint'));
  const close=button('收起设置',()=>panel.classList.add('is-close'));const actions=el('div',undefined,'gc-actions');actions.append(close);panel.append(actions);
  function displayOptions(){g.setOptions({nodeSize:opts.nodeSize,lineSize:opts.lineSize,textFade:opts.textFade,showArrow:opts.arrows});nodeAppearance();}
  function applyForces(){g.setForces({damping:opts.damping,flowStrength:opts.flowStrength,groupStrength:opts.groupStrength,edgeRepulsion:opts.edgeRepulsion,edgeClearance:opts.edgeClearance,centerStrength:opts.centerStrength,repelStrength:opts.repelStrength,linkStrength:opts.linkStrength,linkDistance:opts.linkDistance,relations:opts.relations});$('state').textContent='布局收敛中…';}
@@ -1166,31 +1191,25 @@ function goalCredits(spec,goal) {
   for(const id of selected){const n=view.nodes[id];nodes[id]={...n,rds:{...n.rds},color:opts.colors?n.color:null};}
   const links=view.links.filter(([s,t,meta])=>(opts.scope||meta.family!=='membership')&&selected.has(s)&&selected.has(t)).map(([s,t,meta])=>[s,t,{...meta,...opts.relations[meta.relation]}]);
   g.setData({nodes,links});restyle();nodeAppearance(true);
-  $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边 · ${view.provenance_count} 来源线${view.declaration_count?' · '+view.declaration_count+' 输出声明':''}${opts.scope?' · +项目归属层':''}${query?' · 显示 '+nodesCount(nodes)+' 元素':''}`;$('state').textContent='布局收敛中…';
-  if(query){matches.append(el('p',`${found.length} 条匹配，含完整超边上下文`,'hint'));for(const id of found.slice(0,20)){const b=button(view.nodes[id].label,()=>inspect(id),'record-link');b.title=recordFor(view.nodes[id]).id;matches.append(b);}}
+  $('counts').textContent=`${data.counts.nodes} 节点 · ${data.counts.hyperedges} 超边${query?' · '+nodesCount(nodes)+' 个匹配':''}`;$('state').textContent='布局收敛中…';
+  if(query){matches.append(el('p',`${found.length} 个匹配`,'hint'));for(const id of found.slice(0,20)){const n=view.nodes[id],b=button(n.label,()=>inspect(id),'record-link');b.title=n.rds.kind+' · '+stateText(n);matches.append(b);}}
   if(opts.growth && !query)playGrowth();
  }
  function nodesCount(ns){return Object.keys(ns).length;}
+ function stateText(n){return n.rds.virtual?'归属':n.rds.status_text||({SUPPORTED:n.rds.kind==='声明'?'声明支持':'已记录',CONTRADICTED:'声明反驳',PROPOSED:'候选',UNKNOWN:'待确认'}[recordFor(n).status]||'待确认');}
  function navigate(id){if(!g.nodeLookup.has(id)){opts.search='';search.value='';opts.orphans=true;persist();build();}inspect(id);}
  function inspect(id){
   const n=g.nodeLookup.get(id);if(!n)return;finishGrowth();g.rdsPinned=n;g.rdsLastHL=undefined;g.changed();card.replaceChildren();card.classList.add('show');
-  const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.rds.edge!==undefined?'◇ 超边汇合点':n.label||n.id));
-  const record=recordFor(n);card.append(el('div',record.id,'path'),el('span',record.status+(n.rds.edge!==undefined?' · 规则状态':''),'tag'),el('span',n.rds.kind,'tag'));
-  if(n.rds.outline)card.append(el('p','外描边依据：'+n.rds.outline.basis,'hint'));
-  if(n.rds.virtual)card.append(el('p','显示用项目快照节点。弱虚线只表达分组属于同一快照，不是原始科研超边，不表示任何研究条件已被支持。','hint'));
-  else {const credit=n.rds.edge!==undefined?credits.edges.get(record.id):credits.nodes.get(record.id);card.append(el('p','目标相关权重（结构估计）：'+(credit===undefined?'未记录符合完整最短层条件的可分配路径':credit.toFixed(4)),'hint'),el('p','节点排斥倍率：×'+n.rds.chargeWeight.toFixed(2)+'（上限 ×3）','hint'),el('p','按完整最短依赖路线分配；实际研究贡献未由本页测量。','hint'));}
-  if(record.scientific_support)card.append(el('p','scientific_support: '+record.scientific_support,'hint'));
-  if(n.rds.edge!==undefined){card.append(el('p','一个菱形代表一条规则；连线角度只是布局，没有数值或逻辑含义。','hint'),el('h4',`${record.premises.length>1?'AND · 所有前提须共同满足':'前提'} → 结论`));for(const m of n.rds.members){const v=view.nodes[m];card.append(button(v.label+' · '+recordById.get(v.rds.record).status,()=>navigate(m),'record-link'));}card.append(el('p','同一结论的不同菱形表示不同路线（OR）。规则已记录不表示前提或结论已经获得支持。','hint'));}
-  else if(n.rds.kind==='观测')card.append(el('p','观测/事实记录使用独立样式，颜色不表示科学支持。','hint'));
-  const related=view.links.filter(([s,t,meta])=>(s===id||t===id)&&(opts.scope||meta.family!=='membership')).map(([s,t,rds])=>({source:{id:s,label:view.nodes[s].label},target:{id:t,label:view.nodes[t].label},rds}));if(related.length&&n.rds.edge===undefined){card.append(el('h4','关联节点'));for(const l of related){const other=l.source.id===id?l.target:l.source;card.append(button(other.label+' · '+l.rds.relation,()=>navigate(other.id),'record-link'));}}
-  if(!n.rds.virtual&&n.rds.edge===undefined&&!baseLinks.some(([s,t])=>s===id||t===id))card.append(el('p','原始未关联记录：只有项目归属，尚未记录科研依赖或精确来源关联。','hint'));
-  card.append(el('h4',n.rds.virtual?'显示层依据':'原始记录'),el('pre',JSON.stringify(record,null,2)));const bindings=related.filter(l=>l.rds.binding).map(l=>l.rds.binding);if(bindings.length)card.append(el('h4','绑定依据'),el('pre',JSON.stringify(bindings,null,2)));
+  const close=button('×',()=>{card.classList.remove('show');g.rdsPinned=null;g.rdsLastHL=undefined;g.changed();},'icon-btn close');close.setAttribute('aria-label','关闭详查');card.append(close,el('h3',n.label),el('span',n.rds.virtual?'归属':n.rds.kind,'tag'),el('span',stateText(n),'tag result-tag'));
+  function linked(title,ids){if(!ids.length)return;card.append(el('h4',title));for(const target of ids){const v=view.nodes[target];card.append(button(v.label,()=>navigate(target),'record-link'));}}
+  if(n.rds.edge!==undefined){linked('共同前提 · AND',n.rds.members.slice(0,-1));linked('结论',n.rds.members.slice(-1));}
+  else{const related=view.links.filter(([s,t,meta])=>(s===id||t===id)&&(opts.scope||meta.family!=='membership'));const routes=related.filter(([,t,meta])=>t===id&&meta.family==='dependency').map(([s])=>s);linked('推导路线 · OR',routes);const others=new Set(related.map(([s,t])=>s===id?t:s).filter(other=>!routes.includes(other)));linked('关联节点',[...others]);}
  }
  g.onNodeClick=n=>inspect(n.id);
- g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent=`◇ 超边汇合点 · ${e.premises.length>1?'AND':'依赖'}\n${e.premises.length} 个前提 → ${target.label} · ${recordById.get(target.rds.record).status}\n角度无含义；点击查看整条规则及来源`;}else tip.textContent=n.label+' · '+n.rds.kind+(n.rds.virtual?'\n显示用归属节点，不是科研声明':n.rds.kind==='观测'?'\n记录类型，不代表已证明':'');if(n.rds.outline)tip.textContent+='\n'+n.rds.outline.basis;};
+ g.onNodeHover=n=>{const tip=$('hover-info');tip.hidden=!n;if(!n)return;tip.textContent=n.label+' · '+stateText(n);if(n.rds.edge!==undefined){const e=data.graph.hyperedges[n.rds.edge],target=view.nodes[n.rds.members.at(-1)];tip.textContent+=`\n${e.premises.length} 个共同前提 → ${target.label}`;}else tip.textContent+=' · '+(n.rds.virtual?'归属':n.rds.kind);};
  let growing=false,growthTimer=null,growthOrder=[],growthStart=0;
  function finishGrowth(){clearInterval(growthTimer);growthTimer=null;growing=false;for(const n of g.nodes)n.rdsHidden=false;$('growth-info').textContent='';$('skip-growth').hidden=true;g.changed();}
- function playGrowth(){finishGrowth();g.highlightNode=g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');$('hover-info').hidden=true;growthOrder=[...g.nodes].sort((a,b)=>(a.rds.flowX??1e8)-(b.rds.flowX??1e8));if(!growthOrder.length)return;growing=true;growthStart=performance.now();for(const n of growthOrder)n.rdsHidden=true;$('state').textContent='';$('skip-growth').hidden=false;let shown=0;const advance=()=>{const desired=Math.min(growthOrder.length,Math.max(1,Math.ceil((performance.now()-growthStart)/(opts.growthSeconds*1000)*growthOrder.length)));while(shown<desired){const n=growthOrder[shown++];n.rdsHidden=false;n.fadeAlpha=0;}g.changed();$('growth-info').textContent=`依赖结构生长 · ${shown} / ${growthOrder.length} · 非时间线`;if(shown===growthOrder.length)finishGrowth();};advance();growthTimer=setInterval(advance,60);}
+ function playGrowth(){finishGrowth();g.highlightNode=g.rdsPinned=null;g.rdsLastHL=undefined;card.classList.remove('show');$('hover-info').hidden=true;growthOrder=[...g.nodes].sort((a,b)=>(a.rds.flowX??1e8)-(b.rds.flowX??1e8));if(!growthOrder.length)return;growing=true;growthStart=performance.now();for(const n of growthOrder)n.rdsHidden=true;$('state').textContent='';$('skip-growth').hidden=false;let shown=0;const advance=()=>{const desired=Math.min(growthOrder.length,Math.max(1,Math.ceil((performance.now()-growthStart)/(opts.growthSeconds*1000)*growthOrder.length)));while(shown<desired){const n=growthOrder[shown++];n.rdsHidden=false;n.fadeAlpha=0;}g.changed();$('growth-info').textContent=`展开 · ${shown} / ${growthOrder.length}`;if(shown===growthOrder.length)finishGrowth();};advance();growthTimer=setInterval(advance,60);}
  $('grow').addEventListener('click',playGrowth);$('skip-growth').addEventListener('click',finishGrowth);
  function fit(){if(!g.nodes.length)return;const xs=g.nodes.map(n=>n.x),ys=g.nodes.map(n=>n.y),left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);const free=g.width-(panel.classList.contains('is-close')?60:300),scale=Math.min(1.3,Math.max(1/128,Math.min(free/(right-left+150),(g.height-100)/(bottom-top+150))));g.targetScale=scale;g.setScale(scale);g.setPan(free/2-(left+right)/2*scale,g.height/2-(top+bottom)/2*scale);g.panvX=g.panvY=0;g.changed();}
  $('fit').addEventListener('click',fit);$('restart').addEventListener('click',()=>{g.reheat();$('state').textContent='布局收敛中…';});$('theme').addEventListener('click',()=>{document.body.classList.toggle('theme-dark');g.readColors();});for(const id of ['settings','gear'])$(id).addEventListener('click',()=>panel.classList.toggle('is-close'));

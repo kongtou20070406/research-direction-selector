@@ -34,11 +34,20 @@ class HypergraphViewTests(unittest.TestCase):
             {"id": "owned:artifact:b", "source": {"path": "/results/模型_out.json"}},
             {"id": "natural_name_with_underscores"},
             {"id": "owned:fact:run.root_upper.failed", "label": "Human.failed_name"},
+            {"id": "owned:output:" + "a1" * 32, "interpretation": "MISSING", "run_id": "example_run",
+             "source": {"locator": "missing declared output example_run:outputs/example.json"}},
+            {"id": "owned:artifact:" + "a2" * 32, "run_id": "example_run"},
+            {"id": "human-number", "label": "N=12345678901234567890123456789012"},
+            {"id": "decimal-file", "record_kind": "artifact",
+             "source": {"path": "/results/12345678901234567890123456789012.json"}},
+            {"id": "owned:artifact:" + "b1" * 32, "source": {"path": "/results/" + "b2" * 32 + ".json"}},
+            {"id": "12345678901234567890123456789012", "label": "12345678901234567890123456789012"},
+            {"id": "human-claim", "claim": "Count = 12345678901234567890123456789012"},
         ]
         for row in rows:
             row.setdefault("source", "synthetic:labels")
             if isinstance(row["source"], dict):
-                row["source"]["locator"] = "synthetic fixture"
+                row["source"].setdefault("locator", "synthetic fixture")
                 if "file" in row["source"]:
                     row["source"]["sha256"] = "a" * 64
             row["status"] = "UNKNOWN"
@@ -48,10 +57,15 @@ class HypergraphViewTests(unittest.TestCase):
         payload = self.payload(render_html(result))
         view = replica_view(result)
         expected = ["root upper", "根边界_核查", "Loss_value <>&", "模型_out.json",
-                    "模型_out.json", "natural_name_with_underscores", "Human.failed_name"]
+                    "模型_out.json", "natural_name_with_underscores", "Human.failed_name",
+                    "example.json", "example run · 产物", "N=12345678901234567890123456789012",
+                    "12345678901234567890123456789012.json", "产物.json",
+                    "12345678901234567890123456789012", "Count = 12345678901234567890123456789012"]
         self.assertEqual([payload["display"]["nodes"][row["id"]]["label"] for row in rows], expected)
         self.assertEqual([view["nodes"][f"c{i}"]["label"] for i in range(len(rows))], expected)
         self.assertNotEqual(view["nodes"]["c3"]["rds"]["record"], view["nodes"]["c4"]["rds"]["record"])
+        self.assertEqual(view["nodes"]["c7"]["rds"]["status_text"], "输出缺失")
+        self.assertEqual(view["nodes"]["c7"]["rds"]["outline"]["state"], "neutral")
         self.assertEqual(spec, before)
         self.assertEqual(result["graph"], before)
         self.assertEqual(payload["graph"], before)
@@ -1079,11 +1093,14 @@ canvas.events.pointermove({clientX:good[1],clientY:good[2]-radius-5});b.flush();
 const tip=b.created.find(e=>e.className==='hg-tip');assert.equal(tip.hidden,false);assert.ok(tip.textContent.startsWith('good\n'));
 assert.ok(!tip.textContent.includes('run.good.succeeded'),'hover first line remains readable');
 const search=b.ids['hg-search'];search.value='run.wait.failed';search.events.input();b.flush();
-assert.ok(b.text(b.ids['hg-search-results']).includes('run.wait.failed'),'raw ID remains searchable');
+assert.ok(b.text(b.ids['hg-search-results']).includes('wait'),'original ID finds readable result');
+assert.ok(!b.text(b.ids['hg-search-results']).includes('run.wait.failed'),'result does not expose raw ID');
 const button=b.ids['hg-search-results'].children.find(e=>e.tagName==='BUTTON');button.events.click();b.flush();
-assert.ok(b.text(b.ids.app).includes('failed=false'));assert.ok(b.text(b.ids.app).includes('run.wait.failed'));
+const detail=b.ids['hg-detail'];assert.ok(b.text(detail).includes('未判定'));
+assert.ok(!b.text(detail).includes('failed=false'));assert.ok(!b.text(detail).includes('run.wait.failed'));
+assert.ok(!b.created.some(e=>e.tagName==='PRE'),'technical records are not rendered or collapsed');
 assert.equal(JSON.stringify(payload.graph),JSON.stringify(JSON.parse(b.ids.snapshot.textContent).graph));
-console.log('Actual Canvas: short labels, independent green/red/neutral strokes, short hover, raw ID search/detail PASS');
+console.log('Actual Canvas: readable labels/status, green/red/neutral strokes, ID lookup without visible IDs/technical records PASS');
 ''')
 
     def test_layout_junction_failure_and_visibility_interactions(self):
@@ -1141,7 +1158,9 @@ const mode=b.created.find(e=>e['aria-label']==='__proto__ 力学');assert.ok(mod
 assert.equal(Object.hasOwn(b.renderer.forces.relations,'__proto__'),true);assert.equal(b.renderer.forces.relations.__proto__.mode,'none','worker clone preserves selected force');
 assert.equal(Object.hasOwn(JSON.parse(saved).relations,'__proto__'),true);
 b.renderer.onNodeClick(b.renderer.nodeLookup.get('f'));
-assert.match(b.text(b.ids['note-card']),/receipt-1/,'binding evidence survives filter');
+assert.doesNotMatch(b.text(b.ids['note-card']),/receipt-1/,'binding is not exposed in the card');
+assert.equal(JSON.stringify(payload.replica_view.links[0][2].binding),JSON.stringify(binding),'internal binding survives filtering');
+assert.ok(!b.created.some(e=>e.tagName==='PRE'),'technical records are not rendered or collapsed');
 const link=b.descendants(b.ids['note-card']).find(e=>e.tagName==='BUTTON'&&e.textContent.includes('Owned execution'));assert.ok(link,'complete related target remains navigable');link.events.click();
 assert.ok(b.renderer.nodeLookup.has('r'));assert.equal(JSON.parse(saved).search,'');assert.match(b.text(b.ids['note-card']),/Owned execution/,'navigation rebuilds then opens related target');
 const reloaded=run();assert.equal(reloaded.created.find(e=>e['aria-label']==='__proto__ 力学').value,'none','reload preserves prototype-key relation');
