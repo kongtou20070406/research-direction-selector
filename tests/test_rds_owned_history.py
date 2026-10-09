@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from rds_project import ProjectStore, canonical, digest
 from rds_checkpoints import MAX_BYTES, append_checkpoint, read_checkpoint, restore_checkpoint
-from rds_advisor import RDSAdvisor, _loop_route
-from rds_owned_advisor import review, _dispatch_graph, prepare_admission
+from rds_advisor import _loop_route
+from rds_owned_advisor import review, prepare_admission
 import rds_owned_history as history
 
 spec = importlib.util.spec_from_file_location('owned_history_fixture', ROOT / 'tests/test_rds_owned_advisor.py')
@@ -34,11 +34,9 @@ class OwnedHistoryTests(unittest.TestCase):
 
     def decision(self):
         report = review(self.store)
-        graph = history.bind_graph(self.store, self.contract, _dispatch_graph(self.contract['advisor_policy'], []))
-        recommendations = RDSAdvisor(self.root).recommend_next_directions(
-            {'contract': self.contract, 'contract_sha256': digest(self.contract),
-             'advisor_context': report['context']}, graph)
-        report['advice'] = {'recommendations': recommendations}
+        # Owned review already binds history and calculates the complete graph.
+        # Consume that native advice instead of resubmitting a transformed graph
+        # through the public API, where caller graph overrides are forbidden.
         return history.prepare_decision(self.store, report, self.contract)
 
     def reserve(self):
