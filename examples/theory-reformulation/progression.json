@@ -1,13 +1,6 @@
 {
-  "schema": 1,
-  "claim_id": "finite_rational_multiplication_commutes",
+  "schema": 2,
   "domain": ["0", "1"],
-  "assumptions": [],
-  "transport_obligations": [
-    "finite_table_is_exact_rational_multiplication",
-    "egraph_uses_the_same_rational_multiplication",
-    "native_lean_checks_each_declared_domain_pair"
-  ],
   "limits": {
     "max_domain_size": 4,
     "max_native_pairs": 16,

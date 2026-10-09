@@ -33,6 +33,7 @@ import heapq
 import json
 import sqlite3
 from pathlib import Path
+from rds_hypergraph_blockers import missing_families
 
 ASSURANCE = "INPUT_REPORTED_DEPENDENCY_ANALYSIS_NOT_PROOF"
 DEFAULT_LIMITS = {"max_nodes": 256, "max_hyperedges": 512,
@@ -41,10 +42,6 @@ DEFAULT_LIMITS = {"max_nodes": 256, "max_hyperedges": 512,
 HARD_LIMITS = {"max_nodes": 4096, "max_hyperedges": 16384,
                "max_blocker_sets": 2048, "max_combinations": 1000000,
                "max_source_bytes": 64 * 1024 * 1024}
-
-
-class _Truncated(Exception):
-    pass
 
 
 def _require(condition, message):
@@ -373,56 +370,8 @@ def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
     direct = {ident for ident, node in nodes.items()
               if (node["status"] == "UNKNOWN" or ident in blocked_nodes)
               and node.get("allow_direct_evidence", ident not in incoming)}
-    families = {ident: {frozenset()} if ident in closure else
-                {frozenset({"node:" + ident})} if ident in direct else set()
-                for ident, node in nodes.items()}
-    combinations, truncated, reason = 0, False, None
-
-    def insert(family, candidate):
-        if any(old <= candidate for old in family):
-            return False
-        updated = {old for old in family if not candidate < old}
-        updated.add(candidate)
-        if len(updated) > limits["max_blocker_sets"]:
-            raise _Truncated("max_blocker_sets exceeded")
-        family.clear()
-        family.update(updated)
-        return True
-
-    def spend():
-        nonlocal combinations
-        if combinations >= limits["max_combinations"]:
-            raise _Truncated("max_combinations exceeded")
-        combinations += 1
-
-    # ponytail: antichain fixed point is exponential in the worst case;
-    # explicit set/work caps return UNKNOWN rather than incomplete minimums.
-    try:
-        changed = True
-        while changed:
-            changed = False
-            for edge in edges:
-                head = edge["conclusion"]
-                if edge["id"] not in relevant_edges or edge["status"] == "CONTRADICTED" \
-                        or head in closure or nodes[head]["status"] == "CONTRADICTED":
-                    continue
-                status = "PROPOSED" if edge["id"] in blocked_rules else edge["status"]
-                plans = {frozenset({"rule:" + edge["id"]})} if status == "PROPOSED" \
-                    else {frozenset()}
-                for tail in edge["premises"]:
-                    joined = set()
-                    for left in sorted(plans, key=lambda v: (len(v), sorted(v))):
-                        for right in sorted(families[tail], key=lambda v: (len(v), sorted(v))):
-                            spend()
-                            insert(joined, left | right)
-                    plans = joined
-                    if not plans:
-                        break
-                for plan in sorted(plans, key=lambda v: (len(v), sorted(v))):
-                    spend()
-                    changed |= insert(families[head], plan)
-    except _Truncated as exc:
-        truncated, reason = True, str(exc)
+    families, combinations, truncated, reason = missing_families(
+        nodes, edges, closure, direct, relevant_edges, blocked_rules, limits)
 
     ready = []
     for edge in edges:
@@ -503,7 +452,7 @@ def _selected_support_cone(spec, node_id, closure, derivations):
 
 def review_hypergraph(value, *, locator="input", retract_nodes=(), retract_rules=(),
                       refute_nodes=(), refute_rules=(), change_source=None, trace=None, updates=(),
-                      update_locators=(), audit_receipts_enabled=False):
+                      update_locators=(), audit_receipts_enabled=False, read_receipt=None):
     """Own input compilation, status changes and one current dependency analysis.
 
     The returned dependency_map is the next input: callers submit changes and
@@ -525,7 +474,7 @@ def review_hypergraph(value, *, locator="input", retract_nodes=(), retract_rules
     except ValueError as exc:
         input_review["errors"].append({"path": "$", "reason": str(exc)})
         return incomplete()
-    grounded = frozenset(audit_receipts(spec)['grounded_receipts']) if audit_receipts_enabled else frozenset()
+    grounded = frozenset(audit_receipts(spec, read_receipt)['grounded_receipts']) if audit_receipts_enabled else frozenset()
     previous_closure, previous_derivations, _, _ = _supported_closure(nodes, edges, grounded)
     original_spec = spec
     candidate = deepcopy(spec)
@@ -623,7 +572,8 @@ def review_hypergraph(value, *, locator="input", retract_nodes=(), retract_rules
                 # Withdraw support without destroying the original evidence binding.
                 # The change's source is recorded in the persisted revision.
                 record.update(status=changes[key])
-    result = analyze_hypergraph(revised, audit_receipts_enabled=audit_receipts_enabled)
+    result = analyze_hypergraph(revised, audit_receipts_enabled=audit_receipts_enabled,
+                               read_receipt=read_receipt)
     result.update(status="INCOMPLETE" if result["truncated"] else "ANALYZED",
                   dependency_map=revised, input_review=input_review, authorization="UNCHANGED")
     if applied:
@@ -660,6 +610,128 @@ def cascade_refute(spec, contradicted_node_ids=(), contradicted_rule_ids=()):
     """Declare contradiction and recompute ordinary fields from the revised map."""
     return review_hypergraph(spec, refute_nodes=contradicted_node_ids,
                             refute_rules=contradicted_rule_ids)
+
+
+def _operator_verdict_target(spec, target_token):
+    """Resolve one ``node:<id>``/``rule:<id>`` token to the map's record and kind."""
+    _require(isinstance(target_token, str) and target_token.strip(),
+             "target token must be a nonempty string")
+    kind, separator, ident = target_token.strip().partition(":")
+    _require(separator and kind in ("node", "rule") and ident.strip(),
+             "target token must be 'node:<id>' or 'rule:<id>': use a token from ready_obligations")
+    ident = ident.strip()
+    key = "nodes" if kind == "node" else "hyperedges"
+    records = spec.get(key)
+    _require(isinstance(records, list), "dependency map lacks a " + key + " table")
+    for record in records:
+        if isinstance(record, dict) and record.get("id") == ident:
+            return kind, ident, record
+    _require(False, "unknown " + kind + " target: " + ident)
+
+
+def _bounded_verdict_json(value):
+    """Refuse non-finite/oversize verdict data before copying or changing a map."""
+    def check(item):
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise ValueError("JSON object keys must be strings; witness identity must survive storage")
+                check(child)
+        elif isinstance(item, list):
+            for child in item:
+                check(child)
+        elif type(item) not in (str, int, float, bool, type(None)):
+            raise ValueError("supply JSON objects, arrays and scalar values without type coercion")
+
+    size = 0
+    try:
+        check(value)
+        for chunk in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(value):
+            size += len(chunk.encode("utf-8"))
+            if size > 8 * 1024 * 1024:
+                raise ValueError("operator verdict and dependency declaration exceed 8 MiB")
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise ValueError("operator verdict requires bounded, finite JSON data: " + str(exc)) from exc
+
+
+def apply_operator_verdict(spec, target_token, operator_receipt, *, locator="operator-verdict"):
+    """Apply a scoped operator verdict through the existing TMS and receipt audit.
+
+    PASS can declare support only with a grounded succeeded execution receipt.
+    A bounded_finite_model FAIL/COUNTEREXAMPLE_FOUND is adapted to CONTRADICTED;
+    other FAIL results remain unproven. Refutations require an operator, exact
+    input digest and finite bounded witness. The revision archives the change
+    alongside the full previous source; the original source remains intact.
+    Execution evidence and declared impact never verify scientific truth.
+    """
+    from rds_hypergraph_input import prepare_input
+    spec, input_review = prepare_input(spec, locator)
+    _require(not input_review["errors"],
+             "invalid dependency map: " + "; ".join(row["reason"] for row in input_review["errors"][:3]))
+    _require(isinstance(operator_receipt, dict), "operator receipt must be an object")
+    _bounded_verdict_json({"dependency_map": spec, "operator_receipt": operator_receipt})
+    received_status = operator_receipt.get("status")
+    status = received_status
+    if status == "FAIL":
+        status = "CONTRADICTED" if (operator_receipt.get("operator") == "bounded_finite_model"
+                                    and operator_receipt.get("assurance") == "COUNTEREXAMPLE_FOUND") else "ERROR"
+    _require(status in ("PASS", "CONTRADICTED", "UNKNOWN", "ERROR"),
+             "operator verdict status must be PASS, CONTRADICTED, UNKNOWN or ERROR; "
+             "only bounded_finite_model FAIL/COUNTEREXAMPLE_FOUND is a refutation")
+    kind, ident, record = _operator_verdict_target(spec, target_token)
+    token = kind + ":" + ident
+    key = "nodes" if kind == "node" else "hyperedges"
+    read_receipt = receipt_reader()
+    metadata = {"target_token": token, "status": status, "received_status": received_status,
+                "effect": "UNCHANGED"}
+    if status == "PASS" and operator_receipt.get("evidence") is not None:
+        binding = _evidence(operator_receipt["evidence"], kind, ident)
+        candidate = deepcopy(spec)
+        next(row for row in candidate[key] if row["id"] == ident)["evidence"] = binding
+        audit = audit_receipts(candidate, read_receipt)
+        target_audit = next(row for row in audit["audits"] if token in row["used_by"])
+        metadata["receipt_audit"] = target_audit
+        if target_audit["status"] == "GROUNDED":
+            updated = {**deepcopy(record), "status": "SUPPORTED", "evidence": binding}
+            result = review_hypergraph(spec, locator=locator, updates=[{key: [updated], "goals": []}],
+                                      audit_receipts_enabled=True, read_receipt=read_receipt)
+            _require(not result["input_review"]["errors"], "invalid support update: " +
+                     str(result["input_review"]["errors"][:3]))
+            metadata.update(effect="SUPPORTED", meaning="Grounded execution receipt permits declared support; not statement verification")
+            result["operator_verdict"] = metadata
+            return result
+    if status != "CONTRADICTED":
+        result = review_hypergraph(spec, locator=locator, audit_receipts_enabled=True,
+                                  read_receipt=read_receipt)
+        metadata["meaning"] = ("PASS requires a grounded execution receipt; declared status unchanged" if status == "PASS"
+                               else "Unproven verdict retains the current status and obligations")
+        result["operator_verdict"] = metadata
+        return result
+    witness = operator_receipt.get("witness")
+    _require(isinstance(witness, (dict, list, str, int, float)) and witness is not None,
+             "a CONTRADICTED verdict requires a witness value")
+    operator_name = operator_receipt.get("operator")
+    _require(isinstance(operator_name, str) and operator_name.strip(), "operator receipt must name the operator")
+    input_digest = operator_receipt.get("input_sha256")
+    _require(isinstance(input_digest, str) and len(input_digest) == 64
+             and all(c in "0123456789abcdefABCDEF" for c in input_digest),
+             "input_sha256 must have 64 hexadecimal characters")
+    input_digest = input_digest.lower()
+    archive = {"locator": str(locator) + "#witness/" + kind + "/" + ident,
+               "operator": operator_name.strip(), "verdict_status": "CONTRADICTED",
+               "received_status": received_status, "input_sha256": input_digest, "witness": witness}
+    _bounded_verdict_json({"dependency_map": spec, "change_source": archive})
+    result = review_hypergraph(spec, locator=locator, change_source=archive,
+                              audit_receipts_enabled=True, read_receipt=read_receipt,
+                              **({"refute_nodes": [ident]} if kind == "node" else {"refute_rules": [ident]}))
+    _require(not result["input_review"]["errors"], "invalid refutation: " + str(result["input_review"]["errors"][:3]))
+    metadata.update(effect="REFUTED", operator=operator_name.strip(), input_sha256=input_digest,
+                    witness=deepcopy(witness), lost_support=result.get("revision", {}).get("lost_support", []),
+                    minimal_missing_evidence_sets={goal: row["minimal_missing_evidence_sets"]
+                                                   for goal, row in result["goals"].items()},
+                    meaning="Witness refutes the declared record; remaining routes and blockers are declared impact, not scientific verification")
+    result["operator_verdict"] = metadata
+    return result
 
 
 def main():

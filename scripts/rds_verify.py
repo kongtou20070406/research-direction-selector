@@ -4,13 +4,23 @@ The JSON language can choose registered rules, never load Python or assert an
 axiom. This finite certificate framework is not the Lean kernel or a prover for
 arbitrary dependent types. Search and certificate checking have separate APIs.
 """
+from copy import deepcopy
 from dataclasses import dataclass
 import importlib
 from pathlib import Path
 import re
 import sys
 
-from rds_verify_types import MAX_CERTIFICATE_BYTES, SEMANTICS, bounded_json, canonical, digest, require
+from rds_verify_types import MAX_CERTIFICATE_BYTES, SEMANTICS, bounded_json, canonical, digest, rational, require
+from rds_affine_toolchain import ASSURANCE as AFFINE_CHAIN_ASSURANCE
+from rds_affine_toolchain import COMPOSITION_KIND as AFFINE_COMPOSITION_KIND
+from rds_affine_toolchain import COMPOSITION_RULE as AFFINE_COMPOSITION_RULE
+from rds_affine_toolchain import KIND as AFFINE_CHAIN_KIND
+from rds_affine_toolchain import RULE as AFFINE_CHAIN_RULE
+from rds_theory_progression import PROOF_ASSURANCE as BOUNDED_PROOF_ASSURANCE
+from rds_theory_progression import PROOF_KIND as BOUNDED_PROOF_KIND
+from rds_theory_progression import PROOF_RULE as BOUNDED_PROOF_RULE
+from rds_theory_progression import PROOF_SEMANTICS as BOUNDED_PROOF_SEMANTICS
 
 MAX_THEOREMS = 64
 MAX_NODES = 100000
@@ -25,11 +35,26 @@ class ProofRule:
     version: str = "1"
     support_files: tuple = ()
 
-    def generate(self, statement):
-        return importlib.import_module(self.module).verify(statement)
+    def generate(self, statement, *, max_work_units=None):
+        module = importlib.import_module(self.module)
+        if max_work_units is None:
+            return module.verify(statement)
+        return module.verify(statement, max_work_units=max_work_units)
 
     def check(self, statement, certificate):
         return importlib.import_module(self.module).check_certificate(statement, certificate)
+
+    def canonical_statement(self, statement):
+        """Return a registered rule's semantics-preserving normal form, if available."""
+        module = importlib.import_module(self.module)
+        normalize = getattr(module, "canonical_statement", None)
+        return normalize(statement) if callable(normalize) else statement
+
+    @staticmethod
+    def checked_assurance(certificate):
+        """Use assurance embedded in checked evidence, otherwise the registered checker label."""
+        value = certificate.get("assurance")
+        return value if isinstance(value, str) else "CERTIFICATE_CHECKED"
 
 
 class RuleRegistry:
@@ -61,8 +86,11 @@ class RuleRegistry:
 
 REGISTRY = RuleRegistry((
     ProofRule("scalar.threshold_separation", ("scalar_threshold",), "rds_scalar_verify"),
-    ProofRule("lean.rational_relation", ("lean_obligation",), "rds_lean_verify"),
+    ProofRule("lean.rational_relation", ("lean_obligation", "lean_vector_obligation"), "rds_lean_verify"),
     ProofRule("lean.statistical_obligation", ("statistical_obligation",), "rds_statistical_verify"),
+    ProofRule(AFFINE_CHAIN_RULE, (AFFINE_CHAIN_KIND,), "rds_affine_toolchain",
+              support_files=("rds_dynamics_verify.py", "rds_lean_verify.py")),
+    ProofRule(AFFINE_COMPOSITION_RULE, (AFFINE_COMPOSITION_KIND,), "rds_affine_toolchain"),
     ProofRule("matrix.infinity_contraction", ("affine_contraction",), "rds_dynamics_verify"),
     ProofRule("matrix.fixed_point", ("affine_fixed_point",), "rds_dynamics_verify"),
     ProofRule("dynamics.affine", ("affine_dynamics",), "rds_dynamics_verify"),
@@ -76,6 +104,8 @@ REGISTRY = RuleRegistry((
     ProofRule("geometry.unit_disk_quadtree", ("unit_disk_cover",), "rds_disk_cover_verify"),
     ProofRule("geometry.unit_disk_rational_voronoi", ("unit_disk_rational_voronoi",),
               "rds_rational_voronoi_verify", support_files=("rds_unit_disk_voronoi_core.py",)),
+    ProofRule(BOUNDED_PROOF_RULE, (BOUNDED_PROOF_KIND,), "rds_theory_progression",
+              support_files=("rds_operators.py", "rds_lean_verify.py")),
 ))
 
 
@@ -105,6 +135,314 @@ def _name(value):
     require(isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,79}", value),
             "Declaration names require 1..80 ASCII letters, digits, _, . or -")
     return value
+
+
+PLAN_ASSURANCES = {"LEAN_KERNEL_CHECKED", "CERTIFICATE_CHECKED"}
+PLAN_CERTIFICATE_KEYS = {"version", "plan_sha256", "artifacts", "steps", "verdict"}
+PLAN_CERTIFICATE_VERSION = 2
+
+
+def _plan_artifacts(plan):
+    require(isinstance(plan, dict) and set(plan) == {"version", "artifacts", "steps"},
+            "Proof plan requires version, artifacts and steps")
+    require(type(plan["version"]) is int and plan["version"] == 1,
+            "Unsupported proof-plan version")
+    artifacts = plan["artifacts"]
+    require(isinstance(artifacts, list) and len(artifacts) <= MAX_THEOREMS,
+            "Proof plan has too many artifacts")
+    by_name = {}
+    for item in artifacts:
+        require(isinstance(item, dict) and set(item) == {"name", "type", "value"},
+                "Invalid proof-plan artifact")
+        name = _name(item["name"])
+        require(name not in by_name, "Duplicate proof-plan artifact")
+        value = item["value"]
+        if item["type"] == "exact_rational_vector":
+            require(isinstance(value, list) and 1 <= len(value) <= 128 and
+                    all(isinstance(entry, str) for entry in value),
+                    "Exact rational vector artifacts require 1..128 rational strings")
+            normalized = [str(rational(entry)) for entry in value]
+            require(value == normalized, "Proof-plan vector values must use canonical rationals")
+        elif item["type"] == "exact_rational_affine_model":
+            require(isinstance(value, dict) and set(value) == {"matrix", "bias"},
+                    "Exact affine model artifacts require matrix and bias")
+            matrix, bias = value["matrix"], value["bias"]
+            require(isinstance(matrix, list) and 1 <= len(matrix) <= 128 and
+                    all(isinstance(row, list) and len(row) == len(matrix) for row in matrix) and
+                    isinstance(bias, list) and len(bias) == len(matrix) and
+                    all(isinstance(entry, str) for row in matrix for entry in row) and
+                    all(isinstance(entry, str) for entry in bias),
+                    "Exact affine model artifacts require a square matrix and matching bias")
+            normalized = {"matrix": [[str(rational(entry)) for entry in row] for row in matrix],
+                          "bias": [str(rational(entry)) for entry in bias]}
+            require(value == normalized, "Affine model artifacts must use canonical rationals")
+        elif item["type"] == "exact_rational_affine_chain":
+            require(isinstance(value, list) and 2 <= len(value) <= 8,
+                    "Exact affine chains require 2..8 transformations")
+            dimension = None
+            normalized = []
+            for model in value:
+                require(isinstance(model, dict) and set(model) == {"matrix", "bias"},
+                        "Affine chain entries require matrix and bias")
+                matrix, bias = model["matrix"], model["bias"]
+                require(isinstance(matrix, list) and 1 <= len(matrix) <= 128 and
+                        all(isinstance(row, list) and len(row) == len(matrix) for row in matrix) and
+                        isinstance(bias, list) and len(bias) == len(matrix) and
+                        all(isinstance(entry, str) for row in matrix for entry in row) and
+                        all(isinstance(entry, str) for entry in bias),
+                        "Affine chain entries require a square matrix and matching bias")
+                require(dimension is None or dimension == len(matrix),
+                        "Affine chain transformations must have the same dimension")
+                dimension = len(matrix)
+                normalized.append({"matrix": [[str(rational(entry)) for entry in row]
+                                               for row in matrix],
+                                   "bias": [str(rational(entry)) for entry in bias]})
+            require(value == normalized, "Affine chain entries must use canonical rationals")
+        else:
+            raise ValueError("Unsupported proof-plan artifact type: " + str(item["type"]))
+        by_name[name] = item
+    return artifacts, by_name
+
+
+def _resolve_plan_value(value, artifacts):
+    if isinstance(value, dict):
+        if "$artifact" in value:
+            require(set(value) in ({"$artifact"}, {"$artifact", "index"}),
+                    "Artifact references require an artifact name and optional vector index")
+            name = _name(value["$artifact"])
+            require(name in artifacts, "Unbound proof-plan artifact: " + name)
+            artifact = artifacts[name]
+            if "index" not in value:
+                return deepcopy(artifact["value"])
+            require(artifact["type"] == "exact_rational_vector",
+                    "Only rational vector artifacts support indexed binding")
+            require(type(value["index"]) is int, "Artifact vector index must be an integer")
+            vector = artifact["value"]
+            require(0 <= value["index"] < len(vector), "Artifact vector index is out of range")
+            return deepcopy(vector[value["index"]])
+        return {key: _resolve_plan_value(part, artifacts) for key, part in value.items()}
+    if isinstance(value, list):
+        return [_resolve_plan_value(part, artifacts) for part in value]
+    return value
+
+
+def _step_cost(step):
+    """Ask the registered adapter for cost features, with a generic size fallback."""
+    statement = step["statement"]
+    module = importlib.import_module(step["rule"].module)
+    estimator = getattr(module, "estimate_cost", None)
+    if callable(estimator):
+        estimate = estimator(statement)
+        require(isinstance(estimate, dict) and set(estimate) == {"phase", "work_units"} and
+                isinstance(estimate["phase"], str) and 0 < len(estimate["phase"]) <= 80 and
+                type(estimate["work_units"]) is int and
+                0 <= estimate["work_units"] <= 10**12,
+                "Registered cost estimator returned an invalid profile")
+        phase, units = estimate["phase"], estimate["work_units"]
+    else:
+        phase = "native_kernel" if step["required_assurance"] == "LEAN_KERNEL_CHECKED" else "checked_rule"
+        units = max(1, (len(canonical(statement).encode("utf-8")) + 63) // 64)
+    # Checking evidence at a weaker assurance is always attempted before a
+    # kernel-backed goal, regardless of the adapter's domain-specific estimate.
+    rank = 1 if step["required_assurance"] == "LEAN_KERNEL_CHECKED" else 0
+    return {"phase": phase, "work_units": units, "phase_rank": rank}
+
+
+def _reuse_key(step):
+    return digest({"rule": step["rule"].name,
+                   "required_assurance": step["required_assurance"],
+                   "canonical_statement": step["canonical_statement"]})
+
+
+def _prepare_proof_plan(plan):
+    _bounded_json(plan)
+    artifacts, by_name = _plan_artifacts(plan)
+    raw_steps = plan["steps"]
+    require(isinstance(raw_steps, list) and 1 <= len(raw_steps) <= MAX_THEOREMS,
+            "Proof plan requires 1..64 steps")
+    prepared, by_step_name = [], {}
+    for original_index, item in enumerate(raw_steps):
+        require(isinstance(item, dict) and set(item) in (
+                {"name", "required_assurance", "statement"},
+                {"name", "required_assurance", "statement", "depends_on"}),
+                "Invalid proof-plan step")
+        name = _name(item["name"])
+        require(name not in by_step_name, "Duplicate proof-plan step")
+        assurance = item["required_assurance"]
+        require(isinstance(assurance, str) and assurance in PLAN_ASSURANCES,
+                "Unsupported proof-plan assurance requirement")
+        dependencies = item.get("depends_on", [])
+        require(isinstance(dependencies, list) and all(isinstance(value, str) for value in dependencies),
+                "Proof-plan dependencies must be a list of step names")
+        dependencies = [_name(value) for value in dependencies]
+        require(len(set(dependencies)) == len(dependencies) and name not in dependencies,
+                "Proof-plan dependencies must be unique and cannot include the step itself")
+        statement = _resolve_plan_value(item["statement"], by_name)
+        require(isinstance(statement, dict), "Proof-plan step must resolve to a statement")
+        rule = REGISTRY.rule(statement)
+        step = {"name": name, "required_assurance": assurance,
+                "statement": statement, "rule": rule, "dependencies": dependencies,
+                "canonical_statement": rule.canonical_statement(statement),
+                "cost": None, "original_index": original_index}
+        step["cost"] = _step_cost(step)
+        by_step_name[name] = step
+        prepared.append(step)
+    for step in prepared:
+        require(all(name in by_step_name for name in step["dependencies"]),
+                "Unbound proof-plan dependency")
+    completed, scheduled = set(), []
+    while len(scheduled) < len(prepared):
+        ready = [step for step in prepared if step["name"] not in completed and
+                 set(step["dependencies"]) <= completed]
+        require(bool(ready), "Proof-plan dependencies contain a cycle")
+        chosen = min(ready, key=lambda step: (
+            step["cost"]["phase_rank"], step["cost"]["work_units"], step["original_index"]))
+        scheduled.append(chosen)
+        completed.add(chosen["name"])
+    return artifacts, scheduled
+
+
+def _optimization_report(plan, steps):
+    first_for_key, schedule = {}, []
+    optimized_units = unoptimized_units = reused_steps = 0
+    for step in steps:
+        key = _reuse_key(step)
+        reuse_of = first_for_key.get(key)
+        if reuse_of is None:
+            first_for_key[key] = step["name"]
+            optimized_units += step["cost"]["work_units"]
+        else:
+            reused_steps += 1
+        unoptimized_units += step["cost"]["work_units"]
+        schedule.append({"name": step["name"], "rule": step["rule"].name,
+                         "required_assurance": step["required_assurance"],
+                         "depends_on": step["dependencies"], "phase": step["cost"]["phase"],
+                         "estimated_work_units": step["cost"]["work_units"], "reuses": reuse_of})
+    return {"plan_sha256": digest(plan), "schedule": schedule,
+            "estimated_work_units": optimized_units,
+            "unoptimized_work_units": unoptimized_units,
+            "reused_steps": reused_steps,
+            "estimate_semantics": "registered adapter operation proxies; not elapsed-time or memory predictions"}
+
+
+def _budgeted_optimization(optimization, max_work_units):
+    if max_work_units is None:
+        return True
+    require(type(max_work_units) is int and max_work_units >= 0,
+            "max_work_units must be a non-negative integer")
+    optimization["budget"] = {"max_work_units": max_work_units,
+                              "estimated_work_units": optimization["estimated_work_units"]}
+    return optimization["estimated_work_units"] <= max_work_units
+
+
+def optimize_proof_plan(plan, *, max_work_units=None):
+    """Explain exact CSE and dependency-safe, cheap-first scheduling without running tools."""
+    try:
+        _artifacts, steps = _prepare_proof_plan(plan)
+        optimization = _optimization_report(plan, steps)
+        within_budget = _budgeted_optimization(optimization, max_work_units)
+        return {"status": "READY" if within_budget else "UNKNOWN",
+                "reason": None if within_budget else "Estimated proof-plan work exceeds max_work_units",
+                "optimization": optimization}
+    except (ValueError, TypeError, KeyError, AttributeError, ImportError, OSError,
+            ZeroDivisionError, OverflowError, RecursionError) as exc:
+        return _unknown("Invalid or unsupported proof plan: " + str(exc))
+
+
+def execute_proof_plan(plan, *, max_work_units=None):
+    """Resolve typed artifact references, route obligations by kind, and generate proofs."""
+    try:
+        artifacts, steps = _prepare_proof_plan(plan)
+        optimization = _optimization_report(plan, steps)
+        if not _budgeted_optimization(optimization, max_work_units):
+            return {"status": "UNKNOWN", "optimization": optimization,
+                    "reason": "Estimated proof-plan work exceeds max_work_units"}
+        proofs, discharged = [], {}
+        for step in steps:
+            key = _reuse_key(step)
+            fields = {"name": step["name"],
+                      "required_assurance": step["required_assurance"],
+                      "rule": step["rule"].name,
+                      "statement_sha256": digest(step["statement"]),
+                      "canonical_statement_sha256": digest(step["canonical_statement"])}
+            if key in discharged:
+                proofs.append({**fields, "reuses": discharged[key]})
+                continue
+            answer = step["rule"].generate(step["statement"])
+            if not isinstance(answer, dict):
+                return _unknown("Proof-plan step " + step["name"] + " returned no structured result")
+            evidence = answer.get("certificate")
+            actual_assurance = (step["rule"].checked_assurance(evidence)
+                                if isinstance(evidence, dict) else None)
+            if (answer.get("status") != "PASS" or not isinstance(evidence, dict) or
+                    evidence.get("verdict") != "PASS" or
+                    answer.get("assurance") != actual_assurance or
+                    actual_assurance != step["required_assurance"]):
+                return _unknown("Proof-plan step " + step["name"] + " was not discharged at the required assurance: " +
+                                str(answer.get("reason", answer.get("status", "UNKNOWN"))))
+            proofs.append({**fields, "certificate": evidence})
+            discharged[key] = step["name"]
+        certificate = {"version": PLAN_CERTIFICATE_VERSION,
+                       "plan_sha256": digest(plan), "artifacts": artifacts,
+                       "steps": proofs, "verdict": "PASS"}
+        require(len(canonical(certificate).encode("utf-8")) <= MAX_CERTIFICATE_BYTES,
+                "Proof-plan certificate exceeds the size limit")
+        return {"status": "PASS", "certificate": certificate, "optimization": optimization}
+    except (ValueError, TypeError, KeyError, AttributeError, ImportError, OSError,
+            ZeroDivisionError, OverflowError, RecursionError) as exc:
+        return _unknown("Invalid or unsupported proof plan: " + str(exc))
+
+
+def replay_proof_plan(plan, certificate):
+    """Replay a plan using registered checkers only; never call a proof generator."""
+    try:
+        artifacts, steps = _prepare_proof_plan(plan)
+        _bounded_json(certificate)
+        require(isinstance(certificate, dict) and set(certificate) == PLAN_CERTIFICATE_KEYS,
+                "Invalid proof-plan certificate fields")
+        require(type(certificate["version"]) is int and
+                certificate["version"] == PLAN_CERTIFICATE_VERSION and
+                certificate["plan_sha256"] == digest(plan) and certificate["artifacts"] == artifacts and
+                certificate["verdict"] == "PASS", "Proof-plan certificate binding mismatch")
+        proofs = certificate["steps"]
+        require(isinstance(proofs, list) and len(proofs) == len(steps),
+                "Proof-plan certificate omits or adds steps")
+        discharged, evidence_by_name = {}, {}
+        for expected, item in zip(steps, proofs):
+            require(isinstance(item, dict) and
+                    set(item) in ({"name", "required_assurance", "rule", "statement_sha256",
+                                   "canonical_statement_sha256", "certificate"},
+                                  {"name", "required_assurance", "rule", "statement_sha256",
+                                   "canonical_statement_sha256", "reuses"}),
+                    "Invalid proof-plan step certificate")
+            require(item["name"] == expected["name"] and
+                    item["required_assurance"] == expected["required_assurance"] and
+                    item["rule"] == expected["rule"].name and
+                    item["statement_sha256"] == digest(expected["statement"]) and
+                    item["canonical_statement_sha256"] == digest(expected["canonical_statement"]),
+                    "Proof-plan step changed its registered rule or bound statement")
+            key = _reuse_key(expected)
+            if key in discharged:
+                require(set(item) == {"name", "required_assurance", "rule", "statement_sha256",
+                                      "canonical_statement_sha256", "reuses"} and
+                        item["reuses"] == discharged[key],
+                        "Repeated proof-plan steps must reuse their first matching proof")
+                evidence_by_name[expected["name"]] = evidence_by_name[discharged[key]]
+                continue
+            require(set(item) == {"name", "required_assurance", "rule", "statement_sha256",
+                                  "canonical_statement_sha256", "certificate"},
+                    "First proof-plan step must carry its certificate")
+            evidence = item["certificate"]
+            require(isinstance(evidence, dict) and evidence.get("verdict") == "PASS" and
+                    expected["rule"].check(expected["statement"], evidence) and
+                    expected["rule"].checked_assurance(evidence) == expected["required_assurance"],
+                    "Proof-plan child certificate did not replay")
+            evidence_by_name[expected["name"]] = evidence
+            discharged[key] = expected["name"]
+        return True
+    except (ValueError, TypeError, KeyError, AttributeError, ImportError, OSError,
+            ZeroDivisionError, OverflowError, RecursionError):
+        return False
 
 
 def _elaborate(spec):
@@ -194,27 +532,63 @@ def _wrap(spec, verdict, proof):
             "verdict": verdict, "proof": proof}
 
 
-def _atomic(statement, requested=None):
+def _affine_plan_rule(spec, max_work_units):
+    """Only a registered direct affine adapter may construct a public plan."""
+    require(max_work_units is None or type(max_work_units) is int and max_work_units >= 0,
+            "max_work_units must be a nonnegative integer")
+    _bounded_json(spec)
+    require(isinstance(spec, dict), "Specification must be an object")
+    require(spec.get("kind") != "theorem_module",
+            "Proof-plan inspection and explicit budgets do not support theorem_module")
+    rule = REGISTRY.rule(spec)
+    require(rule.name == AFFINE_CHAIN_RULE,
+            "Proof-plan inspection and explicit budgets require direct affine_fixed_point_synthesis")
+    return rule
+
+
+def plan(spec, *, max_work_units=None):
+    """Inspect a trusted adapter plan; READY is not a proof or certificate."""
+    try:
+        rule = _affine_plan_rule(spec, max_work_units)
+        proof_plan = importlib.import_module(rule.module).build_proof_plan(spec)
+        result = optimize_proof_plan(proof_plan, max_work_units=max_work_units)
+        return dict(result, assurance="NONE", backend="rds_declarative", spec_sha256=digest(spec))
+    except (ValueError, TypeError, KeyError, AttributeError, ImportError, OSError,
+            ZeroDivisionError, OverflowError, RecursionError) as exc:
+        return _unknown(exc)
+
+
+def _atomic(statement, requested=None, *, max_work_units=None):
     rule = REGISTRY.rule(statement, requested)
-    result = rule.generate(statement)
+    if max_work_units is None:
+        result = rule.generate(statement)
+    else:
+        require(rule.name == AFFINE_CHAIN_RULE, "Explicit budget requires the trusted affine adapter")
+        result = rule.generate(statement, max_work_units=max_work_units)
     verdict, evidence = result.get("status"), result.get("certificate")
     if verdict not in {"PASS", "FAIL"} or not isinstance(evidence, dict):
         return dict(_unknown(result.get("reason", "Proof search was inconclusive")),
                     **{key: result[key] for key in ("conditional_statement", "application_status", "assumptions_required")
-                       if key in result})
+                       if key in result},
+                    **({"plan_optimization": result["optimization"]} if "optimization" in result else {}))
     require(evidence.get("verdict") == verdict, "Proof rule has inconsistent candidate evidence")
     # Final checked_result replays every leaf and composition exactly once.
     # Checking here as well would duplicate native Lean compilation.
-    return {"status": verdict, "proof": {"rule": rule.name, "certificate": evidence}}
+    answer = {"status": verdict, "proof": {"rule": rule.name, "certificate": evidence}}
+    if "optimization" in result:
+        answer["plan_optimization"] = result["optimization"]
+    return answer
 
 
-def verify(spec):
+def verify(spec, *, max_work_units=None):
     """Search for a proof, then independently check it; unknown is never admitted."""
     try:
         _bounded_json(spec)
         require(isinstance(spec, dict), "Specification must be an object")
+        if max_work_units is not None:
+            _affine_plan_rule(spec, max_work_units)
         if spec.get("kind") != "theorem_module":
-            answer = _atomic(spec)
+            answer = _atomic(spec, max_work_units=max_work_units)
             if answer["status"] == "UNKNOWN":
                 return answer
             certificate = _wrap(spec, answer["status"], answer["proof"])
@@ -250,7 +624,14 @@ def verify(spec):
                 return result
             verdict = "FAIL" if "FAIL" in statuses else "PASS"
             certificate = _wrap(spec, verdict, {"rule": "module", "theorems": proofs})
-        return checked_result(spec, certificate)
+            result = checked_result(spec, certificate)
+            if "plan_optimization" in answer:
+                result["plan_optimization"] = answer["plan_optimization"]
+            return result
+        result = checked_result(spec, certificate)
+        if "plan_optimization" in answer:
+            result["plan_optimization"] = answer["plan_optimization"]
+        return result
     except (ValueError, TypeError, KeyError, AttributeError, ImportError, OSError,
             ZeroDivisionError, OverflowError, RecursionError) as exc:
         return _unknown(exc)
@@ -328,6 +709,71 @@ def checked_result(spec, certificate):
             result["theorems"] = outcomes
         elif atomic:
             result["semantics"] = leaves[0].get("semantics", SEMANTICS)
+        bounded_scopes = {}
+        composed_scopes = {}
+        if outcomes is None and spec.get("kind") == BOUNDED_PROOF_KIND:
+            item = proof["certificate"]
+            if proof.get("rule") == BOUNDED_PROOF_RULE and item.get("assurance") == BOUNDED_PROOF_ASSURANCE:
+                bounded_scopes["claim"] = item["scope"]
+                result["assurance"] = BOUNDED_PROOF_ASSURANCE
+        elif (outcomes is None and spec.get("kind") == AFFINE_CHAIN_KIND and
+              proof.get("rule") == AFFINE_CHAIN_RULE and
+              proof.get("certificate", {}).get("assurance") == AFFINE_CHAIN_ASSURANCE):
+            item = proof["certificate"]
+            result["assurance"] = AFFINE_CHAIN_ASSURANCE
+            result["proof_scope"] = item["semantics"]
+            result["candidate"] = item["candidate"]
+            result["artifacts"] = {"fixed_point": {
+                "type": "exact_rational_vector", "dimension": item["dimension"],
+                "value": item["candidate"]}}
+            result["proof_components"] = {
+                "candidate": "exact_rational_gaussian_elimination",
+                "fixed_point": "registered_exact_rational_checker",
+                "translation": "bounded_exact_affine_evaluation",
+                "coordinate_obligations": "native_Lean_kernel_checked",
+            }
+            result["scientific_assurance"] = "UNKNOWN"
+            result["application_status"] = "UNKNOWN"
+        elif outcomes is not None:
+            declarations, _ = _elaborate(spec)
+            for name, declaration in declarations.items():
+                item = proof["theorems"].get(name)
+                if (declaration["statement"].get("kind") == BOUNDED_PROOF_KIND
+                        and isinstance(item, dict) and item.get("rule") == BOUNDED_PROOF_RULE
+                        and isinstance(item.get("certificate"), dict)
+                        and item["certificate"].get("assurance") == BOUNDED_PROOF_ASSURANCE):
+                    scope = item["certificate"]["scope"]
+                    bounded_scopes[name] = scope
+                    result["theorems"][name].update({"assurance": BOUNDED_PROOF_ASSURANCE,
+                                                     "semantics": BOUNDED_PROOF_SEMANTICS,
+                                                     "proof_scope": scope,
+                                                     "scientific_assurance": "UNKNOWN",
+                                                     "application_status": "UNKNOWN"})
+                elif (declaration["statement"].get("kind") == AFFINE_CHAIN_KIND
+                      and isinstance(item, dict) and item.get("rule") == AFFINE_CHAIN_RULE
+                      and isinstance(item.get("certificate"), dict)
+                      and item["certificate"].get("assurance") == AFFINE_CHAIN_ASSURANCE):
+                    affine_certificate = item["certificate"]
+                    composed_scopes[name] = affine_certificate["semantics"]
+                    result["theorems"][name].update({
+                        "assurance": AFFINE_CHAIN_ASSURANCE,
+                        "semantics": affine_certificate["semantics"],
+                        "proof_scope": affine_certificate["semantics"],
+                        "candidate": affine_certificate["candidate"],
+                        "artifacts": {"fixed_point": {
+                            "type": "exact_rational_vector",
+                            "dimension": affine_certificate["dimension"],
+                            "value": affine_certificate["candidate"]}},
+                        "scientific_assurance": "UNKNOWN",
+                        "application_status": "UNKNOWN"})
+        if bounded_scopes:
+            result["proof_scope"] = bounded_scopes
+            result["scientific_assurance"] = "UNKNOWN"
+            result["application_status"] = "UNKNOWN"
+        if composed_scopes:
+            result["composed_proof_scopes"] = composed_scopes
+            result["scientific_assurance"] = "UNKNOWN"
+            result["application_status"] = "UNKNOWN"
         conditional = [leaf for leaf in leaves if leaf.get("conditional_statement") is True]
         if conditional:
             result.update(conditional_statement=True, application_status="UNKNOWN",
@@ -359,14 +805,14 @@ class LeanFormalEngine:
             attempts = []
             tried = set()
             compatible = {"interval": {"network_bounds", "network_margin"},
-                          "lean4": {"lean_obligation", "statistical_obligation"},
-                          "rational": {"lean_obligation", "unit_disk_cover", "unit_disk_rational_voronoi"},
+                          "lean4": {"lean_obligation", "lean_vector_obligation", "statistical_obligation"},
+                          "rational": {"lean_obligation", "lean_vector_obligation", "unit_disk_cover", "unit_disk_rational_voronoi"},
                           "gershgorin": {"matrix_spectral_bound"},
                           "spectral_radius": {"matrix_spectral_exact"},
                           "scale_invariance": {"scale_equivariance"}}
             for tactic in tactics:
                 applies = tactic == "rule" or spec.get("kind") in compatible.get(tactic, set())
-                explicit_rational = spec.get("kind") == "lean_obligation" and tactic in {"lean4", "rational"}
+                explicit_rational = spec.get("kind") in {"lean_obligation", "lean_vector_obligation"} and tactic in {"lean4", "rational"}
                 method = tactic if explicit_rational else "rule"
                 if applies and method not in tried:
                     if explicit_rational:

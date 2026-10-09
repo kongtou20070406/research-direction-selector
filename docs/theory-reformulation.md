@@ -6,7 +6,7 @@
 
 这里的 jump 是工作方式：保持原研究目标，重新提出可检验的解释、表示或计算路线。它可以是删除一个多余假设、寻找有限归约或增加必要状态；没有从参数到几何再到 SSM 的通用优越性阶梯。从手推到计算机辅助证明通常改变算法与证书形式，并没有更换数学公理。
 
-Advisor 从已有的 `selection_review` 与同作用域 checkpoint 审查生成 `next_move`。目标未知、当前可用路线缺少预测前提或历史损坏时先补证据；已记录重复否决、目标未达到或预测无区分度时，给出重表述或判别检查建议。已过滤的旧路线及无关候选缺陷不打断可用的新路线；健康的单条证明义务不强制编造竞争假说。`--brief` 只返回动作名，完整理由、来源与提示保存在原 CAS；选择记录沿用同一 ledger。无记录的讨论及任意自然语言同义改写仍不能由程序可靠判同。
+Advisor 从已有的 `selection_review` 与同作用域 checkpoint 审查生成 `next_move`。目标未知、当前可用路线缺少预测前提或历史损坏时先补证据；目标未达到仅给出 `DIAGNOSE_GOAL_GAP`，检查原验收差距与最小修补，不推断方法失败。适用的路线/参数域否决或被否决路线族的参数变体才给出 `REFORMULATE`；仅有 A→B→A 顺序给出 `REVIEW_DECISION_HISTORY`，预测无区分度给出判别检查建议。当前目标 TRUE 不被旧路线或搜索范围警告推翻，原警告仍保留；显式声明的可迁移/全范围适用验收继续独立检查。已过滤的旧路线及无关候选缺陷不打断可用的新路线；健康的单条证明义务不强制编造竞争假说。`--brief` 保留动作名并增加有界的 `next_move_detail` 理由、依据与来源引用，完整报告与提示保存在原 CAS；选择记录沿用同一 ledger。无记录的讨论及任意自然语言同义改写仍不能由程序可靠判同。
 
 消费这条建议时，模型应完成一个短的实际提案，而不是复述警报：
 
@@ -169,3 +169,7 @@ GPU 实验启动前须使用项目实际配置的 runner 做 preflight，核对�
 `python -B scripts/rds_theory_tools.py --test-operator egraph_equivalence_saturation` 检查显式声明变量的有理多项式表达式。示例只实现二元加法/乘法的交换律、加零和乘一；未连通且没有精确反例时保持 UNKNOWN，达到节点、工作或迭代预算时也不判不等。PASS 的 assurance 是 `BOUNDED_REWRITE_CHECK`，没有独立证书，不能据此声明原研究目标完成。
 
 `--scaffold egraph_equivalence_saturation --out rewrite_example.py` 导出相同实现与正例、反例、未决例自测；拒绝覆盖已有文件。导出后必须绑定自己的表达式、变量和适用域。这个标准库示例没有安装 Rust egg/egglog。超图 Rust 后端的实际构建、兼容回退和测量范围见[原生加速](native-acceleration.md)。
+
+## Bounded exact-math capability routing
+
+The theory-tools CLI exposes a typed exact-math adapter registry for bounded rational linear systems and univariate real-root isolation. Unsupported claims stay `UNKNOWN` and return a machine-readable adapter task. See the [capability-router guide](math-capability-router.md) for request schemas, checker semantics, and scope limits.

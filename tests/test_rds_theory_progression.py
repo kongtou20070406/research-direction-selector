@@ -25,6 +25,11 @@ SPEC = {
     "transport_obligations": list(progression.TRANSPORTS),
     "limits": {"max_domain_size": 4, "max_native_pairs": 16, "egraph_iterations": 8},
 }
+CONCISE_SPEC = {
+    "schema": 2,
+    "domain": ["0", "1"],
+    "limits": {"max_domain_size": 4, "max_native_pairs": 16, "egraph_iterations": 8},
+}
 
 
 def native_pass(spec):
@@ -74,6 +79,31 @@ class TheoryProgressionTests(unittest.TestCase):
                 stage, progression.STAGES[index], result["claim_sha256"],
                 None if index == 0 else result["stages"][index - 1]["stage_sha256"]))
             self.assertEqual(stage["claim_sha256"], result["claim_sha256"])
+
+    def test_concise_request_derives_the_fixed_claim_and_transport_contract(self):
+        result = progression.run_progression(CONCISE_SPEC, native_verify=native_pass)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["claim"]["id"], progression.CLAIM_ID)
+        self.assertEqual(result["claim"]["assumptions"], [])
+        self.assertEqual(result["claim"]["transport_obligations"], list(progression.TRANSPORTS))
+        self.assertTrue(all(stage["claim_sha256"] == result["claim_sha256"]
+                            for stage in result["stages"]))
+
+    def test_concise_request_does_not_ignore_incompatible_manual_contract_fields(self):
+        cases = (
+            {**CONCISE_SPEC, "assumptions": ["assume the result"]},
+            {**CONCISE_SPEC, "claim_id": "unrelated_claim"},
+            {**CONCISE_SPEC, "transport_obligations": []},
+        )
+        with mock.patch("rds_operators.BoundedFiniteModelOperator.verify_cayley_property") as dispatch:
+            dispatch.side_effect = AssertionError("Invalid contract fields must not reach a proof stage")
+            for case in cases:
+                with self.subTest(case=case):
+                    result = progression.run_progression(case, native_verify=native_pass)
+                    self.assertEqual(result["status"], "UNKNOWN")
+                    self.assertEqual([stage["result"]["status"] for stage in result["stages"]],
+                                     ["SKIPPED"] * 3)
+            dispatch.assert_not_called()
 
     def test_empty_invalid_unrelated_and_oversized_declarations_stay_unknown(self):
         cases = []

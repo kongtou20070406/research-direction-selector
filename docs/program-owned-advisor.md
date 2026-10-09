@@ -1,5 +1,15 @@
 # Program-owned evidence and Advisor decisions
 
+Artifact import and this workflow share [operation-local result document
+parsing](artifact-import.md), while retaining their original source, receipt and
+execution checks.
+
+For optional complete-plan forecasts, bounded pilots and same-ledger executable
+tool improvement, see [predictive feasibility](predictive-feasibility.md).
+
+For locally qualified Python functions applied through frozen routes and read
+by current decision predicates, see [owned tool consumers](owned-tool-consumers.md).
+
 This workflow addresses [#119](https://github.com/kongtou20070406/research-direction-selector/issues/119): an agent submitting only its preferred direction or favorable results must not control the evidence used to choose its next run.
 
 The researcher establishes the goal, permitted commands, result readers and budget in the frozen project contract. After initialization, RDS receives run results, builds the current evidence graph, derives Advisor inputs and selects the next executable route. The agent can request a bounded next step and inspect its reasons. It cannot replace the inputs to this workflow with another context or a handwritten success summary.
@@ -25,8 +35,9 @@ Choose a new empty directory outside the checkout:
 ```powershell
 python -B examples/owned-advisor/prepare.py --root ../owned-advisor-demo
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project init --contract ../owned-advisor-demo/contract.json
-python -B scripts/rds_cli.py --root ../owned-advisor-demo advise
+python -B scripts/rds_cli.py --root ../owned-advisor-demo advise --working-set --brief
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project advance
+python -B scripts/rds_cli.py --root ../owned-advisor-demo advise --working-set --brief
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project advance
 python -B scripts/rds_cli.py --root ../owned-advisor-demo project next
 ```
@@ -35,9 +46,20 @@ Each `advance` executes at most one selected run. No agent-written post-run mani
 
 For routine agent use, add `--brief` to `advise`, `project next` or `project advance`. The digest retains receipt identity, collection status, selected run and coverage errors, with the full report in the existing CAS record.
 
+For Agent continuation, use `advise --working-set --brief`. The optional
+[current working set](advisor-working-set.md) adds the final owned selection,
+goal measurements, live budget, unresolved declarations, scoped verified
+feedback and original evidence locators. Read any `details_omitted` or omitted
+section's `original` before making a consequential choice. Display does not
+launch a run or call the metered structure APIs.
+
 The example is a six-row deterministic computation. Its comparison exercises collection and selection; it is not a scientific success-rate experiment or a training-performance benchmark.
 
 ## Frozen policy
+
+An optional [graph neural ranker](graph-neural-ranker.md) can report preferences
+or break ties inside the already eligible frozen Pareto frontier. It is
+disabled when absent and cannot change evidence or execution admission.
 
 Add `advisor_policy` to a normal project contract before `project init`:
 
@@ -71,6 +93,14 @@ Normal candidate predicates and existing bounded Advisor search determine eligib
 Completed routes retain their evidence and dependency nodes but no longer consume executable candidate slots. Active reservations are considered before new routes within the same frozen search limit; their current prerequisites, budget and evidence still have to pass. Genuine search truncation remains visible. This allows a limit-one campaign to continue after receiving a result without rerunning the completed route or changing its policy.
 
 ## Collection, graph and admission
+
+An optional frozen `autonomy` declaration connects repeated owned selection,
+bounded model repair, validated method adoption and continuation through
+`project drive`. Optional `confirmation` adds the program-replayed domain task
+gate to the original predicates, preventing candidate success from skipping
+confirmation. See [research drive](autonomy-loop.md) and
+[domain confirmation](domain-confirmation.md). Both use this same ledger and
+ordinary admission, without widening execution authority.
 
 RDS enumerates all registered runs and their owned receipts. It retains favorable and negative values, failures, timeouts, logs, declared outputs and unresolved readings. Original assets stay in the existing project artifacts/CAS; `owned:` nodes and relationships in the existing TMS map connect them to the current observations. Advisor consumes that program-produced state. The scope of completeness is the frozen run/output contract, not arbitrary disk contents, unregistered experiments or every possible scientific interpretation of a file.
 

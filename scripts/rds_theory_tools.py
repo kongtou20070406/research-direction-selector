@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import rds_operators as operators
+import rds_math_router as math_router
 from rds_theory_progression import InvalidProgression, load_spec, run_progression
 
 CATALOGUE = Path(__file__).resolve().parents[1] / "references" / "theory-tools.json"
@@ -99,15 +100,31 @@ def main():
     mode.add_argument("--scaffold")
     mode.add_argument("--test-operator")
     mode.add_argument("--progression", metavar="SPEC",
-                      help="Run the bounded finite-model -> EGraph -> native Lean example")
+                      help="Run the bounded finite-model -> EGraph -> native Lean chain; schema 2 derives its fixed contract")
+    mode.add_argument("--math-capabilities", action="store_true",
+                      help="List the registered, locally available bounded exact-math adapters")
+    mode.add_argument("--math-solve", metavar="REQUEST",
+                      help="Route a typed math request and independently replay its certificate")
+    mode.add_argument("--math-check", metavar="REQUEST",
+                      help="Replay a certificate against a typed request using exact standard-library arithmetic")
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--out", help="Create a new output file; requires --scaffold")
+    parser.add_argument("--certificate", help="Certificate JSON path; requires --math-check")
     args = parser.parse_args()
     try:
         require(1 <= args.limit <= 5, "Limit must be an integer in 1..5")
         require(args.out is None or args.scaffold is not None, "--out requires --scaffold")
+        require(args.certificate is None or args.math_check is not None,
+                "--certificate requires --math-check")
         if args.list_operators:
             result = {"status": "OK", "operators": list_operators()}
+        elif args.math_capabilities:
+            result = math_router.capabilities()
+        elif args.math_solve is not None:
+            result = math_router.solve_and_check(math_router.read_json(args.math_solve))
+        elif args.math_check is not None:
+            require(args.certificate is not None, "--math-check requires --certificate")
+            result = math_router.replay_file(args.math_check, args.certificate)
         elif args.progression is not None:
             try:
                 result = run_progression(load_spec(args.progression))
@@ -127,6 +144,10 @@ def main():
             return {"PASS": 0, "FAIL": 1, "UNKNOWN": 2}.get(result["test_result"]["status"], 2)
         if args.progression is not None:
             return {"PASS": 0, "FAIL": 1, "UNKNOWN": 2}.get(result["status"], 2)
+        if args.math_solve is not None:
+            return {"PASS": 0, "UNKNOWN": 2, "ERROR": 1}.get(result["status"], 1)
+        if args.math_check is not None:
+            return {"PASS": 0, "INVALID_CERTIFICATE": 1}.get(result["status"], 1)
         return 0
     except (ValueError, TypeError, KeyError, OSError) as exc:
         print(json.dumps({"status": "INVALID_INPUT", "reason": str(exc)}))

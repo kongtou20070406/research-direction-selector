@@ -63,6 +63,9 @@ def _parse_rational_string(value, name):
 
 IDENTITY = ("code_sha256", "config_sha256", "data_sha256", "data_split",
             "init", "seed", "checkpoint", "schedule", "sample_work", "numeric_protocol")
+# A successor chain (project init --supersedes) is read at most this many roots back by default (#178).
+PREDECESSOR_DEPTH = 8
+PREDECESSOR_DEPTH_CAP = 32
 
 
 def canonical(value):
@@ -250,7 +253,7 @@ class ProjectStore:
             if "advisor_policy" not in contract:
                 return None
             run = self._run(db, run_id)
-            if (allow_observation and "execution_policy" in contract
+            if (allow_observation and ("execution_policy" in contract or "method_evolution" in contract)
                     and (run["status"] != "RESERVED" or run["attempt_id"] is not None)):
                 return None
         return self._advisor_prepare(run["manifest"], contract)
@@ -317,6 +320,10 @@ class ProjectStore:
         return claims
 
     def _check_start(self, db, run):
+        from rds_steering import check_dispatch
+        check_dispatch(db, run['id'])
+        from rds_method_revision import pending_revision
+        require(pending_revision(db) is None, 'Resume prepared method revision before executing')
         # This run is already reserved. Do not charge its estimate a second time,
         # but do not let that reservation override costs settled since admission.
         for resource, amount in run["resource_estimates"].items():
@@ -326,6 +333,15 @@ class ProjectStore:
             require(row["spent"] + row["charged"] + row["reserved"] <= row["cap"] + 1e-9,
                     f"Insufficient {resource} budget before start")
         contract = self._contract(db)
+        if 'confirmation' in contract.get('advisor_policy', {}):
+            from rds_postcommit_confirmation import check_run as check_confirmation_run
+            check_confirmation_run(self, db, contract, run)
+        if 'autonomy' in contract.get('advisor_policy', {}):
+            from rds_autonomy import check_run
+            check_run(self, db, contract, run)
+        if contract.get('advisor_policy', {}).get('feasibility') is not None:
+            from rds_feasibility import check_start
+            check_start(self, db, run['id'])
         claims = self._output_claims(db)
         self._campaign_deadline(db, contract)
         if 'maintenance' in run['manifest']:
@@ -342,14 +358,16 @@ class ProjectStore:
         """One immutable deadline per owning ledger, including idle/recovery time."""
         if 'stop_policy' not in contract:
             return None
+        # Method adoption changes the effective digest, never the owning T0.
+        genesis_sha = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()[0]
         row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED' ORDER BY id LIMIT 1").fetchone()
         if row is None:
             require(admit, 'Stop policy: campaign admission is missing')
-            event = {'kind': 'CAMPAIGN_STARTED', 'contract_sha256': digest(contract), 'started_at': time.time()}
+            event = {'kind': 'CAMPAIGN_STARTED', 'contract_sha256': genesis_sha, 'started_at': time.time()}
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
         else:
             event = json.loads(row['body'])
-            require(event['contract_sha256'] == digest(contract), 'Stop policy: campaign binding differs')
+            require(event['contract_sha256'] == genesis_sha, 'Stop policy: campaign binding differs')
         deadline = event['started_at'] + contract['stop_policy']['wall_seconds']
         require(time.time() < deadline, 'Stop policy: CAMPAIGN_DEADLINE')
         return deadline
@@ -434,11 +452,8 @@ class ProjectStore:
         # Native research records can share this database before project init.
         require(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone(),
                 UNINITIALIZED)
-        row = db.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
-        require(row is not None, "Project contract is missing")
-        value = json.loads(row["body"])
-        require(digest(value) == row["sha256"], "Contract integrity failure")
-        return value
+        from rds_method_revision import effective_contract
+        return effective_contract(db)
 
     def _bindings(self, contract):
         found = []
@@ -497,11 +512,122 @@ class ProjectStore:
             return "Protocol identity uses reserved fields"
         return cls._protocol_conflict(contract, protocol)
 
-    def initialize(self, contract):
+    def _ledger_pins(self):
+        """This root's verified contract, receipt, checkpoint and predecessor-link digests, plus its link record.
+
+        Any damaged record is rejected. The link digest is None for a root that supersedes nothing, so a link
+        added, removed or replaced later changes the pins as much as a changed receipt does.
+        """
+        require(self.path.is_file(), f"No project ledger at {self.root}")
+        with self._db(True) as db:
+            db.execute("BEGIN")
+            contract = self._contract(db)
+            receipts = [self._receipt(row) for row in db.execute("SELECT run_id,sha256,body FROM receipts ORDER BY run_id")]
+            checkpoints = []
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+                for checkpoint_id, sha, body in db.execute("SELECT id,sha,body FROM checkpoints ORDER BY rowid"):
+                    require(isinstance(body, str) and hashlib.sha256(body.encode("utf-8")).hexdigest() == sha,
+                            f"Checkpoint integrity failure: {checkpoint_id}")
+                    checkpoints.append({"id": checkpoint_id, "sha256": sha})
+            link, link_sha = self._link_record(db)
+        return {"contract_sha256": digest(contract),
+                "receipt_digests": [{"run_id": r["run_id"], "sha256": r["sha256"]} for r in receipts],
+                "checkpoint_shas": checkpoints, "predecessor_sha256": link_sha}, link
+
+    @staticmethod
+    def _link_record(db):
+        """The predecessor link stored in db and its digest, or (None, None); a malformed link is damage, not a link."""
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='predecessor'").fetchone():
+            return None, None
+        row = db.execute("SELECT body,sha256 FROM predecessor WHERE id=1").fetchone()
+        require(row is not None and isinstance(row["body"], str), "Predecessor record is missing")
+        try:
+            record = json.loads(row["body"])
+        except (ValueError, RecursionError):
+            raise ValueError("Predecessor record is not valid JSON") from None
+        require(digest(record) == row["sha256"], "Predecessor record integrity failure")
+
+        def sha(value):
+            return isinstance(value, str) and len(value) == 64 and set(value) <= set("0123456789abcdef")
+
+        def pins(items, key):
+            return isinstance(items, list) and all(isinstance(item, dict) and set(item) == {key, "sha256"}
+                                                   and isinstance(item[key], str) and item[key] and sha(item["sha256"])
+                                                   for item in items)
+
+        require(isinstance(record, dict) and set(record) == {"schema", "root_path", "contract_sha256", "receipt_digests",
+                                                             "checkpoint_shas", "predecessor_sha256", "assurance"},
+                "Predecessor record is malformed: unexpected fields")
+        for field, valid in (("schema", type(record["schema"]) is int and record["schema"] == 1),
+                             ("root_path", isinstance(record["root_path"], str) and 0 < len(record["root_path"]) <= 4096),
+                             ("contract_sha256", sha(record["contract_sha256"])),
+                             ("receipt_digests", pins(record["receipt_digests"], "run_id")),
+                             ("checkpoint_shas", pins(record["checkpoint_shas"], "id")),
+                             ("predecessor_sha256", record["predecessor_sha256"] is None or sha(record["predecessor_sha256"])),
+                             ("assurance", record["assurance"] == "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION")):
+            require(valid, f"Predecessor record is malformed: {field}")
+        return record, row["sha256"]
+
+    def _predecessor(self):
+        """The predecessor this root recorded at init, or None for a root that supersedes nothing."""
+        if not self.path.is_file():
+            return None
+        with self._db(True) as db:
+            return self._link_record(db)[0]
+
+    def predecessor_chain(self, depth=PREDECESSOR_DEPTH):
+        """Check each recorded predecessor against the pins its successor stored; stop at the first failure.
+
+        A hop is VERIFIED when its contract, its own predecessor link and every pinned receipt and checkpoint are
+        present and unchanged. The next hop follows the link read in that same verified transaction.
+        Records the predecessor gained after it was superseded are counted, never pinned.
+        """
+        require(type(depth) is int and 0 <= depth <= PREDECESSOR_DEPTH_CAP,
+                f"Predecessor depth must be an integer in 0..{PREDECESSOR_DEPTH_CAP}")
+        chain, store, seen = [], self, {self.root}
+        # Damage of any shape at the traversal boundary is a MISMATCH; it never escapes into snapshot() or Advisor.
+        damaged = (ValueError, OSError, RuntimeError, sqlite3.Error, TypeError, KeyError, AttributeError)
+        try:
+            record = self._predecessor()
+        except damaged as exc:
+            return [{"root": str(self.root), "status": "MISMATCH", "reason": str(exc)}]
+        while record is not None:
+            hop = {"root": record["root_path"], "superseded_by": str(store.root), "contract_sha256": record["contract_sha256"]}
+            try:
+                target = (store.root / record["root_path"]).resolve()
+                hop["root"] = str(target)
+                if len(chain) >= depth:
+                    chain.append({**hop, "status": "TRUNCATED", "reason": f"Predecessor chain is longer than {depth} roots"})
+                    break
+                require(target not in seen, "Predecessor chain repeats a root")
+                seen.add(target)
+                require(target.is_dir() and (target / ".rds" / "project.sqlite3").is_file(), "Predecessor ledger is missing")
+                predecessor = ProjectStore(target)
+                current, link = predecessor._ledger_pins()
+                require(current["contract_sha256"] == record["contract_sha256"], "Predecessor contract differs from the recorded digest")
+                require(current["predecessor_sha256"] == record["predecessor_sha256"],
+                        "Predecessor's own link differs from the recorded digest")
+                for key, label in (("receipt_digests", "receipt"), ("checkpoint_shas", "checkpoint")):
+                    present = {json.dumps(item, sort_keys=True) for item in current[key]}
+                    for item in record[key]:
+                        require(json.dumps(item, sort_keys=True) in present,
+                                f"Predecessor {label} differs from the recorded digest: {item.get('run_id', item.get('id'))}")
+                hop.update(status="VERIFIED", checkpoint_ids=[item["id"] for item in record["checkpoint_shas"]],
+                           checkpoint_shas=record["checkpoint_shas"],
+                           unpinned_receipts=len(current["receipt_digests"]) - len(record["receipt_digests"]),
+                           unpinned_checkpoints=len(current["checkpoint_shas"]) - len(record["checkpoint_shas"]))
+            except damaged as exc:
+                chain.append({**hop, "status": "MISMATCH", "reason": str(exc)})
+                break
+            chain.append(hop)
+            store, record = predecessor, link
+        return chain
+
+    def initialize(self, contract, supersedes=None):
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
-                                  "primary_metric", "objective_sha256", "execution_policy", "stop_policy", "maintenance_allowance", "advisor_policy"}, "Unknown contract fields")
+                                  "primary_metric", "objective_sha256", "execution_policy", "stop_policy", "maintenance_allowance", "advisor_policy", "method_evolution"}, "Unknown contract fields")
         if "primary_metric" in contract:
             metric = contract["primary_metric"]
             require(isinstance(metric, dict) and set(metric) == {"name", "direction", "min_useful_delta"},
@@ -554,6 +680,8 @@ class ProjectStore:
             binding_roles.add((path, b["role"]))
             roles.add(b["role"])
         require(ROLES <= roles, "code/config/data/evaluator/protocol bindings required")
+        from rds_method_revision import validate_envelope
+        validate_envelope(self, contract)
         # A protocol file freezes with the contract, so a conflict here would reject every run that names it.
         for b in contract["bindings"]:
             if b["role"] != "protocol":
@@ -562,8 +690,10 @@ class ProjectStore:
                 protocol = load_json(self._path(b["path"]))
             except (ValueError, UnicodeDecodeError):
                 continue  # Not a JSON identity file; registration rejects it if a run names it.
-            conflict = self._protocol_conflict(contract, protocol) if isinstance(protocol, dict) else None
-            require(not conflict, f"{conflict} in {b['path']}; the protocol is frozen with the contract, "
+            if not isinstance(protocol, dict):
+                continue  # JSON but not an identity object; registration rejects it if a run names it.
+            error = self._protocol_error(contract, protocol)
+            require(not error, f"{error} in {b['path']}; the protocol is frozen with the contract, "
                     "so correct it and its binding SHA256 before project init")
         if 'maintenance_allowance' in contract:
             self._maintenance_context(contract)
@@ -591,10 +721,33 @@ class ProjectStore:
             # Owned routes register their frozen manifests, so each named protocol must pass registration now.
             for route in contract["advisor_policy"]["routes"]:
                 path = route["manifest"]["protocol"]["path"]
-                error = self._protocol_error(contract, load_json(self._path(path)))
+                try:
+                    protocol = load_json(self._path(path))
+                except (ValueError, UnicodeDecodeError):
+                    require(False, f"Frozen route '{route['manifest']['id']}' protocol {path} is not a JSON "
+                            "identity object; registration would reject every run naming it")
+                error = self._protocol_error(contract, protocol)
                 require(not error, f"Frozen route '{route['manifest']['id']}' cannot register with {path} ({error}). "
                         "The protocol is frozen with the contract, so correct it and its binding SHA256 before project init")
         canonical(contract)
+        predecessor = None
+        if supersedes is not None:
+            # A successor links a frozen root by digest only; the predecessor's bytes are never written (#178).
+            source = Path(supersedes).resolve()
+            require(source != self.root, "A project root cannot supersede itself")
+            require(source.is_dir() and (source / ".rds" / "project.sqlite3").is_file(),
+                    f"Predecessor has no project ledger: {source}")
+            try:
+                pins, _ = ProjectStore(source)._ledger_pins()
+            except (ValueError, sqlite3.Error) as exc:
+                raise ValueError(f"Predecessor ledger cannot be superseded: {exc}") from exc
+            try:
+                root_path = os.path.relpath(source, self.root)
+            except ValueError:
+                # Windows has no relative path across drives or to a UNC share; traversal joins an absolute path as-is.
+                root_path = str(source)
+            predecessor = {"schema": 1, "root_path": root_path, **pins,
+                           "assurance": "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION"}
         self.state_dir.mkdir(exist_ok=True)
         with self._db() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -613,10 +766,26 @@ class ProjectStore:
             db.execute("BEGIN IMMEDIATE")
             old = db.execute("SELECT sha256 FROM contract WHERE id=1").fetchone()
             if old:
-                require(old["sha256"] == digest(contract), "Contract is frozen; use a new project root")
+                require(old["sha256"] == digest(contract), "Contract is frozen; use a new project root"
+                        f" (project init --supersedes {_shell_argument(str(self.root))} links it to this root's ledger)")
+                if predecessor is not None:
+                    recorded = self._link_record(db)[0] or {}
+                    require(recorded.get("root_path") == predecessor["root_path"]
+                            and recorded.get("contract_sha256") == predecessor["contract_sha256"],
+                            "Predecessor is frozen with the contract; use a new project root")
             else:
+                from rds_owned_tools import preparation_costs
+                native_preparation = preparation_costs(self, contract, db=db)
                 db.execute("INSERT INTO contract VALUES (1,?,?)", (digest(contract), canonical(contract)))
                 db.executemany("INSERT INTO budget(resource,cap) VALUES (?,?)", list(budget.items()))
+                from rds_owned_tools import charge_preparation
+                charge_preparation(self, db, contract, native_preparation)
+                if predecessor is not None:
+                    db.execute("CREATE TABLE predecessor(id INTEGER PRIMARY KEY CHECK (id = 1),sha256 TEXT NOT NULL,body TEXT NOT NULL)")
+                    for action in ("UPDATE", "DELETE"):
+                        db.execute(f"CREATE TRIGGER predecessor_no_{action.lower()} BEFORE {action} ON predecessor "
+                                   "BEGIN SELECT RAISE(ABORT,'predecessor is append-only'); END")
+                    db.execute("INSERT INTO predecessor VALUES (1,?,?)", (digest(predecessor), canonical(predecessor)))
         return self.snapshot()
 
     @staticmethod
@@ -643,6 +812,8 @@ class ProjectStore:
             contract = self._contract(db)
             require('advisor_policy' not in contract,
                     'Program-owned Advisor requires project advance/create/execute; theory allowance cannot bypass it')
+            from rds_steering import check_dispatch
+            check_dispatch(db, run_id)
             require('stop_policy' not in contract and 'maintenance_allowance' not in contract,
                     'Configured stop/maintenance policies require project create/execute; theory allowance cannot bypass them')
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
@@ -740,6 +911,9 @@ class ProjectStore:
                    "executor_sha256": file_sha(executor), "attempt_id": None, "worker_pid": None,
                    "pid": None, "started_at": None, "finished_at": None, "observed_wall_seconds": 0.0,
                    "scheduler": None}
+            from rds_feasibility import runtime_fingerprint
+            run['effective_contract_sha256'] = digest(contract)
+            run['runtime_fingerprint'] = runtime_fingerprint()
             require(executor_sha256 is None or run['executor_sha256'] == executor_sha256,
                     'Execution policy: command executable changed before registration')
             if 'execution_policy' in contract:
@@ -747,7 +921,16 @@ class ProjectStore:
                     contract.get('objective_sha256'), arm=spec['arm'], executor_sha256=run['executor_sha256'])
             advisor_token = self._advisor_prepare(spec, contract)
             db.execute("BEGIN IMMEDIATE")
+            from rds_method_revision import pending_revision
+            require(pending_revision(db) is None, 'Resume prepared method revision before registering')
+            require(digest(self._contract(db)) == run['effective_contract_sha256'],
+                    'Method revision changed during run registration')
+            from rds_steering import check_dispatch
+            check_dispatch(db, run_id)
             self._advisor_check(db, spec, advisor_token)
+            if 'autonomy' in contract.get('advisor_policy', {}):
+                from rds_autonomy import bind_run
+                bind_run(self, db, contract, run)
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
             retained = self._runs(db)
             if 'execution_policy' in contract:
@@ -778,9 +961,17 @@ class ProjectStore:
                 require(key not in claims, "Output is already claimed by another run")
                 db.execute("INSERT INTO output_claims VALUES (?,?)", (key, run_id))
             self._campaign_deadline(db, contract, admit=True)
+            if 'confirmation' in contract.get('advisor_policy', {}):
+                from rds_postcommit_confirmation import bind_run as bind_confirmation_run
+                bind_confirmation_run(self, db, contract, run)
             for resource, amount in estimates.items():
                 db.execute("UPDATE budget SET reserved=reserved+? WHERE resource=?", (amount, resource))
+            if advisor_token is not None:
+                run['owned_history_recorded'] = True
             db.execute("INSERT INTO runs VALUES (?,?,?)", (run_id, "RESERVED", canonical(run)))
+            if advisor_token is not None:
+                from rds_owned_history import capture_choice
+                capture_choice(self, db, run, advisor_token['decision'])
         return run
 
     @classmethod
@@ -902,7 +1093,10 @@ class ProjectStore:
         run["run_status"] = "SUCCEEDED" if run["status"] == "COMPLETED" else run["status"]
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
-    def execute(self, run_id, background=False):
+    def execute(self, run_id, background=False, *, admission_guard=None):
+        # An internal caller may restrict admission after all ordinary checks.
+        # This callback grants no authority and is never supplied by the CLI.
+        require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
@@ -911,11 +1105,15 @@ class ProjectStore:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
             self._runs(db)
-            if 'execution_policy' in self._contract(db) and (run['status'] != 'RESERVED' or run['attempt_id'] is not None):
+            contract = self._contract(db)
+            if (('execution_policy' in contract or 'method_evolution' in contract)
+                    and (run['status'] != 'RESERVED' or run['attempt_id'] is not None)):
                 return self._observe(db, run)
             require(run["status"] == "RESERVED" and run["attempt_id"] is None, "Run already dispatched or started; recover never reruns it")
             self._advisor_check(db, run["manifest"], advisor_token)
             self._check_start(db, run)
+            if admission_guard is not None:
+                require(admission_guard(db, run) is None, "Admission guard must allow or raise")
             run["attempt_id"] = uuid.uuid4().hex
             if background:
                 run["scheduler"] = {"task_id": "RDS-Project-" + run["attempt_id"], "status": "REGISTERING"}
@@ -963,7 +1161,15 @@ class ProjectStore:
                            (run['id'], receipt['sha256'])).fetchone() is not None,
                 'Existing receipt has no matching owned completion event')
         if receipt.get('run_status') == 'SUCCEEDED':
-            require(receipt.get('bindings_before') == bindings == receipt.get('bindings_after'),
+            original_bindings = bindings
+            if 'method_evolution' in contract:
+                from rds_method_revision import contract_history
+                history = contract_history(db)
+                ancestor = next((h['contract'] for h in history if h['sha256'] ==
+                                 run.get('effective_contract_sha256', history[0]['sha256'])), None)
+                require(ancestor is not None, 'Existing run contract is outside verified method lineage')
+                original_bindings = ancestor['bindings']
+            require(receipt.get('bindings_before') == original_bindings == receipt.get('bindings_after'),
                     'Existing successful receipt input bindings differ')
             inventory = {entry['path']: entry['sha256'] for entry in receipt.get('artifacts', [])}
             for output in run['manifest']['outpaths']:
@@ -1177,6 +1383,9 @@ class ProjectStore:
                                                      if run["scheduler"] else None)}
         if stop_reason is not None:
             receipt["stop_reason"] = stop_reason
+        for field in ('effective_contract_sha256', 'runtime_fingerprint', 'autonomy_request', 'confirmation_challenge'):
+            if field in run:
+                receipt[field] = run[field]
         if run["manifest"].get("maintenance") is not None:
             receipt["maintenance"] = True
             receipt['maintenance_review'] = run['maintenance_review']
@@ -1205,6 +1414,9 @@ class ProjectStore:
                 self._save(db, current)
                 db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, receipt["sha256"], canonical(receipt)))
                 db.execute("INSERT INTO events(body) VALUES (?)", (canonical({"kind": "ATTEMPT_FINISHED", "run_id": run_id, "sha256": receipt["sha256"]}),))
+            if self._run(db, run_id).get('owned_history_recorded') is True:
+                from rds_owned_history import capture_completion
+                capture_completion(self, db, self._run(db, run_id), receipt)
         self._advisor_finished(contract)
         return receipt
 
@@ -1243,9 +1455,23 @@ class ProjectStore:
                     "runs": self._runs(db),
                     "exposures": [json.loads(r["body"]) for r in db.execute("SELECT body FROM exposures ORDER BY id")],
                     "receipts": [self._receipt(r) for r in db.execute("SELECT run_id,sha256,body FROM receipts ORDER BY run_id")]}
+            from rds_steering import current, view
+            steering = current(db)
+            if steering is not None:
+                snapshot['steering'] = view(steering)
+            if 'method_evolution' in contract:
+                from rds_method_revision import contract_history, pending_revision
+                snapshot['contract_history'] = contract_history(db)
+                pending = pending_revision(db)
+                snapshot['method_revision_pending'] = ({'id': pending['id'], 'sha256': pending['sha256']}
+                                                       if pending else None)
         if check_bindings:
             found, errors = self._bindings(contract)
             snapshot["binding_check"] = {"files": found, "errors": errors}
+        chain = self.predecessor_chain()
+        if chain:  # Only successor roots carry the field; every other snapshot is unchanged.
+            # Pinned checkpoint digests stay in the link record; the snapshot names the IDs only.
+            snapshot["predecessor_chain"] = [{k: v for k, v in hop.items() if k != "checkpoint_shas"} for hop in chain]
         return snapshot
 
     def _receipt_result(self, receipt):
@@ -1298,6 +1524,9 @@ class ProjectStore:
                 raise
             raise ValueError(initialize) from None
         runs = snap["runs"]
+        if snap.get('steering', {}).get('paused'):
+            return {'next_move': 'New dispatch is paused by the current user; inspect the retained instruction and original attempts',
+                    'command': f'{command} project steering', 'steering': snap['steering']}
         receipts = {r["run_id"]: r for r in snap["receipts"]}
         live = [r for r in runs if r["status"] == "RUNNING"]
         failed = [r for r in runs if r["status"] in ("FAILED", "INTERRUPTED")]
@@ -1305,14 +1534,23 @@ class ProjectStore:
         arms = {rid: (receipts[rid].get("arm"), receipts[rid].get("control_id")) for rid in executed}
         control_id = next((rid for rid, (arm, _) in arms.items() if arm == "control"), None)
         treatment_id = next((rid for rid, (_, cid) in arms.items() if cid is not None), None)
-        if failed:
-            run = failed[0]
+        unresolved = [run for run in failed if run['id'] not in receipts]
+        if unresolved:
+            run = unresolved[0]
             return {"next_move": "recover the failed run to a terminal recorded state",
                     "command": f"{command} project recover --id={_shell_argument(run['id'])}"}
         if live:
             run = live[0]
             return {"next_move": "wait for the running attempt, then re-check status",
                     "command": f"{command} project status --brief"}
+        if failed:
+            run = failed[0]
+            receipt = receipts[run['id']]
+            return {'next_move': 'review the recorded execution failure and its original evidence before proposing an authorized repair',
+                    'command': f'{command} project status --brief',
+                    'disposition': 'REVIEW_EXECUTION_FAILURE', 'run_id': run['id'],
+                    'run_status': receipt['run_status'], 'receipt_sha256': receipt['sha256'],
+                    'task_gain': 'UNKNOWN', 'mechanism': 'UNKNOWN'}
         if not executed:
             if not runs:
                 return {"next_move": "register the control arm from its manifest",

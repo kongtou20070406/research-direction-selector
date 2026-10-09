@@ -12,13 +12,76 @@
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 [![tests](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml)
 
-Connect a research goal, evidence and constraints to the next useful step — with Advisor guiding the decision and the kernel checking bounded execution.
+**Your agent proposes. The program keeps the books.**
+
+**Evidence-driven autoresearch for academic research.**
+
+A local research kernel for academic research and agent-driven experiment workflows with Codex, Claude Code and other coding agents. It freezes goals, inputs and evaluators before execution, reserves budgets, preserves execution receipts and carries recorded evidence across sessions. Use it to plan bounded experiments, recover interrupted work and verify supported results.
+
+[RDS in autoresearch workflows](docs/autoresearch.md) · [CPU receipt and recovery example](examples/autoresearch-receipts/README.md) · [Cite this software](CITATION.cff)
 
 **English** · [Simplified Chinese](README.zh-CN.md) · [Japanese](README.ja-JP.md)
 
 </div>
 
 <br />
+
+## Why RDS
+
+An agent's effort is expensive, stochastic and hard to optimize. A program's effort is cheap, deterministic and testable. Yet in agent-driven research, the agent usually carries everything: the goal it was given, the metric it promised, the runs it already paid for, the budget left, and the ideas that already failed. Long jobs, quotas and new sessions are where that memory breaks.
+
+RDS moves every part of that bookkeeping that needs no judgment out of the agent and into a local, append-only ledger. The agent keeps the work that only it can do: framing hypotheses, choosing what to compare and interpreting evidence with you.
+
+| Without RDS, an agent… | With RDS… |
+| :--- | :--- |
+| relaunches a slow job it lost track of and pays twice | each registered run executes once; an identical call returns the existing receipt |
+| moves the metric or threshold after seeing the result | metric, threshold, data and evaluator are hash-bound before the first run |
+| reads exit code 0 as "it worked" | a failed goal predicate stays `FALSE`; missing or inconclusive support stays `UNKNOWN` |
+| starts a new session and retries a route that was already rejected | the ledger survives sessions; Advisor flags repeated rejected routes and oscillating decisions |
+| tracks the remaining budget in its head | wall and CPU budgets are reserved before dispatch; failed and timed-out attempts still count |
+
+## Measured, not promised
+
+We test RDS with real agents on synthetic tasks that have a known answer, and publish negative results as well as positive ones.
+
+- **Costly runs with a quota.** In a launch-decision task (gpt-6-luna, medium effort, 12 trials per arm with 20 s and 60 s query latency), agents given the experimenter's plan as prompt text spent quota on duplicate queries in 6/12 trials and reached the wrong decision in 4/12. Every wrong decision followed duplicate queries. With the same plan frozen and executed by the RDS kernel, 0/12 were wrong and 1/12 had duplicate queries; in that trial the agent called the runner directly while the kernel's run was still in progress (two-sided Fisher p ≈ 0.09 for wrong decisions; [design and data](https://github.com/kongtou20070406/research-direction-selector/issues/166#issuecomment-5974529436)).
+- **Where RDS does not help (yet).** On trap tasks that are cheap to re-check, unaided Codex reached no wrong conclusion in 80 trials across three reasoning-effort levels. RDS did not raise accuracy there; it added receipts, recovery and escape resistance, at a 20–50% time cost ([h1–h3 reports](https://github.com/kongtou20070406/research-direction-selector/issues/120#issuecomment-5969647240)).
+
+These are small samples with one model family. They support a narrow claim: the kernel's value is exactly-once, auditable execution of costly work. They do not show that RDS makes a model a better scientist. Turning research guidance into a measurable gain is the focus of the [5.9 planning thread](https://github.com/kongtou20070406/research-direction-selector/issues/166).
+
+## Try it in two minutes
+
+**1. Let your agent install it.** Give this to Codex, Claude Code or any agent with shell access:
+
+```text
+Install Research Direction Selector from
+https://github.com/kongtou20070406/research-direction-selector
+as the research-direction-selector agent Skill.
+Keep the whole repository, including scripts, references, and examples.
+Use this project's .agents/skills directory and verify the CLI version.
+Then read SKILL.md and help me start from my actual research question.
+```
+
+**2. Wrap one costly command.** No contract or JSON is needed. From your project directory (Python 3.11+, standard library only):
+
+```powershell
+python -B .agents/skills/research-direction-selector/scripts/rds_cli.py --root . exec --name train-001 -t 600 -o outputs/result.json train.py
+```
+
+RDS copies the inputs into a frozen job directory, reserves the time limit, runs the job and records a receipt in `.rds/`. Run the identical command again and it returns `EXISTING_JOB` instead of paying a second time. See [wrap a command](docs/agent-entry.md#wrap-a-command) for bindings, outputs and limits.
+
+**3. Ask in plain language.** For example:
+
+```text
+Use RDS to inspect why the metric has stopped improving. Use the existing logs to distinguish training problems from capacity limits.
+Use RDS to review these two ablations that change several things at once. Design a minimal fair comparison that distinguishes the explanations.
+Use RDS to continue this project. Check the remaining budget and completed runs before proposing new work.
+Use RDS to evaluate the current contraction hypothesis and generate checked evidence for a supported formal statement.
+```
+
+More copyable prompts, and what to do on `[RDS-REJECT]`, are in the [quick start](docs/quickstart.md).
+
+---
 
 ## Two sides of the research loop
 
@@ -28,9 +91,9 @@ RDS is an Advisor-centered research decision system with two cooperating sides a
 
 **Program side** — the local CLI (`scripts/rds_cli.py`) binds supported actions to source, inputs and resources, checks admission and records results and receipts. In a project with a frozen `advisor_policy`, it updates program-owned state and uses Advisor to select the next permitted route before dispatch.
 
-The loop is **goal and constraints → Advisor decision → constrained execution → results and receipts → updated research state → Advisor**. Project records live in `.rds/`; `references/judgment-graph.yaml` supplies scoped methodology rules, not an automatically rewritten collection of proven causal laws. A failed goal predicate remains `FALSE`; missing or inconclusive scientific support remains `UNKNOWN`.
+The loop is **goal and constraints → Advisor decision → constrained execution → results and receipts → updated research state → Advisor**. Project records live in `.rds/`; `references/judgment-graph.yaml` supplies scoped methodology rules, not an automatically rewritten collection of proven causal laws.
 
-The [5.8 vision and collaboration plan](docs/5.8-vision.md) describes the proposed goal-linked decision loop, testable reformulation, conditional tool library and work packages. It distinguishes existing behavior from work under review; 5.8.0 remains Unreleased.
+5.8.0 remains the latest stable release. The next 5.9 preview is `5.9.0-rc.2`; see the [preview notes](docs/releases/5.9.0-rc.2-preview.md) for scope and release validation. Its research-capability claims remain unproven; see the [5.9 evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166).
 
 ---
 
@@ -69,37 +132,17 @@ flowchart TD
 - **`.rds/` project records, the Obelisk history interface, and the judgment graph (`judgment-graph.yaml`)** mainly belong to **③ Research State & Memory**, where other components can read them.
 - **L1–L5** are [capability levels](docs/research-autonomy.md) discussed in the research framework, not additional components.
 
-The **3 foundational components + 2 enhancement components** are five responsibilities in one loop. Advisor is the decision interface between evidence and the next action; this does not make every connection autonomous or prove that the loop improves scientific outcomes. See [research workflow](docs/research-workflow.md) and [autonomy scope](docs/research-autonomy.md).
+The five components are responsibilities in one loop. Advisor is the decision interface between evidence and the next action; this does not make every connection autonomous or prove that the loop improves scientific outcomes. See [research workflow](docs/research-workflow.md) and [autonomy scope](docs/research-autonomy.md).
 
 ---
 
 ## Skill: agent-first research guidance
 
-You can use RDS in your agent like:
-
-```text
-Use RDS to inspect why the metric has stopped improving. Use the existing logs to distinguish training problems from capacity limits.
-Use RDS to review these two ablations that change several things at once. Design a minimal fair comparison that distinguishes the explanations.
-Use RDS to continue this project. Check the remaining budget and completed runs before proposing new work.
-Use RDS to evaluate the current contraction hypothesis and generate checked evidence for a supported formal statement.
-```
+The Skill is what your agent reads. It tells the agent when to call the kernel, how to state a fair comparison, and how to report results without upgrading `UNKNOWN` to success.
 
 ### Install
 
-For Claude Code/Codex plugins and the OMP extension with compact invocation status, see [host plugin packaging](docs/host-plugins.md). The existing standalone Skill installation remains supported.
-
-#### Let your agent install it (recommended)
-
-Give this setup instruction directly to Codex, Claude Code, or any agent with shell access:
-
-```text
-Install Research Direction Selector from
-https://github.com/kongtou20070406/research-direction-selector
-as the research-direction-selector agent Skill.
-Keep the whole repository, including scripts, references, and examples.
-Use this project's .agents/skills directory and verify the CLI version.
-Then read SKILL.md and help me start from my actual research question.
-```
+The recommended agent-driven install is in [Try it in two minutes](#try-it-in-two-minutes). For Claude Code/Codex plugins and the OMP extension with compact invocation status, see [host plugin packaging](docs/host-plugins.md). The standalone Skill installation remains supported.
 
 #### Manual install
 
@@ -112,13 +155,7 @@ git clone https://github.com/kongtou20070406/research-direction-selector.git "$e
 
 ## Deterministic Execution & Acceptance Kernel
 
-The kernel (`scripts/rds_cli.py`) runs on pure Python 3.11+ standard library:
-
-CLI invocations are logged locally by default. Show daily use with
-`python -B scripts/rds_cli.py usage --days 7`, or select an inclusive range with
-`usage --since 2026-09-01 --until 2026-10-01`. Add `--json` for command totals and
-structured daily counts. See [CLI usage](docs/cli-usage.md) for tracking coverage
-and the local log location.
+The kernel (`scripts/rds_cli.py`) runs on pure Python 3.11+ standard library. Use `exec` for a single wrapped command, or a project contract when you want a pre-registered comparison.
 
 Run the following CPU demonstration from the repository root, using a new empty `./my-project` directory. The preparation step creates the bound contract and manifests for both arms; this demonstration does not establish scientific confirmation. See the [project-runner example](examples/project-runner/README.md) for execution and receipt details.
 
@@ -145,6 +182,12 @@ For this example without `advisor_policy`, the kernel derives a procedural next 
 print the one action to take now (register, execute, recover, compare or record
 the decision) with its runnable command; agents can drive the whole loop by
 repeating that step without memorizing the sequence above.
+
+CLI invocations are logged locally by default. Show daily use with
+`python -B scripts/rds_cli.py usage --days 7`, or select an inclusive range with
+`usage --since 2026-09-01 --until 2026-10-01`. Add `--json` for command totals and
+structured daily counts. See [CLI usage](docs/cli-usage.md) for tracking coverage
+and the local log location.
 
 ---
 
@@ -188,18 +231,21 @@ A checked mathematical statement does not establish task performance, causal iso
 
 [Program-owned campaigns](docs/program-owned-advisor.md) freeze the goal predicates, permitted routes and result readers. `project advance` executes at most one program-selected route, settles its receipt, collects declared outputs into the current evidence graph and returns the next Advisor report. Completed routes retain evidence without occupying executable candidate slots. Collection recovery reuses retained results rather than repeating the completed experiment. Projects without `advisor_policy` retain their caller-directed behavior.
 
+[Bounded research drive](docs/autonomy-loop.md) connects repeated selection to authorized model proposals when a method is blocked, validates tool changes through the existing workbench/revision gate, and continues with retained costs and evidence. [Domain confirmation](docs/domain-confirmation.md) checks exact mathematical certificates, finite integer algorithm cases, and CPU tensor metrics separately from execution success. These scoped checks do not establish general scientific autonomy or independent research gains.
+
 Advisor connects the original goal to current facts and constraints within the available candidate space. Results can enable a route, close the declared goal, expose a blocker or motivate a reformulation proposal. Agents still supply new hypotheses, check application assumptions and work with domain-specific verifiers; the program does not silently widen a frozen policy. This restricts caller cherry-picking within declared RDS entries, not commands outside RDS.
 
 `scripts/rds_advisor.py` uses recorded evidence and the methodology graph to propose next steps:
 - **Evidence before diagnosis** — A single loss value does not support an overfitting or underfitting diagnosis. Paired curves or comparable observations provide context for candidate explanations.
 - **Localization before intervention** — For NaN/Inf, suggestions prioritize locating the first nonfinite value and checking precision or update paths before changing numerical safeguards.
+- **Loop-history review** — Recorded checkpoints let Advisor flag a route that repeats an earlier rejection, a reopened review, or decisions that oscillate between the same options.
 - **Graph-guided candidates** — Methodology rules organize diagnostic leads and exploration candidates. Their ranking does not prove a causal effect, Pareto optimality, or that an experiment satisfies every rule obligation.
 
 ```powershell
 python -B scripts/rds_cli.py --root ./my-project advise
 ```
 
-Real CLI workflows and regression tests demonstrate these engineering behaviors. A goal predicate can be `FALSE` even when both commands succeed; scientific support can remain `UNKNOWN` even when a numerical threshold is met. Better scientific decisions or RSI policy gain require a fair prospective comparison on unused cases at equal total budgets, including failures and evaluation costs; that benefit has not been established here.
+Real CLI workflows and regression tests demonstrate these engineering behaviors. A goal predicate can be `FALSE` even when both commands succeed; scientific support can remain `UNKNOWN` even when a numerical threshold is met. Better scientific decisions or RSI policy gain require a fair prospective comparison on unused cases at equal total budgets, including failures and evaluation costs; see [Measured, not promised](#measured-not-promised) for what has been measured so far.
 
 ---
 
@@ -246,6 +292,19 @@ scripts/rds_adversary.py         RSI adversarial variants and evaluation candida
 benchmark/                       Historical decision packets & red-team benchmarks
 tests/                           Full regression test suite
 ```
+
+---
+
+## Get involved
+
+RDS is built in the open, and the most useful contributions right now are not only code:
+
+- **Hard tasks for agents.** A synthetic task where an unaided agent reaches a wrong conclusion is worth more to us than a new feature. Benchmark fixtures, graders and agent-trial reports are welcome ([#169](https://github.com/kongtou20070406/research-direction-selector/issues/169)).
+- **Your research workflow.** Tell us where your agent loses track of runs, budgets or rejected ideas. Real failure modes shape the roadmap.
+- **Hosts and adapters.** Plugins for more agent hosts, execution backends and formal-verification adapters.
+- **Translations and docs.** The READMEs exist in English, Chinese and Japanese; corrections are welcome.
+
+Start with the [contribution guide](CONTRIBUTING.md), browse [open issues](https://github.com/kongtou20070406/research-direction-selector/issues), or open one describing your research problem.
 
 ---
 

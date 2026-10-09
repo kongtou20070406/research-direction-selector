@@ -1,0 +1,1 @@
+{"contract_id":"synthetic-wheel-v1","data_slice_sha256":"abcb2a368959e5d75280c6453bf3bdca493a0f20756b43c2a085c3a565f3ff2a","evaluator_sha256":"0d372dffc1cf3e9b4e101ca9fa1217937eef2ec54a697d51e8b470878d80500f","metric":"loss","screen_wall_ms":1000,"threshold":5,"wall_ms":90000}

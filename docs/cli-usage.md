@@ -8,11 +8,11 @@ commands and statistics queries.
 SQLite lock waits share a ten-second budget per logging phase for temporary contention;
 persistent failures leave the command's original result unchanged. Existing journal
 modes are retained, and fresh logs use SQLite's default mode without a first-use
-existence/PRAGMA race. Idempotent schema preparation commits each statement before
-the call's write transaction, so a process paused between schema setup and logging
-does not hold a writer reserved for other calls. Tracking and the start row are
-still written atomically; reports read one consistent snapshot without reserving
-a writer. A writer stalled inside a data transaction can still exhaust another
+existence/PRAGMA race. Cold or partial-schema writes initialize the schema and
+write tracking and the start row atomically in one transaction before its first
+commit. Cold readers commit schema preparation before opening their consistent
+read snapshot; warm reads use the existing schema without reserving a writer.
+A writer stalled inside a data transaction can still exhaust another
 call's bounded wait; complete recording is not guaranteed during persistent contention.
 The invocation reports a logging failure to stderr as
 [RDS-USAGE-DEGRADED], naming the start/finish phase, exception type and available

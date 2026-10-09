@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "kind": "affine_fixed_point_synthesis",
+  "model": {
+    "matrix": [["1/2"]],
+    "bias": ["1/3"]
+  }
+}

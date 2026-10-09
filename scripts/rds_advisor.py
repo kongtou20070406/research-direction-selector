@@ -679,55 +679,132 @@ class RDSAdvisor:
         checked_witnesses = set()
         skipped_goal_records = []
 
-        def decision_row(prior, checkpoint_id, sha, same_question, same_goal):
-            return {**_checkpoint_route(prior, checkpoint_id, directory, checked_witnesses, same_question),
-                    "checkpoint_id": checkpoint_id, "checkpoint_sha256": sha,
-                    "same_question": same_question, "same_goal": same_goal}
+        def decision_row(prior, checkpoint_id, sha, same_question, same_goal, records, root):
+            row = {**_checkpoint_route(prior, checkpoint_id, records, checked_witnesses, same_question),
+                   "checkpoint_id": checkpoint_id, "checkpoint_sha256": sha,
+                   "same_question": same_question, "same_goal": same_goal}
+            if root is not None:
+                row["root"] = root  # A record read from a predecessor root through its successor chain (#178).
+            return row
+
+        def collect(db, records, contract_sha, rows, skipped, root=None, pinned=None, contracts=None):
+            seen = set()
+            for checkpoint_id, sha, raw in db.execute("SELECT id,sha,body FROM checkpoints ORDER BY rowid"):
+                if pinned is not None:
+                    if checkpoint_id not in pinned:
+                        continue  # Records a predecessor gained after it was superseded are not part of the chain.
+                    # The successor's pin, not the row's own hash, decides which bytes the chain admits (#178).
+                    _require(sha == pinned[checkpoint_id], "Predecessor checkpoint differs from the pinned digest: " + checkpoint_id)
+                    seen.add(checkpoint_id)
+                _require(isinstance(raw, str) and len(raw.encode("utf-8")) <= checkpoint_cap
+                         and hashlib.sha256(raw.encode("utf-8")).hexdigest() == sha, "Checkpoint integrity failure: " + checkpoint_id)
+                record = strict_json(raw)
+                _require(record.get("id") == checkpoint_id and record.get("schema") == SCHEMA
+                         and record.get("kind") == kind and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", checkpoint_id),
+                         "Checkpoint identity mismatch: " + checkpoint_id)
+                recorded_contract_sha = record.get("contract_sha256")
+                allowed_contracts = contracts if contracts is not None else {contract_sha: None}
+                _require(recorded_contract_sha in allowed_contracts
+                         and _sha(record["snapshot"]["contract"]) == recorded_contract_sha
+                         and (allowed_contracts[recorded_contract_sha] is None
+                              or record["snapshot"]["contract"] == allowed_contracts[recorded_contract_sha]),
+                         "Checkpoint contract mismatch: " + checkpoint_id)
+                prior = record.get("decision", {})
+                if not isinstance(prior, dict):
+                    continue
+                same_question = prior.get("question_id") == decision["id"]
+                same_goal = (goal_key is not None and prior.get("goal_revision") == decision["goal_revision"]
+                             and _text(prior.get("question_id")) and _goal_key(prior.get("goal_conditions")) == goal_key)
+                if not (same_question or same_goal):
+                    continue
+                if not all(key in prior for key in CHECKPOINT_ROUTE_FIELDS):
+                    continue  # Older opaque contexts never become route decisions.
+                if same_question:
+                    rows.append(decision_row(prior, checkpoint_id, sha, True, same_goal, records, root))
+                    continue
+                try:  # Another question's record adds history; it was never part of this question's review.
+                    rows.append(decision_row(prior, checkpoint_id, sha, False, True, records, root))
+                except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
+                    skipped.append(checkpoint_id)
+            if pinned is not None:
+                _require(seen == set(pinned), "Pinned predecessor checkpoint is missing: "
+                         + ", ".join(sorted(set(pinned) - seen)[:3]))
+
+        def connect(database):
+            db = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=0.05)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("BEGIN")
+            return db
 
         try:
-            db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=0.05)
+            db = connect(path)
             try:
-                db.execute("PRAGMA query_only=ON")
-                db.execute("BEGIN")
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
-                    return None
-                if kind == "project":
-                    row = db.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
-                    contract, contract_sha = strict_json(row[0]), row[1]
+                    db.close()
+                    db = None
+                elif kind == "project":
+                    from rds_method_revision import contract_history
+                    lineage = contract_history(db)
+                    contract, contract_sha = lineage[-1]['contract'], lineage[-1]['sha256']
+                    checkpoint_contracts = {entry['sha256']: entry['contract'] for entry in lineage}
                 else:
                     live = strict_json(db.execute("SELECT body FROM state WHERE id=1").fetchone()[0])
                     contract, contract_sha = live["contract"], live["contract_sha256"]
-                _require(_sha(contract) == contract_sha and state.get("contract_sha256") == contract_sha
-                         and state.get("contract") == contract, "Live contract integrity or scope mismatch")
-                for checkpoint_id, sha, raw in db.execute("SELECT id,sha,body FROM checkpoints ORDER BY rowid"):
-                    _require(isinstance(raw, str) and len(raw.encode("utf-8")) <= checkpoint_cap
-                             and hashlib.sha256(raw.encode("utf-8")).hexdigest() == sha, "Checkpoint integrity failure: " + checkpoint_id)
-                    record = strict_json(raw)
-                    _require(record.get("id") == checkpoint_id and record.get("schema") == SCHEMA
-                             and record.get("kind") == kind and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", checkpoint_id),
-                             "Checkpoint identity mismatch: " + checkpoint_id)
-                    _require(record.get("contract_sha256") == contract_sha
-                             and _sha(record["snapshot"]["contract"]) == contract_sha,
-                             "Checkpoint contract mismatch: " + checkpoint_id)
-                    prior = record.get("decision", {})
-                    if not isinstance(prior, dict):
-                        continue
-                    same_question = prior.get("question_id") == decision["id"]
-                    same_goal = (goal_key is not None and prior.get("goal_revision") == decision["goal_revision"]
-                                 and _text(prior.get("question_id")) and _goal_key(prior.get("goal_conditions")) == goal_key)
-                    if not (same_question or same_goal):
-                        continue
-                    if not all(key in prior for key in CHECKPOINT_ROUTE_FIELDS):
-                        continue  # Older opaque contexts never become route decisions.
-                    if same_question:
-                        history.append(decision_row(prior, checkpoint_id, sha, True, same_goal))
-                        continue
-                    try:  # Another question's record adds history; it was never part of this question's review.
-                        history.append(decision_row(prior, checkpoint_id, sha, False, True))
-                    except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
-                        skipped_goal_records.append(checkpoint_id)
+                if db is not None:
+                    _require(_sha(contract) == contract_sha and state.get("contract_sha256") == contract_sha
+                             and state.get("contract") == contract, "Live contract integrity or scope mismatch")
+                chain = []
+                if kind == "project":
+                    from rds_project import PREDECESSOR_DEPTH, ProjectStore
+                    depth = context.get("predecessor_depth", PREDECESSOR_DEPTH)
+                    chain = ProjectStore(self.root_dir).predecessor_chain(depth)
+                unverified = "Records at and beyond this root were not read; this root's own history is unaffected."
+                for hop in chain:
+                    if hop["status"] == "MISMATCH":
+                        review["flags"].append({"kind": "PREDECESSOR_CHAIN_UNVERIFIED", "root": hop["root"], "reason": hop["reason"],
+                                                "effect": unverified})
+                    elif hop["status"] == "TRUNCATED":
+                        review["limitations"].append(f"PREDECESSOR_CHAIN_TRUNCATED: roots from {hop['root']} back were not read "
+                                                     f"({hop['reason']}).")
+                inherited = []
+                for hop in (hop for hop in chain if hop["status"] == "VERIFIED"):  # Newest predecessor first.
+                    # Each hop is re-read in its own transaction and must still match the pins the chain check used;
+                    # a hop that fails here is dropped with every older root, as a MISMATCH in the chain would be.
+                    rows, skipped = [], []
+                    try:
+                        root = Path(hop["root"])
+                        other = connect(root / ".rds" / "project.sqlite3")
+                        try:
+                            row = other.execute("SELECT body,sha256 FROM contract WHERE id=1").fetchone()
+                            _require(row is not None and row[1] == hop["contract_sha256"]
+                                     and _sha(strict_json(row[0])) == row[1], "Predecessor contract integrity failure: " + hop["root"])
+                            pinned = {item["id"]: item["sha256"] for item in hop["checkpoint_shas"]}
+                            if pinned:
+                                collect(other, root / ".rds", row[1], rows, skipped, hop["root"], pinned)
+                        finally:
+                            other.close()
+                    except (sqlite3.Error, OSError, ValueError, KeyError, TypeError, AttributeError, UnicodeError,
+                            RecursionError) as exc:
+                        review["flags"].append({"kind": "PREDECESSOR_CHAIN_UNVERIFIED", "root": hop["root"], "reason": str(exc),
+                                                "effect": unverified})
+                        break
+                    inherited.append((rows, skipped))
+                if inherited:
+                    review["limitations"].append(
+                        f"History includes pinned records from {len(inherited)} predecessor root(s); they are recorded input "
+                        "of earlier frozen contracts, not scientific verification.")
+                for rows, skipped in reversed(inherited):  # Oldest root first, so a later decision still wins.
+                    history.extend(rows)
+                    skipped_goal_records.extend(skipped)
+                if db is not None:
+                    collect(db, directory, contract_sha, history, skipped_goal_records,
+                            contracts=checkpoint_contracts if kind == "project" else None)
+                elif not inherited and not review["flags"]:
+                    return None
             finally:
-                db.close()
+                if db is not None:
+                    db.close()
         except (sqlite3.Error, OSError, ValueError, KeyError, TypeError, AttributeError, UnicodeError, RecursionError) as exc:
             review["flags"].append({"kind": "LOOP_HISTORY_REVIEW_ERROR", "reason": str(exc)})
             review["status"] = "REVIEW_REQUIRED"
@@ -755,6 +832,8 @@ class RDSAdvisor:
             review["flags"].append({"kind": "DECISION_OSCILLATION", "question_id": decision["id"],
                 "checkpoint_ids": [row["checkpoint_id"] for row in choices[-3:]],
                 "route_sha256": [row["route_sha256"] for row in choices[-3:]]})
+            if any("root" in row for row in choices[-3:]):
+                review["flags"][-1]["roots"] = [row.get("root") for row in choices[-3:]]
 
         def filter_search(output):
             for key in ("experiment_composition", "rule_search"):
@@ -786,6 +865,8 @@ class RDSAdvisor:
                     flag['witness_sha256'] = prior['falsification']['sha256']
                 if prior["question_id"] != decision["id"]:
                     flag["recorded_question_id"] = prior["question_id"]
+                if "root" in prior:
+                    flag["root"] = prior["root"]
                 if flag not in review["flags"]:
                     review["flags"].append(flag)
                 if changed:
@@ -830,11 +911,11 @@ class RDSAdvisor:
                 rows = [row for row in rows if row["review_context"] == context]
             if rows:
                 variants.append(candidate.get("id"))
-                related.update((row["checkpoint_id"], row) for row in rows)
+                related.update(((row.get("root"), row["checkpoint_id"]), row) for row in rows)
         if related:
             # Parameter-only variants of routes rejected for this goal; not a capacity bound or a guilty premise.
-            order = {row["checkpoint_id"]: index for index, row in enumerate(recorded)}
-            related = sorted(related.values(), key=lambda row: order[row["checkpoint_id"]])
+            order = {(row.get("root"), row["checkpoint_id"]): index for index, row in enumerate(recorded)}
+            related = sorted(related.values(), key=lambda row: order[(row.get("root"), row["checkpoint_id"])])
             review["flags"].append({"kind": "GOAL_ROUTES_REJECTED", "goal_revision": decision["goal_revision"],
                 "rejected_routes": len(related), "candidate_ids": variants,
                 "question_ids": list(dict.fromkeys(row["question_id"] for row in related))[-8:],

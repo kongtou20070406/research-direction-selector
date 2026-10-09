@@ -16,7 +16,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from usage_cli_fixture import count_diagnostics, dual_sqlite_wait, ledger_snapshot, paused_schema, run_cli, slow_schema_commits, wait_marker
+from usage_cli_fixture import attach_usage_diagnostics, caller_commit_reader, cold_commit_handoff, count_diagnostics, dual_sqlite_wait, ledger_snapshot, paused_schema, phase_diagnostics, run_cli, slow_schema_commits, wait_marker
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -541,27 +541,260 @@ class UsageTests(unittest.TestCase):
 
     def test_slow_schema_initialization_retains_first_concurrent_calls(self):
         # Three separate schema commits consume the ten-second start budget
-        # under this declared slow-storage fixture. One schema transaction
-        # keeps the unchanged twelve calls within the same bounded budget.
+        # under this declared slow-storage fixture. The cold schema/start
+        # transaction keeps twelve calls within the same bounded budget.
         self.assertFalse(self.path.exists())
         with slow_schema_commits(self.folder, self.path) as probe:
             environment = {**os.environ, **probe["environment"]}
-            with patch.dict(os.environ, environment), ThreadPoolExecutor(max_workers=8) as workers:
-                children = list(workers.map(lambda _: self.cli("--version"), range(12)))
-            delays = [json.loads(line) for path in probe["work"].glob("*.jsonl")
-                      for line in path.read_text(encoding="utf-8").splitlines()]
-        report = usage.summarize(days=1)
-        evidence = count_diagnostics(self.path, children, report) + " schema=" + json.dumps(delays)
+            completed, gate = {}, threading.Lock()
+
+            def invoke(index):
+                child = self.cli("--version")
+                with gate:
+                    completed[index] = child
+                return child
+
+            try:
+                with patch.dict(os.environ, environment), ThreadPoolExecutor(max_workers=8) as workers:
+                    children = list(workers.map(invoke, range(12)))
+                delays = [json.loads(line) for path in probe["work"].glob("*.jsonl")
+                          for line in path.read_text(encoding="utf-8").splitlines()]
+                report = usage.summarize(days=1)
+            except BaseException as exc:
+                attach_usage_diagnostics(exc, self.path,
+                                         [completed[index] for index in sorted(completed)], probe["work"])
+                raise
+            phases = phase_diagnostics(probe["work"], self.path,
+                                       expected_pids=[child.fixture_timing["pid"] for child in children])
+        evidence = (count_diagnostics(self.path, children, report)
+                    + " schema=" + json.dumps(delays) + " phases=" + json.dumps(phases))
         self.assertTrue(all(child.returncode == 0 for child in children), evidence)
         self.assertEqual(report["total_calls"], 12, evidence)
         self.assertEqual(report["daily"][0]["successful"], 12, evidence)
         self.assertEqual(report["daily"][0]["unfinished"], 0, evidence)
         self.assertTrue(delays and all(row["writer_held"] for row in delays), evidence)
+        self.assertEqual(phases["status"], "OBSERVED", evidence)
+
+    def test_slow_schema_trace_preserves_real_busy_and_cli_result(self):
+        # An external real writer is deliberately untraced: retain the exact
+        # failing statement/PID, but never guess its holder from absent data.
+        warmup = self.cli("--version")
+        self.assertEqual(warmup.returncode, 0)
+        before = ledger_snapshot(self.path)
+        with slow_schema_commits(self.folder, self.path) as probe:
+            with closing(sqlite3.connect(self.path, isolation_level=None)) as writer:
+                writer.execute("BEGIN IMMEDIATE")
+                with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
+                    child = self.cli("--version")
+            phases = phase_diagnostics(probe["work"], self.path,
+                                       expected_pids=[child.fixture_timing["pid"]])
+        evidence = count_diagnostics(self.path, [child]) + " phases=" + json.dumps(phases)
+        self.assertEqual(child.returncode, 0, evidence)
+        self.assertEqual(child.stdout, warmup.stdout, evidence)
+        self.assertIn("start logging failed (OperationalError/SQLITE_BUSY)", child.stderr, evidence)
+        self.assertEqual(ledger_snapshot(self.path), before, evidence)
+        self.assertEqual(phases["status"], "OBSERVED", evidence)
+        self.assertEqual(len(phases["errors"]), 1, evidence)
+        error = phases["errors"][0]
+        self.assertEqual(error["pid"], child.fixture_timing["pid"], evidence)
+        self.assertEqual(error["operation"], "BEGIN IMMEDIATE", evidence)
+        self.assertEqual(error["sqlite_errorname"], "SQLITE_BUSY", evidence)
+        self.assertEqual(error["observed_writers_at_error"], "UNKNOWN", evidence)
+        self.assertEqual(error["overlapping_observed_writers"], [], evidence)
+        self.assertGreaterEqual(error["seconds"], 9, evidence)
+        self.assertEqual(phases["physical_database"]["bytes"], self.path.stat().st_size, evidence)
+
+    def test_cold_start_does_not_reacquire_writer_after_recordable_commit(self):
+        with cold_commit_handoff(self.folder, self.path) as probe:
+            with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pending = pool.submit(self.cli, "--version")
+                    try:
+                        wait_marker(probe["work"] / "handoff-ready")
+                        with closing(sqlite3.connect(self.path, isolation_level=None)) as writer:
+                            writer.execute("BEGIN IMMEDIATE")
+                            (probe["work"] / "handoff-release").touch()
+                            time.sleep(1)
+                            writer.rollback()
+                    finally:
+                        (probe["work"] / "handoff-release").touch()
+                    child = pending.result(timeout=45)
+            phases = phase_diagnostics(probe["work"], self.path,
+                                       expected_pids=[child.fixture_timing["pid"]])
+        report = usage.summarize(days=1)
+        evidence = count_diagnostics(self.path, [child], report) + " phases=" + json.dumps(phases)
+        self.assertEqual(child.returncode, 0, evidence)
+        self.assertEqual(report["total_calls"], 1, evidence)
+        self.assertEqual(report["daily"][0]["successful"], 1, evidence)
+        self.assertEqual(report["daily"][0]["unfinished"], 0, evidence)
+        self.assertEqual(child.stderr, "", evidence)
+        self.assertEqual(phases["status"], "OBSERVED", evidence)
+        start_writers = [row for row in phases["writer_intervals"] if row["connection"] == 1]
+        self.assertEqual(len(start_writers), 1, evidence)
+        commits = [event for event in phases["transaction_events"]
+                   if event["operation"] == "COMMIT" and event["connection"] == 1]
+        self.assertTrue(commits, evidence)
+        self.assertTrue(all(event["deadline"] is not None for event in commits), evidence)
+
+    def caller_commit_control(self, *, expire):
+        warmup = self.cli("--version")
+        self.assertEqual(warmup.returncode, 0, warmup.stderr)
+        before = ledger_snapshot(self.path)
+        with caller_commit_reader(self.folder, self.path, expire=expire) as probe:
+            with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pending = pool.submit(self.cli, "--version")
+                    try:
+                        wait_marker(probe["work"] / "caller-ready")
+                        with closing(sqlite3.connect(self.path, isolation_level=None)) as reader:
+                            reader.execute("BEGIN")
+                            reader.execute("SELECT * FROM calls").fetchall()
+                            (probe["work"] / "caller-release").touch()
+                            if expire:
+                                child = pending.result(timeout=45)
+                            else:
+                                time.sleep(.3)
+                            reader.rollback()
+                    finally:
+                        (probe["work"] / "caller-release").touch()
+                    child = pending.result(timeout=45)
+            phases = phase_diagnostics(probe["work"], self.path,
+                                       expected_pids=[child.fixture_timing["pid"]])
+        evidence = count_diagnostics(self.path, [child]) + " phases=" + json.dumps(phases)
+        self.assertEqual(child.returncode, 0, evidence)
+        self.assertEqual(child.stdout, warmup.stdout, evidence)
+        self.assertEqual(phases["status"], "OBSERVED", evidence)
+        if expire:
+            self.assertEqual(ledger_snapshot(self.path), before, evidence)
+            self.assertIn("start logging failed (OperationalError/SQLITE_BUSY)", child.stderr, evidence)
+            self.assertEqual(len(phases["errors"]), 1, evidence)
+            error = phases["errors"][0]
+            self.assertEqual(error["operation"], "COMMIT", evidence)
+            self.assertEqual(error["busy_timeout_ms"], 0, evidence)
+            self.assertLessEqual(error["remaining_seconds"], 0, evidence)
+            self.assertTrue(error["in_transaction"], evidence)
+            self.assertEqual(error["transaction_work"], ["caller"], evidence)
+            # The known fixture's parent reader is intentionally not traced;
+            # the observer cannot invent its identity from writer intervals.
+            self.assertEqual(error["observed_writers_at_error"][0]["pid"], child.fixture_timing["pid"], evidence)
+        else:
+            report = usage.summarize(days=1)
+            self.assertEqual(report["total_calls"], 2, evidence)
+            self.assertEqual(report["daily"][0]["successful"], 2, evidence)
+            self.assertEqual(report["daily"][0]["unfinished"], 0, evidence)
+            self.assertEqual(child.stderr, "", evidence)
+            self.assertEqual(phases["errors"], [], evidence)
+            committed = [event for event in phases["transaction_events"]
+                         if event["operation"] == "COMMIT" and event["stage"] == "after"]
+            self.assertTrue(any(event["seconds"] >= .2 and event["remaining_seconds"] > 0 for event in committed), evidence)
+
+    def test_transient_reader_commit_retains_start_with_original_deadline(self):
+        self.caller_commit_control(expire=False)
+
+    def test_expired_commit_reader_preserves_loss_without_new_deadline(self):
+        self.caller_commit_control(expire=True)
+
+    def phase_reader_fixture(self):
+        work = self.folder / "reader"
+        (work / "phases").mkdir(parents=True)
+        self.path.touch()
+        records = [{"pid": 99, "connection": 1, "operation": operation,
+                    "stage": stage, "monotonic": clock, "in_transaction": False}
+                   for operation, stage, clock in [("CONNECT", "after", 1),
+                       ("CLOSE", "before", 2), ("CLOSE", "after", 3)]]
+        source = work / "phases/99.jsonl"
+        source.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+        return work, source, records
+
+    def test_phase_reader_retains_valid_records_on_parse_and_shape_errors(self):
+        work, source, records = self.phase_reader_fixture()
+        original = source.read_text(encoding="utf-8")
+        self.assertEqual(phase_diagnostics(work, self.path, expected_pids=[99])["status"], "OBSERVED")
+        for damaged in ['{"pid":', 'null', '{}',
+                        json.dumps({**records[0], "monotonic": float("nan")}),
+                        json.dumps({**records[0], "stage": "error", "seconds": -1})]:
+            with self.subTest(damaged=damaged):
+                source.write_text(original + damaged + "\n", encoding="utf-8")
+                evidence = phase_diagnostics(work, self.path, expected_pids=[99])
+                self.assertEqual(evidence["status"], "UNKNOWN")
+                self.assertEqual(evidence["event_count"], 3)
+                self.assertEqual(evidence["missing_pids"], [])
+                self.assertEqual(len(evidence["read_errors"]), 1)
+                self.assertEqual(evidence["read_errors"][0]["line"], 4)
+                self.assertEqual(evidence["read_errors"][0]["path"], str(source))
+
+    def test_phase_reader_retains_valid_records_with_unreadable_and_missing_trace(self):
+        work, source, _ = self.phase_reader_fixture()
+        (work / "phases/100.jsonl").write_bytes(b"\xff")
+        evidence = phase_diagnostics(work, self.path, expected_pids=[99, 100])
+        self.assertEqual(evidence["status"], "UNKNOWN")
+        self.assertEqual(evidence["event_count"], 3)
+        self.assertEqual(evidence["missing_pids"], [100])
+        self.assertEqual(evidence["read_errors"][0]["error"], "UnicodeDecodeError")
+        with patch.object(Path, "read_text", side_effect=PermissionError("trace unreadable")):
+            evidence = phase_diagnostics(work, self.path, expected_pids=[99])
+        self.assertEqual(evidence["status"], "UNKNOWN")
+        self.assertEqual(evidence["missing_pids"], [99])
+        self.assertTrue(all(error["error"] == "PermissionError" for error in evidence["read_errors"]))
+        evidence = phase_diagnostics(work / "missing", self.path, expected_pids=[99])
+        self.assertEqual(evidence["status"], "UNKNOWN")
+        self.assertEqual(evidence["read_errors"][0]["error"], "FileNotFoundError")
+
+    def test_phase_reader_incomplete_connection_is_unknown(self):
+        work, source, records = self.phase_reader_fixture()
+        records = [records[0], {**records[0], "operation": "BEGIN IMMEDIATE", "stage": "before", "monotonic": 2},
+                   {**records[0], "operation": "BEGIN IMMEDIATE", "monotonic": 3, "in_transaction": True}]
+        source.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+        evidence = phase_diagnostics(work, self.path, expected_pids=[99])
+        self.assertEqual(evidence["status"], "UNKNOWN")
+        self.assertEqual(len(evidence["incomplete_connections"]), 1)
+        self.assertEqual(evidence["unclosed_writers"], [{"pid": 99, "connection": 1, "acquired": 3}])
+
+    def test_slow_schema_autocommit_records_native_writer_acquisition(self):
+        # Exercise the old one-statement autocommit route, not the current
+        # production explicit schema transaction; both need honest coverage.
+        with slow_schema_commits(self.folder, self.path) as probe:
+            environment = {**os.environ, **probe["environment"]}
+            command = [sys.executable, "-B", "-c",
+                "import os,sqlite3; db=sqlite3.connect(os.environ['RDS_USAGE_DB'],isolation_level=None); "
+                "db.execute('CREATE TABLE observed (id INTEGER)'); db.close()"]
+            with patch.dict(os.environ, environment):
+                child = run_cli(command, self.folder, self.path)
+            phases = phase_diagnostics(probe["work"], self.path, expected_pids=[child.fixture_timing["pid"]])
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.assertEqual(phases["status"], "OBSERVED", phases)
+        self.assertEqual(len(phases["writer_intervals"]), 1, phases)
+        writer = phases["writer_intervals"][0]
+        self.assertEqual(writer["pid"], child.fixture_timing["pid"], phases)
+        self.assertGreaterEqual(writer["released"] - writer["acquired"], 3.6, phases)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM observed").fetchone()[0], 0)
+
+    def test_slow_schema_map_exception_retains_original_identity(self):
+        original = subprocess.TimeoutExpired(["synthetic-child"], 60)
+        original.add_note("original watchdog evidence")
+        with patch.object(self, "cli", side_effect=original):
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                self.test_slow_schema_initialization_retains_first_concurrent_calls()
+        self.assertIs(raised.exception, original)
+        self.assertEqual(original.__notes__[0], "original watchdog evidence")
+        self.assertIn('"status": "UNKNOWN"', original.__notes__[-1])
+
+    def test_usage_failure_annotation_cannot_replace_original_exception(self):
+        original = sqlite3.OperationalError("primary reader failed")
+        original.add_note("original reader evidence")
+        with patch("usage_cli_fixture.phase_diagnostics", side_effect=PermissionError("observer failed")):
+            attach_usage_diagnostics(original, self.path, [], self.folder)
+        self.assertEqual(original.__notes__[0], "original reader evidence")
+        evidence = json.loads(original.__notes__[-1])
+        self.assertEqual(evidence["status"], "UNKNOWN")
+        self.assertEqual(evidence["diagnostic_error"], "PermissionError")
+        self.assertEqual(str(original), "primary reader failed")
 
     def test_paused_schema_preparation_does_not_drop_concurrent_cli_starts(self):
-        # One real warmup pauses at the schema/caller boundary. The other
+        # One real warmup pauses after the cold schema/start commit. The other
         # twelve real invocations must complete while it is still paused;
-        # schema preparation must not reserve their writer for Python work.
+        # Python work after that commit must not reserve their writer.
         with paused_schema(self.folder, self.path) as probe:
             environment = {**os.environ, **probe["environment"]}
             with ThreadPoolExecutor(max_workers=1) as warmup_pool:

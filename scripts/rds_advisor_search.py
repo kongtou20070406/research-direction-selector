@@ -40,9 +40,9 @@ OBSTRUCTION_MOVE_TEXT = (
     "computation, dependency report, adapter repair, a discriminating check, or for a capability requirement a reusable "
     "operation meeting its input/operation/output contract with a checker, compared with the smallest repair. Declared "
     "obstructions are input-reported, not a diagnosis, and authorize neither execution nor installation. ")
-# A sourced capability requirement supersedes only a generic jump move, or a goal-evidence step whose every
+# A sourced capability requirement supersedes only a generic gap/jump move, or a goal-evidence step whose every
 # UNKNOWN predicate it covers; integrity, input, search-scope, goal-link and discriminator moves keep precedence.
-CAPABILITY_SUPERSEDES = ("REFORMULATE", "REVIEW_ALTERNATIVE")
+CAPABILITY_SUPERSEDES = ("REFORMULATE", "REVIEW_ALTERNATIVE", "DIAGNOSE_GOAL_GAP")
 GOAL_EVIDENCE_REASON = "The original goal has unresolved evidence; no scientific failure is established."
 SPECIFY_CAPABILITY_REASON = ("A sourced unsupported operation blocks an open goal obligation and no other cause is declared "
                              "for it; the reusable operation it requires is the next step.")
@@ -63,6 +63,12 @@ AFFIRMATIVE_MOVE_TEXT = (
     "program, not a typed or configured value, and each affirmative needs evidence the others do not reuse. Keep "
     "UNKNOWN where unsupported. Do not narrow the scope, weaken the statement or redefine the predicates to close "
     "the goal; a failed affirmative is a scoped gap, not an impossibility result. ")
+GOAL_GAP_TEXT = (
+    "Inspect the failed predicate's actual value, acceptance condition, scope and original source in the referenced review. "
+    "Choose the smallest check that distinguishes an evaluation problem, an incomplete result and a method limitation, "
+    "and compare the smallest repair with an alternative only when that evidence warrants it. "
+    "State the check's cost and stop condition; a below-threshold result alone does not establish a failed method, "
+    "a need to change assumptions or progress toward the goal. ")
 
 
 def _evidence_status(record):
@@ -236,13 +242,14 @@ def _affirmative_move(triple):
         if failed:
             reason += " " + ", ".join(failed) + " already failed and stays open."
     else:
-        kind = "REFORMULATE"
+        kind = "DIAGNOSE_GOAL_GAP"
         reason = ("The found result fails the declared " + ", ".join(failed) + " affirmative" + ("s" if len(failed) > 1 else "") +
                   "; this is a scoped gap, not an impossibility result or a causal diagnosis.")
     return {"kind": kind, "reason": reason, "basis": "INPUT_REVIEW_HEURISTIC_NOT_SCIENTIFIC_PROOF",
             "authorization": "UNCHANGED", "affirmatives": list(triple["open"]),
+            "source": "selection_review.goal.triple_affirmative",
             "preserve_refs": ["search.decision", "context.budget", "context.resources", "context.method_constraints"],
-            "prompt": AFFIRMATIVE_MOVE_TEXT + MOVE_PRESERVE_CLAUSES}
+            "prompt": AFFIRMATIVE_MOVE_TEXT + (GOAL_GAP_TEXT if failed else "") + MOVE_PRESERVE_CLAUSES}
 
 
 def _action_valid(action, current_choice):
@@ -789,7 +796,7 @@ def _specify_capability(move, review, entries, integrity):
     """Whether the applicable capability requirements supersede the existing move kind."""
     capability = {e["obligation"] for e in entries if e["status"] == "APPLICABLE" and e["response"] == "CAPABILITY_REQUIRED"}
     goal = review.get("goal") or {}
-    # A satisfied goal is not blocked; a loop-history move before the goal check must not become a capability step.
+    # A satisfied goal is not blocked; historical warnings cannot make it a capability step.
     if integrity or not capability or goal.get("status") == TRUE:
         return False
     unknown = {c["fact"] for c in goal.get("conditions", []) if c["truth"] == UNKNOWN}
@@ -825,6 +832,7 @@ def review_obstructions(search, context, *, _read_receipt=None):
         # The superseded kind and reason stay as data, so recorded rejections remain visible.
         move.update(supersedes={"kind": move["kind"], "reason": move["reason"]}, kind="SPECIFY_CAPABILITY",
                     reason=SPECIFY_CAPABILITY_REASON,
+                    source="selection_review.obstruction_review",
                     prompt=SPECIFY_CAPABILITY_TEXT + MOVE_PRESERVE_CLAUSES)
     elif not integrity and move["prompt"].endswith(MOVE_PRESERVE_CLAUSES):
         move["prompt"] = move["prompt"][:-len(MOVE_PRESERVE_CLAUSES)] + OBSTRUCTION_MOVE_TEXT + MOVE_PRESERVE_CLAUSES
@@ -889,6 +897,10 @@ def _next_move(review, search):
                     and not supported_route and goal.get("status") in {UNKNOWN, FALSE})
     if "LOOP_HISTORY_REVIEW_ERROR" in loop_flags:
         kind, reason = "RESOLVE_PREMISE", "Recorded history integrity is unresolved; inspect the existing loop review."
+    elif goal.get("status") == TRUE:
+        # Historical/scope warnings stay in their reports. They do not overturn current acceptance;
+        # review_selection still checks any independently declared affirmative below.
+        return None
     elif measuring:
         unresolved_facts = {c["fact"] for c in goal["conditions"] if c["truth"] == UNKNOWN}
         remaining = unresolved_facts - set(measuring.values())
@@ -905,10 +917,11 @@ def _next_move(review, search):
         kind, reason = "RESOLVE_PREMISE", "Resolve the affected evidence, prediction scope, method or budget conditions first."
     elif flags & {"SEARCH_TRUNCATED", "DEPENDENCY_MAP_INCOMPLETE"}:
         kind, reason = "RESOLVE_PREMISE", "The bounded search omitted part of the supplied scope."
-    elif loop_flags & {"REPEAT_REJECTED_ROUTE", "REPEAT_DECLARED_REJECTED_DOMAIN", "DECISION_OSCILLATION"}:
-        kind, reason = "REFORMULATE", "Recorded choices repeat a rejected route/domain or oscillate within the reviewed scope."
-    elif goal.get("status") == TRUE:
-        return None
+    elif loop_flags & {"REPEAT_REJECTED_ROUTE", "REPEAT_DECLARED_REJECTED_DOMAIN"}:
+        kind, reason = "REFORMULATE", "Recorded choices repeat a rejected route/domain within the reviewed scope."
+    elif "DECISION_OSCILLATION" in loop_flags:
+        kind, reason = "REVIEW_DECISION_HISTORY", (
+            "Recorded choices oscillate within the reviewed scope; this order is not a rejected route or a method-failure diagnosis.")
     elif unlinked:
         kind, reason = "REVIEW_GOAL_LINK", "The ready actions have no declared dependency path to an explicit original goal."
     elif review["basis"] == "SCOPED_OBLIGATION" and goal.get("status") != FALSE:
@@ -921,7 +934,9 @@ def _next_move(review, search):
             "for this goal revision and acceptance predicates; compare a changed premise, representation or method with the smallest repair. "
             "Recorded rejections are scoped choices, not a capacity bound or a guilty premise.")
     elif goal.get("status") == FALSE:
-        kind, reason = "REFORMULATE", "The reported goal predicate failed; this is a scoped gap, not a capacity lower bound or a causal diagnosis."
+        kind, reason = "DIAGNOSE_GOAL_GAP", (
+            "The reported goal predicate failed; this is a scoped gap, not a failed-method diagnosis, "
+            "a capacity lower bound or evidence that the goal needs reformulation.")
     elif {"SINGLE_CONFIGURED_DIRECTION", "RIVAL_PREDICTIONS_MISSING"} <= flags and not supported_route:
         kind, reason = "REVIEW_ALTERNATIVE", "One procedure was supplied; review a useful alternative if it could change the decision."
     elif "RIVAL_PREDICTIONS_MISSING" in flags and not supported_route:
@@ -941,12 +956,21 @@ def _next_move(review, search):
         "Retain the existing rival hypotheses and design one observation or scoped proof check with different predictions. "
         "Give the counterfactual difference each rival predicts, the check's cost and a stop condition. "
         if kind == "DESIGN_DISCRIMINATOR" else
+        GOAL_GAP_TEXT
+        if kind == "DIAGNOSE_GOAL_GAP" else
+        "Inspect the recorded choices and their reasons, original evidence and current goal acceptance. "
+        "Determine whether returning to the route is justified by changed evidence or an unfinished obligation; "
+        "compare alternatives only if that review warrants it. The sequence alone does not justify changing method. "
+        if kind == "REVIEW_DECISION_HISTORY" else
         "Propose one concrete candidate changing an assumption, representation or computational method, and compare it with the smallest repair. "
         "Give a counterfactual difference: which observation or scoped proof obligation differs if the proposed change is made? "
         "State a decisive check, its cost and a stop condition; added complexity is not itself progress. "
         "Renaming alone supplies no new mechanism; route identity here is structured input, not semantic equivalence. "
     )
-    return {"kind": kind, "reason": reason, "basis": "INPUT_REVIEW_HEURISTIC_NOT_SCIENTIFIC_PROOF",
+    source = ("selection_review.goal.conditions" if kind == "DIAGNOSE_GOAL_GAP" else
+              "search.loop_review.flags" if kind in {"REFORMULATE", "REVIEW_DECISION_HISTORY"} else
+              "selection_review")
+    return {"kind": kind, "reason": reason, "basis": "INPUT_REVIEW_HEURISTIC_NOT_SCIENTIFIC_PROOF", "source": source,
             "authorization": "UNCHANGED",
             "preserve_refs": ["search.decision", "context.budget", "context.resources", "context.method_constraints"],
             "prompt": prompt + MOVE_PRESERVE_CLAUSES}
@@ -1173,7 +1197,9 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             candidate["discrimination"] = _discrimination(action, facts)
         from rds_methods import review_candidate
         review_candidate(context, candidate)
-        if budget_status == "OVER_REPORTED_BUDGET":
+        # Resource-only blockage requires resolved evidence and method gates.
+        # Keep budget_status on all candidates without hiding earlier blockers.
+        if budget_status == "OVER_REPORTED_BUDGET" and candidate["status"] == "READY":
             candidate["status"] = "BLOCKED_BUDGET"
             result["blocked_candidates"].append(candidate)
         elif candidate["status"] == "BLOCKED_METHOD":

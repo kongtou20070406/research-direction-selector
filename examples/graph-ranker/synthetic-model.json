@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "mode": "shadow",
+  "model": {
+    "features": ["action", "true", "false", "unknown", "observed"],
+    "origin": "Hand-authored synthetic software fixture. Not trained or a scientific policy.",
+    "input_weights": [[0, 1, -1, 0, 0]],
+    "input_bias": [0],
+    "layers": [
+      {"self": [[1]], "message": [[1]], "bias": [0]},
+      {"self": [[1]], "message": [[1]], "bias": [0]}
+    ],
+    "readout": [1],
+    "readout_bias": 0
+  }
+}

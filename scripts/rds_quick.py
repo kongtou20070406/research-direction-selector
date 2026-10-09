@@ -297,6 +297,9 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                     return result
             require(len(rows) < contract['execution_policy']['max_attempts'],
                     'Execution policy: unchanged route reached max_attempts; failures do not establish scientific impossibility')
+        from rds_steering import current
+        require(current(db) is None,
+                'Human steering requires project create/execute; new quick child allowances cannot bypass it')
         amount = number(seconds, 'external wall allowance', True)
         row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
         require(row['spent'] + row['charged'] + row['reserved'] + amount <= row['cap'] + 1e-9,
@@ -396,6 +399,10 @@ def execute(args, review=None):
             # Native research records can share this database before project init.
             has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
             source_contract = source_store._contract(db) if has_contract else {}
+            if source_contract:
+                from rds_steering import current
+                require(current(db) is None,
+                        'Human steering requires project create/execute; use the original child root to inspect or recover an existing quick job')
         require('advisor_policy' not in source_contract,
                 'Program-owned Advisor requires project advance/create/execute; quick exec cannot bypass it')
         require('stop_policy' not in source_contract and 'maintenance_allowance' not in source_contract,
@@ -618,6 +625,26 @@ def execute(args, review=None):
     return result
 
 
+def _brief_move(summary, move):
+    """Retain a bounded explanation while keeping the historical next_move string."""
+    if not isinstance(move, dict):
+        summary['next_move'] = move
+        summary.pop('next_move_detail', None)
+        return
+    summary['next_move'] = move.get('kind', move)
+    detail = {}
+    for key in ('reason', 'basis', 'source'):
+        if isinstance(move.get(key), str):
+            limit = 512 if key == 'reason' else 128
+            detail[key] = move[key][:limit]
+            if len(move[key]) > limit:
+                detail[key + '_truncated'] = True
+    if detail:
+        summary['next_move_detail'] = detail
+    else:
+        summary.pop('next_move_detail', None)
+
+
 def brief(root, value, version, formal=False):
     """Persist full output and expose a bounded, truthful operational digest."""
     ref = cas_json(root, value)
@@ -680,7 +707,7 @@ def brief(root, value, version, formal=False):
             summary['selection_basis'] = selection['basis']
             flags += [f['kind'] for f in selection['flags']]
             if 'next_move' in selection:
-                summary['next_move'] = selection['next_move']['kind']
+                _brief_move(summary, selection['next_move'])
             if 'goal' in selection:
                 summary['goal_input_status'] = selection['goal']['status']
         advisory_moves = {'GOAL_CONTRIBUTION_UNDECLARED': 'REVIEW_GOAL_LINK',
@@ -689,6 +716,14 @@ def brief(root, value, version, formal=False):
         flags = relevant + [kind for kind in flags if kind not in advisory_moves]
         summary['flags'] = list(dict.fromkeys(flags))[:3]
     owned = value.get('advisor') or value
+    if 'steering' in owned:
+        state = owned['steering']
+        summary['steering'] = {key: state.get(key) for key in ('revision', 'paused', 'kind', 'instruction_id')}
+        for key in ('withdrawn_runs', 'preferred_runs'):
+            summary['steering'][key] = state.get(key, [])[:3]
+            summary['steering']['omitted_' + key] = max(0, len(state.get(key, [])) - 3)
+    if 'working_set' in owned:
+        summary['working_set'] = owned['working_set']
     if 'advisor' in value and 'receipt' in value:
         summary.update(status=value['receipt'].get('run_status', 'UNKNOWN'),
                        run_id=value['receipt'].get('run_id'), receipt_sha256=value['receipt'].get('sha256'),
@@ -698,9 +733,23 @@ def brief(root, value, version, formal=False):
     if owned.get('assurance') == 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF':
         summary.update(selected_run=owned.get('selected_run'), snapshot_sha256=owned.get('snapshot_sha256'),
                        authorization='UNCHANGED', scientific_support='UNKNOWN', assurance=owned['assurance'])
+        if owned.get('graph_ranker'):
+            ranker = owned['graph_ranker']
+            summary['graph_ranker'] = {key: ranker.get(key) for key in (
+                'status', 'mode', 'selection_applied', 'precedence', 'reason')}
+            summary['graph_ranker']['preferred'] = ranker.get('preferred', [])[:4]
+            summary['graph_ranker']['scope_count'] = len(ranker.get('scope', []))
         if owned.get('next_move'):
             move = owned['next_move']
-            summary['next_move'] = move.get('kind', move) if isinstance(move, dict) else move
+            _brief_move(summary, move)
+        if owned.get('feasibility'):
+            forecast = owned['feasibility']
+            summary['feasibility'] = {'next_action':forecast['next_action'],
+                'plans':[{'id':p['id'],'status':p['status']} for p in forecast['plans'][:4]],
+                'pilot_budget':forecast['pilot_budget']}
+            repair = forecast.get('repair_request')
+            if repair:
+                summary['tool_workbench_command'] = repair['tool_workbench_command']
         coverage = owned.get('coverage', {})
         summary['coverage'] = {key: coverage.get(key, 0) for key in ('runs', 'receipts', 'artifacts', 'parsed_observations')}
         summary['coverage']['unparsed_outputs'] = len(coverage.get('unparsed_outputs', []))
@@ -711,6 +760,10 @@ def brief(root, value, version, formal=False):
                                                      for row in coverage.get('declared_outputs', []))
         summary['coverage_errors'] = coverage.get('errors', [])[:3]
         summary['coverage_gaps'] = coverage.get('gaps', [])[:3]
+        if 'tool_utilization' in owned:
+            use = owned['tool_utilization']
+            summary['tool_utilization'] = {key: use[key] for key in
+                ('scope', 'counts', 'applicable_use_rate', 'applicable_consumption_rate')}
         warnings = [row['kind'] for row in owned.get('warnings', []) if 'kind' in row]
         summary['flags'] = list(dict.fromkeys(warnings + summary.get('flags', [])))[:5]
         summary['omitted_flags'] = max(0, len(set(warnings)) - len(summary['flags']))

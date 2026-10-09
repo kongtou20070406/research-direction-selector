@@ -27,7 +27,7 @@ def _database(root, kind):
     return path
 
 
-def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None):
+def _checkpoint_record(root, checkpoint_id, snapshot, *, kind, decision=None):
     if not isinstance(checkpoint_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", checkpoint_id):
         raise ValueError("Checkpoint identity must be 1–64 safe identifier characters")
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("contract"), dict):
@@ -50,27 +50,78 @@ def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None):
         strict_json(raw)
     except ValueError as exc:
         raise ValueError("Checkpoint record would be unreadable by loop-history review: " + str(exc)) from exc
-    sha = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return record, raw
+
+
+def read_checkpoint(db, checkpoint_id, *, root):
+    """Verify a retained row using the caller's coherent transaction."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+        return None
+    row = db.execute('SELECT sha,body FROM checkpoints WHERE id=?', (checkpoint_id,)).fetchone()
+    if row is None:
+        return None
+    sha, raw = row
+    if not isinstance(raw, str) or len(raw.encode('utf-8')) > MAX_BYTES or hashlib.sha256(raw.encode('utf-8')).hexdigest() != sha:
+        raise ValueError('Checkpoint integrity failure: ' + checkpoint_id)
+    from rds_artifacts import strict_json
+    record = strict_json(raw)
+    if (not isinstance(record, dict) or record.get('schema') != SCHEMA or record.get('id') != checkpoint_id
+            or record.get('kind') not in {'project', 'reference'}):
+        raise ValueError('Checkpoint identity mismatch: ' + checkpoint_id)
+    if (not isinstance(record.get('snapshot'), dict)
+            or not isinstance(record['snapshot'].get('contract'), dict)
+            or _sha(record['snapshot']['contract']) != record.get('contract_sha256')):
+        raise ValueError('Checkpoint contract mismatch: ' + checkpoint_id)
+    from rds_advisor import validate_checkpoint_decision
+    validate_checkpoint_decision(record.get('decision', {}), checkpoint_id, Path(root).resolve() / '.rds')
+    return {'record': record, 'sha256': sha}
+
+
+def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None, idempotent=False,
+                      _owned_run_id=None):
+    """Append within an existing transaction; never commit the caller's work."""
+    if not db.in_transaction:
+        raise ValueError('Checkpoint append requires the owning transaction')
+    filename = db.execute('PRAGMA database_list').fetchone()[2]
+    if not filename or Path(filename).resolve() != _database(root, kind):
+        raise ValueError('Checkpoint transaction belongs to a different ledger')
+    record, raw = _checkpoint_record(root, checkpoint_id, snapshot, kind=kind, decision=decision)
+    existing = read_checkpoint(db, checkpoint_id, root=root)
+    if existing is not None:
+        comparable = lambda item: {k: v for k, v in item.items() if k != 'created_ns'}
+        if not idempotent or comparable(existing['record']) != comparable(record):
+            raise ValueError('Checkpoint identity already exists with conflicting contents')
+        return {'schema': SCHEMA, 'status': 'ALREADY_SAVED', 'id': checkpoint_id, 'kind': kind,
+                'sha256': existing['sha256'], 'contract_sha256': record['contract_sha256']}
+    if kind == 'project':
+        from rds_owned_history import check_append_slots
+        check_append_slots(root, db, checkpoint_id, owned_run_id=_owned_run_id)
+    # execute(), not executescript(): DDL must not implicitly commit admission.
+    db.execute('CREATE TABLE IF NOT EXISTS checkpoints(id TEXT PRIMARY KEY, sha TEXT NOT NULL, body TEXT NOT NULL)')
+    for operation in ('UPDATE', 'DELETE'):
+        db.execute(f"CREATE TRIGGER IF NOT EXISTS checkpoint_no_{operation.lower()} BEFORE {operation} ON checkpoints "
+                   "BEGIN SELECT RAISE(ABORT, 'checkpoints are append-only'); END")
+    sha = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+    db.execute('INSERT INTO checkpoints VALUES (?,?,?)', (checkpoint_id, sha, raw))
+    return {'schema': SCHEMA, 'status': 'SAVED', 'id': checkpoint_id, 'kind': kind,
+            'sha256': sha, 'contract_sha256': record['contract_sha256']}
+
+
+def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None):
+    # Validate before opening a writer, preserving the public save boundary.
+    _checkpoint_record(root, checkpoint_id, snapshot, kind=kind, decision=decision)
     db = sqlite3.connect(_database(root, kind), timeout=15, isolation_level=None)
     try:
         db.execute("PRAGMA synchronous=FULL")
-        db.executescript("""
-            CREATE TABLE IF NOT EXISTS checkpoints(id TEXT PRIMARY KEY, sha TEXT NOT NULL, body TEXT NOT NULL);
-            CREATE TRIGGER IF NOT EXISTS checkpoint_no_update BEFORE UPDATE ON checkpoints
-            BEGIN SELECT RAISE(ABORT, 'checkpoints are append-only'); END;
-            CREATE TRIGGER IF NOT EXISTS checkpoint_no_delete BEFORE DELETE ON checkpoints
-            BEGIN SELECT RAISE(ABORT, 'checkpoints are append-only'); END;
-        """)
         db.execute("BEGIN IMMEDIATE")
-        db.execute("INSERT INTO checkpoints VALUES (?,?,?)", (checkpoint_id, sha, raw))
+        result = append_checkpoint(db, root, checkpoint_id, snapshot, kind=kind, decision=decision)
         db.commit()
     except sqlite3.IntegrityError as exc:
         db.rollback()
         raise ValueError("Checkpoint identity already exists; use a new identity") from exc
     finally:
         db.close()
-    return {"schema": SCHEMA, "status": "SAVED", "id": checkpoint_id, "kind": kind,
-            "sha256": sha, "contract_sha256": record["contract_sha256"]}
+    return result
 
 
 def _runs(snapshot):
@@ -109,10 +160,31 @@ def restore_checkpoint(root, checkpoint_id, live_snapshot, *, kind):
     old = record["snapshot"]
     conflicts = []
     if _sha(live_snapshot["contract"]) != record["contract_sha256"]:
-        conflicts.append({"field": "contract", "reason": "Live contract differs; do not resume under the old binding"})
+        ancestor = False
+        if kind == 'project':
+            from rds_project import ProjectStore
+            from rds_method_revision import contract_history, pending_revision
+            store = ProjectStore(root)
+            try:
+                with store._db(True) as ledger:
+                    ledger.execute('BEGIN')
+                    lineage = contract_history(ledger)
+                    ancestor = (pending_revision(ledger) is None
+                                and _sha(live_snapshot['contract']) == lineage[-1]['sha256']
+                                and any(h['sha256'] == record['contract_sha256']
+                                        and h['contract'] == old.get('contract') for h in lineage))
+            except (ValueError, OSError, sqlite3.Error):
+                ancestor = False
+        if not ancestor:
+            conflicts.append({"field": "contract", "reason": "Live contract differs; do not resume under the old binding"})
     for reason in live_snapshot.get("binding_check", {}).get("errors", []):
         conflicts.append({"field": "bindings", "reason": reason})
     updates = []
+    if _sha(live_snapshot['contract']) != record['contract_sha256'] and not any(
+            c['field'] == 'contract' for c in conflicts):
+        updates.append({'field': 'contract', 'reason': 'Verified method ancestor retained as history; current method and authorization remain live'})
+    if live_snapshot.get('method_revision_pending'):
+        conflicts.append({'field': 'method_revision', 'reason': 'Resume the durable prepared method revision before execution'})
     for field in ("budget", "exposures", "active_branch", "hypotheses", "final_plan"):
         if old.get(field) != live_snapshot.get(field):
             updates.append({"field": field, "reason": "Live state is authoritative; checkpoint state is retained only as history"})

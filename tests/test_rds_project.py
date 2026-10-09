@@ -472,7 +472,8 @@ class ProjectTests(unittest.TestCase):
 
     def test_stale_recovery_cannot_settle_a_newly_claimed_worker(self):
         # An existing reservation may predate foreground controller identity.
-        self.store.register(self.spec())
+        # This checks claim ownership, not a two-second Windows launch deadline.
+        self.store.register(self.spec(timeout=10))
         with self.store._db() as db:
             run = self.store._run(db, "r1")
             run["attempt_id"] = "pending-attempt"
@@ -507,8 +508,8 @@ class ProjectTests(unittest.TestCase):
             finally:
                 resume_recovery.set()
                 resume_execution.set()
-            receipt = execution.result(timeout=5)
-        self.assertEqual(receipt["run_status"], "SUCCEEDED")
+            receipt = execution.result(timeout=20)
+        self.assertEqual(receipt["run_status"], "SUCCEEDED", receipt)
         self.assertEqual(receipt["exit_code"], 0)
         self.assertEqual(len(self.store.snapshot()["exposures"]), 1)
         self.assertEqual(self.store.snapshot()["budget"]["cpu_seconds"]["charged_estimate"], 1)
@@ -573,8 +574,41 @@ class ProjectTests(unittest.TestCase):
         store.register(self.spec("r1"))
         store.register(self.spec("r2"))
         self.assertAlmostEqual(store.snapshot()["budget"]["wall_seconds"]["remaining"], 0)
-        self.assertEqual(store.execute("r1")["run_status"], "SUCCEEDED")
-        self.assertEqual(store.execute("r2")["run_status"], "SUCCEEDED")
+
+        def settle_synthetic_accounting(run_id, attempt_id):
+            # This tests reservation arithmetic, not subprocess performance.
+            # Successful real execution can settle above its estimate after
+            # preflight/launch/cleanup, which must block the second reservation.
+            # Keep admission and settlement real, but control this worker's
+            # finite cost; no subprocess is launched or claimed by this fixture.
+            with store._db(True) as db:
+                run = store._run(db, run_id)
+                self.assertEqual(run["attempt_id"], attempt_id)
+                self.assertEqual(run["status"], "RESERVED")
+                contract = store._contract(db)
+            before, errors = store._bindings(contract)
+            self.assertEqual(errors, [])
+            return store._finish(run_id, attempt_id, "COMPLETED", 0, 2.2, False, [], before)
+
+        with patch.object(store, "_execute_claim", side_effect=settle_synthetic_accounting) as worker:
+            first = store.execute("r1")
+            self.assertEqual(first["run_status"], "SUCCEEDED")
+            self.assertFalse(first["process_started"])
+            midway = store.snapshot()["budget"]["wall_seconds"]
+            self.assertAlmostEqual(midway["spent_measured"], 2.2)
+            self.assertAlmostEqual(midway["reserved"], 2.2)
+            self.assertAlmostEqual(midway["charged_estimate"], 0)
+            self.assertAlmostEqual(midway["remaining"], 0)
+            second = store.execute("r2")
+            self.assertEqual(second["run_status"], "SUCCEEDED")
+            self.assertFalse(second["process_started"])
+            self.assertNotEqual(first["attempt_id"], second["attempt_id"])
+            self.assertEqual(worker.call_count, 2)
+        final = store.snapshot()["budget"]["wall_seconds"]
+        self.assertAlmostEqual(final["spent_measured"], 4.4)
+        self.assertAlmostEqual(final["reserved"], 0)
+        self.assertAlmostEqual(final["charged_estimate"], 0)
+        self.assertAlmostEqual(final["remaining"], 0)
 
     def test_real_overrun_blocks_reserved_dispatch_and_preserves_charges(self):
         store = self.reserve_overrun_pair()
@@ -1044,7 +1078,16 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
     def test_campaign_deadline_stops_hang_and_preserves_partial_stdout(self):
         # The deadline starts at reservation; allow Windows process startup and scheduling
         # before asserting that deadline cleanup preserves the child's flushed output.
-        store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": 5,
+        # CI runners can need seconds to launch python.exe under load, so the campaign
+        # deadline must outlast interpreter startup: otherwise the child is killed before
+        # its first flushed line and stdout.bin is legitimately empty. Measure a real bare
+        # spawn now and scale it: the deadline is fixture data, not a weakened assertion;
+        # the hang still cannot reach its own 15s timeout, and every CAMPAIGN_DEADLINE/
+        # size/cost assertion below is unchanged.
+        spawn_probe = time.perf_counter()
+        subprocess.run([sys.executable, "-c", "pass"], capture_output=True)
+        startup_headroom = round(max(5.0, 40.0 * (time.perf_counter() - spawn_probe)), 3)
+        store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": startup_headroom,
                                                 "progress": {"window_seconds": 3600, "min_bytes": 0}})
         receipt = self.run_spec(self.spec(timeout=15))
         self.assertEqual(receipt["run_status"], "FAILED")
@@ -1531,16 +1574,32 @@ class ProtocolIdentityMessageTests(unittest.TestCase):
                       + " (the SHA256 of the one 'config' binding)", rejected.stdout + rejected.stderr)
         self.assertFalse((root / ".rds" / "project.sqlite3").exists())
 
-    def test_protocol_files_without_identity_hashes_still_initialize(self):
-        root = self.project("prose")
-        (root / "protocol.md").write_text("# Protocol\nPrimary metric: mse.\n", encoding="utf-8")
+    def test_protocol_files_that_cannot_register_are_rejected_before_the_contract_freezes(self):
+        """#159: a JSON protocol missing identity fields would freeze a contract that can never register a run."""
+        # Prose protocols stay initable: registration rejects them only when a run names one.
+        prose = self.project("prose")
+        (prose / "protocol.md").write_text("# Protocol\nPrimary metric: mse.\n", encoding="utf-8")
+        contract = json.loads((prose / "contract.json").read_text(encoding="utf-8"))
+        contract["bindings"].append({"role": "protocol", "path": "protocol.md", "sha256": file_sha(prose / "protocol.md")})
+        (prose / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+        self.assertEqual(self.init(prose).returncode, 0)
+        # A JSON protocol missing identity fields is rejected at init and fixable in the same root.
+        root = self.project("partial")
         (root / "partial.json").write_text(json.dumps({"seed": 3}), encoding="utf-8")
         contract = json.loads((root / "contract.json").read_text(encoding="utf-8"))
-        contract["bindings"] += [{"role": "protocol", "path": name, "sha256": file_sha(root / name)}
-                                 for name in ("protocol.md", "partial.json")]
+        contract["bindings"].append({"role": "protocol", "path": "partial.json", "sha256": file_sha(root / "partial.json")})
         (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
-        initialized = self.init(root)
-        self.assertEqual(initialized.returncode, 0, initialized.stdout + initialized.stderr)
+        rejected = self.init(root)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("Protocol identity fields required: code_sha256, config_sha256, data_sha256, data_split, init, "
+                      "checkpoint, schedule, sample_work, numeric_protocol; exec can complete operational identity "
+                      "fields in partial.json; the protocol is frozen with the contract", rejected.stdout + rejected.stderr)
+        self.assertFalse((root / ".rds" / "project.sqlite3").exists())
+        # Corrected in place: the unusable protocol binding is removed and the contract initializes.
+        (root / "partial.json").unlink()
+        contract["bindings"] = [b for b in contract["bindings"] if b["path"] != "partial.json"]
+        (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+        self.assertEqual(self.init(root).returncode, 0)
 
 if __name__ == "__main__":
     unittest.main()
