@@ -1350,6 +1350,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".")
     parser.add_argument("--hypergraph", help="Explicit dependency JSON instead of the saved TMS snapshot")
+    parser.add_argument("--archive", help="Complete read-only archive JSON or ZIP, browsed with semantic zoom")
+    parser.add_argument("--archive-node", help="Original node ID to inspect with --archive --export-agent-input")
+    parser.add_argument("--archive-edge", help="Original edge ID to inspect with --archive --export-agent-input")
     parser.add_argument("--demo", action="store_true", help="Synthetic visual preview only")
     parser.add_argument("--large", action="store_true", help="With --demo: 1,200 synthetic claim nodes")
     parser.add_argument("--output", default="rds-hypergraph.html")
@@ -1366,27 +1369,45 @@ def main(argv=None):
             raise ValueError("Output must be an .html file outside the .rds ledger")
         if args.demo and args.hypergraph or args.large and not args.demo:
             raise ValueError("Use --large only with --demo, and --demo without --hypergraph")
+        if args.archive and (args.hypergraph or args.demo or args.large):
+            raise ValueError("Use --archive separately from --hypergraph, --demo and --large")
+        if args.archive_node or args.archive_edge:
+            if not args.archive or not args.export_agent_input or args.archive_node and args.archive_edge:
+                raise ValueError("Inspect one --archive-node or --archive-edge with --archive --export-agent-input")
+        if args.archive and args.readable_json:
+            raise ValueError("Archive names and summaries come from its readable records; dependency sidecars use --hypergraph")
         if bool(args.replica_root) != bool(args.pixi_js):
             raise ValueError("Use --replica-root and --pixi-js together")
-        if args.hypergraph and not args.export_agent_input:
-            source = Path(args.hypergraph).resolve()
+        if args.archive and not args.export_agent_input and not args.replica_root:
+            raise ValueError("Archive browsing requires the existing --replica-root and --pixi-js assets")
+        if (args.hypergraph or args.archive) and not args.export_agent_input:
+            source = Path(args.hypergraph or args.archive).resolve()
             if output == source or output.exists() and source.exists() and output.samefile(source):
                 raise ValueError("Output must not overwrite the hypergraph input")
-        result = read_graph(root, args.hypergraph, demo=args.demo, large=args.large)
-        if args.hypergraph and result["status"] == "UNAVAILABLE":
-            raise ValueError(result["reason"])
-        if args.export_agent_input:
-            from rds_hypergraph_readable import agent_input
-            print(json.dumps(agent_input(result), ensure_ascii=False, allow_nan=False))
-            return 0
-        if args.readable_json:
-            from rds_hypergraph_readable import load_readable, with_readable
-            readable_path = Path(args.readable_json).resolve()
-            if output == readable_path or output.exists() and output.samefile(readable_path):
-                raise ValueError("Output must not overwrite readable information")
-            result = with_readable(result, load_readable(readable_path, result))
+        if args.archive:
+            from rds_hypergraph_archive import read_archive, render_archive_html, archive_agent_input
+            result = read_archive(args.archive)
+            if args.export_agent_input:
+                print(json.dumps(archive_agent_input(result, node_id=args.archive_node, edge_id=args.archive_edge),
+                                 ensure_ascii=False, allow_nan=False))
+                return 0
+            page = render_archive_html(result, args.replica_root, args.pixi_js)
+        else:
+            result = read_graph(root, args.hypergraph, demo=args.demo, large=args.large)
+            if args.hypergraph and result["status"] == "UNAVAILABLE":
+                raise ValueError(result["reason"])
+            if args.export_agent_input:
+                from rds_hypergraph_readable import agent_input
+                print(json.dumps(agent_input(result), ensure_ascii=False, allow_nan=False))
+                return 0
+            if args.readable_json:
+                from rds_hypergraph_readable import load_readable, with_readable
+                readable_path = Path(args.readable_json).resolve()
+                if output == readable_path or output.exists() and output.samefile(readable_path):
+                    raise ValueError("Output must not overwrite readable information")
+                result = with_readable(result, load_readable(readable_path, result))
+            page = render_replica_html(result, args.replica_root, args.pixi_js) if args.replica_root else render_html(result)
         output.parent.mkdir(parents=True, exist_ok=True)
-        page = render_replica_html(result, args.replica_root, args.pixi_js) if args.replica_root else render_html(result)
         write_html_atomic(output, page)
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
         parser.error(str(exc))
