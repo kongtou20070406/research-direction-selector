@@ -145,9 +145,11 @@ def _tool(record, spec):
 def _outcome(record, spec, goal):
     row = _selected(record, spec, ('goal_id', 'evaluator_sha256', 'protocol_sha256', 'artifact_sha256',
                                   'status', 'observed_at', 'score', 'delivered', 'incorrect_claims', 'human_rescues'))
+    for key in ('evaluator_sha256', 'protocol_sha256', 'artifact_sha256'):
+        require(sha256(row[key]), 'outcome needs valid ' + key)
+        row[key] = row[key].lower()
     require(all(row[key] == goal[key] for key in ('goal_id', 'evaluator_sha256', 'protocol_sha256')),
             'outcome goal/evaluator/protocol differs from declared evaluation')
-    require(sha256(row['artifact_sha256']), 'outcome needs artifact hash for deduplication')
     require(row['status'] in {'PASS', 'FAIL', 'UNKNOWN'}, 'outcome status must be PASS, FAIL or UNKNOWN')
     row['key'] = [row[key] for key in ('goal_id', 'evaluator_sha256', 'protocol_sha256', 'artifact_sha256')]
     row['assurance'] = 'EVALUATOR_REPORTED_NOT_INDEPENDENTLY_VERIFIED'
@@ -187,6 +189,7 @@ def _report(root, manifest_path):
     require(isinstance(goal, dict) and _text(goal.get('goal_id')) and
             all(sha256(goal.get(key)) for key in ('evaluator_sha256', 'protocol_sha256')), 'goal and evaluation identities required')
     require(set(goal) <= {'goal_id', 'evaluator_sha256', 'protocol_sha256', 'started_at'}, 'unsupported goal field')
+    goal = {**goal, **{key: goal[key].lower() for key in ('evaluator_sha256', 'protocol_sha256')}}
     sources = manifest.get('sources', [])
     require(isinstance(sources, list) and len(sources) <= 64, 'source limit exceeded')
     inventory, documents, cache, errors, conflicts, receipt_sources = [], {}, {}, [], [], []
@@ -206,7 +209,7 @@ def _report(root, manifest_path):
                 data = _read(str(name), root)
                 cache[name] = (digest(data), strict_json(data.decode('utf-8-sig')))
             actual, document = cache[name]
-            require(actual == source['sha256'], 'source hash mismatch')
+            require(actual == source['sha256'].lower(), 'source hash mismatch')
             documents[source['id']] = document
             item['status'] = 'READ'
         except (OSError, ValueError, TypeError, UnicodeError, RecursionError) as exc:

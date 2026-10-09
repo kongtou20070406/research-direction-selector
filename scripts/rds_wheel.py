@@ -273,7 +273,27 @@ class Wheel:
         self.mapping, self.contract, self.project_contract = setup, contract, project_contract
         self.protocol = {key: protocols[0][key] for key in ("path", "sha256")}
         self.direction = metric["direction"]
+        self.validate_mapping_ids()
         return setup
+
+    def validate_mapping_ids(self):
+        """Validate the entire frozen run namespace before any dispatch or write."""
+        mapped = []
+        for kind in ("control", "initial"):
+            template = self.mapping.get(kind)
+            require(isinstance(template, dict), "missing " + kind + " mapping")
+            mapped.append(self.manifest(template.get("factor"), kind))
+        routes = self.mapping.get("routes", {})
+        require(isinstance(routes, dict), "routes must be an object")
+        for factor, route in routes.items():
+            require(isinstance(route, dict), "factor route must be an object")
+            for kind in ("main", "screen"):
+                if kind in route:
+                    mapped.append(self.manifest(factor, kind))
+        seen = set()
+        for manifest in mapped:
+            require(manifest["id"] not in seen, "mapped run IDs must be distinct: " + manifest["id"])
+            seen.add(manifest["id"])
 
     def initialize(self, project_contract_path):
         require(not self.directory.exists(), "wheel is already initialized")
@@ -361,7 +381,8 @@ class Wheel:
             artifact = artifacts[0]
             path = self.path(artifact["path"])
             require(sha(path) == artifact["sha256"], "metric artifact hash mismatch")
-            value = read_json(path).get(self.contract["metric"])
+            output = read_json(path)
+            value = output.get(self.contract["metric"]) if isinstance(output, dict) else None
             return value if finite(value) else None
         except (ValueError, OSError, KeyError, TypeError):
             return None

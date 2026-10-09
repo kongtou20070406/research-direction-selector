@@ -213,6 +213,45 @@ class TrajectoryTests(unittest.TestCase):
         self.assertEqual(result['outcome_summary']['evaluator_reported_pass_artifacts'], 0)
         self.assertEqual(len(result['errors']), 3)
 
+    def test_mixed_case_artifact_hash_counts_one_reported_pass(self):
+        self.provider()
+        self.outcome(artifact_sha256='a' * 64)
+        self.outcome(artifact_sha256='A' * 64)
+        original_sources = {s['path']: (self.root / s['path']).read_bytes() for s in self.manifest['sources']}
+        result = self.run_report()
+        self.assertEqual(result['outcome_summary']['evaluator_reported_pass_artifacts'], 1)
+        self.assertEqual(result['duplicate_records']['outcomes'], 1)
+        self.assertEqual(result['conflicts'], [])
+        self.assertEqual(result['outcome_summary']['supplied_tokens_per_reported_pass'], 130)
+        self.assertEqual(result['outcomes'][0]['artifact_sha256'], 'a' * 64)
+        self.assertEqual({p: (self.root / p).read_bytes() for p in original_sources}, original_sources)
+
+    def test_mixed_case_hash_conflict_excludes_favourable_outcome(self):
+        self.provider()
+        self.outcome(artifact_sha256='a' * 64, status='PASS')
+        self.outcome(artifact_sha256='A' * 64, status='FAIL')
+        result = self.run_report()
+        self.assertEqual(result['status'], 'CONFLICT')
+        self.assertEqual(len(result['conflicts']), 1)
+        self.assertEqual(result['outcomes'], [])
+        self.assertEqual(result['outcome_summary']['evaluator_reported_pass_artifacts'], 0)
+        self.assertIsNone(result['outcome_summary']['supplied_tokens_per_reported_pass'])
+
+    def test_sha_case_normalization_preserves_source_and_ordinary_goal_identity(self):
+        self.manifest['goal'].update(goal_id='Goal_CASE', evaluator_sha256='E' * 64, protocol_sha256='F' * 64)
+        self.outcome(evaluator_sha256='e' * 64, protocol_sha256='f' * 64, artifact_sha256='A' * 64)
+        self.outcome(evaluator_sha256='e' * 64, protocol_sha256='f' * 64, artifact_sha256='b' * 64, status='FAIL')
+        for source in self.manifest['sources']:
+            source['sha256'] = source['sha256'].upper()
+        result = self.run_report()
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['goal']['goal_id'], 'Goal_CASE')
+        self.assertEqual(result['outcome_summary']['evaluator_reported_pass_artifacts'], 1)
+        self.assertEqual(result['outcome_summary']['evaluator_reported_fail_artifacts'], 1)
+        self.assertEqual(len(result['outcomes']), 2, 'different digest identities remain separate')
+        self.assertEqual(result['manifest_sha256'], digest(self.write().read_bytes()))
+        self.assertTrue(all(s['status'] == 'READ' for s in result['source_inventory']))
+
     def test_contradictory_outcomes_and_invalid_times(self):
         self.outcome()
         self.outcome(status='FAIL')

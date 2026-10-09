@@ -260,6 +260,62 @@ class WheelTests(unittest.TestCase):
         self.assertEqual(before, {name: self.wheel.state_path(name).read_bytes() for name in before})
         self.assertEqual(self.executed(), [])
 
+    def test_frozen_template_id_collisions_are_rejected_before_initialization(self):
+        original_initialize = Wheel.initialize
+        selectors = [(('initial',), ('control',)),
+                     (('initial',), ('routes', 'flat', 'main')),
+                     (('routes', 'flat', 'screen'), ('control',)),
+                     (('routes', 'flat', 'screen'), ('initial',)),
+                     (('routes', 'flat', 'screen'), ('routes', 'benefit', 'screen')),
+                     (('routes', 'flat', 'screen'), ('routes', 'benefit', 'main'))]
+        for index, (changed, existing) in enumerate(selectors):
+            with self.subTest(changed=changed, existing=existing):
+                root = Path(self.temp.name) / ('collision-' + str(index))
+                project = FakeProject(root)
+
+                def collision(wheel, contract_path):
+                    contract = read_json(contract_path)
+                    config = root / 'trusted/wheel-setup.json'
+                    setup = read_json(config)
+                    target, other = setup, setup
+                    for key in changed:
+                        target = target[key]
+                    for key in existing:
+                        other = other[key]
+                    target['id'] = other['id']
+                    config.write_text(canonical(setup), encoding='utf-8')
+                    protocol_path = root / 'trusted/protocol.json'
+                    protocol = read_json(protocol_path)
+                    protocol['config_sha256'] = sha(config)
+                    protocol_path.write_text(canonical(protocol), encoding='utf-8')
+                    for binding in contract['bindings']:
+                        binding['sha256'] = sha(root / binding['path'])
+                    contract_path.write_text(canonical(contract), encoding='utf-8')
+                    return original_initialize(wheel, contract_path)
+
+                with patch.object(Wheel, 'initialize', autospec=True, side_effect=collision):
+                    with self.assertRaisesRegex(wheel_module.WheelError, 'mapped run IDs must be distinct'):
+                        fixture.prepare(root, project=project)
+                self.assertFalse((root / '.rds/wheel').exists())
+                self.assertEqual(project.calls, [], 'no project initialization or dispatch before rejection')
+
+    def test_hash_bound_non_object_metric_is_unknown_without_new_execution(self):
+        for index, value in enumerate((None, [], [1], 1, 'metric', True)):
+            with self.subTest(value=value):
+                self.root = Path(self.temp.name) / ('metric-' + str(index))
+                self.prepare()
+                path = self.root / 'outputs/treatment.json'
+                path.write_text(canonical(value), encoding='utf-8')
+                receipt = self.project.receipts['treatment']
+                receipt['artifacts'][0]['sha256'] = sha(path)
+                receipt['sha256'] = digest({k: v for k, v in receipt.items() if k != 'sha256'})
+                quota = self.wheel.state_path('quota.json').read_bytes()
+                self.assertEqual(self.tick(), 2)
+                self.assertEqual(read_json(self.wheel.state_path('cells/treatment.json'))['state'], 'UNKNOWN')
+                self.assertEqual(self.executed(), [])
+                self.assertEqual(self.wheel.state_path('quota.json').read_bytes(), quota)
+                self.assertIsNone(read_json(self.wheel.state_path('state.json'))['pending'])
+
     def test_ambiguous_execute_is_not_resent(self):
         self.prepare()
         original = self.wheel.project
