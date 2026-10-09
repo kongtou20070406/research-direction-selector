@@ -220,6 +220,22 @@ def check_run(store, db, contract, run):
                 'Model provider executable changed before launch')
 
 
+def _continuous_holdout(contract):
+    """Identify the new numerical check's private labels and terminal route.
+
+    This controls serialization and adaptive reuse, not filesystem access.
+    Ordinary project workers remain trusted; blind trials need an enforced
+    input projection and isolated transport in addition to this guard.
+    """
+    confirmation = contract.get('advisor_policy', {}).get('confirmation', {})
+    if (confirmation.get('domain') != 'continuous' or
+            confirmation.get('rules', {}).get('kind') != 'numerical_expression_evaluation'):
+        return None
+    data = confirmation.get('data', [])
+    require(len(data) == 2, 'Continuous confirmation requires features and private labels')
+    return {'labels': data[1], 'runs': set(confirmation['confirmation_runs'])}
+
+
 def evidence_excerpts(store, state, ids):
     """Bounded heads of frozen task inputs and original outputs, hash-checked.
 
@@ -227,7 +243,10 @@ def evidence_excerpts(store, state, ids):
     with a wrong value leaves the model no task content to repair from.
     """
     from rds_owned_advisor import _read_original
-    receipts = sorted((r for r in state['receipts'] if r['run_id'] not in ids),
+    holdout = _continuous_holdout(state['contract'])
+    withheld_runs = holdout['runs'] if holdout else set()
+    excluded_runs = set(ids) | withheld_runs
+    receipts = sorted((r for r in state['receipts'] if r['run_id'] not in excluded_runs),
                       key=lambda r: (r.get('ended_at', 0), r['run_id']), reverse=True)
     produced = [(r, item) for r in receipts for item in r['artifacts']
                 if item['kind'] == 'project_output' and item.get('size', MAX_BYTES + 1) <= MAX_BYTES]
@@ -247,11 +266,18 @@ def evidence_excerpts(store, state, ids):
             text = encoded[:limit].decode('utf-8', 'ignore')
         used += len(text.encode('utf-8'))
         return {'size': len(raw), 'truncated': len(raw) > limit or len(encoded) > limit, 'text': text}
-    inputs, outputs = [], []
+    inputs, outputs, withheld = [], [], []
     for binding in state['contract']['bindings']:
         if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL - reserved:
             continue
         path = store._path(binding['path'])
+        if holdout and (path == store._path(holdout['labels']['path']) or
+                        binding['sha256'] == holdout['labels']['sha256']):
+            # Match both canonical paths and byte identity: an alias or a
+            # second binding must not serialize the same held-out labels.
+            withheld.append({'path': binding['path'], 'sha256': binding['sha256'],
+                             'reason': 'CONTINUOUS_CONFIRMATION_LABELS_WITHHELD'})
+            continue
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_BYTES:
             continue
         raw = path.read_bytes()
@@ -267,8 +293,12 @@ def evidence_excerpts(store, state, ids):
             continue
         outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
                         'path': item['path'], 'sha256': item['sha256'], **head(raw, EXCERPT_TOTAL)})
-    return {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
-            'frozen_inputs': inputs, 'original_outputs': outputs}
+    result = {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
+              'frozen_inputs': inputs, 'original_outputs': outputs}
+    if holdout:
+        result['withheld_confirmation_inputs'] = withheld
+        result['access_assurance'] = 'SERIALIZATION_FILTER_ONLY_NOT_FILESYSTEM_ISOLATION'
+    return result
 
 
 def _jump_evidence_cut(store, db):
@@ -291,6 +321,14 @@ def request_repair(store, report):
         state = _state(store, db)
         jump_cut = _jump_evidence_cut(store, db)
     config = state['contract']['advisor_policy']['autonomy']
+    holdout = _continuous_holdout(state['contract'])
+    if holdout and any(r['id'] in holdout['runs'] and r.get('attempt_id') is not None
+                       for r in state['runs']):
+        # Final confirmation is not development feedback. Preserve the original
+        # attempt, including failure/unknown, instead of buying a new method
+        # after observing the final partition. Validation belongs in other
+        # explicitly declared development routes.
+        return 'FINAL_CONFIRMATION_REACHED'
     slots = config['repair_slots']
     from rds_jump import packet as jump_packet
     jumps = jump_packet(store)
