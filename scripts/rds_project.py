@@ -1231,6 +1231,10 @@ class ProjectStore:
             bound = binding(self.root)
             if bound is None or Path(bound['project_root']) == self.root:
                 raise
+            with self._db(True) as db:
+                retained = self._run(db, run_id)
+                if retained['status'] != 'RESERVED' or retained['attempt_id'] != attempt_id:
+                    raise
             # A binding installed after admission may stop startup. Keep the
             # exact attempt and conservatively settle its original reservation.
             return self._finish(run_id, attempt_id, 'FAILED', None, None, None,

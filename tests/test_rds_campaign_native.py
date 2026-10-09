@@ -13,11 +13,13 @@ import unittest
 from unittest.mock import patch
 
 import test_rds_project as fixtures
+import test_rds_project_lifecycle as owned_fixture
 from rds_campaign import bind
 from rds_checkpoints import read_checkpoint, save_checkpoint
 from rds_cli import RDSState
 from rds_project import ProjectStore, canonical, file_sha
 from rds_quick import cas_bytes
+import rds_owned_history as owned_history
 from rds_tms_store import save as save_dependencies
 
 
@@ -167,6 +169,75 @@ class CampaignNativeTests(unittest.TestCase):
             self.assertEqual(budget['reserved'], 0)
             self.assertEqual(budget['spent_measured'], reserved[name]['spent_measured'])
             self.assertEqual(budget['charged_estimate'], reserved[name]['charged_estimate'] + reserved[name]['reserved'])
+
+    def test_owned_running_sibling_settles_original_receipt_and_completion_checkpoint(self):
+        helper = owned_fixture.ProjectLifecycleTests(methodName='runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper._testMethodName = self._testMethodName
+        for name in ('code.py', 'config.json', 'data.json', 'evaluator.json'):
+            shutil.copyfile(helper.root / name, self.child / name)
+        helper.root = helper.fixture.root = self.child
+        helper.store = helper.fixture.store = child = ProjectStore(self.child)
+        prefix = ('import pathlib, time\n'
+                  'pathlib.Path("owned-process-started").write_text("started")\n'
+                  'deadline = time.monotonic() + 4\n'
+                  'while not pathlib.Path("release-owned-process").exists():\n'
+                  '    if time.monotonic() >= deadline: raise SystemExit(9)\n'
+                  '    time.sleep(0.01)\n')
+        helper.prepare_contract(owned=True, source=prefix + owned_fixture.fixture_module.SCRIPT)
+        child.initialize(helper.contract)
+        child.register(helper.manifests['baseline'])
+        with child._db(True) as db:
+            registered = child._run(db, 'baseline')
+            before_id = owned_history.checkpoint_id('before', registered)
+            before = read_checkpoint(db, before_id, root=child.root)
+        self.assertTrue(registered['owned_history_recorded'])
+        self.assertEqual(before['record']['decision']['owned_history']['run_id'], 'baseline')
+        self.assertEqual(before['record']['decision']['owned_history']['manifest_sha256'], registered['manifest_sha256'])
+        self.assertIsNone(before['record']['snapshot']['runs'][0]['attempt_id'])
+        release = self.child / 'release-owned-process'
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(child.execute, 'baseline')
+            try:
+                deadline = time.monotonic() + 10
+                while not (self.child / 'owned-process-started').exists() and not future.done():
+                    self.assertLess(time.monotonic(), deadline, 'Owned process did not reach its handshake')
+                    time.sleep(0.01)
+                self.assertFalse(future.done(), 'Owned process exited before binding')
+                running = child.snapshot()['runs'][0]
+                self.assertEqual(running['status'], 'RUNNING')
+                self.assertIsNotNone(running['pid'])
+                bind(self.store, self.root)
+            finally:
+                release.write_text('finish owned original attempt', encoding='utf-8')
+            receipt = future.result(timeout=15)
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+        self.assertEqual(receipt['attempt_id'], running['attempt_id'])
+        state = child.snapshot()
+        self.assertEqual(state['receipts'], [receipt])
+        self.assertEqual(state['runs'][0]['attempt_id'], running['attempt_id'])
+        with child._db(True) as db:
+            completed = child._run(db, 'baseline')
+            after_id = owned_history.checkpoint_id('after', completed)
+            after = read_checkpoint(db, after_id, root=child.root)
+            self.assertEqual(read_checkpoint(db, before_id, root=child.root), before)
+            self.assertEqual({item['id'] for item in owned_history.history_cut(child, db)}, {before_id, after_id})
+            self.assertEqual(after['record']['snapshot'], owned_history.snapshot(child, db))
+        self.assertEqual(after['record']['decision']['previous_checkpoint'], before_id)
+        self.assertEqual(after['record']['decision']['execution'], {
+            'run_id': 'baseline', 'attempt_id': running['attempt_id'],
+            'receipt_sha256': receipt['sha256'], 'run_status': 'SUCCEEDED'})
+        self.assertEqual(after['record']['snapshot']['receipts'], [{'run_id': 'baseline', 'sha256': receipt['sha256']}])
+        self.assertEqual(after['record']['snapshot']['runs'][0]['attempt_id'], running['attempt_id'])
+        for budget in state['budget'].values():
+            self.assertEqual(budget['reserved'], 0)
+        self.assertEqual((self.child / 'outputs/launches.txt').read_text().splitlines(), ['baseline'])
+        with self.assertRaisesRegex(ValueError, 'canonical project ledger'):
+            save_checkpoint(child.root, 'ordinary-after-binding', state, kind='project')
+        with self.assertRaisesRegex(ValueError, 'canonical project ledger'):
+            child.register(helper.manifests['repair'])
+        self.assertEqual(child.snapshot(), state)
 
     def test_orphan_attempt_real_cli_recovery_preserves_charge_and_refuses_other_writers(self):
         child = self.sibling()

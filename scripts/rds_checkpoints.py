@@ -78,15 +78,39 @@ def read_checkpoint(db, checkpoint_id, *, root):
 
 
 def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None, idempotent=False,
-                      _owned_run_id=None):
+                      _owned_run_id=None, _settled_attempt=None):
     """Append within an existing transaction; never commit the caller's work."""
-    from rds_campaign import enforce
-    enforce(root, kind=kind)
+    from rds_campaign import binding, enforce
+    scope = binding(root)
+    completion = (scope is not None and Path(root).resolve() != Path(scope['project_root'])
+                  and _settled_attempt is not None and kind == 'project' and _owned_run_id is not None)
+    if not completion:
+        enforce(root, kind=kind)
     if not db.in_transaction:
         raise ValueError('Checkpoint append requires the owning transaction')
     filename = db.execute('PRAGMA database_list').fetchone()[2]
     if not filename or Path(filename).resolve() != _database(root, kind):
         raise ValueError('Checkpoint transaction belongs to a different ledger')
+    if completion:
+        # Only the receipt-bound completion checkpoint of an existing admitted
+        # attempt can accompany settlement after a workspace binding changes.
+        from rds_project import ProjectStore, TERMINAL, require
+        from rds_owned_history import checkpoint_id as owned_checkpoint_id, snapshot as owned_snapshot
+        run = ProjectStore._run(db, _owned_run_id)
+        row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (_owned_run_id,)).fetchone()
+        receipt = ProjectStore._receipt(row) if row is not None else None
+        require(run['attempt_id'] == _settled_attempt and run['status'] in TERMINAL
+                and run.get('owned_history_recorded') is True and receipt is not None
+                and receipt['attempt_id'] == _settled_attempt
+                and receipt['process_status'] == run['status']
+                and receipt['manifest_sha256'] == run['manifest_sha256']
+                and checkpoint_id == owned_checkpoint_id('after', run),
+                'Settlement checkpoint requires the original completed owned attempt')
+        require(isinstance(decision, dict) and decision.get('execution') == {
+                    'run_id': run['id'], 'attempt_id': run['attempt_id'],
+                    'receipt_sha256': receipt['sha256'], 'run_status': receipt['run_status']}
+                and snapshot == owned_snapshot(ProjectStore(root), db),
+                'Settlement checkpoint must retain its original receipt and live accounting')
     record, raw = _checkpoint_record(root, checkpoint_id, snapshot, kind=kind, decision=decision)
     existing = read_checkpoint(db, checkpoint_id, root=root)
     if existing is not None:
