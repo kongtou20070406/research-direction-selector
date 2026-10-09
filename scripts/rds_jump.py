@@ -297,6 +297,7 @@ def _python_script_operand(argv):
             flags = option[1:]
             for offset, flag in enumerate(flags):
                 require(flag != 'm', 'Python module execution is unsupported for frozen Jump code')
+                require(flag != 'i', 'Python interactive startup is unsupported for frozen Jump code')
                 if flag == 'c':
                     return None  # Inline code has no script-file operand.
                 if flag in {'W', 'X'}:
@@ -305,7 +306,7 @@ def _python_script_operand(argv):
                 # CPython accepts -t as a compatibility no-op; keep scanning.
                 if flag in 'h?V':
                     return None
-                require(flag in 'bBdEiIOPqRsStuvx',
+                require(flag in 'bBdEIOPqRsStuvx',
                         'Unsupported Python option before frozen main script')
             else:
                 index += 1

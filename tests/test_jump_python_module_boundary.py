@@ -96,8 +96,8 @@ class PythonModuleBoundaryTests(unittest.TestCase):
                     self.assertEqual(store.snapshot(), before)
 
     def test_all_cpython_continuing_short_flags_preserve_later_module_refusal(self):
-        # CPython 3.11/3.13 initconfig.c: flags that continue before c/m/file.
-        for flag in 'bBdEiIOPqRsStuvx':
+        # CPython 3.11/3.13 flags that continue; interactive i is refused.
+        for flag in 'bBdEIOPqRsStuvx':
             for options in ([f'-{flag}', '-m', 'worker'], [f'-{flag}mworker']):
                 with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'Python module execution'):
                     jump._python_script_operand(['python', *options])
@@ -158,6 +158,41 @@ class PythonModuleBoundaryTests(unittest.TestCase):
                                (['-BW-J', 'worker.py'], 2), (['--', '-J'], 2),
                                (['worker.py', '--future-option'], 1)):
             self.assertEqual(jump._python_script_operand(['python', *options]), index)
+
+    def test_effective_interactive_flags_refuse_before_registration_or_dispatch(self):
+        for legacy in (False, True):
+            for options in (['-i', 'worker.py'], ['-Bi', 'worker.py'], ['-ti', 'worker.py'],
+                            ['-Ii', 'worker.py'], ['-Si', 'worker.py'], ['-iB', 'worker.py']):
+                with self.subTest(options=options, legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                    root, store = self.build(directory, options, legacy=legacy, frozen_worker=True)
+                    (root / 'readline.py').write_text('raise AssertionError("hook executed")\n', encoding='utf-8')
+                    before = store.snapshot()
+                    plan = fixtures.json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+                    with patch.object(fixtures.ProjectStore, 'execute', side_effect=AssertionError('dispatch forbidden')), \
+                            patch.object(fixtures.ProjectStore, 'register', side_effect=AssertionError('registration forbidden')):
+                        with self.assertRaisesRegex(ValueError, 'Python interactive startup'):
+                            jump.load_plan(store, before)
+                        result = jump.prepare_owned(store, plan['stages'][0]['run'])
+                    self.assertEqual(result['status'], 'JUMP_UNAVAILABLE')
+                    self.assertFalse(result['changed'])
+                    self.assertFalse(result['execution_started'])
+                    self.assertFalse(result['retry_authorized'])
+                    self.assertEqual(store.snapshot(), before)
+
+    def test_interactive_looking_values_literal_files_and_postscript_remain_admissible(self):
+        controls = [(['-W', '-i', 'worker.py'], None), (['-X', '-i', 'worker.py'], None),
+                    (['-BW-i', 'worker.py'], None), (['-BX-i', 'worker.py'], None),
+                    (['--', '-i'], '-i'), (['worker.py', '-i'], None)]
+        for options, main in controls:
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                root, store = self.build(directory, options, frozen_worker=True, literal_main=main)
+                before = store.snapshot()
+                with patch.object(fixtures.ProjectStore, 'execute', side_effect=AssertionError('dispatch forbidden')), \
+                        patch.object(fixtures.ProjectStore, 'register', side_effect=AssertionError('registration forbidden')):
+                    self.assertEqual(len(jump.load_plan(store, before)['stages']), 3)
+                self.assertEqual(store.snapshot(), before)
+        self.assertIsNone(jump._python_script_operand(['python', '-ci']))
+        self.assertIsNone(jump._python_script_operand(['python', '-', '-i']))
 
 
 if __name__ == '__main__':

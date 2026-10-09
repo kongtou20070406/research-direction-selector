@@ -197,6 +197,26 @@ class ContinuousArithmeticTests(unittest.TestCase):
         self.assertEqual(check_output({**CLAIM, 'max_nrmse': 2, 'min_r2': 0},
                                      INPUTS, labels, candidate, SHA)['status'], 'FAIL')
 
+    def test_exact_endpoints_refuse_original_rows_collapsed_by_normalization(self):
+        target = math.nextafter(1.5, math.inf)
+        prediction = math.nextafter(target, math.inf)
+        self.assertNotEqual(target, prediction)
+        self.assertEqual(target / 3, prediction / 3)
+        inputs = {'schema': 1, 'variables': ['x0'], 'rows': [
+            {'id': 'r0', 'values': [-3.]}, {'id': 'r1', 'values': [prediction]}]}
+        labels = {'schema': 1, 'rows': [
+            {'id': 'r0', 'target': -3.}, {'id': 'r1', 'target': target}]}
+        exact_labels = {'schema': 1, 'rows': [
+            {'id': row['id'], 'target': row['values'][0]} for row in inputs['rows']]}
+        candidate = {**output('x0'), 'row_ids': ['r0', 'r1']}
+        for claim in ({**CLAIM, 'max_nrmse': 0, 'min_r2': 0},
+                      {**CLAIM, 'max_nrmse': 1e-7, 'min_r2': 1},
+                      {**CLAIM, 'max_nrmse': 0, 'min_r2': 1}):
+            self.assertEqual(check_output(claim, inputs, labels, candidate, SHA)['status'], 'FAIL')
+            self.assertEqual(check_output(claim, inputs, exact_labels, candidate, SHA)['status'], 'PASS')
+        self.assertEqual(check_output({**CLAIM, 'max_nrmse': 1e-7, 'min_r2': 0},
+                                     inputs, labels, candidate, SHA)['status'], 'PASS')
+
     def test_size_and_ast_complexity_limits(self):
         for expression in ('1' * 4097, '-(' * 20 + '1' + ')' * 20,
                            '+'.join('x0' for _ in range(80))):
