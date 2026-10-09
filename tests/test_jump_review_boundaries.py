@@ -115,7 +115,9 @@ class JumpOriginalBoundaryTests(unittest.TestCase):
                 # A later load must still distinguish a now-existing output from code.
                 self.assertIsNotNone(rds_jump.load_plan(store, store.snapshot()))
         self.assertEqual(rds_jump._python_script_operand(['python.exe', '-W', 'ignore', '-X', 'utf8', 'worker', 'inputs.py']), 5)
-        for argv in (['python', '-c', 'print(1)', 'worker'], ['python', '-m', 'module', 'worker'], ['python', '-']):
+        with self.assertRaisesRegex(ValueError, 'Python module execution'):
+            rds_jump._python_script_operand(['python', '-m', 'module', 'worker'])
+        for argv in (['python', '-c', 'print(1)', 'worker'], ['python', '-']):
             self.assertIsNone(rds_jump._python_script_operand(argv))
 
     def test_literal_script_after_option_terminator_keeps_exact_frozen_identity(self):

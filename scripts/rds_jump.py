@@ -294,8 +294,9 @@ def _python_script_operand(argv):
         elif option.startswith('-'):
             flags = option[1:]
             for offset, flag in enumerate(flags):
-                if flag in {'c', 'm'}:
-                    return None  # Inline code/modules have no script-file operand.
+                require(flag != 'm', 'Python module execution is unsupported for frozen Jump code')
+                if flag == 'c':
+                    return None  # Inline code has no script-file operand.
                 if flag in {'W', 'X'}:
                     index += 1 if offset + 1 < len(flags) else 2
                     break
