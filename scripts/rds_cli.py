@@ -934,6 +934,12 @@ def cmd_meta(args, rds):
 
 
 def cmd_advise(args, rds):
+    from rds_project_lifecycle import discover
+    requested = Path(args.root).resolve()
+    search_root = next((candidate for candidate in (requested, *requested.parents) if candidate.is_dir()), requested)
+    scope = discover(search_root)
+    require(not (scope['workflow']['mode'] == 'FULL' and Path(scope['project_root']).resolve() != requested),
+            'Advisor must use the existing FULL project root: ' + str(scope.get('project_root')))
     from rds_advisor import RDSAdvisor
     owned = _owned_project(args.root)
     if owned is not None:
@@ -2025,7 +2031,7 @@ def _main():
     except (ValueError, KeyError, TypeError, RecursionError, OSError, SyntaxError) as exc:
         # KeyError/TypeError also come from unvalidated user specs, so they stay rejections.
         print("[RDS-REJECT] " + str(exc), file=sys.stderr)
-        if args.command == "init" or args.command == "project" and args.action == "init":
+        if (args.command == "init" or args.command == "project" and args.action == "init") and Path(args.root).is_dir():
             from rds_project import _shell_argument
             print('[RDS-HINT] Inspect the existing project first: python -B scripts/rds_cli.py --root ' +
                   _shell_argument(str(args.root)) + ' project discover; see docs/project-lifecycle.md', file=sys.stderr)
