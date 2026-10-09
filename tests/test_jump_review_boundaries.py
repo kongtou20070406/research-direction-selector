@@ -118,6 +118,45 @@ class JumpOriginalBoundaryTests(unittest.TestCase):
         for argv in (['python', '-c', 'print(1)', 'worker'], ['python', '-m', 'module', 'worker'], ['python', '-']):
             self.assertIsNone(rds_jump._python_script_operand(argv))
 
+    def test_literal_script_after_option_terminator_keeps_exact_frozen_identity(self):
+        initialize = ProjectStore.initialize
+        for role in ('missing', 'data', 'code'):
+            with self.subTest(role=role), tempfile.TemporaryDirectory() as directory:
+                def literal_entrypoint(store, contract):
+                    contract = deepcopy(contract)
+                    filename = '--script=worker.py'
+                    (store.root / filename).write_bytes((store.root / 'worker.py').read_bytes())
+                    plan = json.loads((store.root / 'jump-generation.json').read_text(encoding='utf-8'))
+                    if role != 'missing':
+                        contract['bindings'].append({'path': filename, 'role': role, 'sha256': file_sha(store.root / filename)})
+                    if role == 'code':
+                        plan['generator_code_paths'].append(filename)
+                    for stage in plan['stages']:
+                        command = next(a for a in contract['allowed_commands'] if a == stage['run']['argv'])
+                        command.insert(2, '--')
+                        command[3] = filename
+                        stage['run']['argv'] = command
+                    example.write(store.root / 'jump-generation.json', plan)
+                    next(b for b in contract['bindings'] if b['path'] == 'jump-generation.json')['sha256'] = file_sha(store.root / 'jump-generation.json')
+                    protocol = json.loads((store.root / 'protocol.json').read_text(encoding='utf-8'))
+                    protocol.update({r + '_sha256': ProjectStore._role_sha(contract, r) for r in ('code', 'config', 'data')})
+                    example.write(store.root / 'protocol.json', protocol)
+                    next(b for b in contract['bindings'] if b['path'] == 'protocol.json')['sha256'] = file_sha(store.root / 'protocol.json')
+                    return initialize(store, contract)
+                with patch.object(ProjectStore, 'initialize', literal_entrypoint):
+                    root, store = example.build(Path(directory) / 'project')
+                before = store.snapshot()
+                if role == 'code':
+                    self.assertEqual(rds_jump.generate(root, 1)['status'], 'JUMP_STEP_LIMIT')
+                    receipt = store.snapshot()['receipts'][0]
+                    self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+                    self.assertEqual(receipt['argv'][3], '--script=worker.py')
+                else:
+                    (root / '--script=worker.py').write_text('raise RuntimeError("unfrozen literal entrypoint")', encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError, 'entrypoint.*frozen code'):
+                        rds_jump.load_plan(store, store.snapshot())
+                    self.assertEqual(store.snapshot(), before)
+
     def test_four_generated_proposals_finish_under_one_original_controller_grant(self):
         with tempfile.TemporaryDirectory() as directory:
             initialize = ProjectStore.initialize
@@ -356,7 +395,10 @@ class JumpOriginalBoundaryTests(unittest.TestCase):
                              str((root / 'worker.py').resolve())):
                 with self.subTest(argument=argument):
                     aliased = deepcopy(plan)
-                    aliased['stages'][0]['run']['argv'][2] = argument
+                    if argument.startswith('-'):
+                        aliased['stages'][0]['run']['argv'].append(argument)
+                    else:
+                        aliased['stages'][0]['run']['argv'][2] = argument
                     self.assertEqual(len(rds_jump._generator_bindings(store, contract, aliased)), 3)
                     aliased['generator_code_paths'].remove('worker.py')
                     with self.assertRaisesRegex(ValueError, 'entrypoint'):

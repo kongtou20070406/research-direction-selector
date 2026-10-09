@@ -318,7 +318,8 @@ def _generator_bindings(store, contract, plan):
         for index, arg in enumerate(stage['run']['argv']):
             if index != 0 and index != script_operand and arg.startswith('-') and '=' not in arg:
                 continue  # Interpreter options are not code/data path operands.
-            candidate = arg.split('=', 1)[1] if arg.startswith('-') and '=' in arg else arg
+            candidate = (arg.split('=', 1)[1] if index != 0 and index != script_operand
+                         and arg.startswith('-') and '=' in arg else arg)
             try:
                 path = Path(candidate)
                 path = (path if path.is_absolute() else store.root / path).resolve()
