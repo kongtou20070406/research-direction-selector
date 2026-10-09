@@ -526,7 +526,14 @@ def compare_paired_metrics(candidate, baseline, sampling):
         return result
     try:
         differences = [c - b for c, b in zip(cv, bv)]
-        mean = fsum(differences) / len(differences)
+        if all(isinstance(v, int) for v in differences):
+            mean = sum(differences) / len(differences)
+        elif any(isinstance(v, int) for v in differences):
+            # fsum converts each int to float; retain integer low bits even
+            # when a float elsewhere makes the observations heterogeneous.
+            mean = float(sum((Fraction(v) for v in differences), Fraction()) / len(differences))
+        else:
+            mean = fsum(differences) / len(differences)
         improvement = -mean if report['candidate']['identity']['direction'] == 'minimize' else mean
         _require(_numeric(mean) and _numeric(improvement), 'Unrepresentable paired difference')
     except (ArithmeticError, ValueError):

@@ -52,6 +52,22 @@ class PairedMethodTests(unittest.TestCase):
         self.assertIsNone(result['mean_delta'])
         self.assertIsNone(result['standard_error'])
 
+    def test_integer_low_bits_survive_exact_and_mixed_cancellation(self):
+        for values in ([10 ** 16 + 1, -10 ** 16],
+                       [10 ** 16 + 1, -10 ** 16, 0.0],
+                       [10 ** 16 + 1, -1e16]):
+            expected = float(sum(map(Fraction, values)) / len(values))
+            for ordered in permutations(values):
+                for direction in ('minimize', 'maximize'):
+                    c, b = points(list(ordered), True), points([0] * len(values))
+                    c['identity']['direction'] = b['identity']['direction'] = direction
+                    result = compare_paired_metrics(c, b, SAMPLING)
+                    self.assertEqual(result['status'], 'COMPARABLE')
+                    self.assertEqual(result['mean_delta'], expected)
+                    self.assertEqual(result['mean_improvement'], -expected if direction == 'minimize' else expected)
+                    self.assertIsNone(result['standard_error'])
+                    self.assertEqual(result['scientific_support'], 'UNKNOWN')
+
     def test_descriptive_pairs_and_iid_standard_error_are_distinct(self):
         result = compare_paired_metrics(points([0, 2], True), points([1, 1]), SAMPLING)
         self.assertEqual(result['status'], 'COMPARABLE')
