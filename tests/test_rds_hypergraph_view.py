@@ -2,6 +2,8 @@
 from copy import deepcopy
 import json
 import hashlib
+import io
+from contextlib import redirect_stderr
 import os
 from pathlib import Path
 import re
@@ -155,6 +157,35 @@ class HypergraphViewTests(unittest.TestCase):
         self.assertEqual(snapshot["graph"], spec)
         self.assertEqual({p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*")
                           if p.is_file() and p != output}, originals)
+
+    def test_large_export_reports_analysis_status_to_cli(self):
+        output = self.root / "large.html"
+        result = self.export("--demo", "--large", "--output", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout).get("analysis_status"), "NOT_RUN_LARGE_GRAPH")
+
+    def test_resolution_loops_are_bounded_cli_errors_and_unavailable_reads(self):
+        from rds_hypergraph_view import main
+        original_resolve = Path.resolve
+        loop = self.root / "loop"
+        def resolve(path, *args, **kwargs):
+            if path == loop:
+                raise RuntimeError("Symlink loop from synthetic path-resolution fixture")
+            return original_resolve(path, *args, **kwargs)
+        cases = (["--root", str(loop)], ["--output", str(loop)],
+                 ["--hypergraph", str(loop)], ["--demo", "--readable-json", str(loop)])
+        for arguments in cases:
+            with self.subTest(arguments=arguments), patch.object(Path, "resolve", resolve):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                    main(arguments)
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("Symlink loop", stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+        with patch.object(Path, "resolve", resolve):
+            self.assertEqual(read_graph(self.root, loop)["status"], "UNAVAILABLE")
+            self.assertEqual(read_graph(loop)["status"], "UNAVAILABLE")
+        self.assertEqual(list(self.root.iterdir()), [])
 
     def test_graph_reader_leaves_coexisting_reference_runner_untouched(self):
         sys.path.insert(0, str(ROOT / "tests"))
@@ -861,6 +892,35 @@ console.log('Production outline methods: independent Graphics transport, cached 
             self.assertTrue(any(i["node_id"] == "artifact:a" and i["field"] == "path"
                                 and i["reason"] == "INVALID_BINDING" for i in invalid["record_topology"]["issues"]))
 
+    def test_saved_source_base_reaches_display_without_changing_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory, patch("rds_hypergraph.record_topology", None, create=True):
+            root = Path(directory) / "project"
+            root.mkdir()
+            base = Path(directory).resolve() / "actual-source"
+            spec = self.record_fixture()
+            expected = _legacy_record_report(spec)["record_relations"]
+            for row in spec["nodes"]:
+                if isinstance(row["source"], dict) and "file" in row["source"]:
+                    row["artifact_path"] = row["source"]["file"]
+                    row["source"]["path"] = row["source"]["file"]
+                    row["source"]["file"] = str(base / row["source"]["file"])
+            snapshot = save(root, spec, expected=None, source_base=base)
+            originals = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            result = read_graph(root)
+            before = deepcopy(result)
+            view = replica_view(result)
+            self.assertEqual(view["record_relations"], expected)
+            self.assertEqual(view["record_topology"]["issues"], [])
+            self.assertEqual(HypergraphViewTests.payload(render_html(result))["display"]["diagnostics"]["count"], 0)
+            self.assertEqual(result, before)
+            self.assertEqual(result["snapshot_sha256"], snapshot)
+            self.assertEqual(result["graph"], spec)
+            self.assertNotIn("record_source_base_dir", spec)
+            self.assertEqual({p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}, originals)
+            conflicting = deepcopy(result)
+            conflicting["graph"]["nodes"][6]["source"]["path"] = "out/different.json"
+            self.assertTrue(any(i["reason"] == "CONFLICTING_BINDINGS" for i in replica_view(conflicting)["record_topology"]["issues"]))
+
     def test_fallback_invalid_reported_base_is_diagnostic_without_inference_changes(self):
         spec = self.record_fixture()
         expected = _legacy_record_report(spec)["record_relations"]
@@ -1137,6 +1197,12 @@ console.log(JSON.stringify({none,attract,repel,zero,flow,group,light,heavy,cappe
         self.assertNotIn("importScripts(",page)
         self.assertIn("Copyright (c) 2013-2023 Mathew Groves, Chad Engler",page)
         self.assertIn(REPLICA_APP,page)
+        large_page = render_replica_html(graph_view(large_demo(), "synthetic:large"),
+                                        os.environ["RDS_REPLICA_ROOT"], os.environ["RDS_PIXI_JS"])
+        large_payload = HypergraphViewTests.payload(large_page)
+        self.assertEqual(large_payload["analysis_status"], "NOT_RUN_LARGE_GRAPH")
+        self.assertIn("分析未运行", large_payload["analysis_notice"])
+        self.assertIn('<div id="analysis-note" role="note">', large_page)
         # Runtime scripts themselves are parsed by Node without loading a browser.
         if shutil.which("node"):
             with tempfile.TemporaryDirectory() as tmp:
@@ -1254,6 +1320,31 @@ console.log('Canvas: 8192 relation editors bounded on first/last page and tail r
 
 @unittest.skipUnless(shutil.which("node"), "Node required for actual Replica interaction boundaries")
 class ReplicaBoundaryTests(_JSBoundaryTests):
+    def test_large_analysis_notice_persists_in_actual_both_renderers(self):
+        result = graph_view(large_demo(), "synthetic:large")
+        payload = HypergraphViewTests.payload(render_html(result))
+        payload["replica_view"] = replica_view(result)
+        common = "const payload=" + json.dumps(payload) + ";\n" + r'''
+const before=JSON.stringify(payload.graph),b=browser(payload);
+function verify(){assert.equal(payload.analysis_status,'NOT_RUN_LARGE_GRAPH');const note=b.ids['analysis-note'];assert.ok(note,'analysis has its own visible DOM node');assert.match(note.textContent,/分析未运行/);assert.match(note.textContent,/超过分析上限/);assert.ok(!note.hidden);assert.equal(JSON.stringify(payload.graph),before);}
+'''
+        self.run_js(JS, common + r'''
+vm.runInContext(production,b.scope,{timeout:10000});b.flush();verify();
+b.visibility(true);b.visibility(false);b.flush();verify();
+console.log('Actual Canvas: persistent large-graph analysis notice PASS');
+''')
+        self.run_js(REPLICA_APP, common + r'''
+b.scope.localStorage={getItem:()=>JSON.stringify({growth:false}),setItem(){}};b.scope.SIM_WORKER_MAIN='';b.scope.PIXI={Texture:{WHITE:{}}};
+b.scope.GraphRenderer=class{
+ constructor(){b.renderer=this;this.nodes=[];this.links=[];this.nodeLookup=new Map();this.width=1000;this.height=700;this.worker={onmessage(){},postMessage(){},terminate(){}};}
+ setData({nodes,links}){this.nodes=Object.entries(nodes).map(([id,n])=>({...n,id,x:0,y:0,getSize(){return 10}}));this.nodeLookup=new Map(this.nodes.map(n=>[n.id,n]));this.links=links.map(([s,t,rds])=>({source:this.nodeLookup.get(s),target:this.nodeLookup.get(t),rds}));}
+ setForces(){}setOptions(){}changed(){}resetPan(){}zoomTo(){}setScale(){}setPan(){}
+};
+vm.runInContext(production,b.scope,{timeout:10000});verify();
+b.renderer.worker.onmessage({data:{}});verify();
+console.log('Actual Replica: persistent large-graph analysis notice PASS');
+''')
+
     def test_actual_both_renderers_show_bounded_diagnostics_and_safe_candidates(self):
         from rds_hypergraph_view import readable_diagnostics
         digest = "a" * 64

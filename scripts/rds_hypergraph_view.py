@@ -99,14 +99,24 @@ def read_graph(root, graph_path=None, *, demo=False, large=False):
         saved = current(root)
         if saved is None:
             return {"status": "MISSING", "graph": None, "source": None, "demo": False}
-        return graph_view(saved["dependency_map"], Path(root).resolve() / ".rds" / "project.sqlite3",
-                          snapshot_sha256=saved["sha256"])
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, sqlite3.Error) as exc:
+        result = graph_view(saved["dependency_map"], Path(root).resolve() / ".rds" / "project.sqlite3",
+                            snapshot_sha256=saved["sha256"])
+        if saved.get("source_base_dir") is not None:
+            result["record_source_base_dir"] = saved["source_base_dir"]
+        return result
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, sqlite3.Error) as exc:
         return {"status": "UNAVAILABLE", "graph": None, "source": str(graph_path or root), "reason": str(exc), "demo": demo}
 
 
+def analysis_notice(result):
+    return {"NOT_RUN_LARGE_GRAPH": "阻断条件分析未运行：图规模超过分析上限。图仍完整显示。",
+            "INCOMPLETE": "阻断条件分析不完整：已达到计算上限。",
+            "COMPLETE": "阻断条件分析已完成。",
+            "NOT_RUN": "阻断条件分析未运行。"}.get(result.get("analysis_status"), "阻断条件分析状态未知。")
+
+
 def render_html(result):
-    payload = json.dumps({**result, "display": display_records(result)}, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
+    payload = json.dumps({**result, "display": display_records(result), "analysis_notice": analysis_notice(result)}, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
     payload = payload.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     # Substitute code before data so user fields cannot become template tokens.
     return (HTML.replace("__GRAPH_CSS__", CSS).replace("__GRAPH_JS__", JS)
@@ -256,7 +266,8 @@ function startGraph(){
  const top=$('div',undefined,'hg-top'),title=$('h1',undefined,'hg-title');title.append($('span','RDS'),data.readable?.graph?.title?.trim()||'研究超图');top.append(title);
  function diagnostics(parent,info){if(!info?.count)return;parent.append($('h4','来源待核对'));for(const item of info.items)parent.append($('p',item.message,'source-diagnostic'));if(info.omitted)parent.append($('p',`另有 ${info.omitted} 项待核对`,'hg-hint'));}
  if(data.readable?.graph?.summary?.trim()||data.display?.diagnostics?.count){const info=button('ⓘ','研究说明',()=>{detail.replaceChildren();const head=$('header');head.append($('strong','研究说明'),button('×','关闭详情',()=>{detail.hidden=true},'hg-close'));detail.append(head,$('h3',data.readable?.graph?.title?.trim()||'研究超图'));if(data.readable?.graph?.summary?.trim())detail.append($('p',data.readable.graph.summary.trim(),'readable-summary'));diagnostics(detail,data.display?.diagnostics);detail.hidden=false;settings.hidden=results.hidden=true;},'hg-close');info.style.pointerEvents='auto';title.append(info);}
- const counts=$('div',`${graph.nodes.length.toLocaleString()} 个节点  ·  ${graph.hyperedges.length.toLocaleString()} 条超边  ·  ${links.length.toLocaleString()} 条连接`,'hg-counts');if(data.demo)counts.append($('span','合成示例','hg-demo'));top.append(counts);shell.append(top);
+  const counts=$('div',`${graph.nodes.length.toLocaleString()} 个节点  ·  ${graph.hyperedges.length.toLocaleString()} 条超边  ·  ${links.length.toLocaleString()} 条连接`,'hg-counts');if(data.demo)counts.append($('span','合成示例','hg-demo'));top.append(counts);shell.append(top);
+  const analysisNote=$('div',data.analysis_notice||'阻断条件分析状态未知。','hg-counts');analysisNote.id='analysis-note';analysisNote.setAttribute('role','note');top.append(analysisNote);
  const actions=$('div',undefined,'hg-actions'),searchWrap=$('div',undefined,'hg-search-wrap'),search=$('input',undefined,'hg-search'),results=$('div',undefined,'hg-results');search.id='hg-search';search.type='search';search.placeholder='搜索节点或关系…';search.setAttribute('aria-label','搜索节点或关系');results.hidden=true;results.id='hg-search-results';searchWrap.append(search,results);actions.append(searchWrap);
  const settings=$('aside',undefined,'hg-panel'),detail=$('aside',undefined,'hg-panel');settings.id='hg-settings';detail.id='hg-detail';settings.hidden=detail.hidden=true;settings.setAttribute('aria-label','图谱设置');detail.setAttribute('aria-label','节点与关系详情');
  const settingsButton=button('☷','图谱设置',()=>{settings.hidden=!settings.hidden;detail.hidden=true;results.hidden=true});settingsButton.id='hg-settings-toggle';actions.append(settingsButton);shell.append(actions,settings,detail);
@@ -515,8 +526,11 @@ def _adapt_record_view(spec):
     return adapted
 
 
-def _record_view_report(spec, *, adapted=None):
+def _record_view_report(spec, *, adapted=None, source_base=None):
     adapted = _adapt_record_view(spec) if adapted is None else adapted
+    if source_base is not None:
+        adapted = deepcopy(adapted)
+        adapted["record_source_base_dir"] = source_base
     import rds_hypergraph
     if callable(getattr(rds_hypergraph, "record_topology", None)):
         return rds_hypergraph.record_topology(adapted)
@@ -780,7 +794,7 @@ def display_record(row, *, edge=False):
 def display_records(result, *, adapted=None, report=None):
     spec = result.get("graph") or {}
     adapted = (_adapt_record_view(spec) if spec else spec) if adapted is None else adapted
-    report = (_record_view_report(spec, adapted=adapted) if spec else {"record_topology": {"issues": []}}) if report is None else report
+    report = (_record_view_report(spec, adapted=adapted, source_base=result.get("record_source_base_dir")) if spec else {"record_topology": {"issues": []}}) if report is None else report
     issues = report["record_topology"]["issues"]
     effective = {row["id"]: row for row in adapted.get("nodes", [])}
     by_node = {}
@@ -848,7 +862,7 @@ def replica_view(result, *, presentation=None, report=None):
         return {"nodes": {}, "links": [], "provenance_count": 0, "relations": []}
     nodes, links, groups = {}, [], {}
     adapted = _adapt_record_view(spec) if presentation is None or report is None else None
-    report = _record_view_report(spec, adapted=adapted) if report is None else report
+    report = _record_view_report(spec, adapted=adapted, source_base=result.get("record_source_base_dir")) if report is None else report
     presentation = display_records(result, adapted=adapted, report=report) if presentation is None else presentation
     ids = {n["id"]: f"c{i}" for i, n in enumerate(spec["nodes"])}
     goals = set(spec["goals"])
@@ -1117,9 +1131,9 @@ def render_replica_html(result, replica_root, pixi_js):
         raise ValueError("PixiJS must be the official 7.4.3 dist/pixi.min.js")
     spec = result.get("graph") or {}
     adapted = _adapt_record_view(spec) if spec else spec
-    report = _record_view_report(spec, adapted=adapted) if spec else {"record_topology": {"issues": []}}
+    report = _record_view_report(spec, adapted=adapted, source_base=result.get("record_source_base_dir")) if spec else {"record_topology": {"issues": []}}
     presentation = display_records(result, adapted=adapted, report=report)
-    payload = {**result, "display": presentation, "replica_view": replica_view(result, presentation=presentation, report=report),
+    payload = {**result, "display": presentation, "analysis_notice": analysis_notice(result), "replica_view": replica_view(result, presentation=presentation, report=report),
                "renderer": {"repository": "https://github.com/runningZ1/obsidian-graph-replica", "commit": REPLICA_COMMIT,
                             "pixi": "7.4.3", "runtime_network": False}}
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c")
@@ -1171,7 +1185,7 @@ REPLICA_HTML = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <main id="graph" aria-label="RDS 超图画布"><div class="graph-controls" id="controls"></div>
 <button class="icon-btn graph-controls-gear" id="gear" aria-label="展开图谱设置">⚙</button>
 <section class="note-card" id="note-card" aria-label="节点详查"></section>
-<aside id="legend" aria-label="图例"></aside><div id="counts"></div><div id="state" role="status"></div><div id="hover-info" role="tooltip" hidden></div><div id="growth-info"></div></main>
+<aside id="legend" aria-label="图例"></aside><div id="counts"></div><div id="state" role="status"></div><div id="analysis-note" role="note"></div><div id="hover-info" role="tooltip" hidden></div><div id="growth-info"></div></main>
 <script id="snapshot" type="application/json">__DATA__</script>
 <script id="d3-worker-lib" type="text/plain">__D3__</script>
 <script>__PIXI__</script><script>__WORKER__</script><script>__RENDERER__</script><script>__APP__</script></body></html>'''
@@ -1182,6 +1196,7 @@ REPLICA_EXTRA_CSS = '''
 #legend{left:12px;bottom:34px;max-width:calc(100% - 36px);border:1px solid var(--background-modifier-border);border-radius:6px;background:var(--background-primary);padding:6px 9px;line-height:1.6;pointer-events:none}
 #legend .legend-row{display:flex;flex-wrap:wrap;gap:2px 12px}#legend .symbol{font-size:14px;margin-right:4px}#legend .legend-note{font-size:11px;color:var(--text-muted)}
 #counts{right:16px;pointer-events:none}#state{position:absolute;left:16px;top:14px;font-size:12px;color:var(--text-muted);pointer-events:none;z-index:1}
+#analysis-note{position:absolute;left:16px;top:36px;max-width:calc(100% - 36px);font-size:12px;color:var(--text-muted);pointer-events:none;z-index:1}
 #hover-info{position:absolute;left:12px;top:35px;max-width:calc(100% - 36px);z-index:2;background:var(--background-secondary);border:1px solid var(--background-modifier-border);padding:7px 10px;border-radius:5px;color:var(--text-normal);font-size:12px;pointer-events:none;white-space:pre-line}
 #growth-info{position:absolute;left:16px;top:14px;color:var(--text-muted);font-size:12px;pointer-events:none;z-index:2}.icon-btn[hidden],#hover-info[hidden]{display:none}
 .note-card{width:340px;max-height:65%;bottom:110px}
@@ -1233,7 +1248,8 @@ function activeDependencyLevels(ids,links,relations) {
  const data=JSON.parse(document.getElementById('snapshot').textContent), view=data.replica_view;
  const $=id=>document.getElementById(id), panel=$('controls'), card=$('note-card');
  const source=(data.source || '').split(/[\\/]/).filter(Boolean);
- $('source-name').textContent=data.readable?.graph?.title?.trim()||(data.demo?'演示':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13':'RDS');
+  $('source-name').textContent=data.readable?.graph?.title?.trim()||(data.demo?'演示':source.includes('rds58-n13-sol-max-fresh-20261004')?'n=13':'RDS');
+  $('analysis-note').textContent=data.analysis_notice||'阻断条件分析状态未知。';
  if(!data.graph){$('state').textContent=data.reason || data.status;return;}
  const baseLinks=view.links;
  if(view.scope){view.nodes.scope=view.scope.node;if(data.readable?.graph?.title?.trim())view.nodes.scope.label=data.readable.graph.title.trim();view.links=[...baseLinks,...view.scope.links];}
@@ -1335,8 +1351,8 @@ def main(argv=None):
     parser.add_argument("--export-agent-input", action="store_true", help="Print separate raw/readable JSON layers to stdout; no HTML is written")
     parser.add_argument("--readable-json", help="Agent-authored readable object bound to this raw graph and snapshot")
     args = parser.parse_args(argv)
-    root, output = Path(args.root).resolve(), Path(args.output).resolve()
     try:
+        root, output = Path(args.root).resolve(), Path(args.output).resolve()
         if args.export_agent_input and args.readable_json:
             raise ValueError("Export fresh agent input or consume --readable-json, not both")
         if not args.export_agent_input and (output.suffix.lower() != ".html" or output.is_relative_to(root / ".rds")):
@@ -1365,10 +1381,11 @@ def main(argv=None):
         output.parent.mkdir(parents=True, exist_ok=True)
         page = render_replica_html(result, args.replica_root, args.pixi_js) if args.replica_root else render_html(result)
         write_html_atomic(output, page)
-    except (OSError, ValueError, sqlite3.Error) as exc:
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
         parser.error(str(exc))
     print(json.dumps({"output": str(output), "status": result["status"], "source": result["source"],
-                      "demo": result["demo"], "counts": result.get("counts")}, ensure_ascii=False))
+                      "demo": result["demo"], "counts": result.get("counts"),
+                      "analysis_status": result.get("analysis_status")}, ensure_ascii=False))
     return 0
 
 
