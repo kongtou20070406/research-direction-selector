@@ -39,6 +39,8 @@ python -B scripts/rds_dashboard.py --demo --output dist\dashboard-demo.html
 
 ## 研究超图
 
+完整档案图使用 [`--archive` 大图浏览入口](hypergraph-archive.md)：缩小时聚合，放大后展开，按视口索引绘制，并从全量数据搜索和详查。原始节点、边及快照身份全部保留；来源、归属和历史关联保持各自含义。这个入口与下面保存的科学依赖图及分析预算分开。
+
 ### Obsidian 复刻页面
 
 可直接使用空投指定的 [runningZ1/obsidian-graph-replica](https://github.com/runningZ1/obsidian-graph-replica) 的 Pixi 渲染器、暗色主题、缩放插值、平移惯性和独立 D3 Worker。固定源码 commit 为 `b811f4d12f909d496d44c7f2d98b3a408eb1a627`，PixiJS 固定 `7.4.3`。导出器核对三个上游源码文件和 Pixi 官方 UMD 的 SHA-256，拒绝不匹配的文件，不使用该项目的合成 Vault。
