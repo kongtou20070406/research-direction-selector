@@ -1,10 +1,13 @@
 """Real QUICK admission retains a charged job when the parent graph changes."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from copy import deepcopy
 import json
 from pathlib import Path
 import shutil
 import sys
+import threading
 import unittest
 from unittest import mock
 
@@ -59,6 +62,135 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
         for key in ('spent_measured', 'reserved', 'cap'):
             self.assertEqual(charged[key], original[key])
         self.assertAlmostEqual(charged['remaining'], original['remaining'] - 5)
+
+    def assert_writer_commits_after_attempt(self, name, writer_store, writer, source_root=None):
+        args, reviewed, workspace = self.reviewed_job(name, source_root)
+        entered, committed = threading.Event(), threading.Event()
+        observed = {}
+        original_db = writer_store._db
+        original_execute, original_save = ProjectStore.execute, ProjectStore._save
+
+        @contextmanager
+        def observed_writer_db(readonly=False):
+            with original_db(readonly) as db:
+                if not readonly:
+                    entered.set()  # Legal writer reached its actual DB boundary.
+                yield db
+
+        def write_control():
+            with mock.patch.object(writer_store, '_db', new=observed_writer_db):
+                result = writer()
+            committed.set()
+            observed['committed_attempt'] = ProjectStore(workspace).snapshot()['runs'][0]['attempt_id']
+            return result
+
+        def record_attempt(store, db, run):
+            if store.root == workspace.resolve() and run['attempt_id'] is not None and 'attempt' not in observed:
+                self.assertFalse(committed.is_set())
+                observed['attempt'] = run['attempt_id']
+            return original_save(db, run)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def execute_with_writer(store, run_id, *positional, **keywords):
+                self.assertEqual(store.root, workspace.resolve())
+                self.assertTrue(callable(keywords.get('admission_context')))
+                original_guard = keywords['admission_guard']
+
+                def final_check_then_writer(db, run):
+                    original_guard(db, run)
+                    observed['future'] = pool.submit(write_control)
+                    self.assertTrue(entered.wait(3), 'Writer did not reach the database')
+                    self.assertFalse(committed.wait(0.2), 'Control committed before attempt admission')
+                keywords['admission_guard'] = final_check_then_writer
+                return original_execute(store, run_id, *positional, **keywords)
+
+            with mock.patch.object(ProjectStore, 'execute', new=execute_with_writer), \
+                    mock.patch.object(ProjectStore, '_save', new=record_attempt):
+                result = rds_quick.execute(args, review=reviewed)
+            changed = observed['future'].result(timeout=5)
+        self.assertTrue(committed.is_set())
+        self.assertEqual(observed['committed_attempt'], observed['attempt'])
+        child = ProjectStore(workspace).snapshot()
+        self.assertEqual(len(child['runs']), 1)
+        self.assertEqual(child['runs'][0]['attempt_id'], observed['attempt'])
+        self.assertEqual(child['receipts'][0]['run_status'], 'SUCCEEDED')
+        self.assertTrue((workspace / 'launch-marker').is_file())
+        self.assertEqual(result['receipt']['attempt_id'], observed['attempt'])
+        return changed
+
+    def test_threaded_owner_pause_cannot_commit_between_check_and_attempt(self):
+        from rds_steering import submit, current as current_steering
+        parent = ProjectStore(self.fixture.ledger)
+        before = parent.snapshot()
+
+        def pause():
+            return submit(parent, {'id': 'pause-after-final-check', 'kind': 'pause',
+                'message': 'Synthetic current-user pause', 'expected_revision': None,
+                'contract_sha256': before['contract_sha256']},
+                user_directed=True, source='current-user:threaded-admission-test')
+        changed = self.assert_writer_commits_after_attempt('ordered-pause', parent, pause)
+        after = parent.snapshot()
+        self.assertEqual(after['budget']['wall_seconds']['charged_estimate'],
+                         before['budget']['wall_seconds']['charged_estimate'] + 5)
+        for key in ('runs', 'receipts', 'exposures', 'contract_sha256'):
+            self.assertEqual(after[key], before[key])
+        with parent._db(True) as db:
+            self.assertEqual(current_steering(db)['sha256'], changed['received_revision'])
+
+    def test_threaded_source_initialization_cannot_commit_between_check_and_attempt(self):
+        import test_rds_project_lifecycle as lifecycle_fixture
+        helper = lifecycle_fixture.ProjectLifecycleTests(methodName='runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.prepare_contract()
+        self.assertFalse(helper.store.path.exists())
+        changed = self.assert_writer_commits_after_attempt('ordered-init', helper.store,
+            lambda: helper.store.initialize(helper.contract), source_root=helper.root)
+        self.assertEqual(changed['contract_sha256'], digest(helper.contract))
+        self.assertEqual(helper.store.snapshot()['budget'], changed['budget'])
+        self.assertEqual(helper.store.snapshot()['runs'], [])
+
+    def test_threaded_source_activation_cannot_commit_between_check_and_attempt(self):
+        import test_rds_project_lifecycle as lifecycle_fixture
+        from rds_project_lifecycle import enable_advisor
+        helper = lifecycle_fixture.ProjectLifecycleTests(methodName='runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.init_quick()
+        before = helper.store.snapshot()
+        preview = enable_advisor(helper.store, helper.policy)
+        changed = self.assert_writer_commits_after_attempt('ordered-activation', helper.store,
+            lambda: enable_advisor(helper.store, helper.policy, apply=True,
+                                   expected_snapshot=preview['snapshot_sha256']), source_root=helper.root)
+        after = helper.store.snapshot()
+        self.assertEqual(after['contract_sha256'], changed['contract_sha256'])
+        self.assertNotEqual(after['contract_sha256'], before['contract_sha256'])
+        for key in ('budget', 'runs', 'receipts', 'exposures'):
+            self.assertEqual(after[key], before[key])
+
+    def test_empty_source_lock_anchor_is_not_a_research_project_but_tms_is(self):
+        from rds_project_lifecycle import discover
+        fixture = self.fixture
+        source_root = fixture.root / 'fresh-source'
+        source_root.mkdir()
+        (source_root / 'probe.py').write_text('print("positive quick fixture")\n', encoding='utf-8')
+        self.assertFalse(ProjectStore(source_root).path.exists())
+        completed = json.loads(fixture.call('exec', '--name', 'empty-anchor', '--timeout', '5', '--',
+            sys.executable, '-B', 'probe.py', root=source_root).stdout)
+        self.assertEqual(completed['run_status'], 'SUCCEEDED')
+        source = ProjectStore(source_root)
+        self.assertTrue(source.path.is_file())
+        with source._db(True) as db:
+            self.assertEqual(db.execute("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall(), [])
+        self.assertEqual(discover(source_root)['status'], 'NO_PROJECT_FOUND')
+        self.assertEqual(discover(source_root)['workflow']['mode'], 'UNINITIALIZED')
+        save(source_root, {'schema': 1, 'nodes': [
+            {'id': 'original-claim', 'status': 'UNKNOWN', 'source': {'locator': 'synthetic declaration'}}],
+            'hyperedges': [], 'goals': []}, expected=None, source_base=source_root)
+        native = discover(source_root)
+        self.assertEqual(native['status'], 'EXISTING_PROJECT')
+        self.assertEqual(native['relation'], 'CURRENT')
+        self.assertEqual(native['project_root'], str(source_root.resolve()))
 
     def test_owner_pause_after_preparation_blocks_actual_attempt_without_refunding(self):
         from rds_steering import submit, current as current_steering

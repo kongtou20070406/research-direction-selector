@@ -32,6 +32,13 @@ def discover(root):
         require(state.resolve().is_relative_to(candidate), 'State directory escapes project root')
         if not any((state / name).exists() for name in ('project.sqlite3', 'state.sqlite3')):
             continue
+        if (state / 'project.sqlite3').exists() and not (state / 'state.sqlite3').exists():
+            # QUICK may create an empty same-DB lock anchor for admission. It
+            # has no research records; malformed/nonempty databases still fail
+            # or participate in discovery instead of being silently ignored.
+            with ProjectStore(candidate)._db(True) as db:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").fetchone() is None:
+                    continue
         info = describe(candidate)
         return {'status': 'EXISTING_PROJECT', 'requested_root': str(requested),
                 'project_root': str(candidate), 'relation': 'CURRENT' if candidate == requested else 'ANCESTOR',

@@ -4,6 +4,7 @@ Completion supplies file identities and operational fields, never scientific fac
 """
 import ast
 from collections import Counter
+from contextlib import contextmanager, ExitStack
 from copy import deepcopy
 import hashlib
 import json
@@ -401,18 +402,20 @@ def _inputs(root, argv, binds):
     return files, raw_by_path
 
 
-def _parent_controls(root):
+def _parent_controls(root, *, db=None):
     """Read effective contract and steering together without creating a ledger."""
+    if db is not None:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                or not db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
+            return None, None
+        from rds_steering import current
+        return ProjectStore._contract(db), current(db)
     parent = ProjectStore(root)
     if not parent.path.is_file():
         return None, None
     with parent._db(True) as db:
         db.execute('BEGIN')
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
-                or not db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
-            return None, None
-        from rds_steering import current
-        return parent._contract(db), current(db)
+        return _parent_controls(root, db=db)
 
 
 def execute(args, review=None, *, _native_preparation_root=None):
@@ -651,12 +654,35 @@ def execute(args, review=None, *, _native_preparation_root=None):
     if review is not None:
         from rds_advisor_coverage import project_context
         choice(review[0], project_context(args.ledger, review[1]), args.choose)
+    locked_parents = {}
+
+    @contextmanager
+    def admission_context():
+        # The original allowance path acquires parent before child. Keep that
+        # order and hold every parent through the child's attempt commit.
+        with ExitStack() as locks:
+            try:
+                for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
+                    parent = ProjectStore(parent_root)
+                    create_anchor = not parent.path.is_file()
+                    parent.state_dir.mkdir(exist_ok=True)
+                    parent_db = locks.enter_context(parent._db())
+                    if create_anchor:
+                        # No contract/budget/event is created. The same SQLite
+                        # file serializes a concurrent first project init.
+                        parent_db.execute('PRAGMA journal_mode=WAL')
+                    parent_db.execute('BEGIN IMMEDIATE')
+                    locked_parents[parent_root] = parent_db
+                yield
+            finally:
+                locked_parents.clear()
+
     def admit_quick(_db, _run):
         # Recheck at the existing transactional attempt-admission boundary,
         # after registration and any pause before the execute call.
         check_source_root()
         for parent_root, prepared_sha in parent_contracts.items():
-            current_contract, steering = _parent_controls(parent_root)
+            current_contract, steering = _parent_controls(parent_root, db=locked_parents[parent_root])
             current_sha = digest(current_contract) if current_contract is not None else None
             require(current_sha == prepared_sha,
                     'Quick parent contract changed before admission; review the original project')
@@ -670,7 +696,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
         if review is not None:
             from rds_advisor_coverage import project_context
             choice(review[0], project_context(args.ledger, review[1]), args.choose)
-    receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick)
+    receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,
+                            admission_context=admission_context)
     regression = None
     if guard_path is not None:
         from rds_guard import evaluate

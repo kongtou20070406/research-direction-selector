@@ -7,7 +7,7 @@ own writes and declared artifacts, not every write performed by that code.
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import ctypes
 import hashlib
 import json
@@ -1103,15 +1103,18 @@ class ProjectStore:
         run["run_status"] = "SUCCEEDED" if run["status"] == "COMPLETED" else run["status"]
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
-    def execute(self, run_id, background=False, *, admission_guard=None):
+    def execute(self, run_id, background=False, *, admission_guard=None, admission_context=None):
         # An internal caller may restrict admission after all ordinary checks.
         # This callback grants no authority and is never supplied by the CLI.
         require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
+        require(admission_context is None or callable(admission_context), "Invalid admission context")
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
         advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
-        with self._db() as db:
+        # Parents must be acquired before this child write transaction. Exit
+        # order commits the attempt before releasing the admission context.
+        with (admission_context() if admission_context is not None else nullcontext()), self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
             self._runs(db)
