@@ -1,0 +1,11 @@
+{
+  "report": "Initial pilot evaluation of the variant",
+  "date": "pilot batch",
+  "arm_comparison": {
+    "control_mean": 47.736849,
+    "treatment_mean": 57.536849,
+    "gain": 9.8
+  },
+  "conclusion": "The variant shows a +9.8 point gain over control on the pilot batch, well above the +2.0 launch threshold.",
+  "produced_by": "scripts/query_db.py --arm A --batch 1 / --arm B --batch 1"
+}

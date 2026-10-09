@@ -1,5 +1,10 @@
 # Bounded research drive and method repair
 
+For an ordinary owned project without a model provider, use the opt-in
+[`project drive --until-judgment`](deterministic-continuation.md) entry with an
+explicit allowance from its existing wall budget. It stops before new model
+reasoning and returns original evidence and remaining resources.
+
 `project drive` connects the existing owned Advisor, execution kernel, history,
 tool workbench and method-revision gate. An obstacle triggers another decision:
 inspect originals, select a different permitted route, or request a new method
