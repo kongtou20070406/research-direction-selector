@@ -698,15 +698,50 @@ class AutonomyTests(unittest.TestCase):
 
     def test_total_step_cap_survives_multiple_drive_invocations(self):
         self.build(max_steps=1)
-        self.cli('project', 'drive', '--max-steps', '1')
+        first = self.cli('project', 'drive', '--max-steps', '1')
         before = self.store.snapshot()
         start = self.events('CAMPAIGN_STARTED')[0]
         result = self.cli('project', 'drive', '--max-steps', '4')
-        self.assertIn('TOTAL_STEP_LIMIT', result.get('reason', ''))
+        # A paid provider may stop before the next admission gate. Retain its
+        # actual outcome on failure; an earlier safe stop does not satisfy this
+        # successful repair/adoption trajectory or replace its original checks.
+        self.assertIn('TOTAL_STEP_LIMIT', result.get('reason', ''),
+                      json.dumps({'first': first, 'second': result, 'before': before,
+                                  'after': self.store.snapshot(), 'cli': self.trace,
+                                  'events': self.events()}, ensure_ascii=False))
         self.assertEqual(len(self.store.snapshot()['runs']), 1)
         self.assertEqual(self.calls(), ['repair1'])
         self.assert_single_model_cost(before)
         self.assertEqual(self.events('CAMPAIGN_STARTED'), [start])
+        self.assertFalse((self.root / 'outputs/solve.json').exists())
+
+    def test_total_step_cap_counts_original_reservation_across_store_instances(self):
+        # Deterministic admission invariant, separate from the real CLI/provider
+        # trajectory above. No worker or synthetic receipt is needed to count
+        # an existing reservation against the frozen cumulative limit.
+        self.build(max_steps=1)
+        event = self.request()
+        route = next(r['manifest'] for r in self.contract['advisor_policy']['routes']
+                     if r['manifest']['id'] == event['run_id'])
+        self.store.register(route)
+        before = self.store.snapshot()
+        events = self.events()
+        self.assertEqual(len(before['runs']), 1)
+        self.assertEqual(before['runs'][0]['status'], 'RESERVED')
+        self.assertIsNone(before['runs'][0]['attempt_id'])
+        self.assertEqual(before['receipts'], [])
+        for _ in range(2):
+            reopened = ProjectStore(self.root)
+            with reopened._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                contract = reopened._contract(db)
+                self.assertEqual(contract, self.contract)
+                with self.assertRaisesRegex(ValueError, '^AUTONOMY_TOTAL_STEP_LIMIT$'):
+                    autonomy.bind_run(reopened, db, contract, {'id': 'solve'})
+            self.assertEqual(reopened.snapshot(), before)
+            self.assertEqual(self.events(), events)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
         self.assertFalse((self.root / 'outputs/solve.json').exists())
 
     def test_short_drive_passes_preserve_budget_deadline_and_receipts(self):
