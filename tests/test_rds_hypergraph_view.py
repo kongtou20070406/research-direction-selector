@@ -917,6 +917,13 @@ console.log('Production outline methods: independent Graphics transport, cached 
             self.assertEqual(result["graph"], spec)
             self.assertNotIn("record_source_base_dir", spec)
             self.assertEqual({p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}, originals)
+            explicit = deepcopy(spec)
+            explicit["record_source_base_dir"] = str(base)
+            save(root, explicit, expected=snapshot, source_base=root)
+            explicit_result = read_graph(root)
+            self.assertEqual(replica_view(explicit_result)["record_relations"], expected)
+            self.assertEqual(replica_view(explicit_result)["record_topology"]["issues"], [])
+            self.assertEqual(explicit_result["graph"], explicit)
             conflicting = deepcopy(result)
             conflicting["graph"]["nodes"][6]["source"]["path"] = "out/different.json"
             self.assertTrue(any(i["reason"] == "CONFLICTING_BINDINGS" for i in replica_view(conflicting)["record_topology"]["issues"]))

@@ -528,7 +528,7 @@ def _adapt_record_view(spec):
 
 def _record_view_report(spec, *, adapted=None, source_base=None):
     adapted = _adapt_record_view(spec) if adapted is None else adapted
-    if source_base is not None:
+    if source_base is not None and "record_source_base_dir" not in adapted:
         adapted = deepcopy(adapted)
         adapted["record_source_base_dir"] = source_base
     import rds_hypergraph
