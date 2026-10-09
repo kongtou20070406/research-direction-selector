@@ -162,13 +162,22 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
                   _expected_contract_sha256=None):
     from rds_checkpoints import save_checkpoint
     from rds_advisor_coverage import project_context
+    # QUICK contracts remain frozen; native activation changes ownership.
+    # Reject caller choices in owned ledgers, and pin the checked QUICK
+    # contract through the original checkpoint publication transaction.
+    snapshot = ProjectStore(root).snapshot(check_bindings=True)
+    require('advisor_policy' not in snapshot['contract'],
+            'Program-owned Advisor owns route choices; use project next/advance')
+    require(_expected_contract_sha256 is None or
+            _expected_contract_sha256 == snapshot['contract_sha256'],
+            'Expected choice contract differs from the current QUICK contract; inspect the original decision')
+    expected_contract = (snapshot['contract_sha256'] if _expected_contract_sha256 is None
+                         else _expected_contract_sha256)
     context = project_context(root, context)
     record = choice(advice, context, candidate_id)
-    # Read the contract before writing advice, so a rejected record leaves no blob.
-    snapshot = ProjectStore(root).snapshot(check_bindings=True)
     record['advice'] = cas_json(root, advice)
     saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
-                            _expected_contract_sha256=_expected_contract_sha256,
+                            _expected_contract_sha256=expected_contract,
                             _expected_dependency_snapshot_sha256=context.get('dependency_snapshot_sha256'))
     saved['candidate_id'] = record['candidate']['id']
     return saved

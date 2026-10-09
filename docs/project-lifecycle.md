@@ -112,6 +112,11 @@ copy with the current saved dependency map and its identity. Pass this context a
 the snapshot's `advisor_context` and reuse it for `choice()`; recommendations keep
 their list return type. `record_choice(root, advice, raw_context, ...)` also loads
 the current dependencies, and rejects advice if its analyzed context is stale.
+Caller-directed choice recording requires a QUICK contract and pins that checked
+contract through checkpoint publication. If Advisor activation has already
+committed, recording is refused; if activation races with publication, the
+original transaction rejects the changed contract. Owned history and original
+execution completion continue through their dedicated record producers.
 
 QUICK command preparation validates reserved input names and the complete
 input/output/generated-file layout before charging an allowance or recording a
@@ -127,7 +132,10 @@ can occur in a fully completed analysis and remains UNKNOWN.
 
 Node/depth/candidate/composition limits, absent endpoints or incomplete dependency
 analysis prevent selection and dispatch in both FULL and QUICK. An otherwise
-complete local goal or active reservation does not override this gate. Owned
+complete local goal or active reservation does not override this gate. Invalid
+declared primary actions and active fallback actions also make coverage incomplete;
+another healthy route cannot hide them. Descriptive nodes with no declared action
+retain their explicit UNKNOWN analysis. Owned
 review returns `INCOMPLETE_ANALYSIS` and no selected run; the CLI exits with code
 2. Read-only diagnostics and reconciliation remain available. Resolve the input
 or computation limit while retaining the whole active project graph. Brief output
