@@ -636,7 +636,8 @@ def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None, *,
             [sorted(v) for v in sorted(families[goal], key=lambda v: (len(v), sorted(v)))]
         results[goal] = {"status": status, "minimal_missing_evidence_sets": sets,
                          "blocker_sets_complete": supported or not truncated}
-    result = {**record_topology(spec), "schema": 1, "assurance": ASSURANCE,
+    topology = record_topology(spec) if callable(record_topology) else {}
+    result = {**topology, "schema": 1, "assurance": ASSURANCE,
             "declared_supported_closure": sorted(closure),
             "declared_derivation_rules": derivations,
             "active_contradicted_conclusion_rules": sorted(conflicts),

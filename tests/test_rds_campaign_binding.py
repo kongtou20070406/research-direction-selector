@@ -460,7 +460,7 @@ class CampaignBindingTests(unittest.TestCase):
                 self.assertEqual(after[key], before[key])
 
     def test_actual_job_pointer_does_not_redirect_to_nested_tool_check(self):
-        outer = self.helper.root / 'external-job'
+        outer = self.workspace / 'external-job'
         shutil.copytree(self.root, outer)
         nested = outer / '.rds/exec/tool-check'
         shutil.copytree(self.root, nested)
@@ -476,7 +476,7 @@ class CampaignBindingTests(unittest.TestCase):
         self.assertFalse(self.marker.exists())
 
     def test_recursive_external_retained_jobs_require_nested_settlement(self):
-        outer = self.helper.root / 'external-job'
+        outer = self.workspace / 'external-job'
         shutil.copytree(self.root, outer)
         parent = ProjectStore(outer)
         parent_before = self.settle_job(parent)
@@ -497,7 +497,7 @@ class CampaignBindingTests(unittest.TestCase):
                 self.assertEqual(after[key], before[key])
 
     def test_retained_self_reference_and_cycle_are_checked_once(self):
-        outer = self.helper.root / 'external-job'
+        outer = self.workspace / 'external-job'
         shutil.copytree(self.root, outer)
         child = ProjectStore(outer)
         child_before = self.settle_job(child)
@@ -514,7 +514,7 @@ class CampaignBindingTests(unittest.TestCase):
 
     def test_legacy_tool_allowance_redirects_only_its_authenticated_workspace_shape(self):
         token = 'a' * 32
-        source = self.helper.root / '.rds/rsi/tool-checks' / token
+        source = self.root / '.rds/rsi/tool-checks' / token
         target = source / '.rds/exec/tool-check'
         shutil.copytree(self.root, target)
         child = ProjectStore(target)

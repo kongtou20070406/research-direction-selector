@@ -1239,6 +1239,8 @@ def _project_result(store, receipt):
     if advice is None:
         return receipt
     result = {'receipt': receipt, 'advisor': advice}
+    if getattr(store, 'last_advisor_review_reused', False):
+        result['advisor_review_reused'] = True
     observation = getattr(store, 'last_advisor_observation', None)
     if observation is not None:
         result['observation'] = observation

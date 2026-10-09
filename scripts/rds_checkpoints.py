@@ -95,7 +95,8 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
         raise ValueError('Checkpoint transaction belongs to a different ledger')
     if kind == 'project' and decision:
         from rds_method_revision import contract_history
-        contract = contract_history(db)[-1]['contract']
+        initialized = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+        contract = contract_history(db)[-1]['contract'] if initialized else snapshot.get('contract', {})
         note_only = (set(decision) == {'plan_draft', 'source_kind'}
                      and decision['source_kind'] == 'UNVERIFIED_PLAN_PROPOSAL')
         if 'advisor_policy' in contract and not note_only:

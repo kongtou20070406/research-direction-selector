@@ -269,9 +269,16 @@ class ProjectStore:
 
     def _advisor_finished(self, contract):
         """Collection is post-commit; never mutate the owned receipt or repeat a run."""
+        self.last_advisor_review_reused = False
         if "advisor_policy" not in contract:
             return
         try:
+            from rds_campaign import retained_owned_review
+            retained = retained_owned_review(self)
+            if retained is not None:
+                self.last_advisor_review = retained
+                self.last_advisor_review_reused = True
+                return
             from rds_owned_advisor import after_finish
             self.last_advisor_review = after_finish(self)
         except Exception as exc:

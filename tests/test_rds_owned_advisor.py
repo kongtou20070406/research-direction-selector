@@ -860,7 +860,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(len(self.snapshot()['receipts']), 2)
         self.assertEqual(self.snapshot()['budget']['cpu_seconds']['charged_estimate'], 2)
 
-    def test_matching_structured_checkpoint_is_reviewed_without_blocking_dispatch(self):
+    def test_matching_manual_checkpoint_is_rejected_without_blocking_owned_dispatch(self):
         self.initialize()
         advice = self.output('advise')
         context = advice['context']
@@ -871,7 +871,11 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                     'scope': context['decision']['scope'], 'candidate': search['candidates'][0],
                     'outcome': 'deferred', 'evidence': context['facts']}
         path = self.write_json('owned-decision.json', decision)
-        self.output('checkpoint', 'save', '--id', 'matching-owned', '--decision', path)
+        before = self.snapshot()
+        rejected = self.call('checkpoint', 'save', '--id', 'matching-owned', '--decision', path)
+        self.assertEqual(rejected.returncode, 1)
+        self.assertIn('owns decision checkpoints', rejected.stderr)
+        self.assertEqual(self.snapshot(), before)
         after = self.output('advise')
         search = next(row['search'] for row in after['recommendations']
                       if row.get('type') == 'EXECUTABLE_DIRECTION_SEARCH')

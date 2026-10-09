@@ -1,8 +1,10 @@
 """Binding preserves the original native producers' post-receipt settlement."""
 from pathlib import Path
+import json
 import shutil
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +110,69 @@ class CampaignTailSettlementTests(unittest.TestCase):
         self.assertEqual(after['receipts'], original['receipts'])
         self.assertEqual(after['budget'], original['budget'])
         self.assertEqual(helper.starts(), ['baseline'])
+
+    def test_foreign_recover_reuses_the_original_settled_review_without_collecting(self):
+        helper, store, receipt = self.foreign_owned()
+        campaign.bind(self.f.store, self.f.workspace)
+        before = store.snapshot()
+        with store._db(True) as db:
+            events = [tuple(row) for row in db.execute('SELECT id,body FROM events ORDER BY id')]
+        cas = {path.name: path.read_bytes() for path in (helper.root / '.rds/cas').glob('*') if path.is_file()}
+        from rds_cli import cmd_project
+        args = SimpleNamespace(root=str(helper.root), action='recover', id='baseline')
+        with patch.object(owned, 'after_finish', side_effect=AssertionError('foreign recovery tried fresh collection')):
+            first = cmd_project(args)
+            second = cmd_project(args)
+        self.assertEqual(first['receipt'], receipt)
+        self.assertEqual(second, first)
+        self.assertEqual(first['advisor']['status'], 'REVIEWED')
+        self.assertTrue(first['advisor_review_reused'])
+        self.assertEqual(store.snapshot(), before)
+        with store._db(True) as db:
+            self.assertEqual([tuple(row) for row in db.execute('SELECT id,body FROM events ORDER BY id')], events)
+        self.assertEqual({path.name: path.read_bytes() for path in (helper.root / '.rds/cas').glob('*') if path.is_file()}, cas)
+        self.assertEqual(helper.starts(), ['baseline'])
+
+    def test_foreign_recovery_does_not_accept_a_corrupt_retained_review(self):
+        helper, store, receipt = self.foreign_owned()
+        campaign.bind(self.f.store, self.f.workspace)
+        store.recover('baseline')
+        self.assertTrue(store.last_advisor_review_reused)
+        with store._db(True) as db:
+            row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' ORDER BY id DESC LIMIT 1").fetchone()
+        ref = json.loads(row[0])['report']
+        path = Path(ref['path'])
+        path.write_bytes(path.read_bytes() + b' ')
+        before = store.snapshot()
+        store.recover('baseline')
+        self.assertEqual(store.last_advisor_review['status'], 'COLLECTION_FAILED')
+        self.assertFalse(store.last_advisor_review_reused)
+        from rds_cli import cmd_project
+        result = cmd_project(SimpleNamespace(root=str(helper.root), action='recover', id='baseline'))
+        self.assertEqual(result['receipt'], receipt)
+        self.assertEqual(result['advisor']['status'], 'COLLECTION_FAILED')
+        self.assertNotIn('advisor_review_reused', result)
+        self.assertEqual(store.snapshot(), before)
+        self.assertEqual(helper.starts(), ['baseline'])
+
+    def test_prospective_parent_outside_workspace_blocks_binding_before_marker(self):
+        import test_rds_quick as quick_fixture
+        helper = quick_fixture.QuickTests('runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.initialize_policy_ledger()
+        source = self.f.workspace / 'quick-source'
+        source.mkdir()
+        (source / 'probe.py').write_text('print("original external-parent job")\n', encoding='utf-8')
+        result = helper.call('exec', '--name', 'external-parent', '--timeout', '5',
+            *helper.policy_options(), '--', sys.executable, '-B', 'probe.py', root=source)
+        summary = json.loads(result.stdout)
+        retained = json.loads(Path(summary['record']).read_text(encoding='utf-8'))
+        self.assertEqual(retained['receipt']['run_status'], 'SUCCEEDED')
+        before = ProjectStore(helper.ledger).snapshot()
+        self.refused('parent ledger escapes the selected workspace')
+        self.assertEqual(ProjectStore(helper.ledger).snapshot(), before)
+        self.assertFalse(self.f.marker.exists())
 
     def test_model_paid_receipt_requires_processed_original_result_without_relaunch(self):
         helper, event, receipt = self.foreign_model()

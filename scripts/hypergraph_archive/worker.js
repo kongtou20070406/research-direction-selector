@@ -57,7 +57,7 @@ const ArchiveCore = (() => {
         nodes.forEach((n,i)=>{if(n.primary)points[nodeMap[i]].primary=true;});
       }
       const edges=[],agg=new Map(),edgeMap=new Int32Array(rawEdges.length).fill(-1);let internal=0;
-      rawEdges.forEach((e,i)=>{const a=nodeMap[e[0]],b=nodeMap[e[1]],semantic=data.semantics[e[2]],type=data.edge_types[e[3]],f=family(semantic,type),relationKey=semantic+'|'+type,membership=/snapshot_contains|membership|归属/i.test(semantic+' '+type);if(level!==3&&a===b){internal++;return;}const key=a+':'+b+':'+f+':'+membership;if(level===3){edgeMap[i]=edges.length;edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i});return;}if(agg.has(key)){edgeMap[i]=agg.get(key);const bundled=edges[edgeMap[i]];bundled.count++;const term=bundled.forceTerms.find(t=>t.semantic===semantic&&t.type===type);if(term)term.count++;else bundled.forceTerms.push({semantic,type,membership,count:1});if(bundled.relationKey!==relationKey){bundled.relationKey=null;bundled.mixedRelation=true;}}else{edgeMap[i]=edges.length;agg.set(key,edges.length);edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i,forceTerms:[{semantic,type,membership,count:1}]});}});
+      rawEdges.forEach((e,i)=>{const a=nodeMap[e[0]],b=nodeMap[e[1]],semantic=data.semantics[e[2]],type=data.edge_types[e[3]],f=family(semantic,type),relationKey=JSON.stringify([semantic,type]),membership=/snapshot_contains|membership|归属/i.test(semantic+' '+type);if(level!==3&&a===b){internal++;return;}const key=a+':'+b+':'+f+':'+membership;if(level===3){edgeMap[i]=edges.length;edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i});return;}if(agg.has(key)){edgeMap[i]=agg.get(key);const bundled=edges[edgeMap[i]];bundled.count++;const term=bundled.forceTerms.find(t=>t.semantic===semantic&&t.type===type);if(term)term.count++;else bundled.forceTerms.push({semantic,type,membership,count:1});if(bundled.relationKey!==relationKey){bundled.relationKey=null;bundled.mixedRelation=true;}}else{edgeMap[i]=edges.length;agg.set(key,edges.length);edges.push({a,b,family:f,relationKey,semantic,type,membership,count:1,index:i,forceTerms:[{semantic,type,membership,count:1}]});}});
       levels.push({points,edges,spatial:null,internal,nodeMap,edgeMap});if(level<3)ensureSpatial(level);progress({level,points:points.length,edges:edges.length,spatialReady:level<3});
     }
     function ensureSpatial(level){const stage=levels[level];if(!stage.spatial){stage.spatial=new Spatial(stage.points,stage.edges,data.bounds);indexStats.spatialBuilds++;indexStats.spatialEdgeVisits+=stage.edges.length;if(level===3){indexStats.rawSpatialBuilds++;indexStats.rawSpatialEdgeVisits+=stage.edges.length;}progress({level,spatialReady:true,points:stage.points.length,edges:stage.edges.length,indexStats:{...indexStats}});}return stage.spatial;}
@@ -65,7 +65,7 @@ const ArchiveCore = (() => {
     const rootMembers=levels[0].points.map(()=>[]),representatives=new Map();
     nodes.forEach((_,i)=>rootMembers[levels[0].nodeMap[i]].push(i));
     rootMembers.forEach((members,root)=>{const chosen=new Set();const sample=(candidates,limit)=>{const count=Math.min(limit,candidates.length);for(let j=0;j<count;j++)chosen.add(candidates[Math.floor((j+.5)*candidates.length/count)]);};sample(members.filter(i=>nodes[i].primary),8);sample(members.filter(i=>!chosen.has(i)&&/hyperedge/i.test(nodes[i].type)),8);sample(members.filter(i=>!chosen.has(i)),32-chosen.size);representatives.set(levels[0].points[root].index,[...chosen]);});
-    function presentation(n){const fields={};for(const key of ['label','summary','type','status','status_text','display_kind','color','shape','outline','goal_weights','group','source_id','primary'])if(Object.hasOwn(n,key))fields[key]=n[key];return fields;}
+    function presentation(n){const fields={};for(const key of ['label','summary','type','status','status_text','display_kind','color','shape','outline','goal_weights','group','cohesion_group','source_id','primary'])if(Object.hasOwn(n,key))fields[key]=n[key];return fields;}
     let filterCache=null;
     function clearFilters(){filterCache=null;}
     function filtered(filters={}){
@@ -140,14 +140,14 @@ const ArchiveCore = (() => {
     }
     return {data,levels,degree,counts,adjacency,byId,neighbors,find,viewport,indexStats,ensureSpatial,rebuildSpatial,filtered,clearFilters,clusterView,cellMembers};
   }
-  return {family,intersects,Spatial,create};
+  return {family,intersects,Spatial,create,relationKey:(semantic,type)=>JSON.stringify([semantic,type])};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=ArchiveCore;
 if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
   // Indexed geometry is a stable snapshot while local coordinates animate. Camera
   // queries use that complete snapshot; after commit, incident segments are repaired
   // in yielded batches before any exact raw-coordinate query is answered.
-  let index=null,raw=null,sim=null,timer=null,steps=0,aggregate=null,physicsIds=[],physicsEdges=[],physicsLinks=[],paused=false,simSeed=null;
+  let relationAliases=new Map(),index=null,raw=null,sim=null,timer=null,steps=0,aggregate=null,physicsIds=[],physicsEdges=[],physicsLinks=[],paused=false,simSeed=null;
   let repairTimer=null,repairList=[],repairCursor=0,waitingViews=[],revision=0,dirtyEdges=new Set(),pendingPositions=new Map(),dirtyStageEdges=new Map(),dirtyStageNodes=new Map(),blockedLevels=new Set(),levelRemaining=new Map(),commitJob=null,commitTimer=null,deferredMotion=null;
   const defaults={damping:.55,flowStrength:.005,groupStrength:.025,edgeRepulsion:.15,edgeClearance:35,centerStrength:.035,repelStrength:35,linkStrength:1,linkDistance:80,membership:true,weightMode:'degree',goal:'',relations:{dependency:{mode:'attract',strength:1},source:{mode:'attract',strength:.35},history:{mode:'attract',strength:.15},other:{mode:'none',strength:1}}};
   let options={...defaults,relations:Object.assign(Object.create(null),defaults.relations)};
@@ -200,12 +200,18 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
     const next={...options,relations};for(const key of Object.keys(ranges))if(Object.hasOwn(value,key))next[key]=value[key];if(value.weightMode!==undefined)next.weightMode=value.weightMode;if(value.goal!==undefined)next.goal=String(value.goal);if(value.membership!==undefined)next.membership=value.membership;options=next;
     if(sim){const seed=simSeed,p=sim.nodes().find(p=>('n'+p.id===seed||sim===aggregate?.simulation&&'c'+index.levels[aggregate.level].points[p.id].index===seed));if(p&&(value.relations!==undefined||value.membership!==undefined)){const force={x:p.x,y:p.y,released:p.fx===null||p.fx===undefined};simSeed=null;if(seed[0]==='n')physics(Number(seed.slice(1)),force);else aggregatePhysics(Number(seed.slice(1)),force);}else{applyForces();reheat();}}
   }
-  function relation(e){return options.relations[e.semantic+'|'+e.type]||options.relations[e.family]||{mode:'none',strength:1};}
+  function relation(e){return options.relations[ArchiveCore.relationKey(e.semantic,e.type)]||(relationAliases.get(e.semantic+'|'+e.type)===ArchiveCore.relationKey(e.semantic,e.type)?options.relations[e.semantic+'|'+e.type]:null)||options.relations[e.family]||{mode:'none',strength:1};}
   function active(e){const r=relation(e);return (options.membership||!e.membership)&&r.mode!=='none'&&r.strength>0;}
   function priority(a,b){return relation(b).strength-relation(a).strength||Number(b.family==='dependency')-Number(a.family==='dependency')||(a.index??0)-(b.index??0);}
   function rawTerm(e,i){const semantic=index.data.semantics[e[2]],type=index.data.edge_types[e[3]];return {source:e[0],target:e[1],semantic,type,family:ArchiveCore.family(semantic,type),membership:/snapshot_contains|membership|归属/i.test(semantic+' '+type),count:1,index:i};}
   function forceTerms(e){return (e.forceTerms||(!e.mixedRelation?[{semantic:e.semantic,type:e.type,membership:e.membership,count:e.count}]:[])).map(t=>({...t,family:ArchiveCore.family(t.semantic,t.type),source:e.a,target:e.b,index:e.index,bundleCount:e.count})).filter(active);}
-  function clusterProvenance(ci){const c=index.data.clusters[ci],fields={},sources=new Set(),groups=new Set(),stack=[ci];let parent=ci;while(parent!==null&&parent!==undefined){const p=index.data.clusters[parent];if(!fields.source_id&&p.source_id)fields.source_id=p.source_id;if(!fields.group&&p.group)fields.group=p.group;parent=p.parent;}while(stack.length){const p=index.data.clusters[stack.pop()];for(const ni of p.nodes||[]){const n=index.data.nodes[ni];if(n.source_id)sources.add(n.source_id);if(n.group)groups.add(n.group);}for(const child of p.children||[])stack.push(child);}if(!fields.source_id&&sources.size===1)fields.source_id=[...sources][0];if(!fields.group&&groups.size===1)fields.group=[...groups][0];if(!fields.source_id&&!fields.group&&c.parent!==null&&c.parent!==undefined)fields.group='cluster:'+c.parent;return fields;}
+  function cohesionGroup(point){return Object.hasOwn(point,'cohesion_group')?point.cohesion_group:point.group;}
+  function clusterProvenance(ci){
+    const identities=new Map(),stack=[ci];
+    while(stack.length){const p=index.data.clusters[stack.pop()];for(const ni of p.nodes||[]){const n=index.data.nodes[ni],group=cohesionGroup(n),identity=n.source_id?['source',n.source_id]:group?['group',group]:null;identities.set(JSON.stringify(identity),identity);}for(const child of p.children||[])stack.push(child);}
+    const identity=identities.size===1?[...identities.values()][0]:null;
+    return identity?.[0]==='source'?{source_id:identity[1],cohesion_group:null}:{cohesion_group:identity?.[0]==='group'?identity[1]:null};
+  }
   function weight(p){if(options.weightMode==='uniform')return 1;if(options.weightMode==='goal'){const v=p.goal_weights?.[options.goal];return Number.isFinite(v)&&v>=0?1+Math.min(5,v):1;}return Math.min(6,Math.sqrt((p.degree??p.count??0)+1));}
   function applyForces(){
     if(!sim)return;const coarse=sim===aggregate?.simulation,scale=coarse?10:1;
@@ -216,7 +222,7 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
     sim.force('links',d3.forceLink(physicsLinks).id(p=>p.id).distance(desired).strength(e=>{const r=relation(e);return active(e)&&r.mode==='attract'?options.linkStrength*r.strength*contribution(e)*(coarse?.025:.12):0;}));
     sim.force('x',d3.forceX(p=>p.ax).strength(options.centerStrength)).force('y',d3.forceY(p=>p.ay).strength(options.centerStrength));
     const nodes=sim.nodes(),groups=new Map(),members=new Map(),ownMembers=new Map(),localIds=new Set(nodes.map(p=>p.id)),incidence=e=>/premise|conclusion|共同前提|结论/i.test(e.type||'');
-    for(const p of nodes){const group=p.source_id||p.group;if(group){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(p);}if(/hyperedge|junction|and.rule/i.test(p.type||'')){members.set(p.id,new Set());const own=new Set();if(!coarse)for(let j=index.counts[p.id];j<index.counts[p.id+1];j++){const ei=index.adjacency[j],e=rawTerm(index.data.edges[ei],ei),other=e.source===p.id?e.target:e.source;if(incidence(e)&&localIds.has(other))own.add(other);}ownMembers.set(p.id,own);}}
+    for(const p of nodes){const group=p.source_id||cohesionGroup(p);if(group){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(p);}if(/hyperedge|junction|and.rule/i.test(p.type||'')){members.set(p.id,new Set());const own=new Set();if(!coarse)for(let j=index.counts[p.id];j<index.counts[p.id+1];j++){const ei=index.adjacency[j],e=rawTerm(index.data.edges[ei],ei),other=e.source===p.id?e.target:e.source;if(incidence(e)&&localIds.has(other))own.add(other);}ownMembers.set(p.id,own);}}
     for(const e of physicsLinks)if(incidence(e)){members.get(e.source.id)?.add(e.target.id);members.get(e.target.id)?.add(e.source.id);}
     sim.force('archive-controls',alpha=>{
       for(const e of physicsLinks){if(!active(e))continue;const r=relation(e),a=e.source,b=e.target,dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy));if(r.mode==='repel'&&d<desired(e)){const f=Math.min(20*scale,(desired(e)-d)*options.linkStrength*r.strength*contribution(e)*.06*alpha);a.vx-=dx/d*f;a.vy-=dy/d*f;b.vx+=dx/d*f;b.vy+=dy/d*f;}if(e.family==='dependency'&&options.flowStrength){const f=Math.min(10*scale,Math.max(0,options.linkDistance*scale-dx)*options.flowStrength*alpha)*contribution(e);a.vx-=f;b.vx+=f;}}
@@ -271,7 +277,9 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
       const point=pendingPositions.get(seed)||index.levels[3].points[seed];if(!point)throw Error('Node index out of range');
       physics(seed,{x:point.x,y:point.y,released:true});
     }else{
-      const point=index.data.clusters[seed];if(!point)throw Error('Cluster index out of range');
+      const cluster=index.data.clusters[seed];if(!cluster)throw Error('Cluster index out of range');
+      const stage=index.levels[cluster.level],position=stage.points.findIndex(p=>p.index===seed);
+      const point=aggregate?.level===cluster.level&&sim===aggregate.simulation?aggregate.points.find(p=>p.id===position)||stage.points[position]:stage.points[position];
       aggregatePhysics(seed,{x:point.x,y:point.y,released:true});
     }
   }
@@ -288,8 +296,8 @@ if(typeof self!=='undefined'&&typeof self.postMessage==='function') {
     }
     if(m.type==='init'){
       stop();if(repairTimer!==null)clearTimeout(repairTimer);if(commitTimer!==null)clearTimeout(commitTimer);commitTimer=null;commitJob=null;deferredMotion=null;dirtyStageEdges.clear();dirtyStageNodes.clear();blockedLevels.clear();levelRemaining.clear();repairTimer=null;sim=null;aggregate=null;physicsIds=[];physicsEdges=[];physicsLinks=[];dirtyEdges.clear();pendingPositions.clear();repairList=[];repairCursor=0;waitingViews=[];paused=false;revision=0;
-      const data=await unpack(m.compressed);index=ArchiveCore.create(data,p=>send('progress',p));const catalog=new Map(),goals=new Set();for(const n of data.nodes)for(const [key,value] of Object.entries(n.goal_weights||{}))if(Number.isFinite(value)&&value>=0)goals.add(key);for(const e of data.edges){const semantic=data.semantics[e[2]],type=data.edge_types[e[3]],key=semantic+'|'+type;if(!catalog.has(key))catalog.set(key,{key,semantic,type,family:ArchiveCore.family(semantic,type),count:0});catalog.get(key).count++;}
-      send('ready',{source:data.source,bounds:data.bounds,roots:data.roots,relationCatalog:[...catalog.values()],goals:[...goals].map(id=>({id,label:data.goals?.find(g=>g.id===id)?.label||id})),options,indexStats:{...index.indexStats},levels:index.levels.map(s=>({points:s.points.length,edges:s.edges.length,internal:s.internal,spatialReady:!!s.spatial}))});
+      const data=await unpack(m.compressed);index=ArchiveCore.create(data,p=>send('progress',p));const catalog=new Map(),goals=new Set();relationAliases=new Map();for(const n of data.nodes)for(const [key,value] of Object.entries(n.goal_weights||{}))if(Number.isFinite(value)&&value>=0)goals.add(key);for(const e of data.edges){const semantic=data.semantics[e[2]],type=data.edge_types[e[3]],key=ArchiveCore.relationKey(semantic,type),legacyKey=semantic+'|'+type;if(!relationAliases.has(legacyKey))relationAliases.set(legacyKey,key);else if(relationAliases.get(legacyKey)!==key)relationAliases.set(legacyKey,null);if(!catalog.has(key))catalog.set(key,{key,semantic,type,family:ArchiveCore.family(semantic,type),count:0});catalog.get(key).count++;}
+      send('ready',{source:data.source,bounds:data.bounds,roots:data.roots,relationCatalog:[...catalog.values()].map(r=>({...r,legacyKey:relationAliases.get(r.semantic+'|'+r.type)===r.key?r.semantic+'|'+r.type:null})),goals:[...goals].map(id=>({id,label:data.goals?.find(g=>g.id===id)?.label||id})),options,indexStats:{...index.indexStats},levels:index.levels.map(s=>({points:s.points.length,edges:s.edges.length,internal:s.internal,spatialReady:!!s.spatial}))});
     }else if(m.type==='viewport'){
       if((repairTimer!==null||commitJob)&&blockedLevels.has(m.level)||commitJob&&m.level===3&&!index.levels[3].spatial){for(const old of waitingViews)send('viewport',{cancelled:true},old.request);waitingViews=[m];}else viewport(m);
     }else if(m.type==='configure'){configure(m.options||{});send('configured',{options},m.request);

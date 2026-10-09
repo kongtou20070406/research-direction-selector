@@ -276,7 +276,8 @@ def build_archive_display(graph):
         _identity(row, node_ids, "node")
         node_index[row["id"]] = i
         kind = row.get("type") if isinstance(row.get("type"), str) else "record"
-        group = row.get("group") if isinstance(row.get("group"), str) and row["group"] else "type:" + kind
+        authored_group = row.get("group") if isinstance(row.get("group"), str) and row["group"] else None
+        group = authored_group or "type:" + kind
         groups.setdefault(group, {"id": group, "label": _text(group), "summary": ""})
         presentation = _presentation(row, native=native)
         label = presentation["label"]
@@ -288,7 +289,7 @@ def build_archive_display(graph):
         nodes.append({**presentation, "id": row["id"], "label": label, "summary": _text(row.get("summary")),
                       "type": kind, "status": row.get("status") if isinstance(row.get("status"), str) else "UNKNOWN",
                       "goal_weights": _goal_weights(row, goals),
-                      "group": group, "primary": row.get("primary") is True,
+                      "group": group, "cohesion_group": authored_group, "primary": row.get("primary") is True,
                       "source_id": row.get("source_id") if isinstance(row.get("source_id"), str) else None,
                       "raw_node_index": i, "raw_hyperedge_id": None, "degree": 0})
     edges, semantics, edge_types = [], [], []
@@ -328,7 +329,7 @@ def build_archive_display(graph):
                       "summary": "共同前提须同时满足；保持原规则身份与状态", "type": "hyperedge",
                       "status": row.get("status") if isinstance(row.get("status"), str) else "UNKNOWN",
                       "goal_weights": _goal_weights(row, goals),
-                      "group": group, "primary": False, "source_id": None, "raw_node_index": None,
+                      "group": group, "cohesion_group": None, "primary": False, "source_id": None, "raw_node_index": None,
                       "raw_hyperedge_id": row["id"], "degree": 0})
         for premise in premises:
             add_edge(premise, hub, "original_dependency", "and_premise", i)

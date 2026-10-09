@@ -308,7 +308,7 @@ def _retained_job(root):
                 'Retained job requires an original run and verified terminal receipt')
 
 
-def _guard_quiescent(root, db, contract):
+def _guard_quiescent(root, db, contract, *, workspace=None):
     """Require the native QUICK guard's original immutable tail, not PASS."""
     from rds_guard import read
     bindings = [entry for entry in contract['bindings']
@@ -323,7 +323,7 @@ def _guard_quiescent(root, db, contract):
             'Retained QUICK request differs from its original binding')
     guard = request.get('guard')
     if guard is None:
-        _prospective_quiescent(root, db, request)
+        _prospective_quiescent(root, db, request, workspace=workspace)
         return
     require(isinstance(guard, dict) and isinstance(guard.get('path'), str), 'Retained QUICK guard identity is invalid')
     policy = [entry for entry in contract['bindings'] if entry['path'] == guard['path']]
@@ -352,14 +352,23 @@ def _guard_quiescent(root, db, contract):
                 and report.get('scientific_support') == 'UNKNOWN'
                 and isinstance(report.get('reason'), str)
                 and 'policy_sha256' not in report), 'Guard report differs from its frozen policy')
-    _prospective_quiescent(root, db, request, report, ref)
+    _prospective_quiescent(root, db, request, report, ref, workspace=workspace)
 
 
-def _prospective_quiescent(root, db, request, regression=None, guard_ref=None):
+def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *, workspace=None):
     if request.get('research_context') is None:
         return
     from rds_project import ProjectStore, TERMINAL
     from rds_quick import _prospective_completion
+    context = request['research_context']
+    require(isinstance(context, dict) and isinstance(context.get('ledger'), str),
+            'Prospective campaign parent ledger is invalid')
+    if workspace is not None:
+        # Campaign publication owns this explicit global scope. Activation
+        # also uses the settlement reader, without publishing a workspace.
+        parent = Path(context['ledger'])
+        require(parent.is_absolute() and parent.resolve().is_relative_to(workspace),
+                'Prospective campaign parent ledger escapes the selected workspace; bind a common ancestor')
     require(db.execute('SELECT count(*) FROM runs').fetchone()[0] == 1,
             'Prospective QUICK settlement requires exactly one original run')
     runs = ProjectStore._runs(db)
@@ -462,6 +471,29 @@ def _native_tails_quiescent(root, db, contract, runs, receipts):
                 and isinstance(edge, dict) and edge.get('status') == 'SUPPORTED' and edge.get('source') == source
                 and edge.get('premises') == [run_node['id']] and edge.get('conclusion') == receipt_node['id'],
                 'Owned Advisor settlement dependency map differs from original terminal receipts')
+    return report
+
+
+def retained_owned_review(store):
+    """Read the settled foreign review; never collect through another owner."""
+    scope = binding(store.root)
+    if scope is None or store.root == Path(scope['project_root']):
+        return None
+    from rds_project import TERMINAL
+    with store._db(True) as db:
+        db.execute('BEGIN')
+        contract = store._contract(db)
+        runs = store._runs(db)
+        require(all(run['status'] in TERMINAL for run in runs),
+                'Foreign owned recovery requires original terminal work')
+        receipts = [store._receipt(row) for row in db.execute('SELECT run_id,sha256,body FROM receipts ORDER BY run_id')]
+        require(len(receipts) == len(runs) and all(
+            receipt['run_id'] == run['id'] and receipt['attempt_id'] == run['attempt_id']
+            and receipt['manifest_sha256'] == run['manifest_sha256']
+            and receipt['process_status'] == run['status']
+            for receipt, run in zip(receipts, runs)),
+            'Foreign owned recovery requires its complete original terminal receipt inventory')
+        return _native_tails_quiescent(store.root, db, contract, runs, receipts)
 
 
 def _intent_quiescent(root, db, project, workspace):
@@ -546,7 +578,7 @@ def _theory_quiescent(db, inventory):
     require(allowances == outcomes, 'Campaign binding requires resolved theory allowances with exact outcomes')
 
 
-def _ledger_quiescent(root, db, inventory, *, allow_pending_revision=False, canonical_project=False):
+def _ledger_quiescent(root, db, inventory, *, workspace, allow_pending_revision=False, canonical_project=False):
     from rds_project import ProjectStore, TERMINAL
     contract = None
     if _table(db, 'contract') and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
@@ -555,7 +587,7 @@ def _ledger_quiescent(root, db, inventory, *, allow_pending_revision=False, cano
         require(allow_pending_revision or pending_revision(db) is None,
                 'Campaign binding requires resolved method revision')
         contract = lineage[-1]['contract']
-        _guard_quiescent(root, db, contract)
+        _guard_quiescent(root, db, contract, workspace=workspace)
     _comparisons_quiescent(root, db, inventory)
     _theory_quiescent(db, inventory)
     if _table(db, 'runs'):
@@ -618,12 +650,12 @@ def _quiescent(db, project, workspace=None):
         require(len(visited) <= MAX_JOBS + 1, 'Campaign retained-job bound exceeded; inventory is incomplete')
         if root == project:
             _intent_quiescent(root, db, project, workspace)
-            _ledger_quiescent(root, db, inventory, allow_pending_revision=True, canonical_project=True)
+            _ledger_quiescent(root, db, inventory, workspace=workspace, allow_pending_revision=True, canonical_project=True)
             pending.extend(_retained_targets(root, db, inventory, workspace=workspace))
         else:
             with _database(root) as child:
                 _intent_quiescent(root, child, project, workspace)
-                _ledger_quiescent(root, child, inventory)
+                _ledger_quiescent(root, child, inventory, workspace=workspace)
                 pending.extend(_retained_targets(root, child, inventory, workspace=workspace))
 
 

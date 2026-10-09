@@ -150,21 +150,24 @@ class SuccessorTests(unittest.TestCase):
                              for flag in output['loop_review']['flags']))
         self.assertEqual(ledger_dump(self.first), before)
 
-    def test_activated_predecessor_mixed_lineage_latest_decision_wins(self):
+    def test_activated_predecessor_rejects_manual_choice_and_successor_retains_genesis(self):
         candidate = self.candidate()
         self.record(self.first, 'genesis-accepted', candidate, outcome='accepted')
         self.activate_first()
-        self.record(self.first, 'activated-rejected', candidate)
+        before = ledger_dump(self.first)
+        with self.assertRaisesRegex(ValueError, 'owns decision checkpoints'):
+            self.record(self.first, 'activated-rejected', candidate)
+        self.assertEqual(ledger_dump(self.first), before)
         root, contract = self.phase('mixed-lineage')
         ProjectStore(root).initialize(contract, supersedes=str(self.first))
         output = self.search(root)['search']
-        self.assertEqual(output['candidates'], [])
-        self.assertEqual(output['blocked_candidates'][-1]['loop_review']['checkpoint_id'], 'activated-rejected')
+        self.assertEqual([row['id'] for row in output['candidates']], [candidate['id']])
         self.assertFalse(any(flag['kind'] == 'PREDECESSOR_CHAIN_UNVERIFIED'
                              for flag in output['loop_review']['flags']))
-        # A successor's own later decision still takes precedence over both ancestors.
-        self.record(root, 'successor-accepted', candidate, outcome='accepted')
-        self.assertEqual([row['id'] for row in self.search(root)['search']['candidates']], [candidate['id']])
+        # A legacy successor's own later decision still takes precedence over genesis.
+        self.record(root, 'successor-rejected', candidate)
+        self.assertEqual(self.search(root)['search']['candidates'], [])
+        self.assertEqual(self.search(root)['search']['blocked_candidates'][-1]['loop_review']['checkpoint_id'], 'successor-rejected')
 
     def test_activation_after_supersession_invalidates_original_contract_pin(self):
         self.record(self.first, 'genesis-rejected', self.candidate())

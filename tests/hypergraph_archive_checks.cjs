@@ -217,6 +217,18 @@ async function workerContinuityChecks(){
   assert.ok(Math.abs(await distance(40)-await distance(80))>100);cases++;console.log('PASS link-distance controls affect long archived spans instead of being masked by a floor');
   const large=fixture(2504);large.nodes.forEach(n=>n.type='claim');large.edges=[[0,1500,0,0,0]];await init(large);await drag('c0',1200);await send({type:'drag',id:'c0',x:null,y:null});const start=messages.length;await send({type:'configure',options:{membership:false}});drain();assert.equal(messages.slice(start).filter(m=>m.type==='error').length,0);await send({type:'locate',index:0,request:1701});const locate=messages.find(m=>m.request===1701);await send({type:'cluster',index:0,request:1702});const bounds=messages.find(m=>m.request===1702);assert.ok(locate.x>=bounds.memberBounds[0]&&locate.x<=bounds.memberBounds[2]);
   await drag('c0',1300);await send({type:'reheat',id:'n0'});drain();const reheated=messages.filter(m=>m.type==='physics').at(-1);assert.ok(reheated.ids.includes('n0')&&reheated.settled);assert.equal(messages.filter(m=>m.type==='error').length,0);cases++;console.log('PASS released aggregate configuration and raw reheat survive yielded commit without trapping anchors');
+  const moved=fixture(4);moved.edges=[[0,2,0,0,0]];await init(moved);await send({type:'configure',options:{linkStrength:0}});
+  await drag('c0',1200);const reheatStart=messages.length;await send({type:'reheat',id:'c0'});one();
+  const reheatedCoarse=messages.slice(reheatStart).find(m=>m.type==='physics'),liveX=new Float32Array(reheatedCoarse.buffer)[reheatedCoarse.ids.indexOf('c0')*2];
+  assert.equal(liveX,1200,'coarse relayout releases the current simulated position, not the archived cluster');await send({type:'pause'});drain();cases++;console.log('PASS coarse reheat retains uncommitted live aggregate coordinates');
+  const collision=fixture(2);collision.nodes.forEach(n=>{n.source_id=null;n.group=null;});collision.semantics=['A|B','A'];collision.edge_types=['and_premise','B|and_premise'];collision.edges=[[0,1,0,0,0],[0,1,1,1,1]];await init(collision);
+  const catalog=messages.filter(m=>m.type==='ready').at(-1).relationCatalog;assert.equal(new Set(Array.from(catalog,r=>r.key)).size,2);assert.ok(catalog.every(r=>r.legacyKey===null));
+  await send({type:'configure',options:{relations:{'A|B|and_premise':{mode:'none',strength:1},[JSON.stringify(['A|B','and_premise'])]:{mode:'none',strength:1},[JSON.stringify(['A','B|and_premise'])]:{mode:'attract',strength:1}}}});
+  const separate=await drag('n0',1200);assert.equal(separate.springs,1,'tuple settings affect only the exact semantic/type identity');await send({type:'viewport',level:3,rect:collision.bounds,request:1767});const displayed=messages.find(m=>m.request===1767);assert.equal(new Set(Array.from(displayed.edges,e=>e.relationKey)).size,2);await send({type:'pause'});drain();cases++;console.log('PASS delimiter-colliding relations retain separate display settings and force identities');
+
+  async function authoredCohesion(authored,coarse,mixed=false){const data=fixture(4);data.nodes.forEach((n,i)=>{n.source_id=mixed==='source'&&i!==2?'original-run':null;n.group='type:claim';n.cohesion_group=authored&&!(mixed&&i===2)&&mixed!=='source'?'type:claim':null;n.type='claim';});data.edges=[[0,2,0,0,0]];await init(data);await send({type:'configure',options:{linkStrength:0,groupStrength:.15}});const packet=await drag(coarse?'c0':'n0',1200,12),id=coarse?'c3':'n2',x=new Float32Array(packet.buffer)[packet.ids.indexOf(id)*2];await send({type:'pause'});drain();return x;}
+  for(const coarse of [false,true]){const isolated=await authoredCohesion(false,coarse),authored=await authoredCohesion(true,coarse);assert.equal(isolated,coarse?600:0);assert.equal(await authoredCohesion(true,coarse,true),isolated,'mixed authored and ungrouped members cannot inherit cohesion');assert.equal(await authoredCohesion(false,coarse,'source'),isolated,'mixed attributed and unattributed members cannot inherit a source');assert.ok(Math.abs(authored-isolated)>1,'explicit authored groups still transmit displacement');}cases++;console.log('PASS synthetic display buckets exert no raw or aggregate cohesion while authored type-prefixed groups do');
+
 }
 async function workerSegmentChecks(){
   const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path'),py=fs.readFileSync(path.join(__dirname,'../scripts/rds_hypergraph_view.py'),'utf8'),d3=py.match(/D3_BUNDLE = r'{3}([\s\S]*?)'{3}/)[1],worker=fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/worker.js'),'utf8');
@@ -236,6 +248,21 @@ async function explorerChecks(){
     if(family==='other'||family==='mixed')assert.equal(link.rds.dash,false,'unknown or mixed relations retain a neutral display');
   }
   cases++;console.log('PASS actual paint preserves unknown mixed and known relation identities');
+  ctx.options.relations['A|and_premise']={color:'#ff0000',width:2,dash:'dashed'};
+  ctx.options.relations['B|and_premise']={color:'#0000ff',width:1,dash:'dotted'};
+  ctx.scene.edges=[{source:'n0',target:'n1',family:'dependency',relationKey:'B|and_premise',count:1},{source:'n0',target:'n1',family:'dependency',relationKey:'A|and_premise',count:1}];
+  vm.runInContext('paint(scene,[0,0,100,100])',ctx);const composite=JSON.stringify(link.rds);
+  assert.deepEqual(Array.from(link.rds.relationKeys),['A|and_premise','B|and_premise']);assert.equal(link.rds.color,'#800080');assert.equal(link.rds.width,2);assert.equal(link.rds.pattern,'solid');
+  assert.deepEqual(Array.from(link.rds.relationStyles,s=>s.color),['#ff0000','#0000ff']);ctx.scene.edges.reverse();vm.runInContext('paint(scene,[0,0,100,100])',ctx);assert.equal(JSON.stringify(link.rds),composite);
+  cases++;console.log('PASS actual endpoint composition retains parallel style identities with deterministic composite appearance');
+  const sent=[],fctx=vm.createContext({ArchivePresentation:ui,options:ui.defaults(),relationCatalog:[{family:'source',key:'bound|source_binding'}],persist(){},optionTimer:null,setTimeout:fn=>{fn();return 1;},clearTimeout(){},worker:{postMessage:m=>sent.push(m)}});
+  vm.runInContext(source.match(/  const relationStyles=([^;]+);/)[0]+'\n'+source.slice(source.indexOf('  function applyForces('),source.indexOf('  function reheatView(')),fctx);
+  vm.runInContext('applyForces()',fctx);assert.equal(sent.at(-1).options.relations.source.strength,.35);assert.equal(sent.at(-1).options.relations.history.strength,.15);assert.equal(sent.at(-1).options.relations['bound|source_binding'].strength,.35);
+  fctx.options.relations.source={strength:.6};fctx.options.relations['bound|source_binding']={mode:'repel',strength:.2};vm.runInContext('applyForces()',fctx);assert.equal(sent.at(-1).options.relations.source.strength,.6);assert.equal(sent.at(-1).options.relations['bound|source_binding'].mode,'repel');assert.equal(sent.at(-1).options.relations['bound|source_binding'].strength,.2);
+  cases++;console.log('PASS actual initial force configuration retains worker family defaults and explicit user overrides');
+  const packet=(ids,values,aggregateLevel=null)=>({ids,buffer:new Float32Array(values).buffer,aggregateLevel});let pendingPhysics=ui.retainPhysics(new Map(),packet(['n0','n1'],[50,60,70,80]));pendingPhysics=ui.retainPhysics(pendingPhysics,packet(['n2'],[90,100]));assert.equal(pendingPhysics.get('n0').x,50);assert.equal(pendingPhysics.get('n1').y,80);assert.equal(pendingPhysics.get('n2').x,90);pendingPhysics=ui.retainPhysics(pendingPhysics,packet(['n0'],[55,65]));assert.equal(pendingPhysics.size,3);assert.equal(pendingPhysics.get('n0').x,55);pendingPhysics=ui.retainPhysics(pendingPhysics,packet(['c0'],[500,600],0));assert.equal(pendingPhysics.size,1);assert.equal(pendingPhysics.has('n0'),false);
+  cases++;console.log('PASS disjoint raw physics packets retain pending positions and aggregate publication starts a fresh shift');
+
   let renderedData;
   ctx.g.setData=data=>{renderedData=data;ctx.g.nodeLookup=new Map(Object.keys(data.nodes).map(id=>[id,{id}]));ctx.g.links=data.links.map(([a,b,rds])=>({source:ctx.g.nodeLookup.get(a),target:ctx.g.nodeLookup.get(b),rds,rendered:false}));};
   ctx.scene={level:3,points:[{id:'n0',index:0,x:10,y:15,type:'claim',raw:true,label:'真实声明',status:'UNKNOWN',shape:'circle'}],anchors:[{id:'a0',x:0,y:30,anchor:true},{id:'a1',x:100,y:60,anchor:true}],edges:[{source:'a0',target:'a1',family:'dependency',summary:true,count:120}],counters:{visibleNodes:1}};
@@ -268,7 +295,7 @@ async function explorerParityRegressions(){
   const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),ui=require('../scripts/hypergraph_archive/explorer.js');
   const source=fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/explorer.js'),'utf8');
   const packets=[],timers=new Map();let nextTimer=0;
-  const config=vm.createContext({options:ui.defaults(),optionTimer:null,persist(){},clearTimeout:id=>timers.delete(id),setTimeout:fn=>{const id=++nextTimer;timers.set(id,fn);return id;},worker:{postMessage:m=>packets.push(m)},paused:false});
+  const config=vm.createContext({ArchivePresentation:ui,options:ui.defaults(),optionTimer:null,persist(){},clearTimeout:id=>timers.delete(id),setTimeout:fn=>{const id=++nextTimer;timers.set(id,fn);return id;},worker:{postMessage:m=>packets.push(m)},paused:false});
   vm.runInContext(source.match(/  const relationStyles=([^;]+);/)[0]+'\nconst relationCatalog=[];',config);
   vm.runInContext(source.slice(source.indexOf('  function applyForces('),source.indexOf('  function flushDrag(')),config);
   for(const mode of ['uniform','degree','goal']){
@@ -279,7 +306,7 @@ async function explorerParityRegressions(){
   cases++;console.log('PASS actual UI configure preserves uniform degree and native goal modes');
 
   const actions=new Map(),elements=new Map();const element=()=>({append(){},replaceChildren(){},setAttribute(){},addEventListener(){}});
-  const style=vm.createContext({options:ui.defaults(),api:{goals:[]},relationCatalog:[{key:'original_dependency|and_premise',semantic:'original_dependency',type:'and_premise',family:'dependency'}],relationPage:0,section:element,checkbox(){},slider(){},select(parent,label,value,entries,action){actions.set(label,action);},text:element,button:element,pager(){},appearance(){},applyForces(){},reheatView(){},persist(){},$:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);}});
+  const style=vm.createContext({ArchivePresentation:ui,options:ui.defaults(),api:{goals:[]},relationCatalog:[{key:'original_dependency|and_premise',semantic:'original_dependency',type:'and_premise',family:'dependency'}],relationPage:0,section:element,checkbox(){},slider(){},select(parent,label,value,entries,action){actions.set(label,action);},text:element,button:element,pager(){},appearance(){},applyForces(){},reheatView(){},persist(){},$:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);}});
   vm.runInContext(source.match(/  const relationStyles=([^;]+);/)[0]+'\n'+source.slice(source.indexOf('  function pointStyle('),source.indexOf('  function restoreEdges('))+'\n'+source.slice(source.indexOf('  function settingsUI('),source.indexOf('  function restoreSettings(')),style);
   vm.runInContext('settingsUI()',style);actions.get('依赖作用')('none');
   assert.equal(style.options.relations.dependency.mode,'none');

@@ -432,6 +432,18 @@ class ArchiveCallerTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30, cwd=ROOT)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
+    def test_display_type_buckets_do_not_claim_authored_execution_groups(self):
+        graph = fixture()
+        graph['nodes'][0].pop('group')
+        graph['nodes'][1]['group'] = 'type:evidence'
+        before = deepcopy(graph)
+        nodes = build_archive_display(graph)['nodes']
+        self.assertEqual(nodes[0]['group'], 'type:research')
+        self.assertIsNone(nodes[0]['cohesion_group'])
+        self.assertEqual(nodes[1]['cohesion_group'], 'type:evidence')
+        self.assertEqual(nodes[1]['source_id'], 'source:fixture')
+        self.assertEqual(graph, before)
+
 
 if __name__ == "__main__":
     unittest.main()
