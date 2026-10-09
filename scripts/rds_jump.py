@@ -294,6 +294,62 @@ def _python_script_operand(argv):
     return None
 
 
+def _ruby_script_operand(argv):
+    """Locate Ruby's literal main without admitting cwd/PATH script lookup.
+
+    Ruby's proc_options consumes short flags characterwise; C/X and an
+    attached x directory call chdir before opening the main script. S instead
+    searches PATH for that script. Argument values and tokens after -- are not
+    themselves interpreter options.
+    """
+    index = 1
+    while index < len(argv):
+        option = argv[index]
+        if option == '--':
+            return index + 1 if index + 1 < len(argv) else None
+        if option == '-':
+            return None
+        if not option.startswith('-'):
+            return index
+        if option.startswith('--'):
+            name = option.split('=', 1)[0]
+            values = {'--encoding', '--external-encoding', '--internal-encoding',
+                      '--enable', '--disable', '--dump', '--backtrace-limit',
+                      '--parser', '--crash-report'}
+            index += 2 if name in values and '=' not in option else 1
+            continue
+        offset = 1
+        while offset < len(option):
+            flag = option[offset]
+            offset += 1
+            require(flag not in 'CXS' and not (flag == 'x' and offset < len(option)),
+                    'Ruby script lookup cwd/PATH options are unsupported for Jump')
+            if flag in 'eh':
+                return None  # Inline code/help does not name a main file.
+            if flag in 'rIE':
+                if offset == len(option):
+                    index += 1  # Required value occupies the following token.
+                break
+            if flag in 'iFx':
+                break  # Optional attached value consumes the token remainder.
+            if flag == 'K':
+                offset += int(offset < len(option))
+            elif flag == 'W':
+                if option[offset:offset + 1] == ':':
+                    break  # Warning category consumes the token remainder.
+                if offset < len(option) and option[offset] in '01234567':
+                    offset += 1
+            elif flag == '0':
+                # Ruby scans at most four octal digits including this zero.
+                for _ in range(3):
+                    if offset < len(option) and option[offset] in '01234567':
+                        offset += 1
+                    else:
+                        break
+        index += 1
+    return None
+
+
 def _interpreter_script_operand(argv):
     """Return (argv index, literal main path) for supported interpreters.
 
@@ -305,6 +361,8 @@ def _interpreter_script_operand(argv):
     name = Path(argv[0]).name.casefold().removesuffix('.exe')
     if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', name):
         return file_at(_python_script_operand(argv))
+    if name == 'ruby':
+        return file_at(_ruby_script_operand(argv))
     shells = {'sh', 'bash', 'dash', 'ksh', 'zsh'}
     if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:
         return None
