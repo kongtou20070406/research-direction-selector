@@ -25,7 +25,13 @@ import uuid
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
 
-VERSION = "5.9.0-rc.1"
+VERSION = "5.9.0-rc.2"
+# Reading an explicitly supported ledger does not grant execution admission;
+# the contract digest and engine binding are checked at their existing boundaries.
+READABLE_STATE_VERSIONS = frozenset({
+    VERSION, "5.1.0", "5.2.0", "5.3.0", "5.4.0", "5.5.0-rc.1", "5.5.0-rc.2",
+    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1",
+})
 RESOURCES = {"runtime_ms", "runs"}
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",
                "final_run_authorized", "matched_recipe", "matched_compute"}
@@ -225,7 +231,7 @@ class RDSState:
         row = db.execute("SELECT body FROM state WHERE id=1").fetchone()
         state = strict_json(row[0]) if row else {}
         if state:
-            require(state["version"] in {VERSION, "5.7.0", "5.1.0", "5.2.0", "5.3.0", "5.4.0", "5.5.0-rc.1", "5.5.0-rc.2", "5.6.0-rc.1", "5.6.0-rc.2"},
+            require(state["version"] in READABLE_STATE_VERSIONS,
                     "Incompatible state version")
             require(digest(state["contract"]) == state["contract_sha256"], "Contract integrity failure")
             if "branches" not in state:

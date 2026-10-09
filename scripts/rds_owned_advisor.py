@@ -438,12 +438,12 @@ def _collect(store, state):
         from rds_autonomy import collect
         collect(store, state, nodes, files)
     if policy and 'confirmation' in policy:
-        from rds_domain_confirmation import inspect_confirmation
+        from rds_domain_confirmation import inspect_confirmation, confirmation_fact
         confirmation = inspect_confirmation(store, state['contract'], state)
         fid = 'confirmation.task_status'
-        fact = {'id': fid, 'kind': 'DERIVED', 'value': confirmation['task_confirmation'], 'reliable': True,
-                'source': {'locator': 'program replay of frozen domain evidence ' + digest(confirmation)}}
-        nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], owned_fact=fact))
+        fact = confirmation_fact(confirmation)
+        nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN',
+                           fact['source'], owned_fact=fact))
     return nodes, edges, coverage, files
 
 
@@ -581,15 +581,27 @@ def review(store, persist=True):
         ready = {c['action']['id']: c for search in searches for c in search['candidates'] if c['status'] == 'READY'}
         active = [r for r in policy['routes'] if run_index.get(r['manifest']['id'], {}).get('status') in {'RESERVED', 'RUNNING'}
                   and r['candidate'] in ready]
-        eligible = []
+        eligible, resource_blockers = [], []
+        budget_blocked = {c['action']['id'] for search in searches for c in search.get('blocked_candidates', [])
+                          if c['status'] == 'BLOCKED_BUDGET'}
+        resource_candidates = set(ready) | budget_blocked
         for route in policy['routes']:
             manifest = route['manifest']
-            if manifest['id'] in run_index or route['candidate'] not in ready:
+            if manifest['id'] in run_index or route['candidate'] not in resource_candidates:
                 continue
             if manifest.get('control_id') and manifest['control_id'] not in run_index:
                 continue
-            if all(amount <= budget.get(resource, 0) for resource, amount in manifest['resource_estimates'].items()):
+            shortfalls = {resource: {'required': amount, 'remaining': budget.get(resource, 0)}
+                          for resource, amount in manifest['resource_estimates'].items()
+                          if amount > budget.get(resource, 0)}
+            if shortfalls:
+                resource_blockers.append({'run_id': manifest['id'], 'candidate': route['candidate'],
+                                          'shortfalls': shortfalls})
+            elif route['candidate'] in ready:
                 eligible.append(route)
+        if resource_blockers:
+            result['resource_blockers'] = resource_blockers
+            result['warnings'].append({'kind': 'OWNED_RESOURCE_SHORTFALL', 'routes': deepcopy(resource_blockers)})
         from rds_feasibility import assess
         feasibility = assess(store, state)
         if feasibility is not None:
@@ -648,6 +660,20 @@ def review(store, persist=True):
                 result['next_move'] = {'kind': 'HUMAN_STEERING', 'revision': steering['revision'],
                                        'reason': 'Retained user instruction prevents new dispatch; inspect project steering'}
         chosen = (active or frontier or eligible)
+        integrity_flags = result['warnings'] + [flag for search in searches
+                                                for flag in search.get('loop_review', {}).get('flags', [])]
+        integrity_error = any(flag.get('kind') == 'LOOP_HISTORY_REVIEW_ERROR' for flag in integrity_flags)
+        if (not chosen and resource_blockers and not coverage['errors'] and feasibility is None
+                and not integrity_error and not result.get('steering_handoff')
+                and selection.get('goal', {}).get('status') != 'TRUE'):
+            result['next_move'] = {'kind': 'RESOURCE_BLOCKED', 'authorization': 'UNCHANGED',
+                'basis': 'PROGRAM_OWNED_RESOURCE_ADMISSION',
+                'source': {'locator': 'owned project budget', 'fingerprint': fingerprint},
+                'reason': 'No otherwise-ready frozen route fits the remaining declared resource budget.',
+                'blockers': deepcopy(resource_blockers),
+                'prompt': 'Inspect the recorded resource shortfalls and preserve pending evidence. '
+                          'Continue only an authorized route that fits the remaining budget; '
+                          'a resource block does not refute the task goal or authorize more resources.'}
         if 'graph_ranker' in policy:
             from rds_graph_ranker import rank
             steering = state.get('steering') or {}
