@@ -154,6 +154,48 @@ class ExecutionSemanticsTests(unittest.TestCase):
         self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
         self.assertEqual(helper.starts(), ['baseline'])
 
+    def test_resource_shortfall_cannot_mask_method_gates_in_real_next(self):
+        from test_rds_methods import method, policy
+        for gate, status in (('conflict', 'BLOCKED_METHOD'),
+                             ('description', 'NEEDS_METHOD_DESCRIPTION'),
+                             ('clarification', 'NEEDS_METHOD_CLARIFICATION')):
+            for over in (False, True):
+                with self.subTest(gate=gate, over_budget=over):
+                    helper = owned_fixture.OwnedAdvisorCLITests()
+                    helper.setUp()
+                    self.addCleanup(helper.doCleanups)
+                    def change(p):
+                        p['context'].update(policy())
+                        if gate == 'clarification':
+                            p['context']['method_constraints'].append({'id': 'unclear',
+                                'quote': 'Use exact methods', 'source': 'user:fixture',
+                                'status': 'UNRESOLVED', 'question': 'Which steps?'})
+                        for node in p['graph']['nodes']:
+                            if gate != 'description':
+                                node['executable']['action']['methods'] = method(
+                                    device='gpu' if gate == 'conflict' else 'cpu')
+                        if over:
+                            for route in p['routes']:
+                                route['manifest']['resource_estimates']['wall_seconds'] = 31
+                    helper.initialize(mutate_policy=change)
+                    before = helper.snapshot()
+                    result = helper.output('project', 'next')
+                    search = next(row['search'] for row in result['recommendations']
+                                  if row.get('type') == 'EXECUTABLE_DIRECTION_SEARCH')
+                    candidate = next(c for c in search['candidates'] + search['blocked_candidates']
+                                     if c.get('action', {}).get('id') == 'baseline')
+                    self.assertEqual(candidate['status'], status)
+                    self.assertEqual(candidate['method_review']['status'],
+                                     'CONFLICT' if gate == 'conflict' else 'UNKNOWN')
+                    self.assertEqual(candidate['budget_status'],
+                                     'OVER_REPORTED_BUDGET' if over else 'WITHIN_REPORTED_BUDGET')
+                    self.assertNotEqual(result.get('next_move', {}).get('kind'), 'RESOURCE_BLOCKED')
+                    self.assertEqual(result.get('resource_blockers', []), [])
+                    self.assertIsNone(result['selected_run'])
+                    self.assertEqual(helper.starts(), [])
+                    self.assertEqual(helper.snapshot(), before)
+                    self.retain('method-resource-' + gate + '-' + str(over), result)
+
     def test_pause_has_priority_over_resource_block(self):
         helper = self.owned('cpu_seconds')
         from rds_steering import submit

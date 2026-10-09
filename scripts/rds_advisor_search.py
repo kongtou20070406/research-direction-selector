@@ -1197,7 +1197,9 @@ def search_directions(graph, context, *, max_candidates=12, max_depth=8, max_nod
             candidate["discrimination"] = _discrimination(action, facts)
         from rds_methods import review_candidate
         review_candidate(context, candidate)
-        if budget_status == "OVER_REPORTED_BUDGET":
+        # Resource-only blockage requires resolved evidence and method gates.
+        # Keep budget_status on all candidates without hiding earlier blockers.
+        if budget_status == "OVER_REPORTED_BUDGET" and candidate["status"] == "READY":
             candidate["status"] = "BLOCKED_BUDGET"
             result["blocked_candidates"].append(candidate)
         elif candidate["status"] == "BLOCKED_METHOD":
