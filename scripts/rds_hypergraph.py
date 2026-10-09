@@ -33,6 +33,7 @@ import heapq
 import json
 import sqlite3
 from pathlib import Path
+from rds_hypergraph_blockers import missing_families
 
 ASSURANCE = "INPUT_REPORTED_DEPENDENCY_ANALYSIS_NOT_PROOF"
 DEFAULT_LIMITS = {"max_nodes": 256, "max_hyperedges": 512,
@@ -41,10 +42,6 @@ DEFAULT_LIMITS = {"max_nodes": 256, "max_hyperedges": 512,
 HARD_LIMITS = {"max_nodes": 4096, "max_hyperedges": 16384,
                "max_blocker_sets": 2048, "max_combinations": 1000000,
                "max_source_bytes": 64 * 1024 * 1024}
-
-
-class _Truncated(Exception):
-    pass
 
 
 def _require(condition, message):
@@ -373,56 +370,8 @@ def analyze_hypergraph(spec, audit_receipts_enabled=False, read_receipt=None):
     direct = {ident for ident, node in nodes.items()
               if (node["status"] == "UNKNOWN" or ident in blocked_nodes)
               and node.get("allow_direct_evidence", ident not in incoming)}
-    families = {ident: {frozenset()} if ident in closure else
-                {frozenset({"node:" + ident})} if ident in direct else set()
-                for ident, node in nodes.items()}
-    combinations, truncated, reason = 0, False, None
-
-    def insert(family, candidate):
-        if any(old <= candidate for old in family):
-            return False
-        updated = {old for old in family if not candidate < old}
-        updated.add(candidate)
-        if len(updated) > limits["max_blocker_sets"]:
-            raise _Truncated("max_blocker_sets exceeded")
-        family.clear()
-        family.update(updated)
-        return True
-
-    def spend():
-        nonlocal combinations
-        if combinations >= limits["max_combinations"]:
-            raise _Truncated("max_combinations exceeded")
-        combinations += 1
-
-    # ponytail: antichain fixed point is exponential in the worst case;
-    # explicit set/work caps return UNKNOWN rather than incomplete minimums.
-    try:
-        changed = True
-        while changed:
-            changed = False
-            for edge in edges:
-                head = edge["conclusion"]
-                if edge["id"] not in relevant_edges or edge["status"] == "CONTRADICTED" \
-                        or head in closure or nodes[head]["status"] == "CONTRADICTED":
-                    continue
-                status = "PROPOSED" if edge["id"] in blocked_rules else edge["status"]
-                plans = {frozenset({"rule:" + edge["id"]})} if status == "PROPOSED" \
-                    else {frozenset()}
-                for tail in edge["premises"]:
-                    joined = set()
-                    for left in sorted(plans, key=lambda v: (len(v), sorted(v))):
-                        for right in sorted(families[tail], key=lambda v: (len(v), sorted(v))):
-                            spend()
-                            insert(joined, left | right)
-                    plans = joined
-                    if not plans:
-                        break
-                for plan in sorted(plans, key=lambda v: (len(v), sorted(v))):
-                    spend()
-                    changed |= insert(families[head], plan)
-    except _Truncated as exc:
-        truncated, reason = True, str(exc)
+    families, combinations, truncated, reason = missing_families(
+        nodes, edges, closure, direct, relevant_edges, blocked_rules, limits)
 
     ready = []
     for edge in edges:
