@@ -261,6 +261,36 @@ def _code_identity(store, path):
     return os.path.normcase(str(store._path(path).resolve()))
 
 
+def _python_script_operand(argv):
+    """Identify Python's file operand, including files without an extension."""
+    if not re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?(?:\.exe)?', Path(argv[0]).name.casefold()):
+        return None
+    index = 1
+    while index < len(argv):
+        option = argv[index]
+        if option == '--':
+            return index + 1 if index + 1 < len(argv) else None
+        if option == '-':
+            return None  # Stdin has no script-file operand.
+        if option == '--check-hash-based-pycs':
+            index += 2
+        elif option.startswith('-'):
+            flags = option[1:]
+            for offset, flag in enumerate(flags):
+                if flag in {'c', 'm'}:
+                    return None  # Inline code/modules have no script-file operand.
+                if flag in {'W', 'X'}:
+                    index += 1 if offset + 1 < len(flags) else 2
+                    break
+                if flag not in 'bBdEiIOPqRsSuvx':
+                    return None  # Unknown/stopping options cannot execute a file.
+            else:
+                index += 1
+        else:
+            return index
+    return None
+
+
 def _generator_bindings(store, contract, plan):
     """Frozen explicit dependencies, with conservative legacy code fallback.
 
@@ -270,18 +300,24 @@ def _generator_bindings(store, contract, plan):
     declared = plan.get('generator_code_paths')
     if declared is None:
         require('generator_code_paths' not in plan, 'Generator code paths must be a nonempty list')
-        return list(code.values())
-    require(isinstance(declared, list) and 1 <= len(declared) <= 64,
-            'Generator code paths must be a nonempty bounded list')
-    identities = []
-    for path in declared:
-        require(isinstance(path, str) and path and len(path) <= 2048, 'Invalid generator code path')
-        identity = _code_identity(store, path)
-        require(identity in code and identity not in identities,
-                'Generator code paths must be distinct frozen code bindings')
-        identities.append(identity)
+        identities = list(code)
+    else:
+        require(isinstance(declared, list) and 1 <= len(declared) <= 64,
+                'Generator code paths must be a nonempty bounded list')
+        identities = []
+        for path in declared:
+            require(isinstance(path, str) and path and len(path) <= 2048, 'Invalid generator code path')
+            identity = _code_identity(store, path)
+            require(identity in code and identity not in identities,
+                    'Generator code paths must be distinct frozen code bindings')
+            identities.append(identity)
     for stage in plan['stages']:
-        for arg in stage['run']['argv']:
+        script_operand = _python_script_operand(stage['run']['argv'])
+        data_or_output = {_code_identity(store, b['path']) for b in contract['bindings'] if b['role'] != 'code'}
+        data_or_output.update(_code_identity(store, p) for p in stage['run']['outpaths'])
+        for index, arg in enumerate(stage['run']['argv']):
+            if index != 0 and index != script_operand and arg.startswith('-') and '=' not in arg:
+                continue  # Interpreter options are not code/data path operands.
             candidate = arg.split('=', 1)[1] if arg.startswith('-') and '=' in arg else arg
             try:
                 path = Path(candidate)
@@ -291,7 +327,13 @@ def _generator_bindings(store, contract, plan):
                 identity = os.path.normcase(str(path))
             except (ValueError, OSError):
                 continue  # Executables/options outside the root are not code bindings.
-            require(identity not in code or identity in identities,
+            entrypoint = index == 0 or index == script_operand or (
+                identity not in data_or_output and path.suffix.casefold() in {
+                    '.py', '.pyw', '.js', '.mjs', '.cjs', '.sh', '.ps1', '.bat', '.cmd', '.exe'})
+            if not entrypoint and identity not in code:
+                continue  # Runtime data/output arguments are not code entrypoints.
+            require(identity in code, 'Jump argv entrypoint is not a frozen code binding')
+            require(identity in identities,
                     'Jump argv code entrypoint is absent from generator dependencies')
     return [code[identity] for identity in identities]
 

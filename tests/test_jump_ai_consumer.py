@@ -19,7 +19,7 @@ import rds_autonomy as autonomy
 import rds_jump as jump
 from rds_autonomy_worker import model_prompt, reply_schema
 from rds_math import blob
-from rds_project import digest
+from rds_project import canonical, digest
 
 PROVIDER = fixture.PROVIDER.replace(
     "source=request['base_source'] if mode=='bad' else NEW_SOURCE",
@@ -113,6 +113,46 @@ class JumpAiConsumerTests(unittest.TestCase):
                                  'JUMP_CONTEXT_REQUIRES_ORIGINALS')
         self.assertEqual(self.case.events(autonomy.REQUESTED), [])
         self.assertEqual(self.case.calls(), [])
+
+    def test_concurrent_jump_evidence_change_blocks_request_commit(self):
+        from rds_tms_store import current, maintain, save
+        import rds_tool_workbench as workbench
+        for change, context in (('structure', self.context), ('snapshot', self.context),
+                                ('structure', None), ('snapshot', None)):
+            with self.subTest(change=change, context=context is not None):
+                case = fixture.AutonomyTests(methodName='runTest')
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                case.build(timeout=12, budget=100)
+                maintain(case.root)
+                report = fixture.review(case.store)
+                before = case.store.snapshot()
+                prepare = workbench.prepare
+                def concurrent_prepare(*args, **kwargs):
+                    result = prepare(*args, **kwargs)
+                    if change == 'structure':
+                        with case.store._db() as db:
+                            db.execute('BEGIN IMMEDIATE')
+                            db.execute('INSERT INTO events(body) VALUES (?)', (canonical({
+                                'kind': 'STRUCTURE_EVIDENCE_CHANGED',
+                                'source': 'Concurrent native event; no support or outcome claim'}),))
+                    else:
+                        saved = current(case.root)
+                        graph = deepcopy(saved['dependency_map'])
+                        graph['nodes'].append({'id': 'new-evidence', 'status': 'UNKNOWN',
+                                               'source': 'Concurrent native snapshot; no support claim'})
+                        save(case.root, graph, expected=saved['sha256'])
+                    return result
+                with patch.object(jump, 'packet', return_value=deepcopy(context)), \
+                        patch.object(workbench, 'prepare', side_effect=concurrent_prepare):
+                    with self.assertRaisesRegex(ValueError, 'Jump evidence changed'):
+                        autonomy.request_repair(case.store, report)
+                self.assertEqual(case.events(autonomy.REQUESTED), [])
+                self.assertEqual(case.calls(), [])
+                after = case.store.snapshot()
+                self.assertEqual(after['runs'], before['runs'])
+                self.assertEqual(after['receipts'], before['receipts'])
+                self.assertEqual(after['budget'], before['budget'])
 
     def test_without_jump_keeps_existing_provider_contract(self):
         self.case.build(timeout=12, budget=100)

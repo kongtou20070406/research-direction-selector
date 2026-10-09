@@ -271,6 +271,16 @@ def evidence_excerpts(store, state, ids):
             'frozen_inputs': inputs, 'original_outputs': outputs}
 
 
+def _jump_evidence_cut(store, db):
+    """Read the structure and snapshot identities under the caller's transaction."""
+    from rds_structure import _events
+    snapshot = None
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+        row = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+        snapshot = row['sha256'] if row else None
+    return {'structure_events_sha256': digest(_events(store, db)), 'snapshot_sha256': snapshot}
+
+
 def request_repair(store, report):
     """One request per original blocker; workbench evidence remains immutable."""
     from rds_owned_advisor import _state, _fingerprint
@@ -279,6 +289,7 @@ def request_repair(store, report):
     with store._db(True) as db:
         db.execute('BEGIN')
         state = _state(store, db)
+        jump_cut = _jump_evidence_cut(store, db)
     config = state['contract']['advisor_policy']['autonomy']
     slots = config['repair_slots']
     from rds_jump import packet as jump_packet
@@ -325,6 +336,8 @@ def request_repair(store, report):
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         require(_fingerprint(_state(store, db)) == _fingerprint(state), 'State changed while preparing model request')
+        require(_jump_evidence_cut(store, db) == jump_cut,
+                'Jump evidence changed while preparing model request; retry original evidence')
         _append(db, {'kind': REQUESTED, 'run_id': slot['run_id'], 'parent_sha256': request['parent_sha256'],
                      'blocker_sha256': blocker, 'request': ref})
     return 'REQUESTED'

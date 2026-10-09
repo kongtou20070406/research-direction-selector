@@ -296,6 +296,8 @@ class Wheel:
         require(isinstance(routes, dict), "routes must be an object")
         for factor, route in routes.items():
             require(isinstance(route, dict), "factor route must be an object")
+            require(route and set(route) <= {"main", "screen"},
+                    "route must contain only main or screen mappings")
             for kind in ("main", "screen"):
                 if kind in route:
                     mapped.append(self.manifest(factor, kind))
@@ -368,6 +370,8 @@ class Wheel:
         else:
             template = self.mapping.get("routes", {}).get(factor, {}).get(kind)
         require(isinstance(template, dict), "missing preauthorized evaluator mapping for " + factor)
+        if kind in ("main", "screen"):
+            require(template.get("factor") == factor, "template factor differs from route factor")
         argv = template.get("argv")
         require(isinstance(argv, list) and argv in self.project_contract["allowed_commands"],
                 "factor command was not frozen")
@@ -461,8 +465,10 @@ class Wheel:
                 datetime.fromisoformat(row["ts"].replace("Z", "+00:00"))
                 if (row["factor"] not in dead and row["proposal_id"] not in state["screened"]
                         and row["factor"] not in state["used"] and quota.get(row["proposer_id"], 1) > 0):
-                    template = self.mapping.get("routes", {}).get(row["factor"], {}).get("screen")
-                    if isinstance(template, dict) and self.mapping_consumed(template.get("id"), "screen", snapshot):
+                    # An inbox token cannot authorize its own evaluator. Validate
+                    # the frozen screen mapping before choosing this row.
+                    manifest = self.manifest(row["factor"], "screen")
+                    if self.mapping_consumed(manifest["id"], "screen", snapshot):
                         continue  # Keep duplicate rows and their proposers' quota unchanged.
                     return row
             except (ValueError, TypeError, KeyError, RecursionError):

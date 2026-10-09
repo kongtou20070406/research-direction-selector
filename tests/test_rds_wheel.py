@@ -413,13 +413,18 @@ class WheelTests(unittest.TestCase):
         self.assertEqual(self.tick(), 3)
         self.assertEqual(self.executed(), [])
 
-    def test_missing_mapping_exits_2_and_keeps_inbox(self):
+    def test_missing_mapping_is_skipped_and_keeps_inbox(self):
         self.prepare(factors=[])
         self.inbox(self.row("unmapped"))
         before = self.wheel.state_path("inbox.jsonl").read_bytes()
-        self.assertEqual(self.tick(), 2)
+        quota = self.wheel.state_path("quota.json").read_bytes()
+        self.assertEqual(self.tick(), 0)
         self.assertEqual(self.executed(), [])
         self.assertEqual(before, self.wheel.state_path("inbox.jsonl").read_bytes())
+        self.assertEqual(quota, self.wheel.state_path("quota.json").read_bytes())
+        self.assertIsNone(read_json(self.wheel.state_path("state.json"))['pending'])
+        self.assertEqual(read_json(self.wheel.state_path('pause.json'))['reason'],
+                         'no live factor or eligible proposal')
 
     def test_screen_budget_is_remaining_tenth_and_quota_zero_is_skipped(self):
         self.prepare(factors=[])
@@ -573,6 +578,101 @@ class WheelTests(unittest.TestCase):
 
 
 class RealWheelTests(unittest.TestCase):
+    def prepare_mapping(self, root, transform, *, factors=None):
+        """Freeze a changed input mapping before the real native initialization."""
+        initialize = Wheel.initialize
+        def changed(wheel, contract_path):
+            contract = read_json(contract_path)
+            setup_path = root / 'trusted/wheel-setup.json'
+            setup = read_json(setup_path)
+            transform(setup)
+            setup_path.write_text(canonical(setup) + '\n', encoding='utf-8')
+            protocol_path = root / 'trusted/protocol.json'
+            protocol = read_json(protocol_path)
+            protocol['config_sha256'] = sha(setup_path)
+            protocol_path.write_text(canonical(protocol) + '\n', encoding='utf-8')
+            for binding in contract['bindings']:
+                binding['sha256'] = sha(root / binding['path'])
+            contract_path.write_text(canonical(contract) + '\n', encoding='utf-8')
+            return initialize(wheel, contract_path)
+        with patch.object(Wheel, 'initialize', autospec=True, side_effect=changed):
+            return fixture.prepare(root, factors=factors)
+
+    def test_native_invalid_route_keys_are_rejected_before_publication(self):
+        for invalid in ('mainn', '', 'screen_extra', None):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory(prefix='rds-wheel-route-') as directory:
+                root = Path(directory) / 'project'
+                def invalid_route(setup):
+                    if invalid is None:
+                        setup['routes']['flat'] = {}
+                    else:
+                        setup['routes']['flat'][invalid] = {}
+                with self.assertRaisesRegex(wheel_module.WheelError, 'route must contain only main or screen mappings'):
+                    self.prepare_mapping(root, invalid_route, factors=[])
+                self.assertFalse((root / '.rds/wheel').exists())
+                self.assertFalse((root / '.rds/project.sqlite3').exists())
+
+    def test_native_route_template_factor_must_match_containing_factor(self):
+        for kind in ('main', 'screen'):
+            for value in (None, 'screen_same'):
+                with self.subTest(kind=kind, factor=value), tempfile.TemporaryDirectory(prefix='rds-wheel-factor-') as directory:
+                    root = Path(directory) / 'project'
+                    def mismatched(setup):
+                        template = setup['routes']['flat'][kind]
+                        if value is None:
+                            template.pop('factor')
+                        else:
+                            template['factor'] = value
+                    with self.assertRaisesRegex(wheel_module.WheelError, 'template factor differs from route factor'):
+                        self.prepare_mapping(root, mismatched, factors=[])
+                    self.assertFalse((root / '.rds/wheel').exists())
+                    self.assertFalse((root / '.rds/project.sqlite3').exists())
+
+    def test_native_main_only_and_screen_only_routes_can_initialize(self):
+        for kind in ('main', 'screen'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix='rds-wheel-single-route-') as directory:
+                root = Path(directory) / 'project'
+                def single(setup):
+                    setup['routes']['flat'] = {kind: setup['routes']['flat'][kind]}
+                wheel = self.prepare_mapping(root, single, factors=[])
+                snapshot = wheel.project('status')
+                self.assertEqual(snapshot['runs'], [])
+                self.assertEqual(snapshot['receipts'], [])
+                self.assertEqual(snapshot['budget']['wall_seconds']['remaining'], 90.)
+                argv = wheel.manifest('flat', kind)['argv']
+                self.assertEqual(argv[argv.index('--factor') + 1], 'flat')
+                self.assertEqual(read_json(wheel.state_path('state.json'))['ticks'], 0)
+
+    def test_native_inbox_unmapped_and_main_only_rows_do_not_block_later_screen(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-inbox-mapping-') as directory:
+            root = Path(directory) / 'project'
+            def main_only(setup):
+                setup['routes']['flat'].pop('screen')
+            wheel = self.prepare_mapping(root, main_only, factors=[])
+            fixture.bootstrap(wheel)
+            before = wheel.project('status')
+            rows = [{'proposal_id': str(uuid.uuid4()), 'proposer_id': 'researcher-a', 'kind': 'factor',
+                     'factor': factor, 'parent_contract_id': wheel.contract['contract_id'],
+                     'ts': '2026-10-08T00:00:00Z'} for factor in ('unmapped', 'flat', 'screen_change')]
+            for row in rows:
+                wheel.append('inbox.jsonl', canonical(row) + '\n')
+            wheel.write('quota.json', {'researcher-a': 1})
+            inbox = wheel.state_path('inbox.jsonl').read_bytes()
+            quota = wheel.state_path('quota.json').read_bytes()
+            self.assertEqual(wheel.eligible_proposal(read_json(wheel.state_path('state.json')), before), rows[-1])
+            self.assertEqual(wheel.tick(), 0)
+            after = wheel.project('status')
+            self.assertEqual({r['id'] for r in after['runs']}, {'control', 'treatment', 'screen_screen_change'})
+            self.assertEqual(len(after['receipts']), 3)
+            self.assertEqual(next(r for r in after['runs'] if r['id'] == 'screen_screen_change')['status'], 'COMPLETED')
+            self.assertEqual({r['run_id']: canonical(r) for r in before['receipts']},
+                             {r['run_id']: canonical(r) for r in after['receipts'] if r['run_id'] != 'screen_screen_change'})
+            state = read_json(wheel.state_path('state.json'))
+            self.assertEqual(state['pending']['proposal'], rows[-1])
+            self.assertEqual(state['screened'], [])
+            self.assertEqual(wheel.state_path('inbox.jsonl').read_bytes(), inbox)
+            self.assertEqual(wheel.state_path('quota.json').read_bytes(), quota)
+
     def crash_dispatch(self, root, boundary):
         # Each hook exits a separate process after the actual persisted/native operation.
         code = '''

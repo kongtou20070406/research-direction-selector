@@ -23,6 +23,101 @@ spec.loader.exec_module(example)
 
 
 class JumpOriginalBoundaryTests(unittest.TestCase):
+    def test_unbound_generator_entrypoint_rejects_before_native_dispatch(self):
+        initialize = ProjectStore.initialize
+        for filename, flag in (('worker.py', '-B'), ('worker', '-B'), ('worker', '-Bu')):
+            for declaration in ('explicit', 'legacy'):
+                for role in ('missing', 'data'):
+                    with self.subTest(filename=filename, flag=flag, declaration=declaration, role=role), tempfile.TemporaryDirectory() as directory:
+                        def unfrozen_worker(store, contract):
+                            contract = deepcopy(contract)
+                            if filename != 'worker.py':
+                                (store.root / filename).write_bytes((store.root / 'worker.py').read_bytes())
+                                for argv in contract['allowed_commands']:
+                                    if len(argv) > 2 and argv[2] == 'worker.py':
+                                        argv[2] = filename
+                                next(b for b in contract['bindings'] if b['path'] == 'worker.py')['path'] = filename
+                            for argv in contract['allowed_commands']:
+                                argv[1] = flag
+                            plan = json.loads((store.root / 'jump-generation.json').read_text(encoding='utf-8'))
+                            if declaration == 'legacy':
+                                plan.pop('generator_code_paths')
+                            else:
+                                plan['generator_code_paths'].remove('worker.py')
+                            for stage in plan['stages']:
+                                stage['run']['argv'][1] = flag
+                                stage['run']['argv'][2] = filename
+                            example.write(store.root / 'jump-generation.json', plan)
+                            if role == 'missing':
+                                contract['bindings'] = [b for b in contract['bindings'] if b['path'] != filename]
+                            else:
+                                next(b for b in contract['bindings'] if b['path'] == filename)['role'] = 'data'
+                            next(b for b in contract['bindings'] if b['path'] == 'jump-generation.json')['sha256'] = file_sha(store.root / 'jump-generation.json')
+                            protocol = json.loads((store.root / 'protocol.json').read_text(encoding='utf-8'))
+                            protocol.update({r + '_sha256': ProjectStore._role_sha(contract, r) for r in ('code', 'config', 'data')})
+                            example.write(store.root / 'protocol.json', protocol)
+                            next(b for b in contract['bindings'] if b['path'] == 'protocol.json')['sha256'] = file_sha(store.root / 'protocol.json')
+                            return initialize(store, contract)
+                        with patch.object(ProjectStore, 'initialize', unfrozen_worker):
+                            root, store = example.build(Path(directory) / 'project')
+                        before = store.snapshot()
+                        (root / filename).write_text('raise RuntimeError("unfrozen replacement")', encoding='utf-8')
+                        with self.assertRaisesRegex(ValueError, 'entrypoint.*frozen code'):
+                            rds_jump.load_plan(store, store.snapshot())
+                        after = store.snapshot()
+                        self.assertEqual(after['runs'], before['runs'])
+                        self.assertEqual(after['receipts'], before['receipts'])
+                        self.assertEqual(after['budget'], before['budget'])
+
+    def test_generator_entrypoint_checks_preserve_frozen_data_and_declared_outputs(self):
+        initialize = ProjectStore.initialize
+        for filename, flag in (('worker.py', '-B'), ('worker', '-Bu')):
+            with tempfile.TemporaryDirectory() as directory:
+                def scripted_paths(store, contract):
+                    contract = deepcopy(contract)
+                    worker = store.root / 'worker.py'
+                    worker.write_text(worker.read_text(encoding='utf-8').replace(
+                        'kind, output = sys.argv[1:]',
+                        "kind, output, data = sys.argv[1:]\n    assert read(data) == {'data_only': True}"), encoding='utf-8')
+                    example.write(store.root / 'inputs.py', {'data_only': True})
+                    contract['bindings'].append({'path': 'inputs.py', 'role': 'data', 'sha256': file_sha(store.root / 'inputs.py')})
+                    binding = next(b for b in contract['bindings'] if b['path'] == 'worker.py')
+                    if filename != 'worker.py':
+                        (store.root / filename).write_bytes(worker.read_bytes())
+                        binding['path'] = filename
+                    binding['sha256'] = file_sha(store.root / filename)
+                    plan = json.loads((store.root / 'jump-generation.json').read_text(encoding='utf-8'))
+                    plan['generator_code_paths'][0] = filename
+                    for stage in plan['stages']:
+                        command = next(a for a in contract['allowed_commands'] if a == stage['run']['argv'])
+                        command[1] = flag
+                        command[2] = filename
+                        command[4] = command[4].replace('.json', '.py')
+                        command.append('inputs.py')
+                        stage['run']['argv'] = command
+                        stage['output'] = command[4]
+                        stage['run']['outpaths'] = [command[4]]
+                    example.write(store.root / 'jump-generation.json', plan)
+                    next(b for b in contract['bindings'] if b['path'] == 'jump-generation.json')['sha256'] = file_sha(store.root / 'jump-generation.json')
+                    protocol = json.loads((store.root / 'protocol.json').read_text(encoding='utf-8'))
+                    protocol.update({r + '_sha256': ProjectStore._role_sha(contract, r) for r in ('code', 'config', 'data')})
+                    example.write(store.root / 'protocol.json', protocol)
+                    next(b for b in contract['bindings'] if b['path'] == 'protocol.json')['sha256'] = file_sha(store.root / 'protocol.json')
+                    return initialize(store, contract)
+                with patch.object(ProjectStore, 'initialize', scripted_paths):
+                    root, store = example.build(Path(directory) / 'project')
+                plan = rds_jump.load_plan(store, store.snapshot())
+                self.assertEqual(len(rds_jump._generator_bindings(store, store.snapshot()['contract'], plan)), 3)
+                self.assertEqual(rds_jump.generate(root, 1)['status'], 'JUMP_STEP_LIMIT')
+                receipt = store.snapshot()['receipts'][0]
+                self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+                self.assertTrue(any(a['path'] == 'out/probe.py' for a in receipt['artifacts']))
+                # A later load must still distinguish a now-existing output from code.
+                self.assertIsNotNone(rds_jump.load_plan(store, store.snapshot()))
+        self.assertEqual(rds_jump._python_script_operand(['python.exe', '-W', 'ignore', '-X', 'utf8', 'worker', 'inputs.py']), 5)
+        for argv in (['python', '-c', 'print(1)', 'worker'], ['python', '-m', 'module', 'worker'], ['python', '-']):
+            self.assertIsNone(rds_jump._python_script_operand(argv))
+
     def test_four_generated_proposals_finish_under_one_original_controller_grant(self):
         with tempfile.TemporaryDirectory() as directory:
             initialize = ProjectStore.initialize
