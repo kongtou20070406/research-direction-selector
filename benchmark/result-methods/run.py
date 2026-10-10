@@ -29,6 +29,15 @@ def dump(path, value):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _timed_operation(operation, check_deadline):
+    check_deadline()
+    at = time.perf_counter()
+    operation()
+    elapsed = time.perf_counter() - at
+    check_deadline()
+    return elapsed * 1000
+
+
 def run(workspace):
     root = Path(workspace).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -183,12 +192,10 @@ def run(workspace):
     for name, operation in workloads.items():
         measurements = []
         for repeat in range(30):
-            check_deadline()
-            at = time.perf_counter()
-            operation()
-            measurements.append((time.perf_counter() - at) * 1000)
+            measurements.append(_timed_operation(operation, check_deadline))
         timings[name] = {'repeats': 30, 'median_ms': statistics.median(measurements),
                          'min_ms': min(measurements), 'max_ms': max(measurements)}
+    check_deadline()
     summary = {'status': 'PASS' if not failures else 'FAIL', 'failures': failures, 'versions': versions,
                'dataset_sha256': dataset_sha, 'protocol_sha256': protocol_sha, 'original_predictions_sha256': raw_sha,
                'source_sha256': {path: hashlib.sha256((REPO / path).read_bytes()).hexdigest()
@@ -202,6 +209,7 @@ def run(workspace):
                'existing_scalar_scope': 'descriptive aggregate loss only; no head diagnosis',
                'analysis_speedup': 'NOT_COMPARABLE_DIFFERENT_OUTPUT_SCOPE',
                'model_quality_gain_from_rds': 'NOT_MEASURED', 'agent_comparison': 'NOT_RUN', 'scientific_gain': 'UNKNOWN'}
+    check_deadline()
     dump(root / 'summary.json', summary)
     return summary
 

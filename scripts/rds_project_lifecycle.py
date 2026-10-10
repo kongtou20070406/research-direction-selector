@@ -301,13 +301,17 @@ def _activation_children(store, db, locks, *, apply=False):
             require(isinstance(request, dict), 'Retained child event has an invalid request')
             job = event.get('job_root') or request.get('job_root')
             require(isinstance(job, str) and 0 < len(job) <= 4096, 'Retained child pointer is missing')
-            target = (root / job).resolve()
-            token = target.name
+            logical = Path(os.path.abspath(root / job))
+            target = logical.resolve()
+            require(logical.is_relative_to(root) and target.is_relative_to(root),
+                    'Retained child pointer escapes its original project')
+            token = logical.name
             if (event['kind'] == 'EXTERNAL_RUN_ALLOWANCE' and re.fullmatch('[0-9a-f]{32}', token)
-                    and target.parent.name == 'tool-checks' and target.parent.parent.name == 'rsi'
-                    and target.parent.parent.parent.name == '.rds'
+                    and logical.parent == root / '.rds/rsi/tool-checks'
                     and event.get('request_sha256') == digest({'tool_validation': token})):
-                target = target / '.rds/exec/tool-check'
+                target = (target / '.rds/exec/tool-check').resolve()
+                require(target.is_relative_to(root),
+                        'Retained legacy child pointer escapes its original project')
             pending.append((target, None))
         directory = root / '.rds/exec'
         if directory.exists() or directory.is_symlink():
