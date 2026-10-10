@@ -807,12 +807,18 @@ class AutonomyTests(unittest.TestCase):
             revision._idle(self.store, db)
 
     def test_rejected_first_proposal_uses_next_slot_with_original_cost_retained(self):
-        self.build(modes={'repair1': 'bad'}, slots=2)
+        # This is a success/rejection sequence, not a cold-start timeout test.
+        # Leave headroom for the real Python worker and fixture provider startup.
+        self.build(modes={'repair1': 'bad'}, slots=2, timeout=10)
         self.cli('project', 'drive', '--max-steps', '4')
         if not (self.root / 'outputs/solve.json').exists():
             self.cli('project', 'drive', '--max-steps', '4')
         state = self.store.snapshot()
-        self.assertEqual(self.calls(), ['repair1', 'repair2'])
+        self.assertEqual(self.calls(), ['repair1', 'repair2'], {
+            'drive_statuses': [json.loads(call['stdout'])['status'] for call in self.trace],
+            'runs': [(run['id'], run['status']) for run in state['runs']],
+            'wall_budget': state['budget']['wall_seconds'],
+        })
         self.assertEqual(len(state['runs']), 3)
         self.assertEqual(len(state['receipts']), 3)
         self.assertEqual(len(self.events('METHOD_REVISION_ADOPTED')), 1)
