@@ -22,6 +22,15 @@ Project registration checks existing runs while holding the same SQLite write tr
 
 Quick execution checks the selected parent ledger under the same transaction that writes `EXTERNAL_RUN_ALLOWANCE` and charges its wall allowance. The event binds the route, complete request, frozen contract and policy. The child inherits the policy and registration checks the executor hash observed before charging. Even same-name recovery requires the parent's matching allowance for that exact child location and request; a copied child alone cannot supply ownership. A duplicate live or successful request observes the retained child without a new allowance or launch. Validated failed attempts remain charged and count toward `max_attempts`; a configured additional attempt needs a new job name. A charge followed by a missing or incomplete child remains consumed and blocks another launch. Recover the existing job or inspect the retained state; the controller does not invent a refund. Checkpoint restoration uses the current parent budget.
 
+For an exact pending request interrupted before any attempt or receipt, recovery
+preserves the partial files in `.rds/quick-partials`. Its old operational `.rds`
+directory is stored as `.rds.retained`, with every original file byte intact, so
+recursive campaign discovery cannot treat that forensic snapshot as a live
+project. The recovered job stays at its original location and reuses its
+original allowance and choice. An interruption while moving the retired
+snapshot can resume that same pending request; it does not authorize replacing
+started or completed work.
+
 If the quick source root itself owns a configured project policy, quick applies that owner even without research context. A different ledger cannot replace it. A policy in another ledger applies when that ledger owns the request; a standalone command from an unrelated, unconfigured root does not discover arbitrary project ledgers. Global host command interception is outside this implementation.
 
 This is exact structured comparison, not a detector for every semantic rewrite. Declared content/role normalization intentionally ignores file names; relocation, dynamic imports, environment reads and other hidden dependencies can still change program semantics. Bind relevant inputs explicitly. Allowed code remains trusted local code; this is not an OS sandbox. A finite attempt limit refuses further spending under the configured agreement. It does not establish scientific impossibility, convergence, task gain or a method's superiority.

@@ -1066,6 +1066,19 @@ def execute(args, review=None, *, _native_preparation_root=None):
             retained_path = retained_directory / ('.partial-' + workspace.name + '-' + uuid.uuid4().hex)
             require(workspace.resolve().is_relative_to(root) and retained_path.resolve().is_relative_to(root),
                     'Partial QUICK retention escapes root')
+            # Preserve the old operational bytes under an inactive namespace.
+            # Campaign binding walks the entire workspace, so a relocated
+            # .rds/project.sqlite3 would still be discovered as a live ledger.
+            # Retire the namespace before moving: an interrupted move is safe
+            # to retry and never leaves a live ledger in the forensic tree.
+            partial_state = workspace / '.rds'
+            retired_state = workspace / '.rds.retained'
+            if partial_state.exists() or partial_state.is_symlink():
+                require(partial_state.is_dir() and partial_state.resolve() == partial_state,
+                        'Partial QUICK state must be its original contained directory')
+                require(not retired_state.exists() and not retired_state.is_symlink(),
+                        'Partial QUICK retired state already exists')
+                partial_state.rename(retired_state)
             workspace.rename(retained_path)
         workspace.mkdir(parents=True)
         # Publish identity before any input copy or SQLite initialization.

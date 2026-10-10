@@ -190,7 +190,7 @@ class PartialQuickTests(unittest.TestCase):
         self.addCleanup(self.f.doCleanups)
         self.f.f.script('print("original partial QUICK request")\n')
 
-    def recover_boundary(self, boundary, *, plain=False):
+    def recover_boundary(self, boundary, *, plain=False, interrupt_retention_move=False):
         f = self.f.f
         if plain:
             f.initialize_policy_ledger()
@@ -256,14 +256,32 @@ class PartialQuickTests(unittest.TestCase):
                     quick.execute(args, review=reviewed)
                 (workspace / 'rds-exec-request.json').write_bytes(observed[Path('rds-exec-request.json')])
                 self.assertEqual(parent.snapshot()['budget'], budget)
+            if interrupt_retention_move:
+                original_rename = Path.rename
+                def stop_retention(path, target):
+                    if path == workspace:
+                        raise OSError('retention move interruption')
+                    return original_rename(path, target)
+                with patch.object(Path, 'rename', autospec=True, side_effect=stop_retention):
+                    with self.assertRaisesRegex(OSError, 'retention move interruption'):
+                        quick.execute(args, review=reviewed)
+                self.assertFalse((workspace / '.rds').exists())
+                self.assertTrue((workspace / '.rds.retained').is_dir())
+                self.assertEqual(parent.snapshot()['budget'], budget)
             with patch.object(quick, 'choice', side_effect=AssertionError('must preserve original choice')):
                 result = quick.execute(args, review=reviewed)
             self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
             self.assertEqual(parent.snapshot()['budget'], budget)
             retained = list((Path(args.root).resolve() / '.rds/quick-partials').glob('.partial-' + args.name + '-*'))
             self.assertEqual(len(retained), 1)
+            def retained_file(relative):
+                # Only the operational directory name changes; every original
+                # file byte remains present in this inactive forensic snapshot.
+                if relative.parts[0] == '.rds':
+                    relative = Path('.rds.retained', *relative.parts[1:])
+                return retained[0] / relative
             for relative, raw in observed.items():
-                self.assertEqual((retained[0] / relative).read_bytes(), raw)
+                self.assertEqual(retained_file(relative).read_bytes(), raw)
             with parent._db(True) as db:
                 self.assertEqual(db.execute("SELECT count(*) FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' AND json_extract(body,'$.job_root')=?",
                                             (str(workspace),)).fetchone()[0], 1)
@@ -301,7 +319,16 @@ class PartialQuickTests(unittest.TestCase):
                     self.assertEqual(len(lifecycle._activation_children(parent, db, locks)), 64)
                 self.assertEqual(child.snapshot(), before)
                 for relative, raw in observed.items():
-                    self.assertEqual((retained[0] / relative).read_bytes(), raw)
+                    self.assertEqual(retained_file(relative).read_bytes(), raw)
+                # Exercise the complete public binder, including its recursive
+                # workspace walk, rather than only the retained-job helper.
+                binding = campaign.bind(parent, parent.root)
+                self.assertEqual(campaign.bind(parent, parent.root), binding)
+                self.assertEqual(parent.snapshot()['budget'], budget)
+                for key in ('contract', 'contract_sha256', 'runs', 'receipts', 'budget'):
+                    self.assertEqual(child.snapshot()[key], before[key], key)
+                for relative, raw in observed.items():
+                    self.assertEqual(retained_file(relative).read_bytes(), raw)
 
     def test_after_mkdir(self):
         self.recover_boundary('mkdir')
@@ -323,6 +350,9 @@ class PartialQuickTests(unittest.TestCase):
 
     def test_plain_policy_after_mkdir(self):
         self.recover_boundary('mkdir', plain=True)
+
+    def test_retry_after_retention_move_interruption(self):
+        self.recover_boundary('register', plain=True, interrupt_retention_move=True)
 
 
 if __name__ == '__main__':
