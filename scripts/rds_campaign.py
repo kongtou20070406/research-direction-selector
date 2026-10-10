@@ -272,15 +272,20 @@ def _retained_targets(root, db, inventory, *, workspace):
             token = logical.name
             legacy = (value['kind'] == 'EXTERNAL_RUN_ALLOWANCE'
                       and re.fullmatch('[0-9a-f]{32}', token)
-                      and logical.parent == root / '.rds/rsi/tool-checks'
+                      and logical.parent.name == 'tool-checks' and logical.parent.parent.name == 'rsi'
+                      and logical.parent.parent.parent.name == '.rds'
                       and value.get('request_sha256') == digest({'tool_validation': token}))
             if legacy:
-                require(target.is_relative_to(root),
+                # The original tool source may differ from the charged budget
+                # ledger. Its logical owner, token and nested job remain fixed.
+                source_owner = logical.parents[3].resolve()
+                require(source_owner == logical.parents[3] and source_owner.is_relative_to(workspace)
+                        and target.is_relative_to(source_owner),
                         'Retained legacy campaign workspace escapes its original project')
                 target = target / '.rds' / 'exec' / 'tool-check'
             target = target.resolve()
             if legacy:
-                require(target.is_relative_to(root),
+                require(target.is_relative_to(source_owner),
                         'Retained legacy campaign job escapes its original project')
             require(target.is_relative_to(workspace),
                     'Retained campaign job escapes the selected workspace; bind a common ancestor')

@@ -15,6 +15,7 @@ import rds_project_lifecycle as lifecycle
 import rds_campaign as campaign
 from rds_project import digest
 import test_rds_project_lifecycle as fixtures
+import test_rds_tool_compare as comparison_fixtures
 
 
 class RetainedPointerTests(unittest.TestCase):
@@ -82,11 +83,53 @@ class RetainedPointerTests(unittest.TestCase):
         resolve = Path.resolve
         with patch.object(Path, 'resolve', autospec=True,
                           side_effect=lambda path, *a, **k: unrelated.root if path == logical else resolve(path, *a, **k)):
-            with self.assertRaisesRegex(ValueError, 'Retained|retained'):
+            with self.assertRaisesRegex(ValueError, 'Original campaign project ledger is missing'):
                 campaign.bind(self.f.store, self.f.root)
         self.assertFalse((self.f.root / campaign.MARKER).exists())
         self.assertEqual(self.f.originals(), before)
         self.assertEqual(unrelated.snapshot(), other)
+
+
+class CommonBudgetLedgerTests(unittest.TestCase):
+    def test_actual_distinct_tool_source_keeps_charged_project_advisor_preview(self):
+        f = fixtures.ProjectLifecycleTests('runTest')
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        f.recipe['budget'] = {'wall_seconds': 30}
+        for route in f.recipe['routes']:
+            route['run']['resource_estimates'] = {'wall_seconds': 5}
+        f.init_quick()
+        tool = comparison_fixtures.ToolComparisonTests('runTest')
+        tool.setUp()
+        self.addCleanup(tool.doCleanups)
+        result = tool.compare(timeout=2, ledger=f.root)
+        self.assertEqual(result['correctness'], 'PASS')
+        self.assertEqual(tool.charges(f.root), 2)
+        before = f.originals()
+        preview = lifecycle.enable_advisor(f.store, f.policy)
+        self.assertEqual(preview['status'], 'ADVISOR_ACTIVATION_PREVIEW')
+        self.assertEqual(f.originals(), before)
+        self.assertEqual(f.activations(), [])
+        self.assertEqual(tool.charges(f.root), 2)
+
+    def test_actual_tool_source_and_distinct_budget_ledger_bind_common_workspace(self):
+        f = comparison_fixtures.ToolComparisonTests('runTest')
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        parent = f.parent(5)
+        result = f.compare(timeout=2, ledger=parent)
+        self.assertEqual(result['correctness'], 'PASS')
+        self.assertEqual(f.charges(parent), 2)
+        for arm in ('baseline', 'candidate'):
+            self.assertEqual(result[arm]['run_status'], 'SUCCEEDED')
+        store = lifecycle.ProjectStore(parent)
+        before = store.snapshot()
+        bound = campaign.bind(store, f.root)
+        self.assertEqual(store.snapshot()['budget'], before['budget'])
+        self.assertEqual(store.snapshot()['receipts'], before['receipts'])
+        self.assertEqual(f.charges(parent), 2)
+        self.assertTrue((f.root / campaign.MARKER).is_file())
+        self.assertEqual(campaign.bind(store, f.root), bound)
 
 
 class BenchmarkDeadlineTests(unittest.TestCase):
@@ -142,23 +185,31 @@ class BenchmarkDeadlineTests(unittest.TestCase):
                                 kw_defaults=[], defaults=[]), body=run.body[index:], decorator_list=[])
         code = compile(ast.fix_missing_locations(ast.Module(body=[deadline, tail], type_ignores=[])), str(source), 'exec')
         clock = SimpleNamespace(now=119.9)
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            def slow_dump(path, value):
-                result = module.dump(path, value)
-                clock.now = 120.1
-                return result
-            scope = {**vars(module), 'root': root, 'started': 0.0, 'dump': slow_dump,
-                     'time': SimpleNamespace(perf_counter=lambda: clock.now),
-                     'summary': {'status': 'PASS', 'failures': [], 'total_wall_seconds': 119.9}}
-            exec(code, scope)
-            with self.assertRaisesRegex(TimeoutError, '120-second'):
-                scope['publish']()
-            import json
-            saved = json.loads((root / 'summary.json').read_text(encoding='utf-8'))
-            self.assertEqual(saved['status'], 'FAIL')
-            self.assertGreaterEqual(saved['total_wall_seconds'], 120)
-            self.assertIn('120-second', saved['failures'][-1])
+        for failed_rewrite in (False, True):
+            with self.subTest(failed_rewrite=failed_rewrite), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                clock.now = 119.9
+                def slow_dump(path, value):
+                    if failed_rewrite and value['status'] == 'FAIL':
+                        raise OSError('injected failure settling summary')
+                    result = module.dump(path, value)
+                    clock.now = 120.1
+                    return result
+                scope = {**vars(module), 'root': root, 'started': 0.0, 'dump': slow_dump,
+                         'time': SimpleNamespace(perf_counter=lambda: clock.now),
+                         'summary': {'status': 'PASS', 'failures': [], 'total_wall_seconds': 119.9}}
+                exec(code, scope)
+                with self.assertRaisesRegex(TimeoutError, '120-second') as caught:
+                    scope['publish']()
+                import json
+                saved = json.loads((root / 'summary.json').read_text(encoding='utf-8'))
+                if failed_rewrite:
+                    # No success was returned; the original timeout carries the failed artifact settlement.
+                    self.assertIn('OSError', '\n'.join(caught.exception.__notes__))
+                else:
+                    self.assertEqual(saved['status'], 'FAIL')
+                    self.assertGreaterEqual(saved['total_wall_seconds'], 120)
+                    self.assertIn('120-second', saved['failures'][-1])
 
 
 if __name__ == '__main__':

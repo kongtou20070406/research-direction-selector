@@ -219,7 +219,11 @@ def run(workspace):
         summary['status'] = 'FAIL'
         summary['failures'].append(str(error))
         summary['total_wall_seconds'] = time.perf_counter() - started
-        dump(root / 'summary.json', summary)
+        try:
+            dump(root / 'summary.json', summary)
+        except OSError as artifact_error:
+            error.add_note('Failed to settle summary artifact after allowance exhaustion: '
+                           + repr(artifact_error))
         raise
     return summary
 
