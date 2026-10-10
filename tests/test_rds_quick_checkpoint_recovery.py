@@ -44,7 +44,7 @@ class QuickCheckpointRecoveryTests(unittest.TestCase):
     def test_pending_allowance_before_materialization_resumes_same_choice_once(self):
         self.f.script('print("synthetic QUICK recovery")\n')
         args, review = self.reviewed_request('before-materialization')
-        workspace = self.f.root / '.rds/exec' / args.name
+        workspace = (self.f.root / '.rds/exec' / args.name).resolve()
         original_mkdir = Path.mkdir
         injected = {'done': False}
 
@@ -122,7 +122,7 @@ class QuickCheckpointRecoveryTests(unittest.TestCase):
         args = rds_cli.parser().parse_args([
             '--root', str(source_root), 'exec', '--name', 'plain-before-materialization', '--timeout', '5',
             '--', sys.executable, '-B', 'probe.py'])
-        workspace = source_root / '.rds/exec' / args.name
+        workspace = (source_root / '.rds/exec' / args.name).resolve()
         original_mkdir = Path.mkdir
         injected = {'done': False}
 
