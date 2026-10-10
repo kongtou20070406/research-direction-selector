@@ -14,7 +14,7 @@ class RubyArchiveBoundaryTests(unittest.TestCase):
     def launch(self, argv, *, autonomy=False):
         source = Path(__file__).resolve().parents[1] / 'scripts/rds_project.py'
         tree = ast.parse(source.read_text(encoding='utf-8'))
-        blocks = [n for n in ast.walk(tree) if isinstance(n, ast.Try)
+        blocks = [n for n in ast.walk(tree) if isinstance(n, ast.With)
                   and any(isinstance(s, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'worker_options'
                           for t in s.targets) for s in n.body)]
         self.assertEqual(len(blocks), 1)
