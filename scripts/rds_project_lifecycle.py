@@ -315,8 +315,29 @@ def _activation_children(store, db, locks, *, apply=False):
                 require(target.is_relative_to(source_owner),
                         'Retained legacy child pointer escapes its original project')
             else:
-                require(logical.is_relative_to(root) and target.is_relative_to(root),
-                        'Retained child pointer escapes its original project')
+                if not (logical.is_relative_to(root) and target.is_relative_to(root)):
+                    # Explicit QUICK source and charged budget ledgers may
+                    # differ. Admit only the original native source shape,
+                    # contained in its canonical owner, with its frozen
+                    # request hash and charged ledger still bound together.
+                    import hashlib
+                    from rds_bounded_io import read_regular_bytes
+                    require(event['kind'] in {'EXTERNAL_RUN_ALLOWANCE', 'QUICK_JOB_ADMITTED'}
+                            and logical.parent.name == 'exec' and logical.parent.parent.name == '.rds',
+                            'Retained child pointer escapes its original project')
+                    source_owner = logical.parents[2].resolve()
+                    require(source_owner == logical.parents[2] and target.is_relative_to(source_owner),
+                            'Retained child pointer escapes its original project')
+                    raw = read_regular_bytes(target / 'rds-exec-request.json', 2 * 1024 * 1024,
+                                             label='Retained cross-source QUICK request')
+                    stored = strict_json(raw.decode('utf-8-sig'))
+                    stored_sha = hashlib.sha256(raw).hexdigest()
+                    context = stored.get('research_context') if isinstance(stored, dict) else None
+                    require(stored_sha == event.get('request_sha256') and isinstance(context, dict)
+                            and isinstance(context.get('ledger'), str)
+                            and Path(context['ledger']).is_absolute()
+                            and Path(context['ledger']).resolve() == root,
+                            'Retained cross-source QUICK request differs from its original allowance')
             pending.append((target, None))
         directory = root / '.rds/exec'
         if directory.exists() or directory.is_symlink():
