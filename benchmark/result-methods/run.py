@@ -211,6 +211,16 @@ def run(workspace):
                'model_quality_gain_from_rds': 'NOT_MEASURED', 'agent_comparison': 'NOT_RUN', 'scientific_gain': 'UNKNOWN'}
     check_deadline()
     dump(root / 'summary.json', summary)
+    try:
+        check_deadline()
+    except TimeoutError as error:
+        # This invocation owns the empty workspace. Settle its report as failed
+        # if serialization/write/hash itself exhausted the original allowance.
+        summary['status'] = 'FAIL'
+        summary['failures'].append(str(error))
+        summary['total_wall_seconds'] = time.perf_counter() - started
+        dump(root / 'summary.json', summary)
+        raise
     return summary
 
 

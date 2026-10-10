@@ -265,18 +265,23 @@ def _retained_targets(root, db, inventory, *, workspace):
             require(isinstance(request, dict), 'Retained job request is invalid')
             job = value.get('job_root') or request.get('job_root')
             require(isinstance(job, str) and job, 'Retained child job pointer is missing')
-            target = (root / job).resolve()
+            logical = Path(os.path.abspath(root / job))
+            target = logical.resolve()
             # Only this old allowance shape names a source workspace. Native
             # pointers and ordinary allowances already name the actual ledger.
-            token = target.name
+            token = logical.name
             legacy = (value['kind'] == 'EXTERNAL_RUN_ALLOWANCE'
                       and re.fullmatch('[0-9a-f]{32}', token)
-                      and target.parent.name == 'tool-checks' and target.parent.parent.name == 'rsi'
-                      and target.parent.parent.parent.name == '.rds'
+                      and logical.parent == root / '.rds/rsi/tool-checks'
                       and value.get('request_sha256') == digest({'tool_validation': token}))
             if legacy:
+                require(target.is_relative_to(root),
+                        'Retained legacy campaign workspace escapes its original project')
                 target = target / '.rds' / 'exec' / 'tool-check'
             target = target.resolve()
+            if legacy:
+                require(target.is_relative_to(root),
+                        'Retained legacy campaign job escapes its original project')
             require(target.is_relative_to(workspace),
                     'Retained campaign job escapes the selected workspace; bind a common ancestor')
             if value['kind'] == 'TOOL_PREPARATION_STARTED':

@@ -12,6 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import rds_project_lifecycle as lifecycle
+import rds_campaign as campaign
 from rds_project import digest
 import test_rds_project_lifecycle as fixtures
 
@@ -72,6 +73,21 @@ class RetainedPointerTests(unittest.TestCase):
             self.assertEqual(external.snapshot(), other)
             self.assertEqual(self.f.activations(), [])
 
+    def test_public_campaign_keeps_original_legacy_child_shape(self):
+        unrelated = self.f.retained_child(self.f.root / 'renamed-finished', finish=True)
+        logical = self.f.root / '.rds/rsi/tool-checks' / ('a' * 32)
+        self.f.retained_pointer(self.f.store, logical,
+                                request_sha=digest({'tool_validation': logical.name}))
+        before, other = self.f.originals(), unrelated.snapshot()
+        resolve = Path.resolve
+        with patch.object(Path, 'resolve', autospec=True,
+                          side_effect=lambda path, *a, **k: unrelated.root if path == logical else resolve(path, *a, **k)):
+            with self.assertRaisesRegex(ValueError, 'Retained|retained'):
+                campaign.bind(self.f.store, self.f.root)
+        self.assertFalse((self.f.root / campaign.MARKER).exists())
+        self.assertEqual(self.f.originals(), before)
+        self.assertEqual(unrelated.snapshot(), other)
+
 
 class BenchmarkDeadlineTests(unittest.TestCase):
     def timed_loop(self, finish):
@@ -109,6 +125,40 @@ class BenchmarkDeadlineTests(unittest.TestCase):
         timings, clock = self.timed_loop(119.5)
         self.assertEqual(clock.operations, 30)
         self.assertEqual(timings['last']['repeats'], 30)
+
+    def test_actual_summary_write_over_cap_refuses_success_and_marks_failure(self):
+        source = ROOT / 'benchmark/result-methods/run.py'
+        spec = importlib.util.spec_from_file_location('pr274_summary_benchmark', source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        run = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'run')
+        deadline = next(node for node in run.body if isinstance(node, ast.FunctionDef) and node.name == 'check_deadline')
+        index = next(i for i, node in enumerate(run.body) if isinstance(node, ast.Expr)
+                     and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+                     and node.value.func.id == 'dump' and isinstance(node.value.args[-1], ast.Name)
+                     and node.value.args[-1].id == 'summary')
+        tail = ast.FunctionDef(name='publish', args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[],
+                                kw_defaults=[], defaults=[]), body=run.body[index:], decorator_list=[])
+        code = compile(ast.fix_missing_locations(ast.Module(body=[deadline, tail], type_ignores=[])), str(source), 'exec')
+        clock = SimpleNamespace(now=119.9)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            def slow_dump(path, value):
+                result = module.dump(path, value)
+                clock.now = 120.1
+                return result
+            scope = {**vars(module), 'root': root, 'started': 0.0, 'dump': slow_dump,
+                     'time': SimpleNamespace(perf_counter=lambda: clock.now),
+                     'summary': {'status': 'PASS', 'failures': [], 'total_wall_seconds': 119.9}}
+            exec(code, scope)
+            with self.assertRaisesRegex(TimeoutError, '120-second'):
+                scope['publish']()
+            import json
+            saved = json.loads((root / 'summary.json').read_text(encoding='utf-8'))
+            self.assertEqual(saved['status'], 'FAIL')
+            self.assertGreaterEqual(saved['total_wall_seconds'], 120)
+            self.assertIn('120-second', saved['failures'][-1])
 
 
 if __name__ == '__main__':
