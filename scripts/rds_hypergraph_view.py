@@ -14,6 +14,7 @@ import tempfile
 from rds_hypergraph import ASSURANCE, _validate, analyze_hypergraph
 from rds_hypergraph_input import load_input, prepare_input
 from rds_hypergraph_readable import graph_digest
+from rds_bounded_io import read_regular_bytes
 
 MAX_INPUT_BYTES = 8 * 1024 * 1024
 VIEW_LIMITS = {"nodes": 4096, "hyperedges": 8192, "incidences": 32768}
@@ -89,10 +90,7 @@ def read_graph(root, graph_path=None, *, demo=False, large=False):
             graph_path = Path(__file__).resolve().parents[1] / "examples" / "hypergraph-view.json"
         if graph_path is not None:
             path = Path(graph_path).resolve()
-            with path.open("rb") as handle:
-                raw = handle.read(MAX_INPUT_BYTES + 1)
-            if len(raw) > MAX_INPUT_BYTES:
-                raise ValueError("Hypergraph input exceeds 8 MiB")
+            raw = read_regular_bytes(path, MAX_INPUT_BYTES, label='Hypergraph input (8 MiB)')
             value, repairs = load_input(raw.decode("utf-8-sig"))
             result = graph_view(value, path, demo=demo)
             result["input_review"]["repairs"][:0] = [{"path": "$", "reason": repair} for repair in repairs]

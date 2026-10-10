@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from rds_bounded_io import read_regular_bytes
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_RUNTIME_BYTES = 128 * 1024 * 1024
@@ -576,10 +577,7 @@ def main(argv=None):
     parser.add_argument('--output-dir', required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        with args.manifest.open('rb') as stream:
-            raw = stream.read(MAX_INPUT_BYTES + 1)
-        if len(raw) > MAX_INPUT_BYTES:
-            raise ValueError('Manifest exceeds byte bound')
+        raw = read_regular_bytes(args.manifest, MAX_INPUT_BYTES, label='Manifest')
         manifest = strict_json(raw.decode('utf-8'))
         required = {'schema', 'request', 'worker', 'runtime'}
         optional = {'public_files', 'private_roots', 'timeout_seconds', 'max_output_bytes', 'memory_bytes'}

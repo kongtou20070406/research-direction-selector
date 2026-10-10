@@ -16,6 +16,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'scripts'))
 from rds_result_tools import (_document, compare_metrics, compare_paired_metrics,
                               check_residuals, diagnose_decisions, evaluate_decision_requirements)
+from rds_bounded_io import read_regular_bytes
 
 REQUIREMENTS = {'head': 'gate', 'min_benefit_support': 20, 'min_harm_support': 20,
                 'min_benefit_acceptance': 0.8, 'max_harm_acceptance': 0.1}
@@ -23,6 +24,7 @@ FILES = ('summary.json', 'protocol.json', 'splits.json', 'versions.json', 'model
          'original-predictions.json', 'decision-rows.json', 'independent-oracle.json', 'tool-results.json',
          'baseline.json', 'candidate.json', 'scalar-reference.json', 'evaluator.txt', 'receipt-fields.json',
          'source-rds_result_tools.py.txt', 'source-benchmark-run.py.txt')
+MAX_RECORD_BYTES = 2 * 1024 * 1024
 
 
 def require(condition, reason):
@@ -50,7 +52,8 @@ def equivalent(left, right):
 def replay(records):
     started = time.perf_counter()
     root = Path(records).resolve()
-    raw = {name: (root / name).read_bytes() for name in FILES}
+    raw = {name: read_regular_bytes(root / name, MAX_RECORD_BYTES, label='Replay record ' + name)
+           for name in FILES}
     hashes = {name: hashlib.sha256(value).hexdigest() for name, value in raw.items()}
     data = {name: _document(value.decode('utf-8')) for name, value in raw.items() if name.endswith('.json')}
     summary, receipt, saved = (data[name] for name in ('summary.json', 'receipt-fields.json', 'tool-results.json'))
