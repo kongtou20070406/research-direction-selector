@@ -16,7 +16,8 @@ from rds_project import ProjectStore, file_sha
 
 class StartupControlsTests(unittest.TestCase):
     def test_bash_login_and_interactive_modes_cannot_bind_frozen_main(self):
-        for options in (['--login'], ['--login=force'], ['-l'], ['-i'], ['-il'], ['-li'], ['-xil']):
+        for options in (['--login'], ['--login=force'], ['--l'], ['--lo'], ['--log'],
+                        ['--logi'], ['--logi=force'], ['-l'], ['-i'], ['-il'], ['-li'], ['-xil']):
             with self.subTest(options=options), self.assertRaisesRegex(
                     ValueError, 'Bash login or interactive startup'):
                 jump._interpreter_script_operand(['bash', *options, 'worker.sh'])

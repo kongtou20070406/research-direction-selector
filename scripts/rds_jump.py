@@ -535,10 +535,10 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
                     'Shell explicit startup files are unsupported for frozen Jump code')
             if option.startswith('-') and not option.startswith('--') and any(c in option[1:] for c in 'cs'):
                 return None  # Inline command or stdin, not a main script file.
-            if name == 'bash' and option == '--login':
-                require(False, 'Bash login or interactive startup is unsupported for frozen Jump code')
-            if name == 'bash' and option.startswith('--login='):
-                require(False, 'Bash login or interactive startup is unsupported for frozen Jump code')
+            if name == 'bash' and option.startswith('--'):
+                long_option = option.split('=', 1)[0]
+                if '--login'.startswith(long_option):
+                    require(False, 'Bash login or interactive startup is unsupported for frozen Jump code')
             if name == 'bash' and option.startswith('-') and not option.startswith('--'):
                 short_options = option[1:]
                 require('i' not in short_options and 'l' not in short_options,
