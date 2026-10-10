@@ -1,0 +1,270 @@
+{
+  "tool_utilization": {
+    "scope": "DECLARED_CURRENT_OBLIGATIONS_AND_EXACT_TASK_CASES",
+    "tools": [
+      {
+        "candidate": "paired",
+        "run_id": "paired",
+        "obligation": "paired.mean_improvement",
+        "status": "APPLICABLE",
+        "assurance": "EXACT_TASK_LOCAL_CASES_NOT_GENERAL_APPLICABILITY_OR_SCIENTIFIC_PROOF",
+        "reason": "Exact current-task cases and frozen oracle passed native qualification",
+        "tool": {
+          "id": "tool:paired",
+          "sha256": "f2fca12a3f2b6414ea8ac012dfbb13e711209419d93d7e334e03476a968fa1d4"
+        },
+        "validation": {
+          "id": "validation:9c1db7b3879a531ab08de66c17a3f3e4",
+          "sha256": "83ebe00418d6264ba6d89b36860fcb91ea556e8afbec45cc7b0c6c098fded880"
+        },
+        "adoption": {
+          "id": "tool-adoption:paired",
+          "sha256": "674efe7e39c736728c53ce78d0ea2e9df2df0a6157b694e57485e35455f974fe"
+        },
+        "observation_facts": [
+          "paired.status",
+          "paired.mean_improvement"
+        ],
+        "used": true,
+        "result_consumed": true,
+        "scientific_support": "UNKNOWN",
+        "research_policy_gain_measured": false,
+        "qualification_cost": {
+          "receipt_sha256": "6f7591bc7c0e543676ec9fd71ea995460fda80901a1696694a59a457d7ac09fc",
+          "resources": {
+            "wall_seconds": {
+              "charged_estimate": 0.0,
+              "measured": 0.16447060000064084,
+              "unit": "seconds",
+              "unknown": false
+            }
+          },
+          "parent_budget_accounted": true
+        },
+        "premises": [],
+        "case_count": 1,
+        "domain": "EXACT_TASK_CASES",
+        "code_sha256": "3c1ecffa760ce1819a882a9d050470f1cd0c5ea31544207778e4b087d01ca911",
+        "request_sha256": "9fe1f7368ff2b5005a79e1acc86f8bba60def1ebca2df9b9001ada2cb994f6f6",
+        "qualification_receipt_sha256": "6f7591bc7c0e543676ec9fd71ea995460fda80901a1696694a59a457d7ac09fc",
+        "use_status": "FROZEN_DRIVER_CALLS_OBSERVED",
+        "consumed": true,
+        "consumption_status": "READ_BY_CURRENT_DECISION",
+        "consumers": [
+          "goal_conditions[0]",
+          "goal_conditions[1]"
+        ],
+        "consumed_facts": [
+          "paired.status",
+          "paired.mean_improvement"
+        ],
+        "receipt_sha256": "cca7b7368c429ae6a47e8c0d0681922f7262fc5d62ea5126e4e225186fa751cd",
+        "run_status": "SUCCEEDED",
+        "result_sha256": "f2411e68fc0b5029e13a7ec55f04961560d08c41d471b4fd46aac4fe8559e4c1",
+        "decision_outcome": "TRUE"
+      },
+      {
+        "candidate": "residual",
+        "run_id": "residual",
+        "obligation": "residual.within_tolerance",
+        "status": "APPLICABLE",
+        "assurance": "EXACT_TASK_LOCAL_CASES_NOT_GENERAL_APPLICABILITY_OR_SCIENTIFIC_PROOF",
+        "reason": "Exact current-task cases and frozen oracle passed native qualification",
+        "tool": {
+          "id": "tool:residual",
+          "sha256": "8539b0dabe8129deef324627ed0a1869ba6cdecfd23925de42296c1429c894d0"
+        },
+        "validation": {
+          "id": "validation:e6624a1ab674ab51360addeef6ba306d",
+          "sha256": "0fda9e386be612a83d0da6a331ff8509e980fb72acc2a5c49291c3d3966c31b1"
+        },
+        "adoption": {
+          "id": "tool-adoption:residual",
+          "sha256": "8cebda488a07b2d6d9b773100c3084113e826194c094265ee2557ee03d2cb882"
+        },
+        "observation_facts": [
+          "residual.status",
+          "residual.within_tolerance"
+        ],
+        "used": true,
+        "result_consumed": true,
+        "scientific_support": "UNKNOWN",
+        "research_policy_gain_measured": false,
+        "qualification_cost": {
+          "receipt_sha256": "550f3257563b455be06c278fb396f334ce73de2093477d7645180a4e9f3c207e",
+          "resources": {
+            "wall_seconds": {
+              "charged_estimate": 0.0,
+              "measured": 0.18175390000033076,
+              "unit": "seconds",
+              "unknown": false
+            }
+          },
+          "parent_budget_accounted": true
+        },
+        "premises": [],
+        "case_count": 1,
+        "domain": "EXACT_TASK_CASES",
+        "code_sha256": "68f809b47b3313cfb70024b219e5fcf01953465f79865de00ae9148b761df541",
+        "request_sha256": "01f50d1ff60c37040ac95c61b5b65eb50e77d838a356910ac89fc075e7c4ceee",
+        "qualification_receipt_sha256": "550f3257563b455be06c278fb396f334ce73de2093477d7645180a4e9f3c207e",
+        "use_status": "FROZEN_DRIVER_CALLS_OBSERVED",
+        "consumed": true,
+        "consumption_status": "READ_BY_CURRENT_DECISION",
+        "consumers": [
+          "goal_conditions[2]",
+          "goal_conditions[3]"
+        ],
+        "consumed_facts": [
+          "residual.status",
+          "residual.within_tolerance"
+        ],
+        "receipt_sha256": "d8de2076995c0bd08c939a97615a9b8942778705f1da564a0ede7577f7d86ae3",
+        "run_status": "SUCCEEDED",
+        "result_sha256": "91276d8e0571fde0b58e6f0c0c9ac65b53be6000ca717ce3d85a45e72f0a6f6d",
+        "decision_outcome": "TRUE"
+      },
+      {
+        "candidate": "diagnostic",
+        "run_id": "diagnostic",
+        "obligation": "diagnostic.harm_acceptance",
+        "status": "APPLICABLE",
+        "assurance": "EXACT_TASK_LOCAL_CASES_NOT_GENERAL_APPLICABILITY_OR_SCIENTIFIC_PROOF",
+        "reason": "Exact current-task cases and frozen oracle passed native qualification",
+        "tool": {
+          "id": "tool:diagnostic",
+          "sha256": "a19837b00b35647eba02cb207c47e87dc682321aedf59de031beb5a8aeaa71ac"
+        },
+        "validation": {
+          "id": "validation:13801e28a8494e0ac5fdc8b3f109fea0",
+          "sha256": "a2b3864f9935e94b27371a8589f7c3ed0fdfd81b14b544cadca4b5a3c20a2af1"
+        },
+        "adoption": {
+          "id": "tool-adoption:diagnostic",
+          "sha256": "be48f781c89e1c7e3978fa7972ffa62b91e6a3e4df4a7b835ca88cc92b7019de"
+        },
+        "observation_facts": [
+          "diagnostic.status",
+          "diagnostic.harm_acceptance"
+        ],
+        "used": true,
+        "result_consumed": true,
+        "scientific_support": "UNKNOWN",
+        "research_policy_gain_measured": false,
+        "qualification_cost": {
+          "receipt_sha256": "84d0f76320aab531e3ace2114f1cfe54fac086c7d2261d0fddd3c4d784f12663",
+          "resources": {
+            "wall_seconds": {
+              "charged_estimate": 0.0,
+              "measured": 0.16364280000016151,
+              "unit": "seconds",
+              "unknown": false
+            }
+          },
+          "parent_budget_accounted": true
+        },
+        "premises": [],
+        "case_count": 1,
+        "domain": "EXACT_TASK_CASES",
+        "code_sha256": "38f01ebb74aaf6a970a70415a4cb5b029cc1ee042a0be348f225537a683456b7",
+        "request_sha256": "1cd363e1b56631d5b26f73b748747aa6a5352c0f7e2b5bc75ee62f67db1567ca",
+        "qualification_receipt_sha256": "84d0f76320aab531e3ace2114f1cfe54fac086c7d2261d0fddd3c4d784f12663",
+        "use_status": "FROZEN_DRIVER_CALLS_OBSERVED",
+        "consumed": true,
+        "consumption_status": "READ_BY_CURRENT_DECISION",
+        "consumers": [
+          "goal_conditions[4]",
+          "goal_conditions[5]"
+        ],
+        "consumed_facts": [
+          "diagnostic.status",
+          "diagnostic.harm_acceptance"
+        ],
+        "receipt_sha256": "b4d410d63e355e61bab35e4c33634432cf62c35db401c42e1cb32495743892a6",
+        "run_status": "SUCCEEDED",
+        "result_sha256": "88449e0b87ffeb940d3a6b5b246e7b6ab02a9f7ee362d994d9572c04d1731fb9",
+        "decision_outcome": "TRUE"
+      },
+      {
+        "candidate": "requirements",
+        "run_id": "requirements",
+        "obligation": "requirements.met",
+        "status": "APPLICABLE",
+        "assurance": "EXACT_TASK_LOCAL_CASES_NOT_GENERAL_APPLICABILITY_OR_SCIENTIFIC_PROOF",
+        "reason": "Exact current-task cases and frozen oracle passed native qualification",
+        "tool": {
+          "id": "tool:requirements",
+          "sha256": "6c44d54ba58c45c16368359cbb197b5b150a7b73958221f5260cfe3be2719cd5"
+        },
+        "validation": {
+          "id": "validation:c61bcfbc13bf482b05950291f605b4e8",
+          "sha256": "76c9284c9e4815727ff1c6d1d7c9cb3bbca98107007d72f11617753d08c782b6"
+        },
+        "adoption": {
+          "id": "tool-adoption:requirements",
+          "sha256": "80ada9b09ce2c18ce9e2c808b106150a88c3748c75b2e21b08a4e482d12da791"
+        },
+        "observation_facts": [
+          "requirements.status",
+          "requirements.met"
+        ],
+        "used": true,
+        "result_consumed": true,
+        "scientific_support": "UNKNOWN",
+        "research_policy_gain_measured": false,
+        "qualification_cost": {
+          "receipt_sha256": "61f1d517571292cba7a2bc4abc3cd46b0ac0604a8d8fda980d93d80e082e82f1",
+          "resources": {
+            "wall_seconds": {
+              "charged_estimate": 0.0,
+              "measured": 0.23241219999908935,
+              "unit": "seconds",
+              "unknown": false
+            }
+          },
+          "parent_budget_accounted": true
+        },
+        "premises": [],
+        "case_count": 1,
+        "domain": "EXACT_TASK_CASES",
+        "code_sha256": "de56f167481ae81464372eadebaee1091dacc4c9ffa22b593c6679b653f18c36",
+        "request_sha256": "f1434e080167a13e21f3af441aa17ff35f823c102ae4f315278cbf128f5263a6",
+        "qualification_receipt_sha256": "61f1d517571292cba7a2bc4abc3cd46b0ac0604a8d8fda980d93d80e082e82f1",
+        "use_status": "FROZEN_DRIVER_CALLS_OBSERVED",
+        "consumed": true,
+        "consumption_status": "READ_BY_CURRENT_DECISION",
+        "consumers": [
+          "goal_conditions[6]",
+          "goal_conditions[7]"
+        ],
+        "consumed_facts": [
+          "requirements.status",
+          "requirements.met"
+        ],
+        "receipt_sha256": "e56cb3a6816a644e76d2e4ce683fc4c6840fe1c127a53463cabe60c316b2698a",
+        "run_status": "SUCCEEDED",
+        "result_sha256": "d2bdccdcc4fa9b8a13a5a022037f25b0cbc3699d92844c2acfb1c3de69a9c101",
+        "decision_outcome": "TRUE"
+      }
+    ],
+    "counts": {
+      "applicable": 4,
+      "inapplicable": 0,
+      "unknown": 0,
+      "used": 4,
+      "consumed": 4,
+      "applicable_used": 4,
+      "applicable_consumed": 4
+    },
+    "applicable_use_rate": 1.0,
+    "applicable_consumption_rate": 1.0,
+    "zero_denominator": "NOT_APPLICABLE",
+    "scientific_support": "UNKNOWN"
+  },
+  "recovery_preserved_runs_and_budget": true,
+  "initial_selected_run": "paired",
+  "final_selected_run": null,
+  "specs_sha256": "08302fdb7507f6bdc02b40fe1f664fba764d7f75033dd74b074c4bfc0d1c8427",
+  "scientific_gain": "UNKNOWN",
+  "scope": "EXACT_REUSED_FINITE_CASES"
+}

@@ -13,6 +13,9 @@ builds the bindings/routes; the same native costs and consumers remain in use.
 For JSON result reading, metric differences and failure inspection, use the
 [finite result tools](result-tools.md) and their [three-consumer example](../examples/result-tools/README.md).
 They feed returned values into original goal predicates through this interface.
+The [checked methods example](../examples/result-methods/README.md) adds paired
+comparison, finite residuals and decision diagnostics, with source-byte/input
+reconciliation before qualification and numeric result predicates after use.
 
 ## Run the public finite example
 

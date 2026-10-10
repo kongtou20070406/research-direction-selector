@@ -220,6 +220,22 @@ def check_run(store, db, contract, run):
                 'Model provider executable changed before launch')
 
 
+def _continuous_holdout(contract):
+    """Identify the new numerical check's private labels and terminal route.
+
+    This controls serialization and adaptive reuse, not filesystem access.
+    Ordinary project workers remain trusted; blind trials need an enforced
+    input projection and isolated transport in addition to this guard.
+    """
+    confirmation = contract.get('advisor_policy', {}).get('confirmation', {})
+    if (confirmation.get('domain') != 'continuous' or
+            confirmation.get('rules', {}).get('kind') != 'numerical_expression_evaluation'):
+        return None
+    data = confirmation.get('data', [])
+    require(len(data) == 2, 'Continuous confirmation requires features and private labels')
+    return {'labels': data[1], 'runs': set(confirmation['confirmation_runs'])}
+
+
 def evidence_excerpts(store, state, ids):
     """Bounded heads of frozen task inputs and original outputs, hash-checked.
 
@@ -227,7 +243,10 @@ def evidence_excerpts(store, state, ids):
     with a wrong value leaves the model no task content to repair from.
     """
     from rds_owned_advisor import _read_original
-    receipts = sorted((r for r in state['receipts'] if r['run_id'] not in ids),
+    holdout = _continuous_holdout(state['contract'])
+    withheld_runs = holdout['runs'] if holdout else set()
+    excluded_runs = set(ids) | withheld_runs
+    receipts = sorted((r for r in state['receipts'] if r['run_id'] not in excluded_runs),
                       key=lambda r: (r.get('ended_at', 0), r['run_id']), reverse=True)
     produced = [(r, item) for r in receipts for item in r['artifacts']
                 if item['kind'] == 'project_output' and item.get('size', MAX_BYTES + 1) <= MAX_BYTES]
@@ -247,11 +266,18 @@ def evidence_excerpts(store, state, ids):
             text = encoded[:limit].decode('utf-8', 'ignore')
         used += len(text.encode('utf-8'))
         return {'size': len(raw), 'truncated': len(raw) > limit or len(encoded) > limit, 'text': text}
-    inputs, outputs = [], []
+    inputs, outputs, withheld = [], [], []
     for binding in state['contract']['bindings']:
         if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL - reserved:
             continue
         path = store._path(binding['path'])
+        if holdout and (path == store._path(holdout['labels']['path']) or
+                        binding['sha256'] == holdout['labels']['sha256']):
+            # Match both canonical paths and byte identity: an alias or a
+            # second binding must not serialize the same held-out labels.
+            withheld.append({'path': binding['path'], 'sha256': binding['sha256'],
+                             'reason': 'CONTINUOUS_CONFIRMATION_LABELS_WITHHELD'})
+            continue
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_BYTES:
             continue
         raw = path.read_bytes()
@@ -267,8 +293,22 @@ def evidence_excerpts(store, state, ids):
             continue
         outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
                         'path': item['path'], 'sha256': item['sha256'], **head(raw, EXCERPT_TOTAL)})
-    return {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
-            'frozen_inputs': inputs, 'original_outputs': outputs}
+    result = {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
+              'frozen_inputs': inputs, 'original_outputs': outputs}
+    if holdout:
+        result['withheld_confirmation_inputs'] = withheld
+        result['access_assurance'] = 'SERIALIZATION_FILTER_ONLY_NOT_FILESYSTEM_ISOLATION'
+    return result
+
+
+def _jump_evidence_cut(store, db):
+    """Read the structure and snapshot identities under the caller's transaction."""
+    from rds_structure import _events
+    snapshot = None
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+        row = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+        snapshot = row['sha256'] if row else None
+    return {'structure_events_sha256': digest(_events(store, db)), 'snapshot_sha256': snapshot}
 
 
 def request_repair(store, report):
@@ -279,8 +319,21 @@ def request_repair(store, report):
     with store._db(True) as db:
         db.execute('BEGIN')
         state = _state(store, db)
+        jump_cut = _jump_evidence_cut(store, db)
     config = state['contract']['advisor_policy']['autonomy']
+    holdout = _continuous_holdout(state['contract'])
+    if holdout and any(r['id'] in holdout['runs'] and r.get('attempt_id') is not None
+                       for r in state['runs']):
+        # Final confirmation is not development feedback. Preserve the original
+        # attempt, including failure/unknown, instead of buying a new method
+        # after observing the final partition. Validation belongs in other
+        # explicitly declared development routes.
+        return 'FINAL_CONFIRMATION_REACHED'
     slots = config['repair_slots']
+    from rds_jump import packet as jump_packet
+    jumps = jump_packet(store)
+    if jumps is not None and jumps['status'] != 'CURRENT':
+        return 'JUMP_CONTEXT_REQUIRES_ORIGINALS'
     existing = state['autonomy_records']
     ids = {s['run_id'] for s in slots}
     previous = [e for e in existing if e['kind'] == PROCESSED]
@@ -314,11 +367,15 @@ def request_repair(store, report):
                'rejected_methods': deepcopy(previous),
                'evidence_excerpts': evidence_excerpts(store, state, ids),
                'authority': 'EXISTING_GOAL_BUDGET_COMMANDS_AND_CODE_PATH_ONLY'}
+    if jumps is not None:
+        request['jump_packet'] = jumps
     require(len(canonical(request).encode('utf-8')) <= MAX_BYTES, 'Model request exceeds bound')
     ref = cas_bytes(store.root, canonical(request).encode('utf-8'))
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         require(_fingerprint(_state(store, db)) == _fingerprint(state), 'State changed while preparing model request')
+        require(_jump_evidence_cut(store, db) == jump_cut,
+                'Jump evidence changed while preparing model request; retry original evidence')
         _append(db, {'kind': REQUESTED, 'run_id': slot['run_id'], 'parent_sha256': request['parent_sha256'],
                      'blocker_sha256': blocker, 'request': ref})
     return 'REQUESTED'
@@ -383,6 +440,29 @@ def process_result(store, event, receipt):
                     reason = 'ORIGINAL_MODEL_RESPONSE_JSON_BYTE_LIMIT'
             except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
                 raise ModelResultIntegrityError(str(exc)) from exc
+            if response is not None and response['status'] != 'unknown' and request.get('jump_packet') is not None:
+                from rds_jump import validate_use
+                try:
+                    jump_use = strict_json(response.get('jump_use_json', ''))
+                except RecursionError as exc:
+                    # Invalid untrusted suggestion: consume this paid result once
+                    # through the existing rejection path, without new dispatch.
+                    raise ValueError('Jump-use JSON nesting exceeds parser limit') from exc
+                usage = validate_use(request['jump_packet'], jump_use)
+                body = {'kind': 'AUTONOMY_JUMP_REFERENCED', 'run_id': rid,
+                        'request_sha256': event['request']['sha256'], 'receipt_sha256': receipt['sha256'],
+                        'usage': usage, 'response_source_sha256': digest(response.get('source', '')),
+                        'response_policy_sha256': digest(response.get('policy_json', '')),
+                        'status': 'RESPONSE_REFERENCED', 'scientific_support': 'UNKNOWN'}
+                with store._db() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    existing_use = [e for e in _events(db, ('AUTONOMY_JUMP_REFERENCED',)) if e['run_id'] == rid]
+                    require(len(existing_use) <= 1, 'Duplicate jump response reference')
+                    if existing_use:
+                        require({k: v for k, v in existing_use[0].items() if k != 'sha256'} == body,
+                                'Jump response reference conflicts with original')
+                    else:
+                        _append(db, body)
             if response is not None and response['status'] == 'proposed':
                 require(isinstance(response['source'], str) and response['source'].strip() and
                         len(response['source'].encode('utf-8')) <= MAX_BYTES and
@@ -482,6 +562,8 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
     require(policy and (until_judgment or 'autonomy' in policy),
             'project drive requires a frozen autonomy declaration, or an owned policy with --until-judgment')
     config = validate_policy(store, contract, policy)
+    has_jump = any(b['path'] == 'jump-generation.json' and b['role'] == 'config'
+                   for b in contract['bindings'])
     if config is not None:
         require(controller_wall_seconds is None, 'Frozen autonomy controller allowance cannot be overridden')
     else:
@@ -579,6 +661,19 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
                 db.execute('BEGIN IMMEDIATE')
                 store._campaign_deadline(db, state['contract'], admit=True)
             manifest = report.get('selected_manifest')
+            if has_jump:
+                from rds_jump import prepare_owned
+                from rds_structure import owned_control
+                with owned_control(store, owner, lambda: allowance - (time.monotonic() - started - worker_wall)):
+                    prepared_jump = prepare_owned(store, manifest)
+                if prepared_jump is not None:
+                    result['jump_generation'] = prepared_jump
+                    if prepared_jump['changed']:
+                        continue  # Re-select from the changed original evidence.
+                    if prepared_jump['status'] != 'READY_TO_EXECUTE' or prepared_jump.get('selected_manifest') != manifest:
+                        result['status'] = (prepared_jump['status'] if prepared_jump['status'] != 'READY_TO_EXECUTE'
+                                            else 'JUMP_WAITING_ADMISSION')
+                        break
             if manifest is None:
                 confirmation = report.get('confirmation')
                 if confirmation and all(v != 'PENDING' for v in confirmation['execution'].values()) and confirmation['task_confirmation'] == 'UNKNOWN':
@@ -637,6 +732,9 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
                              'run_status': receipt.get('run_status'), 'receipt_sha256': receipt.get('sha256')})
         else:
             result['status'] = 'CONTROL_TRANSITION_LIMIT'
+        if has_jump:
+            from rds_jump import packet
+            result['jump_packet'] = packet(store)
     except SteeringBlocked as exc:
         result.update(status='HUMAN_STEERING_REQUIRED', reason=str(exc), steering=steering_status(store)['steering'])
     except (ValueError, OSError, sqlite3.Error, KeyError, TypeError, UnicodeError) as exc:

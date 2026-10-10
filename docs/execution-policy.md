@@ -11,7 +11,7 @@ An existing project contract can opt into a bounded execution policy before init
 Include this field in the original contract passed to the existing entry point:
 
 ```text
-python -B scripts/rds_cli.py --root path/to/project project init --contract path/to/contract.json
+python -B scripts/rds_cli.py --root path/to/project project init --mode quick --contract path/to/contract.json
 ```
 
 The usual `project create` and `project execute` commands then enforce it. Quick `exec` from that configured source root also consumes its policy without requiring research context. An already initialized contract cannot be retrofitted with this field; configure an explicit new project instead.
@@ -22,8 +22,23 @@ Project registration checks existing runs while holding the same SQLite write tr
 
 Quick execution checks the selected parent ledger under the same transaction that writes `EXTERNAL_RUN_ALLOWANCE` and charges its wall allowance. The event binds the route, complete request, frozen contract and policy. The child inherits the policy and registration checks the executor hash observed before charging. Even same-name recovery requires the parent's matching allowance for that exact child location and request; a copied child alone cannot supply ownership. A duplicate live or successful request observes the retained child without a new allowance or launch. Validated failed attempts remain charged and count toward `max_attempts`; a configured additional attempt needs a new job name. A charge followed by a missing or incomplete child remains consumed and blocks another launch. Recover the existing job or inspect the retained state; the controller does not invent a refund. Checkpoint restoration uses the current parent budget.
 
+For an exact pending request interrupted before any attempt or receipt, recovery
+preserves the partial files in `.rds/quick-partials`. Its old operational `.rds`
+directory is stored in a freshly reserved `.rds.retained-*/state` container,
+with every original file byte intact. Existing inputs using inactive retained
+names remain untouched, and cannot collide with this container. Thus
+recursive campaign discovery cannot treat that forensic snapshot as a live
+project. The recovered job stays at its original location and reuses its
+original allowance and choice. An interruption while moving the retired
+snapshot can resume that same pending request; it does not authorize replacing
+started or completed work.
+
 If the quick source root itself owns a configured project policy, quick applies that owner even without research context. A different ledger cannot replace it. A policy in another ledger applies when that ledger owns the request; a standalone command from an unrelated, unconfigured root does not discover arbitrary project ledgers. Global host command interception is outside this implementation.
 
 This is exact structured comparison, not a detector for every semantic rewrite. Declared content/role normalization intentionally ignores file names; relocation, dynamic imports, environment reads and other hidden dependencies can still change program semantics. Bind relevant inputs explicitly. Allowed code remains trusted local code; this is not an OS sandbox. A finite attempt limit refuses further spending under the configured agreement. It does not establish scientific impossibility, convergence, task gain or a method's superiority.
 
 Regression coverage: [project tests](../tests/test_rds_project.py) and [real quick CLI tests](../tests/test_rds_quick.py) check refusal before launch/reservation/charge, concurrent requests, renamed identities/files, changed input bytes, verified output reuse and the charged crash window.
+Campaign workspace inventory treats every `.rds` directory entry as native
+state, including unresolved symlinks and damaged file entries. Such unavailable
+state refuses binding before marker publication; it cannot silently disappear
+from the original project inventory.

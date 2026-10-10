@@ -32,10 +32,13 @@ class BatchValidationTests(unittest.TestCase):
             contract.write_text(json.dumps({"schema": 1, "project_id": "demo"}), encoding="utf-8")
             result = run_cli("--root", str(root / "proj"), "init", "--contract", str(contract))
             self.assertEqual(result.returncode, 1)
-            self.assertEqual(result.stderr,
+            self.assertEqual(result.stderr.splitlines()[0],
                              "[RDS-REJECT] Missing contract fields: claim, primary_metric, budget, splits, "
-                             "baseline_source\n[RDS-HINT] python -B examples/project-runner/prepare.py "
-                             "--root ./my-project\n")
+                             "baseline_source")
+            self.assertEqual(len(result.stderr.splitlines()), 2)
+            self.assertIn("[RDS-HINT] Inspect the existing project first: python -B scripts/rds_cli.py --root ", result.stderr)
+            self.assertIn(str(root / "proj"), result.stderr)
+            self.assertIn(" project discover; see docs/project-lifecycle.md", result.stderr)
             self.assertFalse((root / "proj" / ".rds").exists())
 
     def test_single_missing_field_keeps_the_batch_message_shape(self):
@@ -65,23 +68,27 @@ class BatchValidationTests(unittest.TestCase):
 
 
 class InitExampleHintTests(unittest.TestCase):
-    def test_every_l3_init_rejection_names_the_runnable_example(self):
+    def test_every_l3_init_rejection_names_root_discovery(self):
         with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "proj").mkdir()
             contract = Path(raw) / "contract.json"
             contract.write_text("5", encoding="utf-8")
             result = run_cli("--root", str(Path(raw) / "proj"), "init", "--contract", str(contract))
             self.assertEqual(result.returncode, 1)
-            self.assertIn("[RDS-HINT] python -B examples/project-runner/prepare.py --root ./my-project",
-                          result.stderr)
+            self.assertIn("[RDS-HINT] Inspect the existing project first: python -B scripts/rds_cli.py --root ", result.stderr)
+            self.assertIn(str(Path(raw) / "proj"), result.stderr)
+            self.assertIn(" project discover; see docs/project-lifecycle.md", result.stderr)
 
-    def test_project_init_rejection_names_the_runnable_example(self):
+    def test_project_init_rejection_names_root_discovery(self):
         with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "proj").mkdir()
             contract = Path(raw) / "contract.json"
             contract.write_text("5", encoding="utf-8")
             result = run_cli("--root", str(Path(raw) / "proj"), "project", "init", "--contract", str(contract))
             self.assertEqual(result.returncode, 1)
-            self.assertIn("[RDS-HINT] python -B examples/project-runner/prepare.py --root ./my-project",
-                          result.stderr)
+            self.assertIn("[RDS-HINT] Inspect the existing project first: python -B scripts/rds_cli.py --root ", result.stderr)
+            self.assertIn(str(Path(raw) / "proj"), result.stderr)
+            self.assertIn(" project discover; see docs/project-lifecycle.md", result.stderr)
 
     def test_non_init_rejections_stay_unhinted(self):
         with tempfile.TemporaryDirectory() as raw:

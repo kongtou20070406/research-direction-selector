@@ -1,12 +1,14 @@
-"""Offline wheel tests. Fake project responses are unit fixtures; one test uses real CLI receipts."""
+"""Offline wheel tests. Fake project responses are unit fixtures; real CLI tests verify kernel behavior."""
 from copy import deepcopy
 import importlib.util
+import hashlib
 import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 import uuid
@@ -260,6 +262,62 @@ class WheelTests(unittest.TestCase):
         self.assertEqual(before, {name: self.wheel.state_path(name).read_bytes() for name in before})
         self.assertEqual(self.executed(), [])
 
+    def test_frozen_template_id_collisions_are_rejected_before_initialization(self):
+        original_initialize = Wheel.initialize
+        selectors = [(('initial',), ('control',)),
+                     (('initial',), ('routes', 'flat', 'main')),
+                     (('routes', 'flat', 'screen'), ('control',)),
+                     (('routes', 'flat', 'screen'), ('initial',)),
+                     (('routes', 'flat', 'screen'), ('routes', 'benefit', 'screen')),
+                     (('routes', 'flat', 'screen'), ('routes', 'benefit', 'main'))]
+        for index, (changed, existing) in enumerate(selectors):
+            with self.subTest(changed=changed, existing=existing):
+                root = Path(self.temp.name) / ('collision-' + str(index))
+                project = FakeProject(root)
+
+                def collision(wheel, contract_path):
+                    contract = read_json(contract_path)
+                    config = root / 'trusted/wheel-setup.json'
+                    setup = read_json(config)
+                    target, other = setup, setup
+                    for key in changed:
+                        target = target[key]
+                    for key in existing:
+                        other = other[key]
+                    target['id'] = other['id']
+                    config.write_text(canonical(setup), encoding='utf-8')
+                    protocol_path = root / 'trusted/protocol.json'
+                    protocol = read_json(protocol_path)
+                    protocol['config_sha256'] = sha(config)
+                    protocol_path.write_text(canonical(protocol), encoding='utf-8')
+                    for binding in contract['bindings']:
+                        binding['sha256'] = sha(root / binding['path'])
+                    contract_path.write_text(canonical(contract), encoding='utf-8')
+                    return original_initialize(wheel, contract_path)
+
+                with patch.object(Wheel, 'initialize', autospec=True, side_effect=collision):
+                    with self.assertRaisesRegex(wheel_module.WheelError, 'mapped run IDs must be distinct'):
+                        fixture.prepare(root, project=project)
+                self.assertFalse((root / '.rds/wheel').exists())
+                self.assertEqual(project.calls, [], 'no project initialization or dispatch before rejection')
+
+    def test_hash_bound_non_object_metric_is_unknown_without_new_execution(self):
+        for index, value in enumerate((None, [], [1], 1, 'metric', True)):
+            with self.subTest(value=value):
+                self.root = Path(self.temp.name) / ('metric-' + str(index))
+                self.prepare()
+                path = self.root / 'outputs/treatment.json'
+                path.write_text(canonical(value), encoding='utf-8')
+                receipt = self.project.receipts['treatment']
+                receipt['artifacts'][0]['sha256'] = sha(path)
+                receipt['sha256'] = digest({k: v for k, v in receipt.items() if k != 'sha256'})
+                quota = self.wheel.state_path('quota.json').read_bytes()
+                self.assertEqual(self.tick(), 2)
+                self.assertEqual(read_json(self.wheel.state_path('cells/treatment.json'))['state'], 'UNKNOWN')
+                self.assertEqual(self.executed(), [])
+                self.assertEqual(self.wheel.state_path('quota.json').read_bytes(), quota)
+                self.assertIsNone(read_json(self.wheel.state_path('state.json'))['pending'])
+
     def test_ambiguous_execute_is_not_resent(self):
         self.prepare()
         original = self.wheel.project
@@ -289,6 +347,29 @@ class WheelTests(unittest.TestCase):
         (self.root / "outputs/treatment.json").write_text('{"loss":0}', encoding="utf-8")
         self.assertEqual(self.tick(), 2)
         self.assertEqual(self.executed(), [])
+
+    def test_metric_parses_the_same_original_bytes_it_hashes(self):
+        self.prepare()
+        receipt = self.project.receipts['treatment']
+        # Temp directory short names on Windows can resolve to another spelling.
+        # Exercise an equivalent spelling on every platform and match file identity.
+        target = (self.root / 'outputs' / '..' / receipt['artifacts'][0]['path']).resolve()
+        original = target.read_bytes()
+        reads = []
+        read_bytes = Path.read_bytes
+        read_text = Path.read_text
+        def changing_read(path):
+            if path.resolve() == target:
+                reads.append(path)
+                return original if len(reads) == 1 else b'{"loss":-1000}'
+            return read_bytes(path)
+        def changed_text(path, *args, **kwargs):
+            return '{"loss":-1000}' if path.resolve() == target else read_text(path, *args, **kwargs)
+        with patch.object(Path, 'read_bytes', autospec=True, side_effect=changing_read), \
+                patch.object(Path, 'read_text', autospec=True, side_effect=changed_text):
+            value = self.wheel.metric(receipt, self.wheel.manifest('seed', 'initial'))
+        self.assertEqual(value, json.loads(original)['loss'])
+        self.assertEqual(len(reads), 1)
 
     def test_receipt_from_a_different_manifest_is_unknown(self):
         self.prepare()
@@ -333,13 +414,18 @@ class WheelTests(unittest.TestCase):
         self.assertEqual(self.tick(), 3)
         self.assertEqual(self.executed(), [])
 
-    def test_missing_mapping_exits_2_and_keeps_inbox(self):
+    def test_missing_mapping_is_skipped_and_keeps_inbox(self):
         self.prepare(factors=[])
         self.inbox(self.row("unmapped"))
         before = self.wheel.state_path("inbox.jsonl").read_bytes()
-        self.assertEqual(self.tick(), 2)
+        quota = self.wheel.state_path("quota.json").read_bytes()
+        self.assertEqual(self.tick(), 0)
         self.assertEqual(self.executed(), [])
         self.assertEqual(before, self.wheel.state_path("inbox.jsonl").read_bytes())
+        self.assertEqual(quota, self.wheel.state_path("quota.json").read_bytes())
+        self.assertIsNone(read_json(self.wheel.state_path("state.json"))['pending'])
+        self.assertEqual(read_json(self.wheel.state_path('pause.json'))['reason'],
+                         'no live factor or eligible proposal')
 
     def test_screen_budget_is_remaining_tenth_and_quota_zero_is_skipped(self):
         self.prepare(factors=[])
@@ -408,8 +494,721 @@ class WheelTests(unittest.TestCase):
         self.assertFalse(rsi_gate(old, new, 4)["adoption_eligible"])
         self.assertEqual(rsi_gate(old, new, 2, {"regret": 0})["regret"], "UNKNOWN")
 
+    def test_rsi_decimal_boundary_is_exact_without_epsilon(self):
+        old = {"violations": 0, "spin_count": 3, "budget_to_true_cell": .3}
+        for new_value, expected in ((.1, True), (.10000000000000002, False), (.09999999999999999, True)):
+            with self.subTest(new_value=new_value):
+                result = rsi_gate(old, {**old, "spin_count": 2, "budget_to_true_cell": new_value}, .2)
+                self.assertEqual(result["adoption_eligible"], expected)
+                self.assertEqual(result["regret"], "UNKNOWN")
+
+    def handoff_ready(self):
+        self.prepare(factors=["flat"])
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.tick(), 0)
+
+    def test_proposal_inbox_limits_preserve_originals_and_quota(self):
+        self.handoff_ready()
+        inbox = self.wheel.state_path("inbox.jsonl")
+        quota = self.wheel.state_path("quota.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "proposer_id"):
+            self.wheel.propose("汉" * 1000, "screen_change")
+        self.assertEqual(inbox.read_bytes(), b'')
+        with patch.object(wheel_module, "MAX_INBOX_ROWS", 2):
+            self.assertTrue(self.wheel.propose("one", "screen_change"))
+            self.assertTrue(self.wheel.propose("two", "screen_change"))
+            before = inbox.read_bytes()
+            with self.assertRaisesRegex(ValueError, "inbox"):
+                self.wheel.propose("three", "screen_change")
+            self.assertEqual(inbox.read_bytes(), before)
+        with patch.object(wheel_module, "MAX_INBOX_BYTES", len(before)):
+            with self.assertRaisesRegex(ValueError, "inbox"):
+                self.wheel.propose("four", "screen_change")
+            self.assertEqual(inbox.read_bytes(), before)
+        self.assertEqual(self.wheel.state_path("quota.json").read_bytes(), quota)
+        self.assertEqual(self.executed(), ["flat"])
+
+    def test_oversized_and_deep_inbox_scan_is_bounded_without_execution(self):
+        self.prepare(factors=[])
+        inbox = self.wheel.state_path("inbox.jsonl")
+        inbox.write_bytes(b'x' * (1024 * 1024 + 1))
+        before = inbox.read_bytes()
+        self.assertEqual(self.tick(), 2)
+        self.assertEqual(inbox.read_bytes(), before)
+        self.assertEqual(self.executed(), [])
+        # A bounded malformed row must not obstruct a later valid proposal.
+        inbox.write_text('[' * 1500 + '0' + ']' * 1500 + '\n', encoding='utf-8')
+        self.inbox(self.row('screen_change'))
+        before = inbox.read_bytes()
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.executed(), ['screen_screen_change'])
+        self.assertEqual(inbox.read_bytes(), before)
+
+    def test_accepted_proposal_after_partial_append_keeps_prefix_and_is_selectable(self):
+        self.handoff_ready()
+        inbox = self.wheel.state_path('inbox.jsonl')
+        partial = b'{"partial":'
+        inbox.write_bytes(partial)
+        # The separator is part of the append allowance, never a rewrite.
+        with patch.object(wheel_module, 'MAX_INBOX_BYTES', len(partial) + 1):
+            with self.assertRaisesRegex(ValueError, 'inbox'):
+                self.wheel.propose('one', 'screen_change')
+            self.assertEqual(inbox.read_bytes(), partial)
+        self.assertTrue(self.wheel.propose('one', 'screen_change'))
+        self.assertTrue(inbox.read_bytes().startswith(partial))
+        state = read_json(self.wheel.state_path('state.json'))
+        selected = self.wheel.eligible_proposal(state, self.project('status'))
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected['proposer_id'], 'one')
+        self.assertEqual(selected['factor'], 'screen_change')
+        self.assertEqual(self.executed(), ['flat'])
+
+    def test_non_string_proposal_ids_are_skipped_without_consuming_quota(self):
+        self.prepare(factors=[])
+        invalid = [self.row(proposal_id=value) for value in ([], 7, {}, None, True)]
+        valid = self.row(factor='screen_change')
+        self.inbox(*invalid, valid)
+        before = self.wheel.state_path('inbox.jsonl').read_bytes()
+        quota = self.wheel.state_path('quota.json').read_bytes()
+        self.assertEqual(self.tick(), 0)
+        self.assertEqual(self.executed(), ['screen_screen_change'])
+        pending = read_json(self.wheel.state_path('state.json'))['pending']
+        self.assertEqual(pending['proposal'], valid)
+        self.assertEqual(self.wheel.state_path('inbox.jsonl').read_bytes(), before)
+        self.assertEqual(self.wheel.state_path('quota.json').read_bytes(), quota)
+
 
 class RealWheelTests(unittest.TestCase):
+    def crash_legacy_partial_manifest(self, wheel):
+        # Preserve the legacy interruption boundary in a separate process; the
+        # current writer must also recover old, already retained partial files.
+        code = '''
+import os, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+import rds_wheel as w
+wheel = w.Wheel(sys.argv[2])
+write = wheel.write
+def interrupted(name, value, **kwargs):
+    if kwargs.get('once') and name.startswith(('manifests/', 'screen/')):
+        raw = (w.canonical(value) + '\\n').encode('utf-8')
+        target = wheel.state_path(name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open('xb') as stream:
+            stream.write(raw[:len(raw) // 2])
+            stream.flush()
+            os.fsync(stream.fileno())
+        os._exit(73)
+    return write(name, value, **kwargs)
+wheel.write = interrupted
+wheel.tick()
+raise AssertionError('legacy partial boundary was not reached')
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(wheel.root)],
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+        state = read_json(wheel.state_path('state.json'))
+        pending = state['pending']
+        relative = ('screen/' if pending['kind'] == 'screen' else 'manifests/') + pending['manifest']['id'] + '.json'
+        return pending, relative, wheel.state_path(relative).read_bytes()
+
+    def test_once_publication_never_exposes_partial_or_overwrites_existing_state(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-once-') as directory:
+            wheel = fixture.prepare(Path(directory) / 'project')
+            code = '''
+import os, pathlib, subprocess, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+import rds_wheel as w
+old = os.environ.get('RDS_WHEEL_TEST_SOURCE_COMMIT')
+if old:
+    source = subprocess.check_output(['git', 'show', old + ':scripts/rds_wheel.py'], cwd=sys.argv[1])
+    exec(compile(source, w.__file__, 'exec'), w.__dict__)
+wheel = w.Wheel(sys.argv[2])
+original = pathlib.Path.open
+class Interrupted:
+    def __init__(self, stream): self.stream = stream
+    def __enter__(self): self.stream.__enter__(); return self
+    def __exit__(self, *args): return self.stream.__exit__(*args)
+    def write(self, raw):
+        self.stream.write(raw[:len(raw) // 2])
+        self.stream.flush()
+        os.fsync(self.stream.fileno())
+        os._exit(73)
+def opened(path, mode='r', *args, **kwargs):
+    stream = original(path, mode, *args, **kwargs)
+    if 'x' in mode and (path.name == 'once-proof.json' or path.name.startswith('.once-proof.json.')):
+        return Interrupted(stream)
+    return stream
+pathlib.Path.open = opened
+wheel.write('once-proof.json', {'complete': 'payload'}, once=True)
+raise AssertionError('write interruption did not occur')
+'''
+            result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(wheel.root)],
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+            target = wheel.state_path('once-proof.json')
+            self.assertFalse(target.exists(), 'the incomplete temporary file must not become public')
+            wheel.write('once-proof.json', {'complete': 'payload'}, once=True)
+            before = target.read_bytes()
+            with self.assertRaises(FileExistsError):
+                wheel.write('once-proof.json', {'changed': True}, once=True)
+            self.assertEqual(target.read_bytes(), before)
+
+    def test_native_legacy_partial_main_and_screen_keep_originals_and_resume_once(self):
+        for kind in ('main', 'screen'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix='rds-wheel-partial-') as directory:
+                wheel = fixture.prepare(Path(directory) / 'project', factors=['flat'] if kind == 'main' else [])
+                fixture.bootstrap(wheel)
+                if kind == 'screen':
+                    wheel.append('inbox.jsonl', canonical({'proposal_id': str(uuid.uuid4()), 'proposer_id': 'researcher-a',
+                        'kind': 'factor', 'factor': 'screen_change', 'parent_contract_id': wheel.contract['contract_id'],
+                        'ts': '2026-10-08T00:00:00Z'}) + '\n')
+                    wheel.write('quota.json', {'researcher-a': 1})
+                bootstrap = wheel.project('status')
+                pending, relative, partial = self.crash_legacy_partial_manifest(wheel)
+                manifest = pending['manifest']
+                # MAIN covers native absence; SCREEN covers an independently
+                # registered, exact owned reservation with no execution attempt.
+                if kind == 'screen':
+                    original = wheel.root / 'original-screen-registration.json'
+                    original.write_text(canonical(manifest) + '\n', encoding='utf-8')
+                    wheel.project('create', '--manifest', str(original))
+                preserved = {name: wheel.state_path(name).read_bytes() for name in ('factors.txt', 'inbox.jsonl', 'quota.json')}
+                self.assertEqual(wheel.tick(), 0)
+                self.assertEqual(read_json(wheel.state_path(relative)), manifest)
+                evidence = wheel.directory / 'interrupted' / (manifest['id'] + '-' + hashlib.sha256(partial).hexdigest() + '.partial')
+                self.assertEqual(evidence.read_bytes(), partial)
+                after = wheel.project('status')
+                run = next(r for r in after['runs'] if r['id'] == manifest['id'])
+                receipt = next(r for r in after['receipts'] if r['run_id'] == manifest['id'])
+                self.assertEqual(run['status'], 'COMPLETED')
+                self.assertEqual(run['attempt_id'], receipt['attempt_id'])
+                self.assertEqual(run['resource_estimates'], manifest['resource_estimates'])
+                self.assertEqual({r['run_id']: canonical(r) for r in bootstrap['receipts']},
+                                 {r['run_id']: canonical(r) for r in after['receipts'] if r['run_id'] in {'control', 'treatment'}})
+                self.assertEqual(preserved, {name: wheel.state_path(name).read_bytes() for name in preserved})
+                from rds_project import ProjectStore
+                with ProjectStore(wheel.root)._db(True) as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                        "AND json_extract(body,'$.run_id')=?", (manifest['id'],)).fetchone()[0], 1)
+                self.assertEqual(wheel.tick(), 0)
+                self.assertEqual(wheel.project('status')['receipts'], after['receipts'])
+                self.assertEqual(wheel.project('status')['budget'], after['budget'])
+                self.assertEqual(evidence.read_bytes(), partial)
+                if kind == 'screen':
+                    self.assertEqual(read_json(wheel.state_path('quota.json')), {'researcher-a': 2})
+
+    def test_native_partial_manifest_cannot_replace_mismatch_or_attempt_evidence(self):
+        for fault in ('attempt', 'mismatched_partial', 'changed_manifest'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory(prefix='rds-wheel-partial-reject-') as directory:
+                wheel = fixture.prepare(Path(directory) / 'project', factors=['flat'])
+                fixture.bootstrap(wheel)
+                pending, relative, partial = self.crash_legacy_partial_manifest(wheel)
+                if fault == 'attempt':
+                    original = wheel.root / 'original-registration.json'
+                    original.write_text(canonical(pending['manifest']) + '\n', encoding='utf-8')
+                    wheel.project('create', '--manifest', str(original))
+                    code = '''
+import os, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+from rds_project import ProjectStore
+ProjectStore._execute_claim = lambda *args, **kwargs: os._exit(73)
+ProjectStore(sys.argv[2]).execute('flat')
+'''
+                    result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(wheel.root)],
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+                elif fault == 'mismatched_partial':
+                    wheel.state_path(relative).write_bytes(b'{"unrelated":')
+                else:
+                    changed = deepcopy(pending['manifest'])
+                    changed['description'] += ' changed'
+                    wheel.state_path(relative).write_text(canonical(changed), encoding='utf-8')
+                before = wheel.project('status')
+                files = {p: p.read_bytes() for p in wheel.directory.rglob('*') if p.is_file()}
+                with self.assertRaises(wheel_module.WheelError):
+                    wheel.tick()
+                self.assertEqual(wheel.project('status'), before)
+                self.assertEqual(files, {p: p.read_bytes() for p in files})
+                self.assertFalse((wheel.directory / 'interrupted').exists())
+
+    def test_native_hash_bound_deep_metric_is_unknown_without_followup_dispatch(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-deep-metric-') as directory:
+            root = Path(directory) / 'project'
+            def deep_output(setup):
+                evaluator = root / 'trusted/evaluator.py'
+                original = evaluator.read_text(encoding='utf-8')
+                marker = '    return row.get("exit_code", 0)'
+                self.assertEqual(original.count(marker), 1)
+                injected = "    if args.factor == 'seed':\n        output.write_text('{\\\"loss\\\":' + '[' * 20000 + '0' + ']' * 20000 + '}\\n', encoding='utf-8')\n"
+                evaluator.write_text(original.replace(marker, injected + marker), encoding='utf-8')
+                setup['wheel']['evaluator_sha256'] = sha(evaluator)
+                protocol_path = root / 'trusted/protocol.json'
+                protocol = read_json(protocol_path)
+                protocol.update(code_sha256=sha(evaluator), evaluator_sha256=sha(evaluator))
+                protocol_path.write_text(canonical(protocol), encoding='utf-8')
+            wheel = self.prepare_mapping(root, deep_output, factors=['flat'])
+            fixture.bootstrap(wheel)
+            before = wheel.project('status')
+            receipt = next(r for r in before['receipts'] if r['run_id'] == 'treatment')
+            artifact = next(a for a in receipt['artifacts'] if a['kind'] == 'project_output')
+            raw = wheel.path(artifact['path']).read_bytes()
+            self.assertEqual(sha(wheel.path(artifact['path'])), artifact['sha256'])
+            self.assertEqual(raw.count(b'['), 20000)
+        # Parser recursion behavior differs by Python version; the observable
+        # contract is the bounded wheel outcome below, with original bytes kept.
+            quota = wheel.state_path('quota.json').read_bytes()
+            self.assertEqual(wheel.tick(), 2)
+            self.assertEqual(read_json(wheel.state_path('cells/treatment.json'))['state'], 'UNKNOWN')
+            self.assertEqual(wheel.project('status'), before)
+            self.assertEqual(wheel.path(artifact['path']).read_bytes(), raw)
+            self.assertEqual(wheel.state_path('quota.json').read_bytes(), quota)
+            self.assertIsNone(read_json(wheel.state_path('state.json'))['pending'])
+
+    def prepare_mapping(self, root, transform, *, factors=None):
+        """Freeze a changed input mapping before the real native initialization."""
+        initialize = Wheel.initialize
+        def changed(wheel, contract_path):
+            contract = read_json(contract_path)
+            setup_path = root / 'trusted/wheel-setup.json'
+            setup = read_json(setup_path)
+            transform(setup)
+            setup_path.write_text(canonical(setup) + '\n', encoding='utf-8')
+            protocol_path = root / 'trusted/protocol.json'
+            protocol = read_json(protocol_path)
+            protocol['config_sha256'] = sha(setup_path)
+            protocol_path.write_text(canonical(protocol) + '\n', encoding='utf-8')
+            for binding in contract['bindings']:
+                binding['sha256'] = sha(root / binding['path'])
+            contract_path.write_text(canonical(contract) + '\n', encoding='utf-8')
+            return initialize(wheel, contract_path)
+        with patch.object(Wheel, 'initialize', autospec=True, side_effect=changed):
+            return fixture.prepare(root, factors=factors)
+
+    def test_native_invalid_route_keys_are_rejected_before_publication(self):
+        for invalid in ('mainn', '', 'screen_extra', None):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory(prefix='rds-wheel-route-') as directory:
+                root = Path(directory) / 'project'
+                def invalid_route(setup):
+                    if invalid is None:
+                        setup['routes']['flat'] = {}
+                    else:
+                        setup['routes']['flat'][invalid] = {}
+                with self.assertRaisesRegex(wheel_module.WheelError, 'route must contain only main or screen mappings'):
+                    self.prepare_mapping(root, invalid_route, factors=[])
+                self.assertFalse((root / '.rds/wheel').exists())
+                self.assertFalse((root / '.rds/project.sqlite3').exists())
+
+    def test_native_route_template_factor_must_match_containing_factor(self):
+        for kind in ('main', 'screen'):
+            for value in (None, 'screen_same'):
+                with self.subTest(kind=kind, factor=value), tempfile.TemporaryDirectory(prefix='rds-wheel-factor-') as directory:
+                    root = Path(directory) / 'project'
+                    def mismatched(setup):
+                        template = setup['routes']['flat'][kind]
+                        if value is None:
+                            template.pop('factor')
+                        else:
+                            template['factor'] = value
+                    with self.assertRaisesRegex(wheel_module.WheelError, 'template factor differs from route factor'):
+                        self.prepare_mapping(root, mismatched, factors=[])
+                    self.assertFalse((root / '.rds/wheel').exists())
+                    self.assertFalse((root / '.rds/project.sqlite3').exists())
+
+    def test_native_main_only_and_screen_only_routes_can_initialize(self):
+        for kind in ('main', 'screen'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix='rds-wheel-single-route-') as directory:
+                root = Path(directory) / 'project'
+                def single(setup):
+                    setup['routes']['flat'] = {kind: setup['routes']['flat'][kind]}
+                wheel = self.prepare_mapping(root, single, factors=[])
+                snapshot = wheel.project('status')
+                self.assertEqual(snapshot['runs'], [])
+                self.assertEqual(snapshot['receipts'], [])
+                self.assertEqual(snapshot['budget']['wall_seconds']['remaining'], 90.)
+                argv = wheel.manifest('flat', kind)['argv']
+                self.assertEqual(argv[argv.index('--factor') + 1], 'flat')
+                self.assertEqual(read_json(wheel.state_path('state.json'))['ticks'], 0)
+
+    def test_native_inbox_unmapped_and_main_only_rows_do_not_block_later_screen(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-inbox-mapping-') as directory:
+            root = Path(directory) / 'project'
+            def main_only(setup):
+                setup['routes']['flat'].pop('screen')
+            wheel = self.prepare_mapping(root, main_only, factors=[])
+            fixture.bootstrap(wheel)
+            before = wheel.project('status')
+            rows = [{'proposal_id': str(uuid.uuid4()), 'proposer_id': 'researcher-a', 'kind': 'factor',
+                     'factor': factor, 'parent_contract_id': wheel.contract['contract_id'],
+                     'ts': '2026-10-08T00:00:00Z'} for factor in ('unmapped', 'flat', 'screen_change')]
+            for row in rows:
+                wheel.append('inbox.jsonl', canonical(row) + '\n')
+            wheel.write('quota.json', {'researcher-a': 1})
+            inbox = wheel.state_path('inbox.jsonl').read_bytes()
+            quota = wheel.state_path('quota.json').read_bytes()
+            self.assertEqual(wheel.eligible_proposal(read_json(wheel.state_path('state.json')), before), rows[-1])
+            self.assertEqual(wheel.tick(), 0)
+            after = wheel.project('status')
+            self.assertEqual({r['id'] for r in after['runs']}, {'control', 'treatment', 'screen_screen_change'})
+            self.assertEqual(len(after['receipts']), 3)
+            self.assertEqual(next(r for r in after['runs'] if r['id'] == 'screen_screen_change')['status'], 'COMPLETED')
+            self.assertEqual({r['run_id']: canonical(r) for r in before['receipts']},
+                             {r['run_id']: canonical(r) for r in after['receipts'] if r['run_id'] != 'screen_screen_change'})
+            state = read_json(wheel.state_path('state.json'))
+            self.assertEqual(state['pending']['proposal'], rows[-1])
+            self.assertEqual(state['screened'], [])
+            self.assertEqual(wheel.state_path('inbox.jsonl').read_bytes(), inbox)
+            self.assertEqual(wheel.state_path('quota.json').read_bytes(), quota)
+
+    def crash_dispatch(self, root, boundary):
+        # Each hook exits a separate process after the actual persisted/native operation.
+        code = '''
+import os, pathlib, subprocess, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+import rds_wheel as w
+old = os.environ.get('RDS_WHEEL_TEST_SOURCE_COMMIT')
+if old:
+    source = subprocess.check_output(['git', 'show', old + ':scripts/rds_wheel.py'], cwd=sys.argv[1])
+    exec(compile(source, w.__file__, 'exec'), w.__dict__)
+wheel = w.Wheel(sys.argv[2])
+boundary = sys.argv[3]
+commit, write, project = wheel.commit, wheel.write, wheel.project
+def committed(state, effects):
+    result = commit(state, effects)
+    if boundary == 'commit' and state.get('pending'):
+        os._exit(73)
+    return result
+def written(name, value, **kwargs):
+    result = write(name, value, **kwargs)
+    if boundary == 'manifest' and name == 'manifests/flat.json':
+        os._exit(73)
+    return result
+def native(action, *args):
+    result = project(action, *args)
+    if boundary == 'create' and action == 'create':
+        os._exit(73)
+    return result
+wheel.commit, wheel.write, wheel.project = committed, written, native
+wheel.tick()
+raise AssertionError('crash boundary was not reached')
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(root), boundary],
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+
+    def test_native_dispatch_crash_resumes_only_unstarted_owned_run_once(self):
+        for boundary in ('commit', 'manifest', 'create'):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(prefix='rds-wheel-dispatch-') as directory:
+                wheel = fixture.prepare(Path(directory) / 'project', factors=['flat'])
+                fixture.bootstrap(wheel)
+                bootstrap = wheel.project('status')
+                frozen = {r['run_id']: canonical(r) for r in bootstrap['receipts']}
+                inputs = {p: p.read_bytes() for p in wheel.root.glob('*.json')}
+                inputs.update({p: p.read_bytes() for p in (wheel.root / 'trusted').iterdir()})
+                self.crash_dispatch(wheel.root, boundary)
+                crashed = wheel.project('status')
+                self.assertEqual(crashed['receipts'], bootstrap['receipts'])
+                state = read_json(wheel.state_path('state.json'))
+                self.assertEqual(state['pending']['manifest']['id'], 'flat')
+                self.assertFalse(state['pending']['submitted'])
+                preserved = {name: wheel.state_path(name).read_bytes()
+                             for name in ('factors.txt', 'inbox.jsonl', 'quota.json')}
+                self.assertEqual(wheel.tick(), 0)
+                completed = wheel.project('status')
+                runs = [r for r in completed['runs'] if r['id'] == 'flat']
+                receipts = [r for r in completed['receipts'] if r['run_id'] == 'flat']
+                self.assertEqual(len(runs), 1)
+                self.assertEqual(len(receipts), 1)
+                self.assertEqual(runs[0]['status'], 'COMPLETED')
+                self.assertEqual(runs[0]['attempt_id'], receipts[0]['attempt_id'])
+                self.assertTrue(runs[0]['attempt_id'])
+                from rds_project import ProjectStore
+                with ProjectStore(wheel.root)._db(True) as db:
+                    finishes = db.execute("SELECT COUNT(*) FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                                          "AND json_extract(body,'$.run_id')='flat'").fetchone()[0]
+                self.assertEqual(finishes, 1)
+                self.assertEqual(frozen, {r['run_id']: canonical(r) for r in completed['receipts']
+                                          if r['run_id'] in frozen})
+                self.assertEqual(preserved, {name: wheel.state_path(name).read_bytes() for name in preserved})
+                self.assertEqual(inputs, {p: p.read_bytes() for p in inputs})
+                self.assertEqual(completed['budget']['wall_seconds']['cap'], 90)
+                self.assertGreater(completed['budget']['wall_seconds']['spent_measured'],
+                                   crashed['budget']['wall_seconds']['spent_measured'])
+                self.assertEqual(wheel.tick(), 0)
+                self.assertEqual(wheel.project('status')['receipts'], completed['receipts'])
+                self.assertEqual(wheel.project('status')['budget'], completed['budget'])
+
+    def test_native_attempt_and_receiptless_terminal_observation_never_redispatch(self):
+        for boundary in ('attempt', 'terminal', 'missing_contract'):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(prefix='rds-wheel-attempt-') as directory:
+                wheel = fixture.prepare(Path(directory) / 'project', factors=['flat'])
+                fixture.bootstrap(wheel)
+                self.crash_dispatch(wheel.root, 'create')
+                if boundary == 'attempt':
+                    code = '''
+import os, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'scripts'))
+from rds_project import ProjectStore
+ProjectStore._execute_claim = lambda *args, **kwargs: os._exit(73)
+ProjectStore(sys.argv[2]).execute('flat')
+'''
+                    result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(wheel.root)],
+                                            capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+                elif boundary == 'terminal':
+                    wheel.project('execute', '--id', 'flat')
+                actual = wheel.project('status')
+                run = next(r for r in actual['runs'] if r['id'] == 'flat')
+                if boundary == 'missing_contract':
+                    self.assertIsNone(run['attempt_id'])
+                else:
+                    self.assertTrue(run['attempt_id'])
+                observation = deepcopy(actual)
+                observation['receipts'] = [r for r in observation['receipts'] if r['run_id'] != 'flat']
+                if boundary == 'missing_contract':
+                    # Unknown observed ownership is not a current-contract binding.
+                    # The actual native row and its unstarted attempt remain intact.
+                    next(r for r in observation['runs'] if r['id'] == 'flat').pop('effective_contract_sha256')
+                retained = {p: p.read_bytes() for p in wheel.directory.rglob('*') if p.is_file()}
+                original = wheel.project
+                calls = []
+                def observed(action, *args):
+                    calls.append((action, *args))
+                    return observation if action == 'status' else original(action, *args)
+                with patch.object(wheel, 'project', side_effect=observed):
+                    with self.assertRaises(wheel_module.WheelError) as error:
+                        wheel.tick()
+                    self.assertEqual(error.exception.code, 4)
+                self.assertFalse(any(c[0] in ('create', 'execute') for c in calls))
+                self.assertEqual(wheel.project('status'), actual)
+                self.assertEqual(retained, {p: p.read_bytes() for p in retained})
+
+    def test_native_screen_crash_preserves_dynamic_allowance_and_settles_quota_once(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-screen-') as directory:
+            wheel = fixture.prepare(Path(directory) / 'project', factors=[])
+            fixture.bootstrap(wheel)
+            row = {'proposal_id': str(uuid.uuid4()), 'proposer_id': 'researcher-a', 'kind': 'factor',
+                   'factor': 'screen_change', 'parent_contract_id': wheel.contract['contract_id'],
+                   'ts': '2026-10-08T00:00:00Z'}
+            wheel.append('inbox.jsonl', canonical(row) + '\n')
+            wheel.write('quota.json', {'researcher-a': 1})
+            original_inbox = wheel.state_path('inbox.jsonl').read_bytes()
+            original_quota = wheel.state_path('quota.json').read_bytes()
+            self.crash_dispatch(wheel.root, 'create')
+            state = read_json(wheel.state_path('state.json'))
+            pending = state['pending']
+            self.assertEqual(pending['kind'], 'screen')
+            self.assertEqual(pending['proposal'], row)
+            allowance = pending['manifest']['resource_estimates']['wall_seconds']
+            self.assertGreater(allowance, 0)
+            self.assertLessEqual(allowance * 1000, wheel.contract['screen_wall_ms'])
+            snapshot = wheel.project('status')
+            owned = next(r for r in snapshot['runs'] if r['id'] == 'screen_screen_change')
+            self.assertEqual(owned['status'], 'RESERVED')
+            self.assertIsNone(owned['attempt_id'])
+            self.assertEqual(owned['manifest'], pending['manifest'])
+            self.assertEqual(wheel.tick(), 0)
+            completed = wheel.project('status')
+            receipt = next(r for r in completed['receipts'] if r['run_id'] == 'screen_screen_change')
+            run = next(r for r in completed['runs'] if r['id'] == 'screen_screen_change')
+            self.assertEqual(run['attempt_id'], receipt['attempt_id'])
+            self.assertEqual(run['resource_estimates']['wall_seconds'], allowance)
+            self.assertEqual(wheel.state_path('inbox.jsonl').read_bytes(), original_inbox)
+            self.assertEqual(wheel.state_path('quota.json').read_bytes(), original_quota)
+            self.assertEqual(wheel.tick(), 0)
+            self.assertEqual(read_json(wheel.state_path('quota.json')), {'researcher-a': 2})
+            self.assertEqual(read_json(wheel.state_path('state.json'))['screened'], [row['proposal_id']])
+            self.assertEqual(wheel.tick(), 0)
+            self.assertEqual(read_json(wheel.state_path('quota.json')), {'researcher-a': 2})
+            self.assertEqual(wheel.state_path('inbox.jsonl').read_bytes(), original_inbox)
+            # The next ordinary tick may dispatch the newly admitted MAIN arm.
+            # It must not replay SCREEN or apply the proposal quota a second time.
+            after = wheel.project('status')
+            self.assertEqual(next(r for r in after['receipts'] if r['run_id'] == 'screen_screen_change'), receipt)
+            self.assertEqual(read_json(wheel.state_path('state.json'))['screened'], [row['proposal_id']])
+            from rds_project import ProjectStore
+            with ProjectStore(wheel.root)._db(True) as db:
+                finishes = db.execute("SELECT COUNT(*) FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                                      "AND json_extract(body,'$.run_id')='screen_screen_change'").fetchone()[0]
+            self.assertEqual(finishes, 1)
+
+    def test_mutable_data_paths_are_rejected_before_native_initialization(self):
+        initialize = Wheel.initialize
+        class DataRejected(Exception):
+            pass
+        for relative in ('agent/data.json', 'outputs/data.json', 'inbox/data.json', '.rds/wheel/data.json'):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory(prefix='rds-wheel-data-') as directory:
+                root = Path(directory) / 'project'
+                def relocate(wheel, contract_path):
+                    contract = read_json(contract_path)
+                    setup_path = root / 'trusted/wheel-setup.json'
+                    setup = read_json(setup_path)
+                    data = root / relative
+                    data.parent.mkdir(parents=True, exist_ok=True)
+                    data.write_bytes((root / 'trusted/data.json').read_bytes())
+                    setup['data_path'] = relative
+                    # Isolate explicit agent, output, inbox and wheel roots.
+                    setup['agent_writable_roots'] = ['agent']
+                    for template in [setup['control'], setup['initial']] + [t for r in setup['routes'].values() for t in r.values()]:
+                        template['argv'][template['argv'].index('--data') + 1] = relative
+                    setup_path.write_text(canonical(setup), encoding='utf-8')
+                    protocol_path = root / 'trusted/protocol.json'
+                    protocol = read_json(protocol_path)
+                    protocol['config_sha256'] = sha(setup_path)
+                    protocol_path.write_text(canonical(protocol), encoding='utf-8')
+                    for binding in contract['bindings']:
+                        if binding['role'] == 'data':
+                            binding['path'] = relative
+                        binding['sha256'] = sha(root / binding['path'])
+                    contract['allowed_commands'] = [t['argv'] for t in [setup['control'], setup['initial']]
+                                                   + [t for r in setup['routes'].values() for t in r.values()]]
+                    contract_path.write_text(canonical(contract), encoding='utf-8')
+                    before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+                    with self.assertRaisesRegex(wheel_module.WheelError, 'data slice is in an agent-writable tree'):
+                        initialize(wheel, contract_path)
+                    self.assertEqual(before, {p: p.read_bytes() for p in before})
+                    self.assertFalse((root / '.rds/project.sqlite3').exists())
+                    self.assertFalse(wheel.state_path('state.json').exists())
+                    raise DataRejected
+                with patch.object(Wheel, 'initialize', autospec=True, side_effect=relocate):
+                    with self.assertRaises(DataRejected):
+                        fixture.prepare(root)
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-trusted-') as directory:
+            wheel = fixture.prepare(Path(directory) / 'project')
+            self.assertEqual(wheel.project('status')['runs'], [])
+            self.assertEqual(read_json(wheel.state_path('state.json'))['ticks'], 0)
+
+    def test_concurrent_initializer_keeps_one_stable_lock_and_publication(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-concurrent-') as directory:
+            root = Path(directory) / 'project'
+            def prepare_only(wheel, contract_path):
+                wheel.setup(read_json(contract_path), initialized=False)
+            with patch.object(Wheel, 'initialize', autospec=True, side_effect=prepare_only):
+                fixture.prepare(root)
+            code = ("import sys,time; from pathlib import Path; "
+                    "sys.path.insert(0,sys.argv[1]+'/scripts'); from rds_wheel import Wheel; "
+                    "root=Path(sys.argv[2]); original=Wheel.initial_state; "
+                    "exec('def staged(self, factors):\\n original(self, factors)\\n (root/\"staging-ready\").touch()\\n deadline=time.monotonic()+15\\n while not (root/\"release-staging\").exists():\\n  assert time.monotonic()<deadline, \"test publication barrier timed out\"\\n  time.sleep(.02)'); "
+                    "Wheel.initial_state=staged; Wheel(root).initialize(root/'project-contract.json')")
+            process = subprocess.Popen([sys.executable, '-B', '-c', code, str(REPO), str(root)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 10
+                while not (root / 'staging-ready').exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertTrue((root / 'staging-ready').exists(), 'first initializer must hold the actual OS lock')
+                self.assertFalse((root / '.rds/wheel').exists())
+                lock_path = root / '.rds/wheel-init.lock'
+                identity = (lock_path.stat().st_dev, lock_path.stat().st_ino)
+                with self.assertRaisesRegex(ValueError, 'initialization is busy'):
+                    Wheel(root).initialize(root / 'project-contract.json')
+                self.assertEqual(identity, (lock_path.stat().st_dev, lock_path.stat().st_ino))
+                (root / 'release-staging').touch()
+                out, err = process.communicate(timeout=20)
+                self.assertEqual(process.returncode, 0, err.decode('utf-8', errors='replace'))
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+            wheel = Wheel(root)
+            self.assertEqual(lock_path.read_bytes(), b'0')
+            self.assertEqual(len(list(wheel.directory.iterdir())), 10)
+            self.assertEqual(wheel.project('status')['runs'], [])
+            before = {p.name: p.read_bytes() for p in wheel.directory.iterdir()}
+            with self.assertRaisesRegex(ValueError, 'already initialized'):
+                wheel.initialize(root / 'project-contract.json')
+            self.assertEqual(before, {p.name: p.read_bytes() for p in wheel.directory.iterdir()})
+
+    def test_initialization_write_and_publish_failures_retry_same_native_project(self):
+        for point in ('staging', 'publish'):
+            with self.subTest(point=point), tempfile.TemporaryDirectory(prefix='rds-wheel-stage-') as directory:
+                root = Path(directory) / 'project'
+                if point == 'staging':
+                    write = Wheel.write
+                    def fail_write(wheel, name, value, **kwargs):
+                        write(wheel, name, value, **kwargs)
+                        if name == 'band.json':
+                            raise OSError('injected staging write failure')
+                    injection = patch.object(Wheel, 'write', autospec=True, side_effect=fail_write)
+                else:
+                    injection = patch.object(wheel_module.os, 'rename', side_effect=OSError('injected publish failure'))
+                with injection, self.assertRaisesRegex(OSError, 'injected'):
+                    fixture.prepare(root)
+                self.assertFalse((root / '.rds/wheel').exists())
+                wheel = Wheel(root)
+                before = wheel.project('status') if point == 'publish' else None
+                wheel.initialize(root / 'project-contract.json')
+                after = wheel.project('status')
+                if before:
+                    self.assertEqual(after, before, 'matching init retry must preserve the actual ledger and budget')
+                self.assertEqual(after['runs'], [])
+                self.assertEqual(after['receipts'], [])
+                self.assertEqual(after['contract_sha256'], digest(read_json(root / 'project-contract.json')))
+                files = {p.name: p.read_bytes() for p in wheel.directory.iterdir() if p.is_file()}
+                self.assertEqual(len(files), 10)
+                with self.assertRaisesRegex(ValueError, 'already initialized'):
+                    wheel.initialize(root / 'project-contract.json')
+                self.assertEqual(files, {p.name: p.read_bytes() for p in wheel.directory.iterdir() if p.is_file()})
+
+    def test_process_exit_after_native_init_allows_matching_retry_only(self):
+        with tempfile.TemporaryDirectory(prefix='rds-wheel-crash-') as directory:
+            root = Path(directory) / 'project'
+            code = ("import sys,os,importlib.util; from pathlib import Path; from unittest.mock import patch; "
+                    "sys.path.insert(0,sys.argv[1]+'/scripts'); import rds_wheel; "
+                    "s=importlib.util.spec_from_file_location('f',sys.argv[1]+'/examples/wheel/prepare.py'); "
+                    "f=importlib.util.module_from_spec(s); s.loader.exec_module(f); "
+                    "p=patch.object(rds_wheel.os,'rename',side_effect=lambda *a:os._exit(73)); p.start(); "
+                    "f.prepare(Path(sys.argv[2]))")
+            result = subprocess.run([sys.executable, '-B', '-c', code, str(REPO), str(root)], capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 73, result.stderr.decode('utf-8', errors='replace'))
+            self.assertFalse((root / '.rds/wheel').exists())
+            wheel = Wheel(root)
+            before = wheel.project('status')
+            contract_path = root / 'project-contract.json'
+            original = read_json(contract_path)
+            contract_path.write_text(canonical({**original, 'description': 'different contract'}), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'Contract is frozen'):
+                wheel.initialize(contract_path)
+            self.assertFalse(wheel.directory.exists())
+            self.assertEqual(before, wheel.project('status'))
+            contract_path.write_text(canonical(original), encoding='utf-8')
+            wheel.initialize(contract_path)
+            self.assertEqual(before, wheel.project('status'))
+            self.assertEqual(read_json(wheel.state_path('state.json'))['ticks'], 0)
+
+    def test_project_init_rejection_leaves_wheel_uninitialized_for_corrected_retry(self):
+        with tempfile.TemporaryDirectory(prefix="rds-wheel-init-retry-") as directory:
+            root = Path(directory) / "project"
+            initialize = Wheel.initialize
+            original = {}
+
+            def reject_missing_code(wheel, contract_path):
+                contract = read_json(contract_path)
+                original.update(deepcopy(contract))
+                contract["bindings"] = [b for b in contract["bindings"] if b["role"] != "code"]
+                contract_path.write_text(canonical(contract) + "\n", encoding="utf-8")
+                return initialize(wheel, contract_path)
+
+            # Keep all wheel-specific inputs valid; the real kernel rejects the
+            # missing role. No FakeProject or bootstrap execution is involved.
+            with patch.object(Wheel, "initialize", autospec=True, side_effect=reject_missing_code):
+                with self.assertRaisesRegex(wheel_module.WheelError, "code/config/data/evaluator/protocol bindings required"):
+                    fixture.prepare(root)
+            self.assertFalse((root / ".rds/wheel").exists())
+            frozen = {p: p.read_bytes() for p in (root / "trusted").iterdir()}
+            contract_path = root / "project-contract.json"
+            contract_path.write_text(canonical(original) + "\n", encoding="utf-8")
+            wheel = Wheel(root)
+            wheel.initialize(contract_path)
+            status = wheel.project("status")
+            self.assertEqual(status["contract"], original)
+            self.assertEqual(status["contract_sha256"], digest(original))
+            self.assertEqual(status["runs"], [])
+            self.assertEqual(status["receipts"], [])
+            budget = status["budget"]["wall_seconds"]
+            self.assertEqual(budget["cap"], original["budget"]["wall_seconds"])
+            self.assertEqual(budget["remaining"], budget["cap"])
+            self.assertEqual(read_json(wheel.state_path("state.json"))["ticks"], 0)
+            self.assertEqual(frozen, {p: p.read_bytes() for p in frozen})
+
     def test_real_project_cli_fixture_uses_original_receipts_until_pause(self):
         with tempfile.TemporaryDirectory(prefix="rds-wheel-cli-") as directory:
             root = Path(directory) / "project"

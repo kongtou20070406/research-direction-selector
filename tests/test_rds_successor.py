@@ -123,6 +123,99 @@ class SuccessorTests(unittest.TestCase):
     def candidate(self):
         return self.search(self.first)["search"]["candidates"][0]
 
+    def activate_first(self):
+        from rds_project_lifecycle import enable_advisor
+        declaration = copy.deepcopy(CONTEXT['decision'])
+        declaration['goal_conditions'] = [{'fact': 'run.r1.completed', 'value': True}]
+        policy = {'schema': 1, 'context': {'decision': declaration}, 'graph': graph(),
+                  'routes': [{'candidate': 'root-test', 'manifest': self.spec()}], 'observations': []}
+        preview = enable_advisor(self.store, policy)
+        enabled = enable_advisor(self.store, policy, apply=True, expected_snapshot=preview['snapshot_sha256'])
+        self.assertEqual(enabled['status'], 'ADVISOR_ENABLED')
+        return enabled
+
+    def test_activated_predecessor_retains_pinned_genesis_rejection(self):
+        candidate = self.candidate()
+        self.record(self.first, 'genesis-rejected', candidate)
+        self.activate_first()
+        save_checkpoint(self.first, 'activated-opaque', self.store.snapshot(), kind='project')
+        before = ledger_dump(self.first)
+        root, contract = self.phase('after-activation')
+        successor = ProjectStore(root)
+        successor.initialize(contract, supersedes=str(self.first))
+        self.assertEqual(successor.predecessor_chain()[0]['status'], 'VERIFIED')
+        output = self.search(root)['search']
+        self.assertEqual(output['candidates'], [])
+        self.assertEqual(output['blocked_candidates'][-1]['loop_review']['checkpoint_id'], 'genesis-rejected')
+        self.assertFalse(any(flag['kind'] in {'PREDECESSOR_CHAIN_UNVERIFIED', 'LOOP_HISTORY_REVIEW_ERROR'}
+                             for flag in output['loop_review']['flags']))
+        self.assertEqual(ledger_dump(self.first), before)
+
+    def test_activated_predecessor_rejects_manual_choice_and_successor_retains_genesis(self):
+        candidate = self.candidate()
+        self.record(self.first, 'genesis-accepted', candidate, outcome='accepted')
+        self.activate_first()
+        before = ledger_dump(self.first)
+        with self.assertRaisesRegex(ValueError, 'owns decision checkpoints'):
+            self.record(self.first, 'activated-rejected', candidate)
+        self.assertEqual(ledger_dump(self.first), before)
+        root, contract = self.phase('mixed-lineage')
+        ProjectStore(root).initialize(contract, supersedes=str(self.first))
+        output = self.search(root)['search']
+        self.assertEqual([row['id'] for row in output['candidates']], [candidate['id']])
+        self.assertFalse(any(flag['kind'] == 'PREDECESSOR_CHAIN_UNVERIFIED'
+                             for flag in output['loop_review']['flags']))
+        # A legacy successor's own later decision still takes precedence over genesis.
+        self.record(root, 'successor-rejected', candidate)
+        self.assertEqual(self.search(root)['search']['candidates'], [])
+        self.assertEqual(self.search(root)['search']['blocked_candidates'][-1]['loop_review']['checkpoint_id'], 'successor-rejected')
+
+    def test_activation_after_supersession_invalidates_original_contract_pin(self):
+        self.record(self.first, 'genesis-rejected', self.candidate())
+        root, contract = self.phase('pinned-before-activation')
+        ProjectStore(root).initialize(contract, supersedes=str(self.first))
+        self.activate_first()
+        chain = ProjectStore(root).predecessor_chain()
+        self.assertEqual(chain[0]['status'], 'MISMATCH')
+        self.assertIn('Predecessor contract differs', chain[0]['reason'])
+        output = self.search(root)['search']
+        self.assertTrue(output['candidates'])
+        self.assertIn('PREDECESSOR_CHAIN_UNVERIFIED', {flag['kind'] for flag in output['loop_review']['flags']})
+
+    def test_predecessor_lineage_is_revalidated_after_chain_check(self):
+        candidate = self.candidate()
+        self.record(self.first, 'genesis-rejected', candidate)
+        self.activate_first()
+        root, contract = self.phase('lineage-revalidation')
+        ProjectStore(root).initialize(contract, supersedes=str(self.first))
+        original_check, checked = ProjectStore.predecessor_chain, []
+        def corrupt_after_check(store, *args, **kwargs):
+            chain = original_check(store, *args, **kwargs)
+            if not checked:
+                checked.append(chain)
+                db = sqlite3.connect(self.first / '.rds/project.sqlite3')
+                try:
+                    row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='ADVISOR_POLICY_ENABLED'").fetchone()
+                    value = json.loads(row[1])
+                    value['parent_sha256'] = '0' * 64
+                    value['sha256'] = digest({key: field for key, field in value.items() if key != 'sha256'})
+                    db.execute('DROP TRIGGER IF EXISTS events_no_update')
+                    db.execute('DROP TRIGGER IF EXISTS event_no_update')
+                    db.execute('UPDATE events SET body=? WHERE id=?', (canonical(value), row[0]))
+                    db.commit()
+                finally:
+                    db.close()
+            return chain
+        with mock.patch.object(ProjectStore, 'predecessor_chain', corrupt_after_check):
+            output = self.search(root)['search']
+        self.assertEqual(checked[0][0]['status'], 'VERIFIED')
+        review = output['loop_review']
+        refusal = next(flag for flag in review['flags'] if flag['kind'] == 'PREDECESSOR_CHAIN_UNVERIFIED')
+        self.assertIn('Advisor activation lineage mismatch', refusal['reason'])
+        self.assertTrue(output['candidates'])
+        self.assertFalse(output.get('blocked_candidates'))
+        self.assertFalse(any('predecessor root(s)' in line for line in review['limitations']))
+
     def test_link_pins_digests_and_never_writes_the_predecessor(self):
         self.store.register(self.spec())
         self.store.execute("r1")
@@ -186,7 +279,9 @@ class SuccessorTests(unittest.TestCase):
         # The frozen-contract rejection names the link that keeps the next phase in one study ledger.
         with self.assertRaises(ValueError) as caught:
             ProjectStore(root).initialize(dict(contract, description="changed"))
-        self.assertTrue(str(caught.exception).startswith("Contract is frozen; use a new project root"))
+        self.assertTrue(str(caught.exception).startswith("Contract is frozen; reuse this project for additional runs."))
+        self.assertIn("project enable-advisor", str(caught.exception))
+        self.assertIn("project revise", str(caught.exception))
         self.assertIn("project init --supersedes", str(caught.exception))
         self.assertIn(str(root.resolve()), str(caught.exception))
 
@@ -425,14 +520,14 @@ class SuccessorTests(unittest.TestCase):
         root, contract = self.phase("second")
         (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
         completed = subprocess.run([sys.executable, "-B", str(ROOT / "scripts" / "rds_cli.py"), "--root", str(root),
-                                    "project", "init", "--contract", str(root / "contract.json"),
+                                    "project", "init", "--mode", "quick", "--contract", str(root / "contract.json"),
                                     "--supersedes", str(self.first)], capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(completed.stdout)["predecessor_chain"][0]["status"], "VERIFIED")
         missing, contract = self.phase("third")
         (missing / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
         completed = subprocess.run([sys.executable, "-B", str(ROOT / "scripts" / "rds_cli.py"), "--root", str(missing),
-                                    "project", "init", "--contract", str(missing / "contract.json"),
+                                    "project", "init", "--mode", "quick", "--contract", str(missing / "contract.json"),
                                     "--supersedes", str(Path(self.tmp.name) / "nowhere")],
                                    capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(completed.returncode, 1)
@@ -471,7 +566,7 @@ class SuccessorTests(unittest.TestCase):
         def init(root, contract, predecessor):
             (root / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
             completed = subprocess.run([sys.executable, "-B", str(ROOT / "scripts" / "rds_cli.py"), "--root", str(root),
-                                        "project", "init", "--contract", str(root / "contract.json"),
+                                        "project", "init", "--mode", "quick", "--contract", str(root / "contract.json"),
                                         "--supersedes", str(predecessor)], capture_output=True, encoding="utf-8", timeout=30)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             chain = json.loads(completed.stdout)["predecessor_chain"]
@@ -489,10 +584,7 @@ class SuccessorTests(unittest.TestCase):
 
 
 class RevisedPredecessorTests(unittest.TestCase):
-    """Synthetic method changes must not erase an intact predecessor's choices."""
-
-    search = SuccessorTests.search
-    record = SuccessorTests.record
+    """Revised checkpoints stay bound to their own contracts across a successor link."""
 
     def setUp(self):
         helper = test_rds_method_revision.MethodRevisionTests()
@@ -501,39 +593,46 @@ class RevisedPredecessorTests(unittest.TestCase):
         self.helper, self.first, self.store = helper, helper.root, helper.store
         self.tmp = tempfile.TemporaryDirectory(prefix="rds revised successor ")
         self.addCleanup(self.tmp.cleanup)
-        self.candidate = self.search(self.first)["search"]["candidates"][0]
 
-    def revise_and_link(self, record_revision=True):
-        self.record(self.first, "genesis-choice", self.candidate,
-                    "accepted" if record_revision else "rejected")
+    def revise_and_link(self, record_revised_checkpoint=True):
+        save_checkpoint(self.first, "genesis-context", self.store.snapshot(), kind="project")
         from rds_method_revision import apply
         apply(self.store, self.helper.proposal())
-        if record_revision:
-            self.record(self.first, "revised-choice", self.candidate)
+        if record_revised_checkpoint:
+            save_checkpoint(self.first, "revised-context", self.store.snapshot(), kind="project")
         root = Path(self.tmp.name) / "successor"
         shutil.copytree(self.first, root, ignore=shutil.ignore_patterns(".rds", "outputs"))
         ProjectStore(root).initialize(self.store.snapshot()["contract"], supersedes=str(self.first))
         return root
 
-    def test_verified_revisions_keep_genesis_and_effective_choices(self):
+    def search(self, root):
+        state = ProjectStore(root).snapshot()
+        graph = state["contract"]["advisor_policy"]["graph"]
+        rows = RDSAdvisor(root).recommend_next_directions(state, graph)
+        return next(row for row in rows if row["type"] == "EXECUTABLE_DIRECTION_SEARCH")["search"]
+
+    def test_verified_revisions_keep_checkpoints_bound_to_each_contract(self):
         root = self.revise_and_link()
         before = ledger_dump(self.first)
-        self.assertEqual(ProjectStore(root).predecessor_chain()[0]["status"], "VERIFIED")
-        output = self.search(root)["search"]
-        self.assertEqual([f["kind"] for f in output["loop_review"]["flags"]], ["REPEAT_REJECTED_ROUTE"])
-        self.assertEqual(output["candidates"], [])
-        blocked = output["blocked_candidates"][-1]["loop_review"]
-        self.assertEqual(blocked["checkpoint_id"], "revised-choice")
-        self.assertEqual(Path(blocked["root"]), self.first.resolve())
+        chain = ProjectStore(root).predecessor_chain()
+        self.assertEqual(chain[0]["status"], "VERIFIED")
+        output = self.search(root)
+        self.assertEqual(output["loop_review"]["status"], "RECORDED_HISTORY_REVIEWED")
+        self.assertFalse(any(f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED"
+                             for f in output["loop_review"]["flags"]))
+        self.assertTrue(any("History includes pinned records from 1 predecessor root(s)" in line
+                            for line in output["loop_review"]["limitations"]))
+        self.assertEqual([item["id"] for item in chain[0]["checkpoint_shas"]],
+                         ["genesis-context", "revised-context"])
         self.assertEqual(ledger_dump(self.first), before)
 
-    def test_genesis_choice_survives_a_verified_method_revision(self):
-        root = self.revise_and_link(record_revision=False)
+    def test_genesis_checkpoint_survives_a_verified_method_revision(self):
+        root = self.revise_and_link(record_revised_checkpoint=False)
         before = ledger_dump(self.first)
-        output = self.search(root)["search"]
-        self.assertEqual([f["kind"] for f in output["loop_review"]["flags"]], ["REPEAT_REJECTED_ROUTE"])
-        self.assertEqual(output["candidates"], [])
-        self.assertEqual(output["blocked_candidates"][-1]["loop_review"]["checkpoint_id"], "genesis-choice")
+        output = self.search(root)
+        self.assertEqual(output["loop_review"]["status"], "RECORDED_HISTORY_REVIEWED")
+        [hop] = ProjectStore(root).snapshot()["predecessor_chain"]
+        self.assertEqual(hop["checkpoint_ids"], ["genesis-context"])
         self.assertEqual(ledger_dump(self.first), before)
 
     def test_new_method_revision_after_pin_is_not_admitted(self):
@@ -543,7 +642,6 @@ class RevisedPredecessorTests(unittest.TestCase):
         from rds_project import file_sha
         changed = False
         state = ProjectStore(root).snapshot()
-        state["advisor_context"] = copy.deepcopy(CONTEXT)
 
         def changed_after_check(store, *args, **kwargs):
             nonlocal changed
@@ -553,25 +651,36 @@ class RevisedPredecessorTests(unittest.TestCase):
             changed = True
             source = self.first / "second-replacement.py"
             source.write_text(test_rds_method_revision.NEW + "\nassert p.is_file()\n", encoding="utf-8")
-            proposal = self.helper.proposal("second-repair")
-            proposal["code_replacements"] = [{"path": "code.py", "source": source.name,
-                                               "sha256": file_sha(source)}]
+            live = self.store.snapshot()
+            proposal = {"id": "second-repair", "parent_sha256": live["contract_sha256"],
+                        "reason": "Exercise a predecessor contract change after the successor pin",
+                        "policy": copy.deepcopy(live["contract"]["advisor_policy"]),
+                        "code_replacements": [{"path": "code.py", "source": source.name,
+                                               "sha256": file_sha(source)}]}
             apply(self.store, proposal)
             return chain
 
+        state = ProjectStore(root).snapshot()
+        graph = state["contract"]["advisor_policy"]["graph"]
         with mock.patch.object(ProjectStore, "predecessor_chain", changed_after_check):
-            rows = RDSAdvisor(root).recommend_next_directions(state, graph())
+            rows = RDSAdvisor(root).recommend_next_directions(state, graph)
         output = next(row for row in rows if row["type"] == "EXECUTABLE_DIRECTION_SEARCH")["search"]
         flag = next(f for f in output["loop_review"]["flags"] if f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED")
         self.assertIn("Predecessor contract integrity failure", flag["reason"])
-        self.assertEqual([c["id"] for c in output["candidates"]], [self.candidate["id"]])
+        self.assertTrue(output["candidates"])
 
     def test_tampered_revision_checkpoint_remains_excluded(self):
         root = self.revise_and_link()
-        tamper(self.first, "checkpoints", "body", "{}")
-        output = self.search(root)["search"]
+        db = sqlite3.connect(self.first / ".rds" / "project.sqlite3")
+        try:
+            db.execute("DROP TRIGGER checkpoint_no_update")
+            db.execute("UPDATE checkpoints SET body='{}' WHERE id='revised-context'")
+            db.commit()
+        finally:
+            db.close()
+        output = self.search(root)
         self.assertTrue(any(f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED" for f in output["loop_review"]["flags"]))
-        self.assertEqual([c["id"] for c in output["candidates"]], [self.candidate["id"]])
+        self.assertTrue(output["candidates"])
 
 
 if __name__ == "__main__":

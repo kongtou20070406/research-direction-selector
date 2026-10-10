@@ -21,6 +21,7 @@ ASSURANCE = 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
 MAX_RUNS = 128
 MAX_ARTIFACTS = 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_REPORT_BYTES = 32 * 1024 * 1024
 TERMINAL = {'COMPLETED', 'FAILED', 'INTERRUPTED'}
 CONTEXT_FIELDS = {'decision', 'research_mode', 'method_constraints', 'scope',
                   'max_depth', 'max_candidates', 'target_types', 'targets'}
@@ -49,7 +50,9 @@ def validate_policy(store, contract):
     goals = decision.get('goal_conditions')
     require(isinstance(goals, list) and 1 <= len(goals) <= 32, 'Owned Advisor needs explicit goal_conditions')
     require(all(isinstance(g, dict) and set(g) <= {'fact', 'op', 'value'} and _text(g.get('fact'))
-                and 'value' in g for g in goals), 'Invalid owned goal condition')
+                and 'value' in g and isinstance(g.get('op', 'eq'), str)
+                and g.get('op', 'eq') in {'eq', 'ne', 'in', 'lt', 'lte', 'gt', 'gte'}
+                for g in goals), 'Invalid owned goal condition')
     require(isinstance(graph, dict) and set(graph) <= {'nodes', 'edges', 'schema'}, 'Invalid owned judgment graph')
     require(isinstance(graph.get('nodes'), list) and len(graph['nodes']) <= 128
             and isinstance(graph.get('edges'), list) and len(graph['edges']) <= 512, 'Owned graph limits exceeded')
@@ -79,6 +82,9 @@ def validate_policy(store, contract):
                 history = contract_history(db)
                 retained = {r['id']: r for r in store._runs(db)}
     require(isinstance(routes, list) and 1 <= len(routes) <= 64, 'Owned routes must contain 1..64 manifests')
+    if 'max_candidates' in context:
+        require(type(context['max_candidates']) is int and 1 <= context['max_candidates'] <= 64,
+                'Owned max_candidates must be an integer within the 1..64 candidate limit')
     ids, candidates, output_owners = {}, set(), set()
     manifest_fields = {'schema', 'id', 'arm', 'control_id', 'protocol', 'argv', 'outpaths',
                        'resource_estimates', 'timeout_seconds', 'description'}
@@ -146,7 +152,8 @@ def validate_policy(store, contract):
     require(all(g['fact'] in fact_ids | lifecycle for g in goals), 'Goal predicates must refer to owned observations or lifecycle facts')
     # Existing graph validation and method checks remain authoritative.
     from rds_advisor_search import search_directions
-    search_directions(graph, {**deepcopy(context), 'facts': {}})
+    search_directions(graph, {**deepcopy(context), 'facts': {}},
+                      max_candidates=context.get('max_candidates', max(12, len(routes))))
     from rds_feasibility import validate
     validate(store, contract, policy)
     if 'tool_bindings' in policy:
@@ -180,10 +187,8 @@ def _state(store, db):
                 'Owned receipt has no matching completion event')
         completed.append(receipt['sha256'])
     campaign = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED' ORDER BY id LIMIT 1").fetchone()
-    history = [{'sha256': digest(contract), 'contract': contract}]
-    if 'method_evolution' in contract:
-        from rds_method_revision import contract_history
-        history = contract_history(db)
+    from rds_method_revision import contract_history
+    history = contract_history(db)
     from rds_owned_history import history_cut
     try:
         verified_history = history_cut(store, db)
@@ -296,17 +301,20 @@ def _collect(store, state):
                 'parsed_observations': 0, 'declared_outputs': [], 'unparsed_outputs': [], 'gaps': [], 'errors': errors}
     requested = {(o['run_id'], o['path']) for o in policy['observations']} if policy else set()
     contract_source = {'locator': 'project contract ' + digest(state['contract'])}
-    nodes.append(_node('contract', 'SUPPORTED', contract_source, claim='The frozen project contract was read'))
+    nodes.append(_node('contract', 'SUPPORTED', contract_source, record_kind='contract',
+                       claim='The frozen project contract was read'))
     for rid, run in runs.items():
         receipt = receipts.get(rid)
         require(run['status'] not in TERMINAL or receipt is not None, 'Terminal owned run has no receipt: ' + rid)
         nodes.append(_node('run:' + rid, 'SUPPORTED', {'locator': 'owned run ' + rid},
+                           record_kind='run', run_id=rid,
                            lifecycle_status=run['status'], manifest_sha256=run['manifest_sha256']))
         if receipt is None:
             for relative in run['manifest']['outpaths']:
                 coverage['declared_outputs'].append({'run_id': rid, 'path': relative, 'status': 'PENDING'})
                 nodes.append(_node('output:' + digest((rid, relative)), 'UNKNOWN',
                                    {'locator': 'pending declared output ' + rid + ':' + relative},
+                                   record_kind='declared_output', output_path=relative,
                                    interpretation='PENDING', run_id=rid))
             continue
         require(receipt.get('manifest_sha256') == run['manifest_sha256'] and receipt.get('attempt_id') == run['attempt_id']
@@ -330,7 +338,8 @@ def _collect(store, state):
             require(bound_contract is not None and receipt.get('bindings_before') == receipt.get('bindings_after') == bound_contract['bindings'],
                     'Successful owned receipt input bindings differ: ' + rid)
         source = {'locator': 'owned receipt ' + receipt['sha256']}
-        nodes.append(_node('receipt:' + rid, 'SUPPORTED', source, receipt_sha256=receipt['sha256'],
+        nodes.append(_node('receipt:' + rid, 'SUPPORTED', source, record_kind='receipt', run_id=rid,
+                           receipt_id=receipt['sha256'], receipt_sha256=receipt['sha256'],
                            outcome=receipt['run_status'], scientific_support='UNKNOWN'))
         edges.append({'id': OWNED_PREFIX + 'completion:' + rid, 'premises': [OWNED_PREFIX + 'run:' + rid],
                       'conclusion': OWNED_PREFIX + 'receipt:' + rid, 'status': 'SUPPORTED', 'source': source})
@@ -364,7 +373,8 @@ def _collect(store, state):
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 errors.append({'run_id': rid, 'path': item['path'], 'reason': str(exc)})
                 node_status = 'UNKNOWN'
-            nodes.append(_node('artifact:' + digest(key), node_status, source, run_id=rid,
+            nodes.append(_node('artifact:' + digest(key), node_status, source, record_kind='artifact', run_id=rid,
+                               receipt_id=receipt['sha256'], artifact_path=item['path'],
                                interpretation='UNPARSED', scientific_support='UNKNOWN'))
             if item.get('kind') == 'project_output':
                 output_statuses[item['path']] = 'VERIFIED_BYTES' if node_status == 'SUPPORTED' else 'UNAVAILABLE_OR_CHANGED'
@@ -378,6 +388,7 @@ def _collect(store, state):
             if status == 'MISSING':
                 nodes.append(_node('output:' + digest((rid, relative)), 'UNKNOWN',
                                    {'locator': 'missing declared output ' + rid + ':' + relative},
+                                   record_kind='declared_output', output_path=relative, receipt_id=receipt['sha256'],
                                    interpretation='MISSING', run_id=rid))
                 if expected_status == 'SUCCEEDED':
                     errors.append({'run_id': rid, 'path': relative, 'reason': 'Successful receipt omitted a declared output'})
@@ -394,7 +405,11 @@ def _collect(store, state):
             fid = 'run.' + rid + '.' + key
             fact = {'id': fid, 'value': value, 'kind': 'DERIVED', 'source': {'locator': 'owned lifecycle ' + rid},
                     'reliable': True}
-            nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], owned_fact=fact))
+            binding = {'run_id': rid} if run else {}
+            if receipt:
+                binding['receipt_id'] = receipt['sha256']
+            nodes.append(_node('fact:' + fid, 'SUPPORTED', fact['source'], record_kind='lifecycle_fact',
+                               route_id=rid, **binding, owned_fact=fact))
     observations = policy['observations'] if policy else []
     last_uses = {(obs['run_id'], obs['path']): i for i, obs in enumerate(observations)}
     for position, obs in enumerate(observations):
@@ -409,11 +424,16 @@ def _collect(store, state):
                                       'locator': 'verified original over JSON parse byte limit'}
                     raise ValueError('Verified original JSON exceeds the ' + str(MAX_JSON_BYTES) + '-byte parse limit')
                 require((rid, relative) in originals, 'Declared output missing, changed or over JSON byte limit')
+                # originals contains only bytes whose declared size/hash passed
+                # _read_original. Preserve that identity even if parsing fails.
+                artifact = next(a for a in receipt['artifacts'] if a['path'] == relative)
+                fact['source'] = {'path': relative, 'sha256': artifact['sha256'],
+                                  'receipt_id': receipt['sha256'],
+                                  'locator': 'verified original owned output ' + rid + ':' + relative}
                 value, locator, _ = originals[rid, relative].extract(obs['selector'], 'metric', 'json')
                 require(value is None or isinstance(value, (str, bool, int, float)), 'Owned observation must be a JSON scalar')
                 require(not isinstance(value, (int, float)) or math.isfinite(value), 'Owned observation must be finite')
                 reliable = receipt['run_status'] == 'SUCCEEDED'
-                artifact = next(a for a in receipt['artifacts'] if a['path'] == relative)
                 fact.update(value=value, kind='OBSERVED' if reliable else 'UNKNOWN', reliable=reliable,
                             source={'path': relative, 'sha256': artifact['sha256'], 'locator': locator,
                                     'receipt_id': receipt['sha256']},
@@ -431,7 +451,11 @@ def _collect(store, state):
                 # lifecycle facts. Corrupt successful evidence fails closed.
                 destination = errors if receipt['run_status'] == 'SUCCEEDED' and (rid, relative) not in oversized_json else coverage['gaps']
                 destination.append({'run_id': rid, 'fact': fid, 'reason': str(exc)})
-        nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'], owned_fact=fact))
+        binding = {'run_id': rid} if rid in runs else {}
+        if receipt:
+            binding['receipt_id'] = receipt['sha256']
+        nodes.append(_node('fact:' + fid, 'SUPPORTED' if fact['reliable'] else 'UNKNOWN', fact['source'],
+                           record_kind='observation', route_id=rid, output_path=relative, **binding, owned_fact=fact))
         if (rid, relative) in originals and position == last_uses[rid, relative]:
             originals[rid, relative].clear()
     if policy and 'autonomy' in policy:
@@ -537,12 +561,20 @@ def review(store, persist=True):
               'telemetry': telemetry,
               'coverage': coverage, 'snapshot_sha256': snapshot_sha, 'selected_run': None, 'selected_manifest': None,
               'recommendations': [], 'warnings': [], 'next_move': None, 'evidence_files': files}
+    from rds_hypergraph import record_topology
+    result.update(record_topology(spec))
     if policy:
         context = deepcopy(policy['context'])
+        context.setdefault('max_candidates', max(12, len(policy['routes'])))
         if 'confirmation' in policy:
             context['decision']['goal_conditions'] = effective_goals
         context['facts'] = _facts(spec)
         context['dependency_map'] = spec
+        # The same snapshot identity is consumed by direct API and CLI callers.
+        # A nonpersistent diagnostic is scoped to its supplied collected map.
+        if persist:
+            from rds_advisor_coverage import project_context
+            context = project_context(store.root, context)
         budget = {r['resource']: max(0, r['cap'] - r['spent'] - r['charged'] - r['reserved']) for r in state['budget']}
         identity = {'resource': 'wall_seconds', 'unit': 'seconds', 'comparison_group': 'owned-project',
                     'source': {'locator': 'owned project budget'}}
@@ -566,13 +598,15 @@ def review(store, persist=True):
             from rds_owned_tools import applicable, gate_graph
             tool_reports = applicable(store, state['contract'], context['facts'])
             graph = gate_graph(graph, tool_reports, context['facts'])
-        recommendations = RDSAdvisor(store.root).recommend_next_directions(
-            state_for_advisor, graph, priority_action_ids=priority)
+        recommendations = RDSAdvisor(store.root)._recommend_next_directions(
+            state_for_advisor, graph, priority_action_ids=priority, _collected_context=not persist)
         advice = {'advisor_type': 'STRATEGIC_RESEARCH_ADVICE', 'recommendations': recommendations,
                   'recommendations_count': len(recommendations)}
         result.update(advice=advice, recommendations=recommendations, context=context)
         searches = [r['search'] for r in recommendations if r.get('type') == 'EXECUTABLE_DIRECTION_SEARCH']
         selection = searches[0]['selection_review'] if searches else {}
+        result['analysis_coverage'] = deepcopy(searches[0].get('analysis_coverage', {})) if searches else {}
+        complete = result['analysis_coverage'].get('full') is True
         if policy.get('tool_bindings'):
             from rds_owned_tools import consumption
             result['tool_utilization'] = consumption(store, state, context['facts'], tool_reports, selection, searches)
@@ -687,7 +721,7 @@ def review(store, persist=True):
                                                 frontier, precedence=precedence)
             if result['graph_ranker']['selection_applied']:
                 chosen = ranked
-        if not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
+        if complete and not coverage['errors'] and chosen and selection.get('goal', {}).get('status') != 'TRUE':
             route = chosen[0]
             # Every dispatch, including a reservation, must still satisfy the
             # ordinary method, history and current evidence checks.
@@ -699,6 +733,10 @@ def review(store, persist=True):
         if coverage['errors']:
             result['status'] = 'COLLECTION_FAILED'
             result['warnings'].append({'kind': 'OWNED_EVIDENCE_INCOMPLETE', 'errors': deepcopy(coverage['errors'])})
+        elif not complete:
+            result.update(status='INCOMPLETE_ANALYSIS', selected_run=None, selected_manifest=None,
+                          next_move={'kind': 'COMPLETE_GRAPH_ANALYSIS', 'authorization': 'UNCHANGED',
+                                     'reason': 'Resolve incomplete graph analysis before dispatch; retain every active graph record'})
         if 'confirmation' in policy:
             from rds_domain_confirmation import inspect_confirmation
             try:
@@ -709,7 +747,7 @@ def review(store, persist=True):
     from rds_global_planning import build as shadow_plan
     result['shadow_plan'] = shadow_plan(state, result, admitted_runs=[r['manifest']['id'] for r in active + eligible] if policy else [])
     if persist:
-        ref = cas_json(store.root, result)
+        ref = cas_json(store.root, result, max_bytes=MAX_REPORT_BYTES)
         if result.get('tool_utilization'):
             from rds_owned_tools import record_consumption
             record_consumption(store, result['tool_utilization'], ref)
@@ -721,6 +759,7 @@ def review(store, persist=True):
 def prepare_admission(store, spec):
     report = review(store)
     require(report['status'] == 'REVIEWED' and report['selected_run'] == spec.get('id')
+            and report.get('analysis_coverage', {}).get('full') is True
             and report['selected_manifest'] == spec, 'Owned Advisor did not select this frozen manifest; inspect project next')
     from rds_owned_history import prepare_decision
     with store._db(True) as db:
@@ -728,12 +767,14 @@ def prepare_admission(store, spec):
     return {'fingerprint': report['fingerprint'], 'selected_run': report['selected_run'],
             'manifest_sha256': digest(spec), 'evidence_files': report['evidence_files'],
             'decision': prepare_decision(store, report, contract),
-            'snapshot_sha256': report['snapshot_sha256'], 'telemetry': deepcopy(report['telemetry'])}
+            'snapshot_sha256': report['snapshot_sha256'], 'telemetry': deepcopy(report['telemetry']),
+            'analysis_coverage': deepcopy(report['analysis_coverage'])}
 
 
 def check_admission(store, db, spec, token):
     """No nested write connection: called under the caller's BEGIN IMMEDIATE."""
     require(isinstance(token, dict) and token.get('selected_run') == spec.get('id')
+            and token.get('analysis_coverage', {}).get('full') is True
             and token.get('manifest_sha256') == digest(spec), 'Owned admission manifest binding mismatch')
     _reconcile(_state(store, db), token['fingerprint'], token.get('telemetry'),
                'Owned state changed after Advisor selection; retry admission')

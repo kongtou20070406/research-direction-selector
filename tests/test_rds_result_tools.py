@@ -157,6 +157,23 @@ class JSONResultTests(unittest.TestCase):
 
 
 class MetricComparisonTests(unittest.TestCase):
+    def test_mixed_scalar_difference_preserves_original_integer_low_bits(self):
+        code, _ = extract_function((ROOT / 'scripts/rds_result_tools.py').read_bytes(), 'compare_metrics')
+        namespace = {}
+        exec(compile(code, '<extracted-mixed-scalar>', 'exec'), namespace)
+        for cv, bv, expected in ((10**16 + 1, 1e16, 1), (1e16, 10**16 + 1, -1),
+                                 (2**54, float(2**54), 0), (5e-324, 0, 5e-324)):
+            candidate = {'value': cv, 'identity': metric_identity(run_id='candidate')}
+            baseline = {'value': bv, 'identity': metric_identity(run_id='baseline')}
+            before = deepcopy([candidate, baseline])
+            for operation in (compare_metrics, namespace['compare_metrics']):
+                result = operation(candidate, baseline)
+                self.assertEqual(result['status'], 'COMPARABLE')
+                self.assertEqual(result['delta'], expected)
+                self.assertEqual(result['improvement'], -expected)
+                self.assertEqual(result['scientific_support'], 'UNKNOWN')
+            self.assertEqual([candidate, baseline], before)
+
     def points(self, direction='minimize'):
         candidate = {'status': 'OBSERVED', 'value': 6,
                      'identity': metric_identity(run_id='candidate', source_path='out/candidate.json',

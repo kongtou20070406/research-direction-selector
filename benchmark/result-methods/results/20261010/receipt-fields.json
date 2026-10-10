@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "run_id": "digits-methods-20261010",
+  "attempt_id": "738df9e97ec346618964273a6bd28f23",
+  "run_status": "SUCCEEDED",
+  "process_status": "COMPLETED",
+  "manifest_sha256": "3cb97115d6a43f557c56773c2b11c141768ac00e62c0d83c7f11a7b39e40021b",
+  "bindings_before": [
+    {
+      "path": "benchmark/result-methods/run.py",
+      "role": "code",
+      "sha256": "ace5ae0934c86b813bbd519345fee292844bee6a89e4beaf9ca801ad15556194"
+    },
+    {
+      "path": "scripts/rds_result_tools.py",
+      "role": "code",
+      "sha256": "3f5c81271994b460a4e2dd890a9edfa2e51eab6cdbe05cbd28257ab62a206ef6"
+    },
+    {
+      "path": "rds-exec-request.json",
+      "role": "config",
+      "sha256": "488682f37263b0e213e3dbf5fd34ff914a0a7f8102c8f0f8cbae8211e5f70a0b"
+    },
+    {
+      "path": "rds-exec-metadata.json",
+      "role": "data",
+      "sha256": "e1465eee9b6a2e07137e42921994564f0c967352b9912ce9c583326c09223b4b"
+    },
+    {
+      "path": "rds-exec-metadata.json",
+      "role": "evaluator",
+      "sha256": "e1465eee9b6a2e07137e42921994564f0c967352b9912ce9c583326c09223b4b"
+    },
+    {
+      "path": "rds-exec-protocol.json",
+      "role": "protocol",
+      "sha256": "704d19bf244b14c5b3cfc14dd4587c946b701890e64682ac4169232dfeb03c6e"
+    }
+  ],
+  "bindings_after": [
+    {
+      "path": "benchmark/result-methods/run.py",
+      "role": "code",
+      "sha256": "ace5ae0934c86b813bbd519345fee292844bee6a89e4beaf9ca801ad15556194"
+    },
+    {
+      "path": "scripts/rds_result_tools.py",
+      "role": "code",
+      "sha256": "3f5c81271994b460a4e2dd890a9edfa2e51eab6cdbe05cbd28257ab62a206ef6"
+    },
+    {
+      "path": "rds-exec-request.json",
+      "role": "config",
+      "sha256": "488682f37263b0e213e3dbf5fd34ff914a0a7f8102c8f0f8cbae8211e5f70a0b"
+    },
+    {
+      "path": "rds-exec-metadata.json",
+      "role": "data",
+      "sha256": "e1465eee9b6a2e07137e42921994564f0c967352b9912ce9c583326c09223b4b"
+    },
+    {
+      "path": "rds-exec-metadata.json",
+      "role": "evaluator",
+      "sha256": "e1465eee9b6a2e07137e42921994564f0c967352b9912ce9c583326c09223b4b"
+    },
+    {
+      "path": "rds-exec-protocol.json",
+      "role": "protocol",
+      "sha256": "704d19bf244b14c5b3cfc14dd4587c946b701890e64682ac4169232dfeb03c6e"
+    }
+  ],
+  "executor_sha256": "cec2fab4b3258900cc330346de8c664e57fa04227406920a6edb06f0efeeebb1",
+  "started_at": 1791563587.2377784,
+  "ended_at": 1791563596.976327,
+  "exit_code": 0,
+  "timeout": false,
+  "resources": {
+    "wall_seconds": {
+      "charged_estimate": 0.0,
+      "measured": 9.732613899999706,
+      "unit": "seconds",
+      "unknown": false
+    }
+  },
+  "artifacts": [
+    {
+      "kind": "manifest.json",
+      "path": ".rds/project-artifacts/digits-methods-20261010/manifest.json",
+      "sha256": "3cb97115d6a43f557c56773c2b11c141768ac00e62c0d83c7f11a7b39e40021b",
+      "size": 509
+    },
+    {
+      "kind": "stdout.bin",
+      "path": ".rds/project-artifacts/digits-methods-20261010/stdout.bin",
+      "sha256": "6286fad10c6e1be7c5af9bf34ae63d2608db4ccf228d11099dc24dafe400a6c6",
+      "size": 3300
+    },
+    {
+      "kind": "stderr.bin",
+      "path": ".rds/project-artifacts/digits-methods-20261010/stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "kind": "project_output",
+      "path": "outputs/digits/summary.json",
+      "sha256": "a8e5de4a17fdf24d31a80437f2df901dba70e82a997dd9a45070d8712b6278f8",
+      "size": 3298
+    }
+  ],
+  "assessment": {
+    "mechanism": "UNKNOWN",
+    "task_gain": "UNKNOWN"
+  },
+  "sha256": "05850edcbb6b24abec7a1a4b2995606ae5e7f3ce886dce90b7249c733d935ed3"
+}

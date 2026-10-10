@@ -37,6 +37,126 @@ python -B scripts/rds_dashboard.py --demo --output dist\dashboard-demo.html
 
 运行成功、任务收益和机制支持是不同判断。收据里的 `gain` 仅按原记录展示，不会自动升级成确认结论。未记录字段显示 `—` 或“未记录”；缺少预算时没有资源进度。Lean / mathlib 是适用于数学子任务的协作能力。
 
+## 研究超图
+
+完整档案图使用 [`--archive` 大图浏览入口](hypergraph-archive.md)：缩小时聚合，放大后展开，按视口索引绘制，并从全量数据搜索和详查。原始节点、边及快照身份全部保留；来源、归属和历史关联保持各自含义。这个入口与下面保存的科学依赖图及分析预算分开。
+
+### Obsidian 复刻页面
+
+可直接使用空投指定的 [runningZ1/obsidian-graph-replica](https://github.com/runningZ1/obsidian-graph-replica) 的 Pixi 渲染器、暗色主题、缩放插值、平移惯性和独立 D3 Worker。固定源码 commit 为 `b811f4d12f909d496d44c7f2d98b3a408eb1a627`，PixiJS 固定 `7.4.3`。导出器核对三个上游源码文件和 Pixi 官方 UMD 的 SHA-256，拒绝不匹配的文件，不使用该项目的合成 Vault。
+
+上游该版本没有发布 LICENSE，因此其源码保留在本地 checkout；本仓库只包含 RDS 适配器，不把上游源码纳入 RDS 的许可证。用户本地导出时把经核对的源码、Pixi 和 D3 一并内嵌，运行时不使用 CDN。Pixi MIT 与 D3 ISC 的完整许可保留在导出文件中。页面 CSP 禁用连接；Pixi 需要的代码生成权限仅供固定版本渲染器使用，原始图字段仍通过转义 JSON 和 `textContent` 显示。
+
+准备上游 checkout 和官方 npm 包后：
+
+```powershell
+git clone https://github.com/runningZ1/obsidian-graph-replica dist/obsidian-graph-replica
+git -C dist/obsidian-graph-replica checkout --detach b811f4d12f909d496d44c7f2d98b3a408eb1a627
+npm pack pixi.js@7.4.3 --ignore-scripts --pack-destination dist
+python -c "import tarfile; from pathlib import Path; t=tarfile.open('dist/pixi.js-7.4.3.tgz'); Path('dist/pixi.min.js').write_bytes(t.extractfile('package/dist/pixi.min.js').read()); t.close()"
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --replica-root dist/obsidian-graph-replica --pixi-js dist/pixi.min.js --output dist/hypergraph.html
+```
+
+同样支持 `--hypergraph <dependency.json>` 或明确标识为演示的 `--demo --large`。显示和分析上限仍沿用下文的边界。只读导出当前 TMS 时保留原始快照 SHA-256、节点、超边、状态和来源；不重跑科研过程。界面只提供图谱、搜索、显示/力学设置和按需详查。
+
+- 节点按声明、执行、回执、产物、观测使用稍有区分的银白、紫、薄荷、蓝、金色；每种类型可调整颜色、圆点/圆环/方形/三角/六边形及大小倍率。小菱形专用于超边。所有共同前提汇入同一菱形，再连向结论；同一结论的不同菱形保留不同 OR 路线。悬停/详查高亮完整超边。搜索命中某条超边或其节点时保留整条前提集合，常驻图例随实际样式更新。
+- 可视化另用细虚线表达精确的 `run_id`、`source.receipt_id`、`source.sha256 + source.path/file` 绑定。它们不会加入原始逻辑超边、闭包或阻断分析，不按相似名称生成关联，也不把运行成功视为科学支持。没有绑定的记录保留为未连接节点。
+- 依赖流向力只约束相连节点的相对前后方向，不把同层节点吸附到固定列；使用强连通分量凝缩，循环内部不施方向约束。来源凝聚力只把有明确记录绑定的同次执行聚拢。两项附加力均可调到零，不改动声明。
+- 超边整线排斥是每条关联线段周围的留白力场：无关节点进入留白距离时受到排斥，线段两端承受按投影位置分配的反作用；该超边的全部前提、结论和汇合点豁免。空间网格仅查询附近节点，每步候选检查预算 60,000、每段采样最多 64 个间隔，超预算按轮转顺序近似；不执行节点数乘边数的全量配对。此力与留白距离可调，关系选择无力时不施该关系的方向/线场作用。
+- 可开关的项目归属层，用一个明确标记为显示层的“项目快照”节点和弱虚线连接各已有连通分组的代表。归属绑定来自当前输入来源/快照身份，默认吸引倍率 `0.12`，平衡长度是普通线的两倍；不施依赖流向或超边整线排斥。它不会进入原始逻辑图、闭包、阻断分析或目标权重。未连接记录筛选仍按原始依赖/精确来源关联计算，原始关联诊断保留在导出数据中。归属层连贯不表示研究依赖已补齐。
+- 每种关系可选吸引、排斥或无力，并调整浅色、粗细和实线/虚线。两个渲染器的关系设置都按每页 32 项显示，切换页面保留设置；大量不同关系不会同时生成全部控件。状态不会自动触发排斥。排斥仅在作用距离内生效；吸引是有平衡长度的弹簧。节点大小可选连接度或目标相关权重，并叠加类型显示倍率。
+- 目标相关权重是显示用的结构估计：所选原始目标权重为 `1`，同一结论的 OR 路线按正数 `weight` 分配（未给出时各为 `1`），AND 前提均分。仅纳入所有前提都位于下一最短依赖层的完整路线；混层或循环路线整条不分配，避免部分 AND 前提取得份额而其余份额消失。无前提路线保留自己的路线份额，不产生前提节点。排除 `CONTRADICTED` 规则，来源/声明输出/归属线不参与。共享前提积累来自不同合格路线的份额，半径按权重平方根映射。没有可分配路径的节点保留最小可见大小，不能解释为实际贡献为零。原始 `UNKNOWN` 和规则状态均不因布局改变；计算值保留在显示元数据中，实际研究贡献需要另有归因证据。
+- 目标权重也影响节点排斥：倍率为 `1 + 2√w`，`w` 限在 `[0,1]`，最大三倍；显示用项目节点保持一倍。没有已记录目标路径的节点保留基础排斥。碰撞半径随实际显示大小变化，并限在 `24–120`，给大节点留出空间。仅改颜色或形状不会重启力学模拟；改目标或大小会重新收敛。
+- **拖动节点是力学拖拽**：抓住的节点跟随指针并激活模拟，邻居通过关系力逐步跟随；未连接节点不会刚性同步平移。**拖动背景才平移画布**，保留上游平移惯性。运动阻尼默认 `0.4`（每步速度乘 `0.6`），可在 `0.1–0.85` 之间调节；松手清除固定位置，按约 300 步的能量衰减收敛后停止。窗口失焦/指针取消也会释放拖拽。
+
+关系和布局偏好仅写浏览器本地存储，以图快照身份隔离。关系名称使用无原型的设置字典，`__proto__` 等合法名称可正常保存并传入 Worker。几何趋势表示声明结构，不能解释成科学重要性、正确性或任务已经验收。点击记录只显示可读名称、类型、简短状态与实际关联导航；搜索筛选后仍可跳到原始关联的节点，清除筛选并打开目标详查。内部绑定和来源数据保持完整。
+
+来源显示优先使用后端独立 `record_topology` 出口，大图跳过组合分析时仍适用。没有该出口的旧版本使用保守的结构化绑定适配：产物/观测匹配要求同次运行、物理路径、字节摘要与一致的回执身份，重复/冲突不取最后一个节点。缺失必需记录身份明确诊断；receipt 属于另一 run 时，独立精确 run 关系保留，受冲突影响的关联阻断。显式 `record_source_base_dir` 用于统一解析相对路径别名与绝对 `source.file`，不从 cwd 或路径后缀猜 base；非法或不可解析的 reported base 只产生图级 `INVALID_BINDING`，退回原路径字符串匹配，NUL 路径别名也只报告诊断。旧快照只有明确的运行/回执或结构化来源元数据时才能参与适配，不从事实名称或文本 locator 猜测关联。声明输出以独立关系显示，`PENDING`/`MISSING` 不表示产物已经存在；一般逻辑 run→claim 规则不会赋予执行分组。适配只使用显示副本，输入图、来源、UNKNOWN 和推理结果保持不变，原快照不补写，记录关联不参与闭包或目标权重。
+
+绑定逐字段校验：坏字段或冲突别名只阻断依赖该字段的关系，不隐藏其他必需字段的缺失诊断。run 归属只需有效且唯一的运行绑定；声明输出另需有效路径。receipt→artifact 要求有效 receipt 摘要、唯一回执来源和一致的有效 run 归属，不要求产物已经具备完整字节/路径身份；artifact→observation 则要求唯一 `(run_id, path, sha256)` 来源及兼容 receipt 字段。无效 receipt 不能当作缺失值互相匹配；两端均未声明 receipt 时仍可兼容，已匹配回执的缺失或无效 run 归属不能建立来源关系。某索引所需字段有效时，含其他坏字段的重复记录仍参与该索引，保留歧义诊断；歧义阻断该来源匹配，不抹去独立 run 归属。重复回执实体阻断 receipt→artifact，但不抹去唯一 artifact 元组与一致有效 receipt 字符串的独立匹配。这些都是记录显示关系，科学支持保持 `UNKNOWN`。
+
+即使没有其他记录引用 run，重复 run origin 也会报告 `AMBIGUOUS_BINDING`；候选节点最多显示三个，并保留省略数量。此检查不生成 self-link，不升级任何 `UNKNOWN` 声明。
+
+常驻图例只显示类型符号、状态颜色及虚线标识。颜色不表示已证明，夹角没有逻辑或数值含义。悬停汇合点显示前提数量和结论，点击列出全部 AND 前提与结论。刷新默认用 12 秒按依赖层次逐步显现完整结构；可调 4–30 秒、重播或立即显示全部。它是可视化展开，不是科研时间线，不添加/删除原始节点，也不据此改变逻辑分析。关闭归属层时，没有绑定的记录保留为独立节点。空筛选会停止 Worker 计时器。
+
+集成回归使用本地固定版本资产，明确设置路径；不下载测试依赖：
+
+```powershell
+$env:RDS_REPLICA_ROOT=(Resolve-Path dist/obsidian-graph-replica).Path
+$env:RDS_PIXI_JS=(Resolve-Path dist/pixi.min.js).Path
+python -B -m unittest discover -s tests -p test_rds_hypergraph_view.py
+```
+
+未提供这些本地资产时，两项集成测试明确跳过，其余结构、来源边界及现有导出回归继续执行。提供资产时执行实际 Worker，验证各类力、节点拖拽的弹性传播、阻尼、释放和自动停止，并检查离线脚本及数据转义。安装 Node 时另执行实际目标权重函数，覆盖 AND/OR、共享前提、循环、零权重、反驳规则、缺失目标、特殊 ID 和长链。归属层连通性与原始逻辑不变单独验证。它不证明任意设备或任意最大规模的帧率。
+
+### 无外部源码的基础 Canvas 导出
+
+超图使用独立的全画布页面，只显示网络和按需打开的节点/超边详情。深灰背景、细线、按连接数调整大小的圆点与力导向布局适合浏览大图；没有项目总览或其他工作台面板。导出已保存的 TMS 图，或直接查看依赖 JSON：
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --output dist\hypergraph.html
+python -B scripts/rds_hypergraph_view.py --hypergraph dependency-map.json --output dist\hypergraph.html
+```
+
+输入复用 `hypergraph` 的声明适配器，接受原生依赖表、`claims` / `rules` 简写和程序生成的 `dependency_map`。修复及警告保留在内部导出数据中。只读取现有 TMS 快照及其绑定 CAS，不需要执行契约；不读取或混入工作台收据，不发布新快照。显式文件只决定此次展示的图，不能与 `--demo` 同用。
+
+Canvas 以圆点表示主张，以小菱形表示超边汇合点：同一个汇合点的前提是 **AND**，通向同一结论的不同汇合点保留 **OR** 路线。支持整图平移、缩放、适应全图、小地图定位、搜索及上游依赖聚焦。从节点上开始拖动也平移整图；单击才打开详查。节点名称按缩放级别显示并避免重叠；悬停查看名称和状态，点击打开详情。搜索结果也可通过键盘选择；画布获得焦点后用方向键平移、`+` / `-` 缩放、`0` 适应全图、Esc 关闭详情。
+
+右上角设置可切换统一细线、按声明状态或按关系类型区分线条。按状态时，实线表示 `SUPPORTED`、虚线表示 `PROPOSED`、点线表示 `CONTRADICTED`。按类型时，读取已有的 `relation` / `kind` / `type` 元数据，没有该字段则显示“依赖关系”；每种类型可选实线、虚线、点线、点划线，并单独调整浅色线条颜色、粗细，以及吸引 / 排斥 / 无作用、力度与作用距离。名称包含竞争、冲突、反驳等词的关系默认设为排斥；这只是可修改的显示偏好，不是推导出的科学关系。排斥只在设定距离内生效，吸引使用带平衡长度的弹簧。节点默认采用蓝白、暖白、金橙的星系配色，也可自选统一颜色或按声明状态着色；可调节点大小、轮廓粗细、标签阈值及全局力学参数。所有设置只影响当前页面，不改写输入。
+
+声明的 `UNKNOWN` 不会因为进入依赖闭包而改写为 `SUPPORTED`。分析保持 `INPUT_REPORTED_DEPENDENCY_ANALYSIS_NOT_PROOF`；本页不审计外部证据文件或回执绑定。显示保存图时只验证该快照及其绑定 CAS 的完整性，不扫描项目证据目录。几何布局、聚团和圆点大小不表示科学重要性或证明顺序。
+
+显示上限为 4,096 个主张节点、8,192 条超边及 32,768 条关联连接，输入最多 8 MiB，并仍需满足输入中声明的 schema 限额。超限显示提示，不绘制部分图。布局在离线 Web Worker 中用固定版本 D3 执行。四叉树近似全局排斥，碰撞力保持间距，吸引和定向关系排斥共同作用于主张节点；超边汇合点随关联节点取几何中心，不增加物理粒子。初始预热最多 180 步，每步检查 4.5 秒停止条件（单步可越过阈值），随后衰减至稳定并停止 Worker；初始模拟最多 291 步，重新调参约 248 步。没有持续旋转或随机摇晃，坐标更新经逐帧插值，静止时停止重绘。可暂停 / 继续；平移和缩放不重新激发物理模拟。布局不改写声明，浏览器不可用 Worker 时保留初始位置。绘制按样式批处理和视口裁剪，节点命中采用空间网格，标签避免重叠；Canvas 不为每个节点创建 DOM 元素。
+
+组合阻断分析与大图显示分开：超过 200 节点、400 超边或 2,000 连接时，仍显示完整图，但明确标记 `NOT_RUN_LARGE_GRAPH`，不声称已求得闭包或最小阻断集合。较小图的分析最多 50,000 次组合、128 个阻断集（尊重输入更小的限额），截断保留“不完整”。保存的快照损坏时显示不可用；显式输入错误时 CLI 失败。
+
+以下预览都是合成数据，没有真实实验结论。大图包含 1,200 个主张、1,426 条超边和 3,104 条连接；生成器固定，不使用外部数据。实际浏览器性能取决于硬件、图结构、缩放与显示面积；上限不是每种图结构的帧率保证。
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --demo --output dist\hypergraph-small.html
+python -B scripts/rds_hypergraph_view.py --demo --large --output dist\hypergraph-preview.html
+```
+
+页面只有内联代码和数据，Worker 通过本地 Blob 创建，无 CDN 或网络连接；可直接打开 HTML。`scripts/rds_hypergraph_view.py` 内嵌官方 npm UMD 发行文件：`d3-force@3.0.0`、`d3-quadtree@3.0.1`、`d3-dispatch@3.0.1`、`d3-timer@3.0.1`，保留各自完整 ISC 许可、版本及包 SHA-1。导出时无需 Node.js 或 npm；浏览器运行时不下载依赖。输出必须在项目 `.rds` 之外，且不能覆盖输入图；不同名称但同文件的硬链接别名也会被拒绝。分享 HTML 会一并分享图中的节点、来源及路径。
+
+Canvas 无前提超边与结论保持可选中的稳定偏移。Worker 不可用的状态会在平移、缩放或重绘后继续显示；隐藏标签页只暂停当时正在运行的模拟，已稳定或手动暂停的图不会因返回标签页而重新收敛。
+
+两种超图页面共用只读的短名和状态描边规则。已有 `label`（优先 `zh`，其次 `en`）或自然语言 `claim` 保留原文；仅已识别的机器记录去除保留前缀和生命周期谓词，再将分隔符显示为空格，例如 `run.root_upper.succeeded` 显示为 `root upper`。产物显示文件 basename，保留扩展名；不猜测中文科研名称。短名相同的记录仍按原 ID 独立显示，搜索接受短名和完整 ID。完整 ID、哈希、原始 JSON、来源/绑定转储和算法说明不在界面渲染，也不放入折叠详情；内部导出数据保持完整。悬停、搜索结果与详查均显示可读名称。明确的缺失声明输出依据原记录的文件路径显示 basename 和“输出缺失”；不据此推断失败或实际产物已存在。没有可读路径的机器哈希记录使用执行名与类型作为名称。人工名称和文件名中的长十进制数值保留。
+
+类型颜色和形状表达声明、执行、回执、产物与观测；外描边是独立的状态显示。绿表示已记录执行成功或普通声明 `SUPPORTED`，红表示已记录执行失败或普通声明 `CONTRADICTED`，灰表示未知、待验证、否定谓词或结果冲突。执行结果仅取明确的记录 outcome，或对应可靠生命周期事实中严格为 `true` 的 `succeeded` / `failed` / `timed_out` 谓词；`false`、数值 `0/1`、完成但未记录成功、待执行不推断相反结果。执行记录本身为 `UNKNOWN` / `CONTRADICTED` / `PROPOSED` 时保持中性；单独的 `scientific_support=UNKNOWN` 不抹去已记录的执行结果。悬停与详查用“执行成功 / 执行失败 / 未判定”和“声明支持 / 声明反驳 / 待确认”区分执行结果与声明状态，运行成功与绿描边都不是科学验收或数学证明。
+
+状态描边不会改写原图、ID、声明状态、来源、推理或目标权重。Replica 使用独立的外圈 Graphics，位于选中/悬停高亮之上、文字之下；位置、大小、缩放、淡化及隐藏状态跟随现有节点，形状改变才重建外圈几何，清除节点时一并销毁。Canvas 使用相同显示元数据批绘轮廓。力学 Worker 保持原样。
+
+## Agent 可读信息接口
+
+为人解释节点用途，使用独立的可读信息层。原始超图继续保存 ID、状态、完整 AND 前提、结论、权重和来源；可读层只提供名称和简短用途，以及超边含义。它不改变科学判断、执行结果、推理、布局规则或节点权重。
+
+先导出 agent 输入（stdout 是单个 UTF8 JSON 对象，不生成 HTML 或新账本）：
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --export-agent-input
+```
+
+输出包含两个分开的字段：`raw` 是完整规范化图；`readable` 是绑定原图和快照的填写模板。将这个对象与已有源码、manifest 或证据交给 agent。Agent 只返回 `readable` 对象，保存为 `readable.json`，再导出页面：
+
+```powershell
+python -B scripts/rds_hypergraph_view.py --root C:\research\project --readable-json readable.json --output dist\hypergraph.html
+```
+
+也适用于 `--hypergraph map.json`；Replica 可追加既有 `--replica-root` / `--pixi-js` 参数。Python 接口是 `rds_hypergraph_readable.agent_input(result)`、`validate_readable(value, result)` 和 `with_readable(result, value)`，返回新展示层，原记录保持原样。
+
+填写整张图的 `graph.summary` 后，页面显示一个“研究说明”按钮，点击查看；说明为空时隐藏入口。关闭归属层也能查看说明，画布上不常驻介绍段落。
+
+Agent 可直接采用以下指令：
+
+> 阅读 raw 和已有源文件，返回完整 readable 对象。保持 schema、graph_sha256、snapshot_sha256 与 ID 键原样，只填写 graph、nodes、hyperedges 下的 title 和 summary。title 用简短自然语言描述对象；summary 用一两句解释用途、输入输出或既有关系。成功、失败、缺失与未判定依据原始证据，运行成功不称为科研证明。未知用途留空，不依据文件名猜结论。不添加状态、权重、来源或关系成员，不新增节点或边。不要返回 raw、Markdown 或脚本。
+
+例如，原节点 ID `owned:run:comparison_trial` 对应的条目可以是 `{"title":"方法对比试验","summary":"在相同预算下比较候选方法与对照，结果供下一轮选择使用。"}`；该说明需有真实 manifest 或源码依据。节点和超边使用各自的 ID 映射，允许只填写一部分，空文本沿用默认名称／不显示说明。同名条目仍保持独立，不会按标题合并。
+
+契约见 [hypergraph-readable.schema.json](../schemas/hypergraph-readable.schema.json)。读取上限 8 MiB，名称最多 120 字符，说明最多 600 字符；仅接受 `title` 和 `summary`。CLI 另外拒绝重复 JSON 键、非有限数、控制字符、未知 ID、错误版本、额外字段及过期绑定。`graph_sha256` 覆盖规范化原图全部字段与数组顺序；`snapshot_sha256` 绑定保存的快照，显式输入图为 `null`。图变化后重新导出模板，由 agent 更新说明。任一错误均停止导出，不部分应用旧说明。输出禁止覆盖可读文件，包括硬链接／符号链接别名。
+
+网页使用可读名称、用途与关系说明；原始图通过 agent 输入或原有 TMS 接口供程序查询，不在页面转储。所有说明按纯文本显示，搜索支持名称、用途和原始 ID，导航与 AND／OR 语义仍按原始图。说明由 agent 撰写，应由其依据源证据核对；本接口验证结构和绑定，不验证自然语言真实性。分享 HTML 或 agent 输入也会分享其中的原始研究信息。
+
 ## 载入诊断
 
 可以传入 advisor 返回的 JSON 对象或对象数组：
@@ -71,6 +191,9 @@ python -B scripts/rds_dashboard.py --root C:\research\project --advisor advice.j
 
 ```powershell
 python -B -m unittest discover -s tests -p test_rds_dashboard.py
+python -B -m unittest discover -s tests -p test_rds_hypergraph_view.py
 ```
 
 测试覆盖真实 CPU 项目的成功与失败收据、未知资源与预估记账、两类账本选择、导出不 hash 输入或改变账本、UTF8 输出、无数据库时不创建状态、独立证据轴、脚本注入转义、示例不伪造结果，以及错误数据库与危险输出路径的拒绝。
+
+超图回归另外覆盖真实 TMS/CAS 的只读导出、参考账本保护、显式中文路径与输入修复、原声明和派生闭包分离、损坏与缺失图、输入和画布上限、分析不完整、恶意图字段转义、输入文件保护，以及千节点图完整保留和大图分析跳过状态。安装 Node.js 时还会执行实际导出的 D3 Worker，验证吸引 / 排斥 / 无作用的方向、零力度不施力，以及衰减结束后停止；缺少 Node.js 时明确跳过此项。

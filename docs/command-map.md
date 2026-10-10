@@ -1,6 +1,6 @@
 # Public command map
 
-Problem-model exploration uses `structure request|propose|next|drive|advance|feedback|activate|rollback|list|recover`.
+Problem-model exploration uses `structure request|propose|jump|next|drive|advance|feedback|activate|rollback|list|recover`.
 It requires an initialized project and current TMS, uses existing execution authority and budget,
 and returns open Agent tasks or independently checked observations. See [problem structure](problem-structure.md).
 
@@ -9,6 +9,7 @@ Use this map when the short Skill route table does not cover the task. It covers
 | Command | Behavior | Prerequisite | Guide |
 | --- | --- | --- | --- |
 | `structure request` | Return bounded open Agent tasks | Initialized project and saved dependencies | [Problem structure](problem-structure.md) |
+| `structure jump` | Generate explanations and return their original content to the Agent | Frozen `jump-generation.json` routes and `--steps` in 1..3 | [Jump generation and AI input](jump-generation.md) |
 | `structure propose` | Retain an experimental topology branch | Current request, sourced testable proposal and allowed manifests | [Problem structure](problem-structure.md) |
 | `structure next` | Consume feedback and select a distinguishing test | Same ledger and remaining budget | [Problem structure](problem-structure.md) |
 | `structure drive` | Bounded proposal/execution/feedback handoff | Existing admission and `--steps` in 1..8 | [Problem structure](problem-structure.md) |
@@ -25,6 +26,7 @@ CLI := python -B "<skill_dir>/scripts/rds_cli.py" --root "<user-project>"
 REBIND printed scripts/rds_cli.py command prefixes TO CLI; preserve remaining arguments
 SELECT one relevant entry; READ its linked guide and CLI <command path> --help
 SUPPLY the actual project inputs, authorized budget, and required installed backend
+BEFORE every experiment: project discover; REUSE returned project_root and its ledger
 KEEP records in user-project; never initialize a ledger in the installation/cache
 IF unavailable or unsupported: report that boundary; do not substitute a claimed result
 ```
@@ -49,11 +51,14 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | Command | Purpose | Inputs and prerequisites | Guide |
 | --- | --- | --- | --- |
 | `exec` | Freeze and run one authorized tool job | Explicit command after `--`, bounded `--timeout`, inputs and expected `--output`; prospective selection pairs `--context` with `--ledger` | [Command wrapper](agent-entry.md), [Execution policy](execution-policy.md) |
-| `project init` | Lock a project execution contract | `--contract` with real bindings, commands, outputs and authorized budget | [Contract](project-contract.md), [Project runner](development-loop.md) |
-| `project plan` | Form an inspectable draft with grouped missing inputs | Optional `--intent`; `--output` never overwrites; `--save-as` uses an initialized project's checkpoints | [Planning and steering](planning-and-steering.md) |
+| `project discover` | Read requested root and ancestors and return the existing project root, mode and next action | Existing requested directory; no sibling search or state creation; reuse the returned ledger for each experiment | [Project lifecycle](project-lifecycle.md) |
+| `project bind-workspace` | Bind a known campaign workspace to its original project ledger | Existing canonical project and explicit ancestor `--workspace-root`; all workspace ledgers and retained jobs settled; retain the returned `RDS_CAMPAIGN_BINDING` path in subprocesses; no new history or budget | [Campaign binding](project-lifecycle.md#bind-a-known-campaign-workspace) |
+| `project init` | Lock a project execution contract; default FULL owns collection and selection | Valid explicit `--contract` with `advisor_policy` or finite `--recipe`; limited non-policy contracts need `--mode quick`; independent nesting needs `--separate-project REASON` | [Project lifecycle](project-lifecycle.md), [Assembly](project-assembly.md), [Contract](project-contract.md) |
+| `project enable-advisor` | Preview or atomically enable owned Advisor in the same legacy ledger | Basic five-field `--policy`; apply requires `--apply --expected-snapshot SHA`, idle attempts, unchanged manifests and original bindings; preserves genesis/history/budget | [Owned Advisor](program-owned-advisor.md#enable-advisor-in-an-existing-quick-project) |
+| `project plan` | Form an inspectable draft with grouped missing inputs | Optional `--intent` and read-only `--dialogue`; `--output` never overwrites; `--save-as` uses an initialized project's checkpoints | [Planning and steering](planning-and-steering.md) |
 | `project plan --shadow` | Refresh global milestones, strategic alternatives and jump requests without dispatch | Initialized program-owned evidence; optional `--goal` names one frozen goal fact; compare identities before using omitted originals | [Global shadow planning](global-shadow-planning.md) |
 | `project steering` | Inspect current direction, resources and active-work dispositions | Initialized project | [Planning and steering](planning-and-steering.md) |
-| `project steer` | Receive current-user pause, route priority, hypothesis or material-change request | Exact current contract/revision in `--request`; host attestation `--user-directed --source` | [Planning and steering](planning-and-steering.md) |
+| `project steer` | Receive current-user pause, route priority, hypothesis or material-change request | Exact current contract/revision in `--request`; host attestation `--user-directed --source`; optional `--dialogue` explains effects | [Planning and steering](planning-and-steering.md) |
 | `project improve` | Prepare diagnostics, editable tool code and a revision proposal | Frozen `method_evolution`, authorized `--code-path` and bounded `--id`; no adoption or child launch | [Tool improvement](predictive-feasibility.md) |
 | `project revise` | Adopt or resume a bounded executable method change in the same ledger | `--proposal`, unchanged goals/evaluator/budget/commands, idle attempts and exact parent identity | [Tool improvement](predictive-feasibility.md) |
 | `project create` | Register an execution and reserve resources | Initialized project and `--manifest` matching its contract | [Project runner](development-loop.md) |
@@ -68,6 +73,14 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `project costs` | Inspect measured costs and charged estimates | Existing project records; failed attempts and unknown resource values remain visible | [Cost accounting](development-loop.md) |
 | `project trajectory` | Reconcile supplied provider/tool costs and evaluator-reported outcomes | `--manifest`; hash-bound original exports; no execution or independent scientific certification | [Trajectory accounting](trajectory-accounting.md) |
 | `project control-check` | Check whether a completed control is reusable | `--candidate` receipt and `--current` expected operation/protocol; source and output identity must match | [Control reuse](../examples/project-runner/README.md) |
+
+FULL and QUICK are workflow modes, shown by the stderr `[RDS]` banner and
+nonhashed `workflow` metadata with available capabilities. FULL does not enable
+optional autonomy or confirmation automatically. Both modes require complete
+analysis of every declared active direction graph and current saved TMS before
+selection; `analysis_coverage` records scope, graph identities, counts and
+completeness. Incomplete computation blocks selection and dispatch. This is
+registered graph coverage, not arbitrary-file coverage or scientific validation.
 
 ## Native mathematical assets and local tools
 
@@ -167,7 +180,7 @@ In an `advisor_policy` project, `advise --brief` derives inputs from its ledger 
 - **Frontier exploration/reformulation:** `--frontier <spec>` and optional `--frontier-proposals <proposals>` generate/review bounded tasks beyond the current graph. Novel labels and graph reachability do not certify science. [Frontier](advisor-frontier.md), [Theory reformulation](theory-reformulation.md).
 - **Plan, trace and fit diagnostics:** `--plan`, `--telemetry`, `--doc`, `--train-loss`, `--val-loss`, `--baseline-loss`, `--fit-telemetry`; supply the matching recorded data instead of invented metrics. [Advisor implementation](../scripts/rds_advisor.py).
 - **Scoped local literature:** `--literature` with optional `--topic` uses explicit local primary-source records. It is not a general web search. [Advisor implementation](../scripts/rds_advisor.py).
-- **Retired option:** `--research-note` is retained to return migration guidance. Use `checkpoint save --decision` and scoped context instead; it is not a working alternative archive. [Local decision workflow](lightweight-workflow.md).
+- **Retired option:** `--research-note` is retained to return migration guidance. Caller-managed decisions use `checkpoint save --decision` and scoped context; program-owned Advisor decisions must use `project next`/`project advance` so checkpoints retain their native run identity. [Local decision workflow](lightweight-workflow.md).
 
 ## Documented helper entry points
 
@@ -178,8 +191,10 @@ Run these as `python -B "<skill_dir>/scripts/<file>" ...`, checking their own `-
 - `rds_dynamics_probe.py --input <snapshot> --output <report>`: bounded diagnostics on exported matrices/refinement data; optional NumPy-dependent results remain unavailable when missing. [Dynamics snapshots](theory-reformulation.md).
 - `rds_context_compact.py --input <context> --output-dir <new-directory>`: compact repeated declared hash maps while retaining originals and manifests. [Context compaction](agent-entry.md).
 - `rds_dashboard.py --root <user-project> --output <html>`: export a read-only offline view; optional `--advisor` or labelled `--demo`. [Dashboard](dashboard.md).
+- `rds_hypergraph_view.py --root <user-project> --output <html>`: export the real saved hypergraph without changing its ledger. `--export-agent-input` prints separate raw graph and readable template; `--readable-json <file>` consumes snapshot-bound agent titles and purpose descriptions. Open the returned output with host preview/browser tools and provide its actual file/URL to the user; do not invent a localhost address or substitute a demo for a missing graph. Existing pinned Replica/Pixi assets are optional. [Graph page and agent interface](dashboard.md#agent-可读信息接口).
 - `rds_hypergraph.py --input <map>`: one-shot bounded analysis and optional evidence audits; use the public `hypergraph` command above for program-owned continuation. [Hypergraph evidence](hypergraph-evidence.md).
 - `rds_disk_cover_verify.py --spec <spec> --output <result>` and `rds_rational_voronoi_verify.py --spec <spec> --output <result>`: adapter-specific geometric generation/replay options; prefer `formal verify`/`formal check` when the declared kind is supported there. Inspect each helper's certificate and resource options. [Formal adapters](formal-verification.md).
 - `build_plugins.py --output <new-package-directory>`: build host packages when plugin installation/development is the task. [Host plugins](host-plugins.md).
+- `rds_blind_runner.py --manifest <public-input-manifest> --output-dir <new-attempt-directory>`: opt-in Linux, offline Python benchmark worker with an explicit clean runtime inventory and mandatory live isolation checks. Refuses unavailable boundaries; does not sandbox ordinary project execution or enable a model-provider transport. [Blinded benchmark scope](blind-evaluation.md).
 
 Modules such as `rds_resources.py` and `rds_operators.py` supply implementations to these entries; their names do not imply callable CLI commands. Worker processes and internal solver cores are owned by their dispatchers. The historical `rds_probe.py` path is not the current formal dispatcher and cannot inherit its assurance. Discover supported mathematical declarations through the verifier guide rather than invoking internal modules as new public capabilities.

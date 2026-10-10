@@ -14,9 +14,13 @@
 
 **让 AI 更好地辅助人进行科研。**
 
+**Agent 主动与你讨论研究，程序保存证据。**
+
 **以 RDS 连接科研目标、证据、决策与执行。**
 
 我们的根本目的是让 AI 更好地辅助人进行科研。Research Direction Selector（RDS）是我们选择的实现形式：用科研决策与执行系统，帮助研究者与 AI 一起澄清问题、比较假说、设计实验、理解结果，并把证据用于下一步。它与 Codex、Claude Code 等编程 Agent 协作。研究者确定目标与投入、接受科学结论；AI 提供提案与分析，本地程序则通过决策记录、执行与恢复，支撑由证据驱动的 autoresearch。
+
+面向学术研究及 Codex、Claude Code 等编程 Agent 实验工作流的科研 Skill 与本地内核。RDS 可在执行前冻结目标、输入与评估器，预留预算；包裹命令可记录执行，并跨会话保留输入、失败证据、回执、剩余预算及已记录的证据。用 Skill 规划有界实验、讨论证据、恢复中断工作并核验受支持的结果，也可配置由 Advisor 管理的研究项目，让程序从允许的路线中选择下一步。
 
 [愿景与范围](docs/rds-purpose.zh-CN.md) · [RDS 如何参与 autoresearch 工作流](docs/autoresearch.md) · [CPU 回执与恢复示例](examples/autoresearch-receipts/README.md) · [引用本软件](CITATION.cff)
 
@@ -149,6 +153,10 @@ Skill 指导 Agent 的科研推理；Advisor 利用已有证据建议或选择�
 
 Skill 是 Agent 阅读的部分。它告诉 Agent 何时调用内核、如何表述公平比较，以及如何报告结果而不把 `UNKNOWN` 说成成功。
 
+加载 Skill 后，宿主 AI 应在研究开始，以及证据、解释、方向或资源约束改变下一步决定时，主动发起简短讨论。它说明当前判断，推荐有价值的下一步，并在答案确实会改变工作时提出一个有针对性的问题。已授权工作继续推进，每轮都提问或确认并非必要。
+
+你可以直接说“这个结果让我怀疑原来的解释”，或者“暂停新实验，先检查对照是否公平”。AI 会讨论证据，并解释你的指令实际影响了什么。CLI 提供可核对的记录，人与 AI 的交流由宿主 AI 承担。详见[规划与改向](docs/planning-and-steering.md#host-initiated-research-discussion)。这是 Skill 的行为指导，交互质量和科研收益仍需要真实 Agent 评测。
+
 ### 安装
 
 推荐的 Agent 安装方式见[两分钟上手](#两分钟上手)。Claude Code、Codex 插件及带简短调用状态的 OMP 扩展见[宿主插件打包指南](docs/host-plugins.md)。原有独立 Skill 安装方式继续支持。
@@ -192,7 +200,7 @@ python -B "$env:USERPROFILE/.agents/skills/research-direction-selector/examples/
 python -B examples/project-runner/prepare.py --root ./my-project
 
 # 1. 根据契约初始化研究状态
-python -B scripts/rds_cli.py --root ./my-project project init --contract ./my-project/contract.json
+python -B scripts/rds_cli.py --root ./my-project project init --mode quick --contract ./my-project/contract.json
 
 # 2. 在事务级预算管理下创建并执行两组
 python -B scripts/rds_cli.py --root ./my-project project create --manifest ./my-project/control.json

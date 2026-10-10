@@ -14,6 +14,8 @@
 
 **AI が人の研究をよりよく支援するために。**
 
+**Agent があなたと研究を進め、プログラムが証拠を残す。**
+
 **RDS で研究目標、証拠、判断、実行をつなぐ。**
 
 私たちの目的は、AI が人の科学研究をよりよく支援できるようにすることです。その実現方法として Research Direction Selector（RDS）を選びました。研究者と AI が問いを明確にし、仮説を比較し、実験を設計し、結果を理解して次の一手につなげるための意思決定・実行システムです。Codex、Claude Code などと連携し、研究者が目標とリソースを定め、科学的結論を受け入れます。AI は提案と分析を行い、ローカルのプログラムが判断の記録、実行、復旧を通じて証拠に基づく autoresearch を支えます。
@@ -149,6 +151,10 @@ Skill は Agent の研究上の推論を導き、Advisor は記録された証�
 
 Skill は Agent が読む部分です。いつカーネルを呼ぶか、公平な比較をどう述べるか、`UNKNOWN` を成功に格上げせずに結果をどう報告するかを Agent に示します。
 
+Skill を読み込んだホスト Agent は、研究の開始時や、証拠・説明・方向・資源の制約が次の判断を変えるときに、短い対話を自ら始めます。現在の判断を説明し、有用な次の一手を勧め、答えが作業を変える場合に的を絞った質問をします。許可済みの作業は継続し、毎回の質問や確認は必要ありません。
+
+「この結果を見ると、元の説明に疑問があります」「新しい実験を止め、まず対照が公平か確認してください」のように話せます。Agent は証拠を議論し、指示が実際に何へ影響したかを説明します。CLI は確認可能な記録を提供し、対話はホスト Agent が担います。詳しくは[計画と方向変更](docs/planning-and-steering.md#host-initiated-research-discussion)を参照してください。これは Skill の行動指針であり、対話の質と科学的な利益には実際の Agent による評価が必要です。
+
 ### インストール
 
 推奨する Agent によるインストールは[2 分で試す](#2-分で試す)を参照してください。Claude Code・Codex プラグインと、短い呼び出し状態を表示する OMP 拡張は[ホスト別プラグインの手順](docs/host-plugins.md)を参照してください。従来の単独 Skill インストールも引き続き利用できます。
@@ -192,7 +198,7 @@ python -B "$env:USERPROFILE/.agents/skills/research-direction-selector/examples/
 python -B examples/project-runner/prepare.py --root ./my-project
 
 # 1. 契約から研究状態を初期化
-python -B scripts/rds_cli.py --root ./my-project project init --contract ./my-project/contract.json
+python -B scripts/rds_cli.py --root ./my-project project init --mode quick --contract ./my-project/contract.json
 
 # 2. トランザクションによる予算管理のもとで両群を作成・実行
 python -B scripts/rds_cli.py --root ./my-project project create --manifest ./my-project/control.json

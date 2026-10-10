@@ -18,6 +18,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from rds_artifacts import strict_json
+from rds_mutation import mutation
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_KNOWLEDGE_ROWS = 10000
@@ -432,6 +433,8 @@ class RDSAdvisor:
 
     def ingest_document(self, doc_path: Path, topic: Optional[str] = None) -> Dict[str, Any]:
         """Store unreviewed source excerpts with a short isolated WAL transaction."""
+        from rds_campaign import enforce
+        enforce(self.root_dir)
         doc_path = doc_path.resolve()
         if not doc_path.exists():
             raise FileNotFoundError(f"Document not found: {doc_path}")
@@ -464,29 +467,31 @@ class RDSAdvisor:
             entries.append(_knowledge_entry(rule, hashlib.sha256(key.encode("utf-8")).hexdigest(), document_sha))
         # Parsing and possible legacy loading finish before any writer lock.
         legacy = self._legacy_entries() if self._needs_legacy_migration() else []
-        self.knowledge_db.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.knowledge_db, timeout=15, isolation_level=None)
-        try:
-            _configure_wal(db)
-            db.execute("BEGIN IMMEDIATE")
-            db.execute("CREATE TABLE IF NOT EXISTS knowledge (entry_id TEXT PRIMARY KEY, document_sha TEXT NOT NULL, body TEXT NOT NULL)")
-            db.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            migrate = db.execute("SELECT 1 FROM metadata WHERE key='legacy_migrated'").fetchone() is None
-            existing_ids = {row[0] for row in db.execute("SELECT entry_id FROM knowledge")}
-            candidates = {entry[0]: entry for entry in ((legacy if migrate else []) + entries)}
-            added = [entry for entry_id, entry in candidates.items() if entry_id not in existing_ids]
-            if len(existing_ids) + len(added) > MAX_KNOWLEDGE_ROWS:
-                raise ValueError("Advisor knowledge exceeds the 10000-entry limit")
-            db.executemany("INSERT INTO knowledge VALUES (?,?,?)", added)
-            if migrate:
-                db.execute("INSERT INTO metadata VALUES ('legacy_migrated','1')")
-            total = len(existing_ids) + len(added)
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        with mutation():
+            enforce(self.root_dir)
+            self.knowledge_db.parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite3.connect(self.knowledge_db, timeout=15, isolation_level=None)
+            try:
+                _configure_wal(db)
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("CREATE TABLE IF NOT EXISTS knowledge (entry_id TEXT PRIMARY KEY, document_sha TEXT NOT NULL, body TEXT NOT NULL)")
+                db.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                migrate = db.execute("SELECT 1 FROM metadata WHERE key='legacy_migrated'").fetchone() is None
+                existing_ids = {row[0] for row in db.execute("SELECT entry_id FROM knowledge")}
+                candidates = {entry[0]: entry for entry in ((legacy if migrate else []) + entries)}
+                added = [entry for entry_id, entry in candidates.items() if entry_id not in existing_ids]
+                if len(existing_ids) + len(added) > MAX_KNOWLEDGE_ROWS:
+                    raise ValueError("Advisor knowledge exceeds the 10000-entry limit")
+                db.executemany("INSERT INTO knowledge VALUES (?,?,?)", added)
+                if migrate:
+                    db.execute("INSERT INTO metadata VALUES ('legacy_migrated','1')")
+                total = len(existing_ids) + len(added)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
         evidence = [json.loads(entry[2]) for entry in added]
         return _advice("DOCUMENT_EXCERPT_INGESTION", status="INGESTED", doc_path=str(doc_path),
@@ -495,17 +500,54 @@ class RDSAdvisor:
             limitations=["rules_extracted 是兼容字段，计数匹配的未审查摘录；rules_added 计数本次实际新增行，包括显式迁移。",
                          "关键词命中不会自动成为可执行原则；legacy_bundle_sha256 不代表源文档身份。"])
 
+    def effective_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Read caller-directed recommendation inputs; confer no owned execution authority."""
+        from copy import deepcopy
+        from rds_project_lifecycle import require_advisor_root
+        from rds_advisor_coverage import project_context
+        require_advisor_root(self.root_dir)
+        return deepcopy(project_context(self.root_dir, context))
+
     def recommend_next_directions(self, state: Dict[str, Any], judgment_graph: Dict[str, Any],
                                   *, priority_action_ids=()) -> List[Dict[str, Any]]:
+        """Public recommendations retain the registered owned project graph."""
+        from rds_project_lifecycle import require_advisor_root
+        require_advisor_root(self.root_dir)
+        from rds_project import ProjectStore, require
+        store = ProjectStore(self.root_dir)
+        if store.path.is_file():
+            with store._db(True) as db:
+                has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+                row = db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() if has_contract else None
+                contract = store._contract(db) if row else {}
+            if 'advisor_policy' in contract:
+                require(judgment_graph == contract['advisor_policy']['graph'],
+                        'Program-owned Advisor requires the complete frozen direction graph; caller graph overrides are not accepted')
+                require(not priority_action_ids, 'Program-owned Advisor owns route priority; use project next')
+                # Caller facts/state cannot replace owned collection. The owned
+                # path invokes the private analysis method after collection.
+                from rds_owned_advisor import review
+                return review(store)['recommendations']
+        context = self.effective_context(state.get('advisor_context', {}))
+        return self._recommend_next_directions({**state, 'advisor_context': context}, judgment_graph,
+                                              priority_action_ids=priority_action_ids, _collected_context=True)
+
+    def _recommend_next_directions(self, state: Dict[str, Any], judgment_graph: Dict[str, Any],
+                                   *, priority_action_ids=(), _collected_context=False) -> List[Dict[str, Any]]:
         """Read real state and supplied graph; recommend a review, never a causal ranking."""
         recommendations = []
         context = state.get("advisor_context", {})
+        if isinstance(context, dict) and not _collected_context:
+            from rds_advisor_coverage import project_context
+            context = project_context(self.root_dir, context)
+            state = {**state, 'advisor_context': context}
         research_mode = context.get("research_mode") if isinstance(context, dict) else None
         if research_mode is not None and research_mode not in ("theory", "empirical", "mixed"):
             raise ValueError("research_mode must be theory, empirical or mixed")
+        frontier = None
         if isinstance(context, dict) and "frontier" in context:
-            from rds_frontier import discover_frontier
-            frontier = discover_frontier(context["frontier"])
+            from rds_advisor_coverage import _operation_frontier
+            frontier = _operation_frontier(context)
             if "frontier_proposals" in context:
                 from rds_frontier_proposals import review_proposals
                 frontier["proposal_review"] = review_proposals(frontier, context["frontier"], context["frontier_proposals"])
@@ -517,16 +559,18 @@ class RDSAdvisor:
                     from rds_advisor_search import _obstruction_records
                     _obstruction_records(context)
                 return recommendations  # Pure frontier queries do not need unrelated ML advice or rule libraries.
-        if context and (not isinstance(context, dict) or "decision" in context or "frontier" not in context):
+        if not isinstance(context, dict) or "decision" in context or "frontier" not in context:
             from rds_advisor_search import search_directions, review_selection
             options = {"templates": state["advisor_templates"]} if state.get("advisor_templates") else {}
+            if frontier is not None:
+                options['_frontier'] = frontier
             if priority_action_ids:
                 options['priority_action_ids'] = priority_action_ids
-            if isinstance(state["advisor_context"], dict):
-                options.update({key: state["advisor_context"][key] for key in ("max_depth", "max_candidates")
-                                if key in state["advisor_context"]})
+            if isinstance(context, dict):
+                options.update({key: context[key] for key in ("max_depth", "max_candidates")
+                                if key in context})
                 for key in ("audit_receipts", "audit_files"):
-                    if state["advisor_context"].get(key) is True:
+                    if context.get(key) is True:
                         options[key] = True
             read_receipt = None
             if options.get("audit_receipts"):
@@ -537,14 +581,13 @@ class RDSAdvisor:
             if isinstance(context, dict) and "dependency_map" in context:
                 # History filters candidates, then the final review evaluates them.
                 options["_defer_selection_review"] = True
-                if options.get("templates", context.get("templates")) is not None:
-                    from rds_advisor_search import _operation_dependency
-                    dependency = _operation_dependency(context,
-                                                       audit_receipts=options.get("audit_receipts", False),
-                                                       audit_files=options.get("audit_files", False),
-                                                       read_receipt=read_receipt)
-                    options["_dependency"] = dependency
-            search = search_directions(judgment_graph, state["advisor_context"], **options)
+                from rds_advisor_search import _operation_dependency
+                dependency = _operation_dependency(context,
+                                                   audit_receipts=options.get("audit_receipts", False),
+                                                   audit_files=options.get("audit_files", False),
+                                                   read_receipt=read_receipt)
+                options["_dependency"] = dependency
+            search = search_directions(judgment_graph, context, **options)
             loop_review = self._review_loop_history(state, context, search)
             search["selection_review"] = review_selection(search, context, _dependency=dependency,
                                                           audit_receipts=options.get("audit_receipts", False),
@@ -671,6 +714,7 @@ class RDSAdvisor:
         if not path.is_file():
             return None
         from rds_checkpoints import SCHEMA, MAX_BYTES as checkpoint_cap, _sha
+        from rds_method_revision import contract_history
         review = {"assurance": "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION", "flags": [],
                   "authorization": "UNCHANGED", "limitations": [
                       "Checkpoint hashes authenticate recorded choices, not scientific validity or execution admission.",
@@ -744,7 +788,6 @@ class RDSAdvisor:
                     db.close()
                     db = None
                 elif kind == "project":
-                    from rds_method_revision import contract_history
                     lineage = contract_history(db)
                     contract, contract_sha = lineage[-1]['contract'], lineage[-1]['sha256']
                     checkpoint_contracts = {entry['sha256']: entry['contract'] for entry in lineage}
@@ -776,17 +819,18 @@ class RDSAdvisor:
                         root = Path(hop["root"])
                         other = connect(root / ".rds" / "project.sqlite3")
                         try:
-                            from rds_method_revision import contract_history
-                            predecessor_contracts = contract_history(other)
-                            effective = predecessor_contracts[-1]
-                            _require(effective["sha256"] == hop["contract_sha256"]
-                                     and _sha(effective["contract"]) == effective["sha256"],
+                            predecessor_lineage = contract_history(other)
+                            effective = predecessor_lineage[-1]
+                            predecessor_sha = effective["sha256"]
+                            _require(predecessor_sha == hop["contract_sha256"]
+                                     and _sha(effective["contract"]) == predecessor_sha,
                                      "Predecessor contract integrity failure: " + hop["root"])
+                            predecessor_contracts = {entry["sha256"]: entry["contract"]
+                                                     for entry in predecessor_lineage}
                             pinned = {item["id"]: item["sha256"] for item in hop["checkpoint_shas"]}
                             if pinned:
-                                collect(other, root / ".rds", effective["sha256"], rows, skipped, hop["root"], pinned,
-                                        contracts={entry["sha256"]: entry["contract"]
-                                                   for entry in predecessor_contracts})
+                                collect(other, root / ".rds", predecessor_sha, rows, skipped, hop["root"], pinned,
+                                        contracts=predecessor_contracts)
                         finally:
                             other.close()
                     except (sqlite3.Error, OSError, ValueError, KeyError, TypeError, AttributeError, UnicodeError,

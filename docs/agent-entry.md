@@ -4,6 +4,23 @@ Programmatic completion supplies file hashes, protocol identities, timestamps, r
 
 In the examples below, `scripts/`, `references/` and `examples/` refer to resources beside the installed `SKILL.md`. Resolve the CLI path there, including in a plugin, and always pass `--root <user-project>` explicitly; user input paths and `--ledger` identify the user's project records. Do not initialize `.rds/` in the Skill installation or plugin cache.
 
+Before every experiment, the Agent runs `project discover` from the requested
+root. Discovery is read-only and checks that directory and its ancestors. Rebind
+subsequent calls to the returned `project_root`, inspect its existing work and
+remaining budget, and add the experiment as another run in the same project.
+Do not make a new ledger for each experiment. A deliberately independent nested
+project requires `project init --separate-project "<reason>"`; `exec` from a child
+directory cannot bypass an existing parent project.
+
+New `project init` defaults to FULL and requires a valid explicit Advisor policy
+or `--recipe`. An intentionally limited non-policy contract uses `--mode quick`;
+exact retries of old non-policy projects remain compatible. FULL means owned
+collection and selection, with optional autonomy, confirmation and tools only
+when their declarations exist. Read the stderr mode/advisor banner and returned
+nonhashed `workflow` capabilities. Original signed receipt bodies stay unchanged.
+Use [same-ledger activation](program-owned-advisor.md#enable-advisor-in-an-existing-quick-project)
+to add owned Advisor to a legacy project without replacing its frozen history.
+
 ## Wrap a command
 
 ```powershell
@@ -20,7 +37,16 @@ For an existing local Python file, use `python -B scripts/rds_cli.py --root <sou
 
 ## Select before executing
 
-For a new campaign in which the program must own evidence collection and route selection, use the [frozen Advisor policy](program-owned-advisor.md). `advise` reads the complete registered inventory and current owned graph; `project advance` executes at most one program-selected route and automatically incorporates its receipt. Caller context, graph and choice overrides are refused in that workflow. The commands below describe the compatible caller-directed workflow for projects without `advisor_policy`.
+For the default FULL campaign, use the [frozen Advisor policy](program-owned-advisor.md). `advise` reads the complete registered inventory and current owned graph; `project advance` executes at most one program-selected route and automatically incorporates its receipt. Caller context, graph and choice overrides are refused in that workflow. The commands below describe the compatible caller-directed QUICK workflow for projects without `advisor_policy`.
+
+Both workflows require complete computation over all declared active direction
+graphs and the current persistent TMS before a route can be selected.
+`analysis_coverage` retains graph identities, node/edge counts, completeness and
+reasons. An incomplete report cannot authorize a choice, including an explicit
+`--choose`; owned review returns `INCOMPLETE_ANALYSIS` without a selected run.
+If dependency declarations have changed, update the saved map first rather than
+passing a different private dependency map. Full computation does not establish
+that unknown premises are true or that arbitrary project files were analyzed.
 
 Maintain the semantic `context.json` and structured graph for the actual next decision. The tool supplies repetitive bookkeeping around these inputs; it cannot derive the right mathematical question from arbitrary prose.
 

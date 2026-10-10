@@ -14,9 +14,13 @@
 
 **Better AI assistance for human research.**
 
+**Your agent discusses the research with you. The program keeps the evidence.**
+
 **RDS connects research goals, evidence, decisions and execution.**
 
 Our purpose is to help AI better assist people in scientific research. Research Direction Selector (RDS) is the form we have chosen: a research decision and execution system that helps researchers and their agents clarify questions, compare hypotheses, design experiments, interpret results and carry evidence into the next step. It works with Codex, Claude Code and other coding agents. Researchers set the goal and resources and accept scientific conclusions; AI supplies proposals and analysis, while the local program supports evidence-driven autoresearch with recorded decisions, execution and recovery.
+
+A research Skill and local kernel for academic research and agent-driven experiment workflows with Codex, Claude Code and other coding agents. Freeze goals, inputs and evaluators before execution, reserve budgets, wrap commands to record execution, and preserve failures, receipts, remaining budget and evidence across sessions. Use the Skill to plan bounded experiments, discuss evidence and recover interrupted work, or configure an Advisor-owned campaign to select permitted routes and verify supported results.
 
 [Vision and scope](docs/rds-purpose.md) · [RDS in autoresearch workflows](docs/autoresearch.md) · [CPU receipt and recovery example](examples/autoresearch-receipts/README.md) · [Cite this software](CITATION.cff)
 
@@ -149,6 +153,21 @@ Skill guides the agent's research reasoning; Advisor uses recorded evidence to s
 
 The Skill is what your agent reads. It tells the agent when to call the kernel, how to state a fair comparison, and how to report results without upgrading `UNKNOWN` to success.
 
+With the Skill loaded, the host agent should initiate a short research discussion
+at the start and when evidence, explanations, direction or resource constraints
+change the next decision. It explains its current judgment, recommends a useful
+step and asks a focused question when the answer genuinely changes the work.
+Already authorized work continues; questions and confirmations are not required
+every round.
+
+You can say, "This result makes me doubt our explanation," or "Pause new runs;
+first inspect whether the control was fair." The agent discusses the evidence
+and explains the actual consequences of your instruction. The CLI supplies
+inspectable records; conversation is the host agent's responsibility. See
+[planning and steering](docs/planning-and-steering.md#host-initiated-research-discussion).
+This is Skill guidance; conversation quality and scientific benefit still need
+real-agent evaluation.
+
 ### Install
 
 The recommended agent-driven install is in [Try it in two minutes](#try-it-in-two-minutes). For Claude Code/Codex plugins and the OMP extension with compact invocation status, see [host plugin packaging](docs/host-plugins.md). The standalone Skill installation remains supported.
@@ -192,7 +211,7 @@ Run the following CPU demonstration from the repository root, using a new empty 
 python -B examples/project-runner/prepare.py --root ./my-project
 
 # 1. Initialize research state from contract
-python -B scripts/rds_cli.py --root ./my-project project init --contract ./my-project/contract.json
+python -B scripts/rds_cli.py --root ./my-project project init --mode quick --contract ./my-project/contract.json
 
 # 2. Create and execute both arms with transactional budget
 python -B scripts/rds_cli.py --root ./my-project project create --manifest ./my-project/control.json

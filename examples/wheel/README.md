@@ -56,9 +56,19 @@ access and then treat this path check as process isolation.
 
 ## Cell and queue semantics
 
+Initialization writes the complete wheel into a private staging directory under
+`.rds`, then publishes it with one rename after the native project accepts the
+same contract. A stable OS lock serializes initializers. A failed write or exit
+before publication leaves no final wheel; retrying the same contract preserves
+the native ledger and budget. A different contract is rejected. Stale staging
+directories are never trusted as initialized state. This is process-interruption
+recovery, not a cross-storage power-loss transaction.
+
 Metric direction and useful-delta threshold come from the frozen project
 contract; the wheel contract must agree. Receipt bindings, output hashes and
 the pre-registered slice are checked. Exit code does not determine the cell.
+Both the evaluator and declared data slice must be outside every declared
+agent-writable root and project output root before initialization.
 Either absent/nonfinite metric yields UNKNOWN; threshold equality qualifies.
 `cell changed` compares the new TRUE/FALSE with the preceding processed cell;
 the first known cell changes from the initial unset state.
@@ -70,6 +80,13 @@ processed transitions and pending execution are retained separately. A nonzero,
 unchanged cell with live factors idles. With no live factors, the wheel tries
 SCREEN before pausing for lack of eligible proposals. It pauses before exceeding
 the next reservation, and never widens `band.json` from `{"width":"narrow"}`.
+
+If a process stops after journaling dispatch but before a native attempt, the
+next tick retains that same manifest and completes its remaining registration
+and execution. It requires the exact frozen manifest and native contract, and
+only executes an unstarted RESERVED run with no attempt or worker identity.
+An existing attempt, terminal run without a receipt, mismatched manifest or
+unknown native state requires inspection; a tick never redispatches it.
 
 SCREEN selects the oldest unprocessed eligible inbox row, with default quota 1
 keyed by proposer ID. Its budget is `min(screen_wall_ms, remaining_wall // 10)`.
@@ -107,6 +124,12 @@ after rechecking the evaluator hash. The wheel alone appends the resulting
 proposal to `inbox.jsonl`. Invalid/dead tokens are discarded. A token still needs
 a frozen execution mapping before it can be screened. Collect proposals before
 the next tick would find no eligible work and write terminal pause.
+
+Proposer IDs are limited to 256 UTF-8 bytes, each proposal row to 4096 bytes,
+and the append-only inbox to 1024 rows and 1 MiB. A full inbox rejects new rows
+without changing retained bytes or quota. Consumption uses a bounded read and
+rejects an oversized inbox; malformed rows remain retained and cannot prevent
+selection of a later valid row within the limits.
 
 ## Exit codes and evidence limits
 

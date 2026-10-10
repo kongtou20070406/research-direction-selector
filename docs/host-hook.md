@@ -9,6 +9,10 @@ first supported host (the Windows Task Scheduler registration used by
 `project execute --background`). It is not an OS sandbox and requires no
 Docker, VM or container.
 
+For an opt-in structured stdio entry bound to one original campaign ledger, see
+the [fixed-campaign host broker](host-broker.md). Its auxiliary Codex filter has
+partial coverage; neither entry implements OS isolation or same-user protection.
+
 ## Commands
 
 ```

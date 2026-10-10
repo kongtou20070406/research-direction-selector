@@ -9,7 +9,12 @@ def main():
     config = json.loads(Path("development-config.json").read_text(encoding="utf-8"))
     suite = unittest.TestSuite()
     for pattern in config["test_patterns"]:
-        suite.addTests(unittest.defaultTestLoader.discover("tests", pattern=pattern))
+        if not (Path('tests') / pattern).is_file():
+            raise ValueError('Selected test module is missing from the frozen workload: ' + pattern)
+        selected = unittest.defaultTestLoader.discover('tests', pattern=pattern)
+        if not selected.countTestCases():
+            raise ValueError('Selected test module contains no regression cases: ' + pattern)
+        suite.addTests(selected)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     observations = {"case_count": result.testsRun,
                     "failure_count": len(result.failures) + len(result.errors),

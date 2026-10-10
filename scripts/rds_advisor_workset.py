@@ -124,6 +124,8 @@ def build(store, report):
                         'exit_code': r['exit_code'], 'scientific_support': 'UNKNOWN'}
                        for r in state['receipts']]
         operational.sort(key=lambda r: (r['run_status'] == 'SUCCEEDED', r['run_id']))
+        from rds_jump import packet as jump_packet
+        jumps = jump_packet(store)
         budget = {b['resource']: {'cap': b['cap'], 'spent_measured': b['spent'],
                   'charged_estimate': b['charged'], 'reserved': b['reserved'],
                   'remaining': b['cap'] - b['spent'] - b['charged'] - b['reserved'],
@@ -149,6 +151,8 @@ def build(store, report):
             shadow_plan=_compact(store, report.get('shadow_plan', {})),
             continuation={'command': 'project next', 'structure_command': 'structure request',
                 'instruction': 'Consume final owned next_move. For structure exploration, use exact feedback trigger and declared conditions; UNKNOWN requires EVIDENCE. Reopen route review only through existing goal/scope/relevant-evidence gates. Read omitted originals before a consequential choice.'})
+        if jumps is not None:
+            result['jump_packet'] = jumps
     except (ValueError, KeyError, TypeError, OSError) as exc:
         result['diagnostic'] = str(exc)[:512]
     return result

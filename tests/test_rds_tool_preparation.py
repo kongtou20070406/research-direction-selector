@@ -125,11 +125,11 @@ class ToolPreparationTests(unittest.TestCase):
     def test_qualification_marker_wins_concurrent_init_and_no_cost_is_omitted(self):
         entered, release = threading.Event(), threading.Event()
         original_execute = tools.execute
-        def paused(args):
+        def paused(args, **kwargs):
             entered.set()
             if not release.wait(15):
                 raise RuntimeError('synchronized qualifier timed out')
-            return original_execute(args)
+            return original_execute(args, **kwargs)
         with ThreadPoolExecutor(max_workers=1) as pool, patch('rds_tools.execute', side_effect=paused):
             pending = pool.submit(self.qualify)
             self.assertTrue(entered.wait(15))
@@ -188,12 +188,27 @@ class ToolPreparationTests(unittest.TestCase):
         self.write('bad.py', 'def wrong(a, b):\n    return 0\n')
         tools.extract(self.root, self.root / 'bad.py', 'wrong', 'wrong-v1')
         self.assertEqual(self.qualify('wrong-v1')['status'], 'FAILED')
-        def interrupted(store, run_id, **kwargs):
-            return store._finish(run_id, None, 'INTERRUPTED', None, None, False,
+        observed = {}
+
+        def interrupted(store, run_id, attempt_id):
+            with store._db(True) as db:
+                run = store._run(db, run_id)
+            self.assertEqual(run['attempt_id'], attempt_id)
+            self.assertIsNotNone(attempt_id)
+            self.assertEqual(run['status'], 'RESERVED')
+            self.assertIsNone(run['started_at'])
+            observed['attempt_id'] = attempt_id
+            return store._finish(run_id, attempt_id, 'INTERRUPTED', None, None, False,
                                  ['Synthetic unavailable dispatch; wall cost unknown'], only_unstarted=True)
-        with patch.object(ProjectStore, 'execute', interrupted):
+        with patch.object(ProjectStore, '_execute_claim', interrupted):
             unknown = self.qualify()
         self.assertEqual(unknown['status'], 'UNKNOWN')
+        receipt = ProjectStore(unknown['job_root']).snapshot()['receipts'][0]
+        self.assertEqual(receipt['attempt_id'], observed['attempt_id'])
+        self.assertFalse(receipt['process_started'])
+        self.assertIsNone(receipt['resources']['wall_seconds']['measured'])
+        self.assertTrue(receipt['resources']['wall_seconds']['unknown'])
+        self.assertEqual(receipt['resources']['wall_seconds']['charged_estimate'], 3)
         state = self.store.initialize(self.contract)
         with self.store._db(True) as db:
             charge = json.loads(db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_COST'").fetchone()['body'])
@@ -212,11 +227,15 @@ class ToolPreparationTests(unittest.TestCase):
         state = self.store.initialize(legacy)
         self.assertEqual(state['budget']['wall_seconds']['charged_estimate'], 0)
 
-    def test_initialized_legacy_native_validation_keeps_its_existing_entry(self):
+    def test_full_without_tool_bindings_refuses_private_validation_before_launch(self):
         legacy = deepcopy(self.contract)
         del legacy['advisor_policy']['tool_bindings']
         self.store.initialize(legacy)
-        self.assertEqual(self.qualify()['status'], 'LOCAL_CASES_PASSED')
+        before = self.store.snapshot()
+        with patch('rds_tools.execute', side_effect=AssertionError('FULL must not launch private child')):
+            with self.assertRaisesRegex(ValueError, 'before this owned project init'):
+                self.qualify()
+        self.assertEqual(self.store.snapshot(), before)
         self.assertEqual(self.intents(), [])
 
     def test_interrupted_comparison_blocks_owned_init_and_recovers_original_qualification(self):
@@ -231,7 +250,15 @@ class ToolPreparationTests(unittest.TestCase):
             return compare(self.root, 'before', 'after', self.root / 'comparison-cases.json',
                            'precision', 12, timeout=3)
 
-        with patch.object(ProjectStore, 'execute', side_effect=RuntimeError('interrupted after reservation')):
+        def interrupt_registered_job(store, run_id, **kwargs):
+            with store._db(True) as db:
+                run = store._run(db, run_id)
+            self.assertEqual(run['status'], 'RESERVED')
+            self.assertIsNone(run['attempt_id'])
+            self.assertIsNone(run['started_at'])
+            raise RuntimeError('interrupted after reservation')
+
+        with patch.object(ProjectStore, '_advisor_prepare_run', interrupt_registered_job):
             with self.assertRaisesRegex(RuntimeError, 'after reservation'):
                 check()
         unresolved = check()

@@ -24,6 +24,7 @@ import uuid
 
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
+from rds_mutation import mutation
 
 VERSION = "5.9.0-rc.2"
 # Reading an explicitly supported ledger does not grant execution admission;
@@ -195,6 +196,15 @@ class RDSState:
         self.db_path = self.directory / "state.sqlite3"
 
     def connect(self, create=False, readonly=False):
+        """Return a reader; native writers must use the complete transaction scope."""
+        require(readonly, 'Writable reference connections require RDSState.transaction()')
+        require(not create, 'Readonly reference connections cannot create state; use RDSState.transaction()')
+        return self._connect(readonly=True)
+
+    def _connect(self, create=False, readonly=False):
+        if not readonly:
+            from rds_campaign import enforce
+            enforce(self.root, kind='reference')
         if create:
             require(not (self.directory / "contract.json").exists(),
                     "Legacy v5 JSON state found; preserve it and initialize a new root")
@@ -259,7 +269,13 @@ class RDSState:
 
     @contextmanager
     def transaction(self, create=False):
-        db = self.connect(create)
+        from rds_mutation import mutation
+        with mutation(), self._transaction(create) as pair:
+            yield pair
+
+    @contextmanager
+    def _transaction(self, create=False):
+        db = self._connect(create)
         try:
             db.execute("BEGIN IMMEDIATE")
             state = self.read_state(db)
@@ -918,6 +934,8 @@ def cmd_meta(args, rds):
 
 
 def cmd_advise(args, rds):
+    from rds_project_lifecycle import require_advisor_root
+    require_advisor_root(args.root)
     from rds_advisor import RDSAdvisor
     owned = _owned_project(args.root)
     if owned is not None:
@@ -1001,6 +1019,8 @@ def cmd_advise(args, rds):
     if getattr(args, 'saved_dependencies', False):
         from rds_tms_store import with_saved_dependencies
         state['advisor_context'] = with_saved_dependencies(args.root, state.get('advisor_context', {}))
+    from rds_advisor_coverage import project_context
+    state['advisor_context'] = project_context(args.root, state.get('advisor_context', {}))
     if getattr(args, "frontier", None):
         context = state.setdefault("advisor_context", {})
         require(isinstance(context, dict), "Research context must be an object")
@@ -1024,7 +1044,7 @@ def cmd_advise(args, rds):
                 "Research context and facts must be objects")
         require(isinstance(manual.get("costs", {}), dict), "Research context costs must be an object")
         for key in ("decision", "targets", "budget", "max_depth", "max_candidates", "target_types", "templates", "frontier", "frontier_proposals", "resources",
-                    "dependency_map", "objective_binding", "method_constraints", "research_mode", "require_goal_link", "scope",
+                    "dependency_map", "dependency_snapshot_sha256", "objective_binding", "method_constraints", "research_mode", "require_goal_link", "scope",
                     "audit_receipts", "audit_files",
                     "obstructions"):
             if key in manual:
@@ -1119,14 +1139,25 @@ def cmd_advise(args, rds):
 
 def cmd_project(args):
     """Run a locked external project without claiming task or mechanism gains."""
-    if args.action == 'compose-tools':
-        from rds_tool_calls import compose
-        return compose(args.root, args.request)
     if args.action == 'trajectory':
         from rds_trajectory import report
         return report(args.root, args.manifest)
+    if args.action == 'compose-tools':
+        from rds_tool_calls import compose
+        return compose(args.root, args.request)
     from rds_project import ProjectStore
+    from rds_project_lifecycle import check_root, discover, enable_advisor, initialize
+    if args.action == 'discover':
+        return discover(args.root)
     store = ProjectStore(args.root)
+    if args.action == 'bind-workspace':
+        from rds_campaign import bind
+        return {'status': 'BOUND', 'binding': bind(store, args.workspace_root), 'execution_started': False}
+    if args.action not in {'init', 'recover'}:
+        check_root(args.root)
+    if args.action == 'enable-advisor':
+        return enable_advisor(store, load_spec(args.policy), apply=args.apply,
+                              expected_snapshot=args.expected_snapshot)
     if args.action == 'plan':
         if args.shadow:
             require(not (args.intent or args.output or args.save_as),
@@ -1136,19 +1167,34 @@ def cmd_project(args):
         require(args.goal is None, '--goal requires --shadow')
         from rds_steering import plan
         return plan(store, load_spec(args.intent) if args.intent else None,
-                    output=args.output, save_as=args.save_as)
+                    output=args.output, save_as=args.save_as, dialogue=args.dialogue)
     if args.action == 'steering':
         from rds_steering import status
         return status(store)
     if args.action == 'steer':
         from rds_steering import submit
-        return submit(store, load_spec(args.request), user_directed=args.user_directed, source=args.source)
+        result = submit(store, load_spec(args.request), user_directed=args.user_directed, source=args.source)
+        if args.dialogue:
+            from rds_steering import plan
+            try:
+                result['dialogue'] = plan(store, dialogue=True)['dialogue']
+            except (ValueError, KeyError, TypeError, OSError, sqlite3.Error) as exc:
+                # Submission already committed. A display read cannot turn the
+                # retained instruction into an apparent failed mutation.
+                result['dialogue'] = {'schema': 'rds-research-dialogue-v1', 'status': 'UNAVAILABLE',
+                    'reason': str(exc)[:512], 'selected_run': None, 'scientific_support': 'UNKNOWN',
+                    'execution_started': False, 'authorization': 'UNCHANGED',
+                    'next_move': 'Instruction is retained; read project steering using the received revision.'}
+        return result
     if args.action == "init":
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
-            from rds_project_assembly import initialize
-            return initialize(store, args.recipe)
-        return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
+            require(args.mode != 'quick', 'A recipe creates a FULL project with program-owned Advisor')
+            check_root(args.root, separate_reason=args.separate_project)
+            from rds_project_assembly import initialize as assemble
+            return assemble(store, args.recipe, separate_reason=args.separate_project)
+        return initialize(store, load_spec(args.contract), mode=args.mode, supersedes=args.supersedes,
+                          separate_reason=args.separate_project)
     if args.action == "revise":
         from rds_method_revision import apply
         return apply(store, load_spec(args.proposal))
@@ -1199,6 +1245,8 @@ def _project_result(store, receipt):
     if advice is None:
         return receipt
     result = {'receipt': receipt, 'advisor': advice}
+    if getattr(store, 'last_advisor_review_reused', False):
+        result['advisor_review_reused'] = True
     observation = getattr(store, 'last_advisor_observation', None)
     if observation is not None:
         result['observation'] = observation
@@ -1436,6 +1484,7 @@ def parser():
     structure_actions.add_parser('next')
     structure_actions.add_parser('list')
     structure_actions.add_parser('recover')
+    structure_actions.add_parser('jump', help='Generate explanations through frozen probe, refresh and synthesis routes').add_argument('--steps', type=int, default=1)
     structure_actions.add_parser('drive', help='Consume proposals and feedback until a bounded stop or open Agent task').add_argument('--steps', type=int, default=1)
     hypergraph = commands.add_parser('hypergraph', help='Bounded AND/OR proof dependency analysis, not proof certification')
     hypergraph.add_argument('--input', '-i', help='Import or restore a map; omitted inputs reuse this root\'s saved map')
@@ -1536,10 +1585,18 @@ def parser():
 
     project = commands.add_parser("project", help="Locked local project runner with receipts and resource accounting")
     pr_actions = project.add_subparsers(dest="action", required=True)
+    pr_actions.add_parser('discover', help='Find the existing project in this root/ancestors; report mode and next capabilities without execution')
+    pr_bind = pr_actions.add_parser('bind-workspace', help='Bind this workspace to the existing canonical research ledger; preserve history and budget')
+    pr_bind.add_argument('--workspace-root', required=True, help='Existing workspace containing this project and its experiment directories')
+    pr_enable = pr_actions.add_parser('enable-advisor', help='Preview or atomically enable Advisor in this same ledger; preserve history and budget')
+    pr_enable.add_argument('--policy', required=True, help='Explicit basic owned Advisor policy JSON')
+    pr_enable.add_argument('--apply', action='store_true', help='Apply the exact reviewed snapshot; preview by default')
+    pr_enable.add_argument('--expected-snapshot', help='Snapshot SHA256 from the activation preview; required with --apply')
     pr_plan = pr_actions.add_parser('plan', help='Prepare a minimal draft with explicit unknowns; never authorize or launch work')
     pr_plan.add_argument('--intent', help='Optional declared goal/scope/budget/evaluation JSON')
     pr_plan.add_argument('--output', help='Write a new project-relative proposal artifact')
     pr_plan.add_argument('--save-as', help='Retain the draft in an initialized project checkpoint and CAS')
+    pr_plan.add_argument('--dialogue', action='store_true', help='Read retained owned advice and current human steering; no search or execution')
     pr_plan.add_argument('--shadow', action='store_true', help='Read a rolling global planning proposal from the current owned evidence; no writes or dispatch')
     pr_plan.add_argument('--goal', help='With --shadow, focus the bounded dependency view on one frozen goal fact')
     pr_actions.add_parser('steering', help='Read the current user instruction, active work disposition and live resources')
@@ -1547,10 +1604,13 @@ def parser():
     pr_steer.add_argument('--request', required=True)
     pr_steer.add_argument('--user-directed', action='store_true', help='Caller attests this is a current user request, not imported text')
     pr_steer.add_argument('--source', required=True, help='Locator of the current user request in the trusted host')
+    pr_steer.add_argument('--dialogue', action='store_true', help='Explain current instruction effects and retained advice compatibility')
     pr_init = pr_actions.add_parser("init")
     pr_source = pr_init.add_mutually_exclusive_group(required=True)
     pr_source.add_argument("--contract")
     pr_source.add_argument("--recipe", help="Compile explicit research declarations into an owned contract")
+    pr_init.add_argument('--mode', choices=['full', 'quick'], help='New projects default to FULL with Advisor; QUICK is explicitly limited. Existing exact retries retain their mode')
+    pr_init.add_argument('--separate-project', metavar='REASON', help='Explicitly declare an independent project; required under an existing research root')
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
                          help="Link this new root to a frozen project root by digest; the predecessor is never modified")
     pr_actions.add_parser("revise", help="Adopt a bounded method revision in the same ledger without resetting budget or deadline").add_argument("--proposal", required=True)
@@ -1574,10 +1634,10 @@ def parser():
     pr_actions.add_parser("compare", help="Compare recorded arms against the precommitted min_useful_delta")
     pr_actions.add_parser("status").add_argument("--brief", "--digest", action="store_true")
     pr_actions.add_parser("costs")
-    pr_compose = pr_actions.add_parser('compose-tools', help='Compose existing qualified tool routes with original admission and recovery')
-    pr_compose.add_argument('--request', required=True)
     pr_trajectory = pr_actions.add_parser('trajectory', help='Read original provider/tool/evaluator records; no execution or new ledger')
     pr_trajectory.add_argument('--manifest', required=True, help='Project-relative rds-trajectory-manifest-v1 JSON')
+    pr_compose = pr_actions.add_parser('compose-tools', help='Compose existing qualified tool routes with original admission and recovery')
+    pr_compose.add_argument('--request', required=True)
     pr_control = pr_actions.add_parser("control-check")
     pr_control.add_argument("--candidate", required=True)
     pr_control.add_argument("--current", required=True)
@@ -1760,6 +1820,9 @@ def _main():
         print("[RDS-HINT] python -B scripts/rds_cli.py --root \"" + str(args.root) + "\" project next", file=sys.stderr)
         return 1
     try:
+        from rds_campaign import enforce
+        if not (args.command == 'project' and args.action in {'discover', 'recover', 'bind-workspace'}):
+            enforce(args.root)
         if args.command == "history":
             from rds_obelisk import history_command
             return history_command(args) or 0
@@ -1868,6 +1931,8 @@ def _main():
                 if args.saved_dependencies:
                     from rds_tms_store import with_saved_dependencies
                     context = with_saved_dependencies(args.ledger, context)
+                from rds_advisor_coverage import project_context
+                context = project_context(args.ledger, context)
                 review = (advice, context)
             result = execute(args, review=review)
         elif args.command == "reject":
@@ -1877,7 +1942,10 @@ def _main():
             result = cmd_advise(args, rds)
         elif args.command == 'structure':
             import rds_structure
-            if args.action == 'request':
+            if args.action == 'jump':
+                from rds_jump import generate
+                result = generate(args.root, args.steps)
+            elif args.action == 'request':
                 result = rds_structure.request(args.root, args.limit)
             elif args.action == 'propose':
                 result = rds_structure.propose(args.root, load_spec(args.proposal))
@@ -1926,12 +1994,29 @@ def _main():
             result = cmd_decide(args, rds)
         else:
             result = cmd_status(args, rds)
+        workflow = None
+        if args.command in {'project', 'exec', 'advise'}:
+            from rds_project_lifecycle import describe
+            workflow = result.get('workflow') or describe(args.root, quick=args.command == 'exec')
+            print('[RDS] mode=' + workflow['mode'] + ' advisor=' + workflow['advisor'] +
+                  ' continuity=' + workflow['continuity']['status'] +
+                  ' root=' + workflow['project_root'], file=sys.stderr)
         compact = getattr(args, "brief", False) or args.command in {"exec", "reject", "guard", "hypergraph", "math", "rsi"} and not args.json
+        if args.command == 'project' and args.action == 'recover':
+            from rds_campaign import binding
+            scope = binding(args.root)
+            if scope is not None and Path(args.root).resolve() != Path(scope['project_root']):
+                compact = False  # Recovery may settle an old attempt; it cannot write a new CAS brief.
         if args.command == 'rsi' and args.action == 'discover':
             compact = False  # Discovery is already bounded and must expose the requested signatures.
         if compact:
             from rds_quick import brief
             summary = brief(args.root, result, VERSION)
+            if workflow is not None:
+                # Full commands remain in the saved report/discovery response;
+                # repeating an absolute-root command crowds out decision detail.
+                summary['workflow'] = {key: workflow[key] for key in ('mode', 'advisor')}
+                summary['workflow']['continuity'] = workflow['continuity']['status']
             if args.command == 'rsi' and args.action == 'compare':
                 summary.update({k: result[k] for k in ('correctness', 'comparable_context', 'speedup_ratio',
                                                       'precision', 'precision_key', 'case_count', 'samples_per_tool',
@@ -1940,7 +2025,10 @@ def _main():
                 summary['reasons'] = result['reasons']
             print(json.dumps(summary, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
         else:
-            print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+            # Hashed receipts/events keep their exact body; the mode banner is
+            # separate. Operational un-hashed responses can carry discovery data.
+            shown = {**result, 'workflow': workflow} if workflow is not None and 'sha256' not in result else result
+            print(json.dumps(shown, ensure_ascii=False, indent=2, allow_nan=False))
         if args.command == "exec" and (result.get("receipt") or {}).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
         if args.command == 'guard' or args.command == 'exec' and 'regression_review' in result:
@@ -1958,7 +2046,7 @@ def _main():
             return 2
         if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and result.get('receipt', result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
-        if result.get('status') == 'COLLECTION_FAILED' or (result.get('advisor') or {}).get('status') == 'COLLECTION_FAILED':
+        if result.get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'} or (result.get('advisor') or {}).get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'}:
             return 2  # The receipt is retained; collection needs attention, never a training retry.
         if args.command == "meta" and args.action == "evaluate-rule" and not result.get("adoption_eligible"):
             return 1
@@ -1967,9 +2055,10 @@ def _main():
     except (ValueError, KeyError, TypeError, RecursionError, OSError, SyntaxError) as exc:
         # KeyError/TypeError also come from unvalidated user specs, so they stay rejections.
         print("[RDS-REJECT] " + str(exc), file=sys.stderr)
-        if args.command == "init" or args.command == "project" and args.action == "init":
-            # Point at a command that produces a valid, bound contract from scratch (#72).
-            print("[RDS-HINT] python -B examples/project-runner/prepare.py --root ./my-project", file=sys.stderr)
+        if (args.command == "init" or args.command == "project" and args.action == "init") and Path(args.root).is_dir():
+            from rds_project import _shell_argument
+            print('[RDS-HINT] Inspect the existing project first: python -B scripts/rds_cli.py --root ' +
+                  _shell_argument(str(args.root)) + ' project discover; see docs/project-lifecycle.md', file=sys.stderr)
         return 1
     except (sqlite3.Error, ImportError, subprocess.SubprocessError) as exc:
         # Nothing in the request was refused: the state database, a dependency or a subprocess failed.

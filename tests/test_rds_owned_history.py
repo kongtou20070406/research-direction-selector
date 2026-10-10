@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from rds_project import ProjectStore, canonical, digest
 from rds_checkpoints import MAX_BYTES, append_checkpoint, read_checkpoint, restore_checkpoint
-from rds_advisor import RDSAdvisor, _loop_route
-from rds_owned_advisor import review, _dispatch_graph, prepare_admission
+from rds_advisor import _loop_route
+from rds_owned_advisor import review, prepare_admission
 import rds_owned_history as history
 
 spec = importlib.util.spec_from_file_location('owned_history_fixture', ROOT / 'tests/test_rds_owned_advisor.py')
@@ -34,11 +34,9 @@ class OwnedHistoryTests(unittest.TestCase):
 
     def decision(self):
         report = review(self.store)
-        graph = history.bind_graph(self.store, self.contract, _dispatch_graph(self.contract['advisor_policy'], []))
-        recommendations = RDSAdvisor(self.root).recommend_next_directions(
-            {'contract': self.contract, 'contract_sha256': digest(self.contract),
-             'advisor_context': report['context']}, graph)
-        report['advice'] = {'recommendations': recommendations}
+        # Owned review already binds history and calculates the complete graph.
+        # Consume that native advice instead of resubmitting a transformed graph
+        # through the public API, where caller graph overrides are forbidden.
         return history.prepare_decision(self.store, report, self.contract)
 
     def reserve(self):
@@ -58,7 +56,7 @@ class OwnedHistoryTests(unittest.TestCase):
             db.execute('BEGIN IMMEDIATE')
             db.execute('UPDATE budget SET reserved=1 WHERE resource="wall_seconds"')
             snap = history.snapshot(self.store, db)
-            append_checkpoint(db, self.root, 'rollback', snap, kind='project', decision=decision)
+            append_checkpoint(db, self.root, 'rollback', snap, kind='project')
             self.assertTrue(db.in_transaction)
             db.rollback()
         live = self.store.snapshot()
@@ -208,8 +206,11 @@ class OwnedHistoryTests(unittest.TestCase):
         decision['outcome'] = 'deferred'
         with self.store._db() as db:
             db.execute('BEGIN IMMEDIATE')
+            with self.assertRaisesRegex(ValueError, 'Program-owned Advisor'):
+                append_checkpoint(db, self.root, 'forged-late-choice', history.snapshot(self.store, db),
+                                  kind='project', decision=decision)
             append_checkpoint(db, self.root, 'late-choice', history.snapshot(self.store, db),
-                              kind='project', decision=decision)
+                              kind='project')
         before = self.store.snapshot()
         with patch('rds_owned_advisor.prepare_admission', return_value=token):
             with self.assertRaisesRegex(ValueError, 'state changed after Advisor selection'):
