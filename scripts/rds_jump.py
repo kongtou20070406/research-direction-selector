@@ -726,6 +726,19 @@ def _generator_bindings(store, contract, plan):
         require('env' not in command_names,
                 'Command-launching wrapper cannot be a Jump generator executable')
         operand = _interpreter_script_operand([str(executable), *argv[1:]], frozen_startup=True)
+        executable_identity = os.path.normcase(str(executable))
+        executable_name = executable.name.casefold().removesuffix('.exe')
+        recognized_interpreter = bool(
+            re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', executable_name)
+            or re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name)
+            or re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', executable_name)
+            or re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', executable_name)
+            or re.fullmatch(r'julia(?:\d+(?:\.\d+)*)?', executable_name)
+            or re.fullmatch(r'lua(?:\d+(?:\.\d+)*)?', executable_name)
+            or executable_name in {'rscript', 'node', 'nodejs', 'sh', 'bash', 'dash', 'ksh', 'zsh'}
+        )
+        require(operand is not None or recognized_interpreter or executable_identity in code,
+                'Command-launching wrapper or unknown executable cannot bind generator entrypoint without frozen code')
         script_operand, script_path = operand if operand is not None else (None, None)
         preloads = _node_preload_operands([str(executable), *argv[1:]], script_operand)
         for candidate in preloads.values():

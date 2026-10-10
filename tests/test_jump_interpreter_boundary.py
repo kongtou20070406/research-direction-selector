@@ -25,19 +25,22 @@ spec.loader.exec_module(example)
 
 
 class InterpreterBoundaryTests(unittest.TestCase):
-    def test_env_wrapper_cannot_hide_the_effective_generator_interpreter(self):
+    def test_command_wrapper_cannot_hide_the_effective_generator_interpreter(self):
         with tempfile.TemporaryDirectory() as directory:
             root, store = example.build(Path(directory) / 'project')
             before = store.snapshot()
+            self.assertTrue(jump.load_plan(store, before))
             original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
             policy = root / 'jump-generation.json'
+            external_timeout = Path(directory) / 'timeout.exe'
             cases = (
-                ('env', root / 'bin' / 'launcher.exe'),
-                ('launcher', root / 'bin' / 'env.exe'),
+                ('env', root / 'bin' / 'launcher.exe', ['env', 'python', 'worker.py']),
+                ('launcher', root / 'bin' / 'env.exe', ['launcher', 'python', 'worker.py']),
+                ('timeout', external_timeout, ['timeout', '10', sys.executable, '-B', 'worker.py']),
+                ('launcher', external_timeout, ['launcher', '10', sys.executable, '-B', 'worker.py']),
             )
-            for command, resolved in cases:
+            for command, resolved, argv in cases:
                 plan = deepcopy(original)
-                argv = [command, 'python', 'worker.py']
                 plan['stages'][0]['run']['argv'] = argv
                 policy.write_text(canonical(plan), encoding='utf-8')
                 state = deepcopy(before)
