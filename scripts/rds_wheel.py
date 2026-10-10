@@ -277,6 +277,8 @@ class Wheel:
 
     def initialize(self, project_contract_path):
         require(not self.directory.exists(), "wheel is already initialized")
+        from rds_workspace import check_admission
+        check_admission(self.root)
         contract = read_json(project_contract_path)
         setup = self.setup(contract, initialized=False)
         factors = setup.get("factors")

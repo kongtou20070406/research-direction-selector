@@ -234,6 +234,12 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
     authority. The child still has its own frozen command and run admission.
     """
     store = ProjectStore(root)
+    # #282: this transaction charges budget and appends events, so a replaced
+    # bound ledger must be refused before the first charge, not only at the
+    # child's later register() call.
+    if root == workspace:
+        from rds_workspace import check_admission
+        check_admission(root)
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         contract = store._contract(db)
@@ -487,9 +493,9 @@ def execute(args, review=None):
     if review is not None:
         request['research_context'] = {'sha256': digest(review[1]), 'candidate': args.choose,
                                        'ledger': str(Path(args.ledger).resolve())}
+    parent = ProjectStore(owner) if owner is not None else None
     execution_policy, executor_sha256 = None, None
-    if owner is not None:
-        parent = ProjectStore(owner)
+    if parent is not None:
         with parent._db(True) as db:
             parent_contract = parent._contract(db)
             execution_policy = parent_contract.get('execution_policy')
@@ -513,6 +519,11 @@ def execute(args, review=None):
         if execution_policy is not None:
             return _charge_ledger(owner, workspace, request, timeout, source_root=root,
                                   executor_sha256=executor_sha256, existing_only=True)
+        if owner is None:
+            # #282: a resumed job workspace of a bound owner keeps its binding even
+            # when this invocation resolves no owner ledger.
+            from rds_workspace import check_admission
+            check_admission(workspace)
         state = ProjectStore(workspace).snapshot(check_bindings=True)
         require(not state['binding_check']['errors'], 'Frozen job bindings changed')
         receipt = next((r for r in state['receipts'] if r['run_id'] == args.name), None)
@@ -582,7 +593,17 @@ def execute(args, review=None):
         contract['objective_sha256'] = request['objective_sha256']
     if execution_policy is not None:
         contract['execution_policy'] = deepcopy(execution_policy)
-    store.initialize(contract)
+    store.initialize(contract, fresh_workspace=parent if owner is not None else False)
+    if owner is not None:
+        # #282: a child exec workspace of a bound owner binds to its own child
+        # ledger, so a child cannot become a second accounting identity for the
+        # owner's budget. The child's own WORKSPACE_BOUND event and pointer
+        # stay untouched: copying the owner pointer here would make every
+        # later child admission compare the owner digest against the child
+        # ledger and refuse all work.
+        from rds_workspace import bind as bind_workspace, check_admission
+        check_admission(owner)
+        bind_workspace(workspace)
     if review is not None:
         require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
         record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name))

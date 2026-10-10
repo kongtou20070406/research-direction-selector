@@ -623,7 +623,29 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
-    def initialize(self, contract, supersedes=None):
+    def initialize(self, contract, supersedes=None, separate_project=False, fresh_workspace=False):
+        # #282: a bound workspace admits only its canonical ledger. This check
+        # precedes every write, so a refusal leaves attempts, receipts and
+        # budget unchanged. Unbound legacy workflows are unaffected.
+        # A fresh tool-exec child under a bound owner is admitted by quick exec
+        # (`fresh_workspace=<owner store>`): the caller must already have
+        # passed admission on the owner's ledger, and the child binds to its
+        # own ledger afterwards — it is a new job workspace, not an attempt to
+        # replace the owner's canonical ledger.
+        from rds_workspace import check_admission
+        require(fresh_workspace is False or isinstance(fresh_workspace, ProjectStore),
+                "fresh_workspace must be the admitted owner ProjectStore")
+        if fresh_workspace is False:
+            check_admission(self.root, supersedes=supersedes, separate_project=separate_project)
+        else:
+            # The child must sit inside the owner's bound tree and must not
+            # already carry a pointer; otherwise the bypass would open a
+            # second identity outside the owner's coverage.
+            from rds_workspace import read_pointer, pointer_path
+            require(self.root.resolve().is_relative_to(fresh_workspace.root.resolve()),
+                    "fresh_workspace must be admitted by the enclosing bound owner")
+            require(read_pointer(self.root) is None and not pointer_path(self.root).is_file(),
+                    "Workspace already carries a binding; fresh_workspace applies only to new workspaces")
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
@@ -800,6 +822,11 @@ class ProjectStore:
     @contextmanager
     def theory_allowance(self, spec, request, allowance):
         """Precharge bounded controller work; unused allowances are not refunded."""
+        # #282: this transaction charges budget and appends an event, so a
+        # replaced bound ledger must be refused here, before the allowance
+        # write — not only at the later register() call.
+        from rds_workspace import check_admission
+        check_admission(self.root)
         started = time.monotonic()
         require(isinstance(spec, dict), "Run manifest must be an object")
         run_id = spec.get("id", "")
@@ -862,6 +889,10 @@ class ProjectStore:
             return json.loads(row["body"])
 
     def register(self, spec, *, executor_sha256=None):
+        # #282: a bound workspace's canonical ledger admits every mutating
+        # entry, not only initialize, so a replaced ledger cannot reserve work.
+        from rds_workspace import check_admission
+        check_admission(self.root)
         require(isinstance(spec, dict) and type(spec.get("schema")) is int
                 and spec["schema"] == 1, "Run manifest schema must be 1")
         require(set(spec) <= {"schema", "id", "arm", "control_id", "protocol", "argv", "outpaths", "resource_estimates",
@@ -1094,6 +1125,10 @@ class ProjectStore:
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
     def execute(self, run_id, background=False, *, admission_guard=None):
+        # #282: refuse dispatch against a replaced bound ledger before any
+        # reservation, attempt or receipt write.
+        from rds_workspace import check_admission
+        check_admission(self.root)
         # An internal caller may restrict admission after all ordinary checks.
         # This callback grants no authority and is never supplied by the CLI.
         require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
@@ -1472,6 +1507,10 @@ class ProjectStore:
         if chain:  # Only successor roots carry the field; every other snapshot is unchanged.
             # Pinned checkpoint digests stay in the link record; the snapshot names the IDs only.
             snapshot["predecessor_chain"] = [{k: v for k, v in hop.items() if k != "checkpoint_shas"} for hop in chain]
+        from rds_workspace import coverage
+        binding = coverage(self.root)
+        if binding["status"] != "UNBOUND":  # Unbound legacy workflows keep their original snapshot shape.
+            snapshot["workspace_binding"] = binding
         return snapshot
 
     def _receipt_result(self, receipt):
