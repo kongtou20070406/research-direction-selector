@@ -24,7 +24,7 @@ def _section(rows, locator, limit=ITEM_LIMIT):
         if len(canonical(row).encode('utf-8')) <= DETAIL_BYTES:
             items.append(deepcopy(row))
         else:
-            items.append({**{k: row[k] for k in ('id', 'run_id', 'status', 'fact') if k in row},
+            items.append({**{k: row[k] for k in ('id', 'run_id', 'status', 'fact', 'kind') if k in row},
                           'details_omitted': True, 'sha256': digest(row),
                           'source': deepcopy(row.get('source', {'locator': locator,
                                       'id': row.get('id', row.get('run_id', row.get('fact')))}))})
@@ -87,7 +87,17 @@ def build(state, report, *, admitted_runs=(), goal=None):
               'expand': 'project next and project status; compare source identities before using omitted originals'}
     if not policy or report.get('status') != 'REVIEWED':
         return {**result, 'reason': 'A coherent program-owned evidence review is required',
-                'owned_status': report.get('status'), 'current_advisor_run': report.get('selected_run')}
+                'owned_status': report.get('status'), 'current_advisor_run': report.get('selected_run'),
+                'source': {'contract_sha256': digest(state['contract']),
+                           'fingerprint': report.get('fingerprint'),
+                           'snapshot_sha256': report.get('snapshot_sha256')},
+                'admitted_runs': [], 'next_small_check': None,
+                'current_next_move': _section([report['next_move']], 'owned review.next_move')['items'][0]
+                    if report.get('next_move') else None,
+                'diagnostics': {
+                    'coverage_errors': _section(report.get('coverage', {}).get('errors', []), 'owned review.coverage.errors'),
+                    'coverage_gaps': _section(report.get('coverage', {}).get('gaps', []), 'owned review.coverage.gaps'),
+                    'warnings': _section(report.get('warnings', []), 'owned review.warnings')}}
     context = report['context']
     conditions = context['decision']['goal_conditions']
     require(goal is None or any(c['fact'] == goal for c in conditions), 'Shadow goal must name a frozen goal fact')

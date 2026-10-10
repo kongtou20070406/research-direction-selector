@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import test_rds_owned_advisor as fixtures
 from rds_global_planning import inspect_plan
 from rds_project import ProjectStore
+from rds_project import digest
 from rds_tms_store import current, save
 
 
@@ -95,13 +96,50 @@ class GlobalPlanningTests(unittest.TestCase):
         self.assertFalse(plan['execution_authorized'])
 
     def test_original_collection_failure_makes_shadow_unavailable(self):
+        from rds_owned_advisor import review
+        from rds_steering import submit
         self.f.initialize(mode='badjson')
         self.f.create()
         self.f.execute(ok=False)
+        snap = self.f.snapshot()
+        submit(ProjectStore(self.f.root), {'id': 'pause-after-failure', 'kind': 'pause', 'message': 'Retain this attempt and stop new work',
+               'contract_sha256': snap['contract_sha256'], 'expected_revision': None},
+               user_directed=True, source='synthetic direct user instruction')
+        original = review(ProjectStore(self.f.root), persist=False)
         before = self.f.snapshot()
         plan = self.f.output('project', 'plan', '--shadow')
         self.assertEqual(plan['status'], 'UNAVAILABLE')
         self.assertEqual(plan['owned_status'], 'COLLECTION_FAILED')
+        self.assertEqual(plan['diagnostics']['coverage_errors']['items'], original['coverage']['errors'])
+        self.assertTrue(plan['diagnostics']['coverage_errors']['items'])
+        self.assertEqual(plan['diagnostics']['coverage_errors']['sha256'], digest(original['coverage']['errors']))
+        self.assertEqual(plan['source']['fingerprint'], original['fingerprint'])
+        self.assertEqual(plan['source']['contract_sha256'], before['contract_sha256'])
+        self.assertEqual(plan['current_next_move'], original['next_move'])
+        self.assertEqual(plan['current_next_move']['kind'], 'HUMAN_STEERING')
+        self.assertIsNone(plan['next_small_check'])
+        self.assertEqual(plan['admitted_runs'], [])
+        self.assertEqual(self.f.snapshot()['receipts'], before['receipts'])
+        self.assertEqual(self.f.snapshot()['budget'], before['budget'])
+        self.assertEqual(self.f.starts(), ['baseline'])
+
+    def test_unavailable_diagnostics_bound_omissions_without_losing_original_error_identity(self):
+        from rds_owned_advisor import review
+        def many_observations(policy):
+            original = deepcopy(policy['observations'][0])
+            policy['observations'].extend({**deepcopy(original), 'fact': 'malformed.' + str(i)} for i in range(10))
+        self.f.initialize(mode='badjson', mutate_policy=many_observations)
+        self.f.create()
+        self.f.execute(ok=False)
+        original = review(ProjectStore(self.f.root), persist=False)
+        before = self.f.snapshot()
+        plan = self.f.output('project', 'plan', '--shadow')
+        errors = plan['diagnostics']['coverage_errors']
+        self.assertEqual(errors['total'], len(original['coverage']['errors']))
+        self.assertGreater(errors['omitted'], 0)
+        self.assertLess(len(errors['items']), errors['total'])
+        self.assertEqual(errors['sha256'], digest(original['coverage']['errors']))
+        self.assertEqual(errors['source']['locator'], 'owned review.coverage.errors')
         self.assertEqual(self.f.snapshot()['receipts'], before['receipts'])
         self.assertEqual(self.f.starts(), ['baseline'])
 

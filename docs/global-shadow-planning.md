@@ -70,6 +70,11 @@ alternatives have passed the existing prerequisite/resource/feasibility/steering
 filters; only the original selected manifest can acquire execution admission.
 Human pause, priority, active attempts, budget, method and feasibility gates retain
 precedence. Missing collection or a concurrent state change returns UNAVAILABLE.
+Collection failures retain bounded original errors, gaps and warnings under
+`diagnostics`, the evidence identities and `current_next_move`. A retained human
+stop remains visible even when planning is unavailable. Inspect the named
+original report to expand omitted errors; no suggested run is admitted or
+dispatched by an unavailable plan.
 
 The public software tests cover disagreement with the original local choice,
 real feedback closing only part of an AND goal, exhausted producers, preserved
