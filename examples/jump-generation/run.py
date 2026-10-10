@@ -45,9 +45,9 @@ def build(root, *, corpus=None, measurement_offset=0, max_candidates=2000, searc
     protocol = {'data_split': 'public-finite-development', 'init': 'fresh', 'seed': 0, 'checkpoint': 'none',
                 'schedule': 'three generation routes then independent finite verification',
                 'sample_work': {'training_rows': 4, 'verification_rows': 3}, 'numeric_protocol': 'bounded exact integers'}
-    commands = [[sys.executable, '-B', 'worker.py', kind, 'out/' + kind + '.json']
+    commands = [[sys.executable, '-BES', 'worker.py', kind, 'out/' + kind + '.json']
                 for kind in ('probe', 'refresh', 'synthesize', 'candidate')]
-    commands.append([sys.executable, '-B', 'evaluator.py', 'out/candidate.json', 'out/verdict.json'])
+    commands.append([sys.executable, '-BES', 'evaluator.py', 'out/candidate.json', 'out/verdict.json'])
     bindings = [{'path': p, 'role': role, 'sha256': file_sha(root / p)} for p, role in
         [('worker.py', 'code'), ('instrument.py', 'code'), ('rds_jump_search.py', 'code'), ('evaluator.py', 'evaluator'),
          ('domain.json', 'data'), ('instrument.json', 'data'), ('corpus.json', 'data'), ('oracle.json', 'data')]]

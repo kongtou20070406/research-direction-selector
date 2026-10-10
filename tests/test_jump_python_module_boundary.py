@@ -28,7 +28,7 @@ class PythonModuleBoundaryTests(unittest.TestCase):
                 plan.pop('generator_code_paths')
             for stage in plan['stages']:
                 command = next(a for a in contract['allowed_commands'] if a == stage['run']['argv'])
-                command[:] = [sys.executable, *options, *command[3:]]
+                command[:] = [sys.executable, '-ES', *options, *command[3:]]
                 stage['run']['argv'] = command
         return fixtures.InterpreterBoundaryTests().freeze(Path(directory) / 'project', change)
 

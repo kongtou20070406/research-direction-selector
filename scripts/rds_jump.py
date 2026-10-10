@@ -278,16 +278,24 @@ def _code_identity(store, path):
     return os.path.normcase(str(store._path(path).resolve()))
 
 
-def _python_script_operand(argv):
+def _python_script_operand(argv, *, frozen_startup=False):
     """Identify Python's file operand, including files without an extension."""
     if not re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?(?:\.exe)?', Path(argv[0]).name.casefold()):
         return None
+    no_site = ignore_environment = False
+
+    def startup():
+        require(not frozen_startup or no_site and ignore_environment,
+                "Python startup isolation requires effective -E/-I and -S before frozen main")
+
     index = 1
     while index < len(argv):
         option = argv[index]
         if option == '--':
+            startup()
             return index + 1 if index + 1 < len(argv) else None
         if option == '-':
+            startup()
             return None  # Stdin has no script-file operand.
         if option == '--check-hash-based-pycs':
             index += 2
@@ -299,10 +307,16 @@ def _python_script_operand(argv):
                 require(flag != 'm', 'Python module execution is unsupported for frozen Jump code')
                 require(flag != 'i', 'Python interactive startup is unsupported for frozen Jump code')
                 if flag == 'c':
+                    startup()
                     return None  # Inline code has no script-file operand.
                 if flag in {'W', 'X'}:
+                    value = flags[offset + 1:] if offset + 1 < len(flags) else (argv[index + 1] if index + 1 < len(argv) else '')
+                    require(not frozen_startup or flag != 'X' or value.split('=', 1)[0] != 'presite',
+                            'Python presite startup execution is unsupported for frozen Jump code')
                     index += 1 if offset + 1 < len(flags) else 2
                     break
+                no_site = no_site or flag == 'S'
+                ignore_environment = ignore_environment or flag in {'E', 'I'}
                 # CPython accepts -t as a compatibility no-op; keep scanning.
                 if flag in 'h?V':
                     return None
@@ -311,7 +325,9 @@ def _python_script_operand(argv):
             else:
                 index += 1
         else:
+            startup()
             return index
+    startup()
     return None
 
 
@@ -461,7 +477,7 @@ def _perl_script_operand(argv):
     return None
 
 
-def _interpreter_script_operand(argv):
+def _interpreter_script_operand(argv, *, frozen_startup=False):
     """Return (argv index, literal main path) for supported interpreters.
 
     Other existing project file arguments still require an explicit immutable
@@ -481,7 +497,7 @@ def _interpreter_script_operand(argv):
         return main
     name = Path(argv[0]).name.casefold().removesuffix('.exe')
     if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', name):
-        return file_at(_python_script_operand(argv))
+        return file_at(_python_script_operand(argv, frozen_startup=frozen_startup))
     if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', name):
         return file_at(_ruby_script_operand(argv))
     if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', name):
@@ -678,7 +694,7 @@ def _generator_bindings(store, contract, plan):
     for stage in plan['stages']:
         argv = stage['run']['argv']
         executable = Path(store._command(argv)).resolve()
-        operand = _interpreter_script_operand([str(executable), *argv[1:]])
+        operand = _interpreter_script_operand([str(executable), *argv[1:]], frozen_startup=True)
         script_operand, script_path = operand if operand is not None else (None, None)
         preloads = _node_preload_operands([str(executable), *argv[1:]], script_operand)
         for candidate in preloads.values():

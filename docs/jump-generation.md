@@ -18,6 +18,16 @@ It returns the generated proposal before experimental execution; the next
 `drive` call goes through the ordinary candidate selection and experiment path.
 Projects without the binding keep the existing Agent handoff.
 
+Python generator commands must freeze effective pre-main `-S` and `-E` (or `-I`)
+options. The example declares `-BES` before freezing the contract: `-S` disables
+automatic site startup, and `-E` ignores mutable Python environment settings while
+retaining ordinary local worker/helper imports. `-I` also removes the local script
+search path, so use it only when the frozen worker explicitly supports that mode.
+Consumed option values and post-script arguments do not supply isolation. Debug
+`-X presite` module startup is unsupported. An old unisolated plan fails closed;
+its historical argv and receipts are retained. Execution never adds flags to an
+already admitted command. This boundary does not infer arbitrary import closure.
+
 ## Drive the full loop in one ledger
 
 With both a frozen `jump-generation.json` and an autonomy policy, `project drive`

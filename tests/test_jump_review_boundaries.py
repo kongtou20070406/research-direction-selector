@@ -25,7 +25,7 @@ spec.loader.exec_module(example)
 class JumpOriginalBoundaryTests(unittest.TestCase):
     def test_unbound_generator_entrypoint_rejects_before_native_dispatch(self):
         initialize = ProjectStore.initialize
-        for filename, flag in (('worker.py', '-B'), ('worker', '-B'), ('worker', '-Bu')):
+        for filename, flag in (('worker.py', '-BES'), ('worker', '-BES'), ('worker', '-BuES')):
             for declaration in ('explicit', 'legacy'):
                 for role in ('missing', 'data'):
                     with self.subTest(filename=filename, flag=flag, declaration=declaration, role=role), tempfile.TemporaryDirectory() as directory:
@@ -71,7 +71,7 @@ class JumpOriginalBoundaryTests(unittest.TestCase):
 
     def test_generator_entrypoint_checks_preserve_frozen_data_and_declared_outputs(self):
         initialize = ProjectStore.initialize
-        for filename, flag in (('worker.py', '-B'), ('worker', '-Bu')):
+        for filename, flag in (('worker.py', '-BES'), ('worker', '-BuES')):
             with tempfile.TemporaryDirectory() as directory:
                 def scripted_paths(store, contract):
                     contract = deepcopy(contract)
