@@ -14,7 +14,7 @@ import test_rds_autonomy as af
 
 
 class AmbientStartupTests(unittest.TestCase):
-    def admission(self, family, options, *, legacy=False, bound=True, main='worker.opaque', refusal=None):
+    def admission(self, family, options, *, legacy=False, bound=True, main='worker.opaque', refusal=None, no_main=False):
         with tempfile.TemporaryDirectory() as directory:
             def change(store, contract, plan):
                 (store.root / main).write_text('inert frozen main', encoding='utf-8')
@@ -26,7 +26,7 @@ class AmbientStartupTests(unittest.TestCase):
                     plan.pop('generator_code_paths')
                 for stage in plan['stages']:
                     argv = next(a for a in contract['allowed_commands'] if a == stage['run']['argv'])
-                    argv[:] = [family, *options, *argv[3:]]
+                    argv[:] = [family, *options, *([] if no_main else argv[3:])]
                     stage['run']['argv'] = argv
             resolved = str(Path(directory) / (family + ('.exe' if os.name == 'nt' else '')))
             with patch.object(f.ProjectStore, '_command', return_value=resolved):
@@ -59,6 +59,13 @@ class AmbientStartupTests(unittest.TestCase):
                     self.admission('lua5.4', argv, legacy=legacy, main=main)
                     self.admission('lua5.4', argv, legacy=legacy, main=main, bound=False,
                                    refusal='entrypoint.*frozen code')
+
+    def test_lua_inline_and_stdin_also_require_effective_environment_isolation(self):
+        for legacy in (False, True):
+            for argv in (['-e', 'print(1)'], ['-e', '-E'], ['-e-E'], ['-']):
+                self.admission('lua5.4', argv, legacy=legacy, no_main=True, refusal='startup isolation')
+            for argv in (['-E', '-e', 'print(1)'], ['-e', 'print(1)', '-E'], ['-E', '-']):
+                self.admission('lua5.4', argv, legacy=legacy, no_main=True)
 
     def test_julia_effective_startup_no_rejects_defaults_overrides_and_consumed_values(self):
         for legacy in (False, True):
@@ -140,6 +147,15 @@ class AmbientStartupTests(unittest.TestCase):
             next(b for b in contract['bindings'] if b['path'] == 'worker.py')['sha256'] = f.file_sha(worker)
             for name in ('node-fixture.js', 'frozen-preload.js'):
                 contract['bindings'].append({'path':name, 'role':'code', 'sha256':f.file_sha(store.root / name)})
+            protocol = json.loads((store.root / 'protocol.json').read_text(encoding='utf-8'))
+            protocol.update({role + '_sha256': f.ProjectStore._role_sha(contract, role)
+                             for role in ('code', 'config', 'data')})
+            helper.write('protocol.json', protocol)
+            protocol_ref = {'path':'protocol.json', 'sha256':f.file_sha(store.root / 'protocol.json')}
+            next(b for b in contract['bindings'] if b['path'] == 'protocol.json').update(protocol_ref)
+            for route in contract['advisor_policy']['routes']:
+                route['manifest']['protocol'] = protocol_ref
+            helper.contract = contract
             return initialize(store, contract)
         with patch.object(f.ProjectStore, 'initialize', prepare):
             helper.build()
