@@ -25,6 +25,31 @@ spec.loader.exec_module(example)
 
 
 class InterpreterBoundaryTests(unittest.TestCase):
+    def test_env_wrapper_cannot_hide_the_effective_generator_interpreter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, store = example.build(Path(directory) / 'project')
+            before = store.snapshot()
+            original = json.loads((root / 'jump-generation.json').read_text(encoding='utf-8'))
+            policy = root / 'jump-generation.json'
+            cases = (
+                ('env', root / 'bin' / 'launcher.exe'),
+                ('launcher', root / 'bin' / 'env.exe'),
+            )
+            for command, resolved in cases:
+                plan = deepcopy(original)
+                argv = [command, 'python', 'worker.py']
+                plan['stages'][0]['run']['argv'] = argv
+                policy.write_text(canonical(plan), encoding='utf-8')
+                state = deepcopy(before)
+                state['contract'] = deepcopy(before['contract'])
+                state['contract']['allowed_commands'].append(argv)
+                binding = next(b for b in state['contract']['bindings'] if b['path'] == 'jump-generation.json')
+                binding['sha256'] = file_sha(policy)
+                with self.subTest(command=command, resolved=resolved.name):
+                    with patch.object(store, '_command', return_value=str(resolved)):
+                        with self.assertRaisesRegex(ValueError, 'Command-launching wrapper'):
+                            jump.load_plan(store, state)
+
     def test_node_preloads_require_project_frozen_code_and_declaration(self):
         interpreter = shutil.which('node')
         if interpreter is None:

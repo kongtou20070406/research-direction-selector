@@ -717,6 +717,14 @@ def _generator_bindings(store, contract, plan):
     for stage in plan['stages']:
         argv = stage['run']['argv']
         executable = Path(store._command(argv)).resolve()
+        command_names = {
+            Path(argv[0]).name.casefold().removesuffix('.exe'),
+            executable.name.casefold().removesuffix('.exe'),
+        }
+        # `env` can launch a different interpreter and inject startup variables,
+        # so its argv cannot safely be parsed as though it were the generator.
+        require('env' not in command_names,
+                'Command-launching wrapper cannot be a Jump generator executable')
         operand = _interpreter_script_operand([str(executable), *argv[1:]], frozen_startup=True)
         script_operand, script_path = operand if operand is not None else (None, None)
         preloads = _node_preload_operands([str(executable), *argv[1:]], script_operand)
