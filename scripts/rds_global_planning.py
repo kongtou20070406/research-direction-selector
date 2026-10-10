@@ -208,7 +208,8 @@ def build(state, report, *, admitted_runs=(), goal=None):
     selected = report.get('selected_run')
     steering = state.get('steering') or {}
     active = [r['id'] for r in state['runs'] if r['status'] in {'RESERVED', 'RUNNING'}]
-    precedence = ('CURRENT_USER_INSTRUCTION' if steering.get('paused') or steering.get('preferred_runs')
+    preferred_admitted = admitted.intersection(steering.get('preferred_runs', ()))
+    precedence = ('CURRENT_USER_INSTRUCTION' if steering.get('paused') or preferred_admitted
                   else 'ACTIVE_ORIGINAL_WORK' if active else None)
     suggestion = by_id.get(selected) if precedence else next((r for r in ranked if r['open_goal_links']), None)
     if not open_facts:
@@ -278,7 +279,7 @@ def build(state, report, *, admitted_runs=(), goal=None):
         local_routes=_section(route_views, 'advisor_policy.routes', ROUTE_LIMIT),
         replan_requests=_section(requests, 'goal predicates and recommendations.search.loop_review.flags'), goal_cone=cone,
         comparison={'current_advisor_run': selected, 'shadow_suggested_run': suggestion['id'] if suggestion else None,
-                    'different': suggestion is not None and suggestion['id'] != selected,
+                    'different': (suggestion['id'] if suggestion else None) != selected,
                     'precedence': precedence, 'selection_applied': False,
                     'basis': 'HEURISTIC_OPEN_GOAL_LINKS_THEN_DECLARED_DISCRIMINATION_THEN_ALLOWANCE_NOT_GLOBAL_OPTIMUM'},
         next_small_check={'run_id': suggestion['id'], 'action': deepcopy(suggestion['discriminator']),

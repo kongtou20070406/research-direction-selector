@@ -32,6 +32,60 @@ class GlobalPlanningTests(unittest.TestCase):
             {'fact': 'baseline.score', 'op': 'gte', 'value': .5},
             {'fact': 'repair.score', 'op': 'gte', 'value': .5}]
 
+    @staticmethod
+    def with_blocked_repair(policy):
+        policy['context']['decision']['goal_conditions'].append(
+            {'fact': 'repair.score', 'op': 'gte', 'value': .5})
+
+    def prefer(self, run_id):
+        from rds_steering import submit
+        snapshot = self.f.snapshot()
+        submit(ProjectStore(self.f.root), {'id': 'prefer', 'kind': 'redirect',
+               'message': 'Prefer ' + run_id, 'prefer': [run_id],
+               'contract_sha256': snapshot['contract_sha256'], 'expected_revision': None},
+               user_directed=True, source='synthetic direct user instruction')
+
+    def test_unlinked_selected_action_reports_missing_shadow_choice_as_difference(self):
+        self.f.initialize(mutate_policy=self.with_blocked_repair)
+        before = self.f.snapshot()
+        plan = self.f.output('project', 'plan', '--shadow', '--goal', 'repair.score')
+        self.assertEqual(plan['admitted_runs'], ['baseline'])
+        self.assertEqual(plan['comparison']['current_advisor_run'], 'baseline')
+        self.assertIsNone(plan['comparison']['shadow_suggested_run'])
+        self.assertTrue(plan['comparison']['different'])
+        self.assertIsNone(plan['next_small_check'])
+        self.assertIn('REVIEW_LOCAL_GLOBAL_LINK', plan['summary']['request_kinds'])
+        self.assertEqual(self.f.snapshot()['budget'], before['budget'])
+        self.assertEqual(self.f.starts(), [])
+
+    def test_ineligible_retained_preference_does_not_override_shadow_heuristic(self):
+        self.f.initialize(mutate_policy=self.with_blocked_repair)
+        self.prefer('repair')
+        before = self.f.snapshot()
+        plan = self.f.output('project', 'plan', '--shadow', '--goal', 'repair.score')
+        self.assertIsNone(plan['comparison']['precedence'])
+        self.assertEqual(plan['comparison']['current_advisor_run'], 'baseline')
+        self.assertIsNone(plan['comparison']['shadow_suggested_run'])
+        self.assertTrue(plan['comparison']['different'])
+        self.assertEqual(before['steering']['preferred_runs'], ['repair'])
+        self.assertEqual(self.f.output('project', 'next')['selected_run'], 'baseline')
+        self.assertEqual(self.f.snapshot()['steering'], before['steering'])
+        self.assertEqual(self.f.snapshot()['budget'], before['budget'])
+        self.assertEqual(self.f.starts(), [])
+
+    def test_completed_retained_preference_releases_shadow_precedence(self):
+        self.f.initialize(mode='positive', mutate_policy=self.independent)
+        self.prefer('baseline')
+        self.f.output('project', 'advance')
+        before = self.f.snapshot()
+        plan = self.f.output('project', 'plan', '--shadow')
+        self.assertIsNone(plan['comparison']['precedence'])
+        self.assertEqual(plan['comparison']['shadow_suggested_run'], 'repair')
+        self.assertEqual(before['steering']['preferred_runs'], ['baseline'])
+        self.assertEqual(self.f.snapshot()['steering'], before['steering'])
+        self.assertEqual(self.f.snapshot()['budget'], before['budget'])
+        self.assertEqual(self.f.starts(), ['baseline'])
+
     def test_actual_cli_can_suggest_a_different_goal_connected_action_without_changing_selection(self):
         def mutate(policy):
             self.independent(policy)
