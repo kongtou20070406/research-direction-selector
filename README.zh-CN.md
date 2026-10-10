@@ -12,13 +12,15 @@
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 [![tests](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/kongtou20070406/research-direction-selector/actions/workflows/test.yml)
 
-**Agent 出主意，程序来记账。**
+**让 AI 更好地辅助人进行科研。**
 
-**面向学术研究、由证据驱动的 autoresearch。**
+**以 RDS 连接科研目标、证据、决策与执行。**
 
-面向学术研究及 Codex、Claude Code 等编程 Agent 的本地科研内核。昂贵实验跨会话进行、需要保留输入、失败证据、回执和剩余预算时，可以使用 RDS。包裹命令可记录执行，Skill 可辅助讨论证据；配置由 Advisor 管理的研究项目后，程序可从允许的路线中选择下一步。
+我们的根本目的是让 AI 更好地辅助人进行科研。Research Direction Selector（RDS）是我们选择的实现形式：用科研决策与执行系统，帮助研究者与 AI 一起澄清问题、比较假说、设计实验、理解结果，并把证据用于下一步。它与 Codex、Claude Code 等编程 Agent 协作。研究者确定目标与投入、接受科学结论；AI 提供提案与分析，本地程序则通过决策记录、执行与恢复，支撑由证据驱动的 autoresearch。
 
-[RDS 如何参与 autoresearch 工作流](docs/autoresearch.md) · [CPU 回执与恢复示例](examples/autoresearch-receipts/README.md) · [引用本软件](CITATION.cff)
+[愿景与范围](docs/rds-purpose.zh-CN.md) · [RDS 如何参与 autoresearch 工作流](docs/autoresearch.md) · [CPU 回执与恢复示例](examples/autoresearch-receipts/README.md) · [引用本软件](CITATION.cff)
+
+[试用 RDS](#两分钟上手) · [文档导航](docs/README.zh-CN.md) · **[加入项目](docs/RECRUITING.zh-CN.md)**
 
 [English](README.md) · **简体中文** · [日本語](README.ja-JP.md)
 
@@ -28,17 +30,21 @@
 
 ## 为什么需要 RDS
 
-Agent 的算力昂贵、结果随机、难以优化；程序的算力便宜、行为确定、可以测试。可在 Agent 驱动的科研里，几乎所有事情都压在 Agent 身上：最初的目标、承诺的指标、已经花钱跑过的实验、剩余预算、已经失败的想法。长任务、额度限制和换会话，正是这份记忆最容易断掉的地方。
+研究者需要的不只是一段回答或一次完成的实验，还需要看清：建议为什么回应原问题，比较能否区分竞争解释，结果究竟支持什么。长实验和会话切换容易让 AI 助手丢掉原始问题、已有证据与下一建议之间的联系。
 
-RDS 把其中所有不需要判断的记账工作从 Agent 身上移走，放进本地只追加的账本。Agent 只保留只有它能做的部分：提出假说、决定比较什么，并和你一起解读证据。
+**目的在前：让 AI 更好地辅助研究者。** 名字说明我们选择的做法。*Research* 围绕人的科学问题；*Direction* 包括可一起讨论、检验的假说、方法与问题表述；*Selector* 将证据、约束和资源连接到下一行动，或明确未解决的阻塞。我们希望科研辅助更有用、更可检查、更能持续接续；实际收益仍需独立评估。详见[愿景与范围](docs/rds-purpose.zh-CN.md)。
 
-| 没有 RDS，Agent 会…… | 有了 RDS…… |
+RDS 支撑研究者、AI 与程序检查之间的协作。AI 提供想法与领域解读，Advisor 连接声明的目标、证据与候选路线，内核和账本保留检验想法所需的执行依据。研究者可以审阅、质疑推理，并保留目标与科学接受的决定权；已授权执行可以在这个范围内持续推进。
+
+| 当研究…… | RDS 提供…… |
 | :--- | :--- |
-| 忘了慢任务已经在跑，又重跑一次、花两份钱 | 相同的已注册调用复用原运行及其回执 |
-| 看到结果后再改指标或阈值 | 指标、阈值、数据和评价器在首次运行前按哈希绑定 |
-| 把退出码 0 当成"成功了" | 未满足的目标谓词保持 `FALSE`；缺失或不确定的支持保持 `UNKNOWN` |
-| 换个会话又去试一条早被否掉的路线 | 账本跨会话保存；Advisor 会标记重复已否决路线和来回摇摆的决定 |
-| 靠记忆估算剩余预算 | 派发前预留墙钟和 CPU 预算；失败与超时的尝试同样计入 |
+| 需要说明下一次实验为什么值得做 | Advisor 审阅声明的目标关联、证据与候选条件；冻结策略可以选择一条可执行路线 |
+| 当前问题表述走进死路 | [问题结构探索](docs/problem-structure.md)保留新概念提案与替代依赖，供后续检验；提案未经检查仍未确认 |
+| 跨会话进行，或弄丢了昂贵运行的状态 | 已记录的输入、失败、剩余预算和回执；相同的已注册调用复用原执行 |
+| 程序运行成功，科学问题却仍未解决 | 分开报告执行状态、声明的目标谓词与科学支持；缺少支持仍为 `UNKNOWN` |
+| 需要修订方法或工具 | [有界研究推进](docs/autonomy-loop.md)连接已授权提案、准入检查与已有证据，沿用原资源上限 |
+
+这些检查适用于 RDS 支持的工作流；领域评价器与研究者判断仍然必要。
 
 ## 已测到的，而非承诺的
 
@@ -47,7 +53,7 @@ RDS 把其中所有不需要判断的记账工作从 Agent 身上移走，放进
 - **有额度的昂贵运行。** 在一个上线决策任务中（gpt-6-luna，medium 推理强度，每组 12 次，查询延迟分别为 20 秒和 60 秒）：把实验者的计划作为提示文本交给 Agent，有 6/12 次因重复查询浪费额度，4/12 次得出错误决定，且每次错误都发生在重复查询之后。同一份计划冻结后交由 RDS 内核执行，错误为 0/12，出现重复查询的只有 1/12；那一次是 Agent 在内核运行尚未结束时直接调用了查询脚本。错误决定的双侧 Fisher 检验 p ≈ 0.09（[设计与数据](https://github.com/kongtou20070406/research-direction-selector/issues/166#issuecomment-5974529436)）。
 - **RDS（暂时）帮不上忙的地方。** 在复查成本很低的陷阱任务上，不用 RDS 的 Codex 在三档推理强度、共 80 次试验中没有一次得出错误结论。RDS 在这些任务上没有提高正确率；它带来的是回执、可恢复性和防逃逸，代价是多花 20%–50% 的时间（[h1–h3 报告](https://github.com/kongtou20070406/research-direction-selector/issues/120#issuecomment-5969647240)）。
 
-这些都是小样本，且只测了一个模型系列。它们只支持一个窄结论：内核的价值在于对昂贵工作做到恰好一次、可审计的执行。它们不能说明 RDS 让模型成为更好的科学家。如何把科研指导变成可测量的收益，正是 [5.9 规划讨论](https://github.com/kongtou20070406/research-direction-selector/issues/166)的重点。
+这些都是小样本，且只测了一个模型系列。它们只为上述任务中的重复工作与决策错误提供有限证据，不能证明通用的恰好一次执行、更好的假说生成或科学发现能力。更广泛的选路目标需要在未使用研究任务上，用相同模型、工具与总预算做前瞻比较；参见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)和[愿景验收标准](docs/rds-purpose.zh-CN.md#什么证据才说明取得进展)。
 
 ## 两分钟上手
 
@@ -89,7 +95,8 @@ python -B .agents/skills/research-direction-selector/examples/autoresearch-recei
 ```text
 用 RDS 检查为什么指标不再提升。利用现有日志区分训练问题和容量限制。
 用 RDS 审查这两个同时改变多项因素的消融实验。设计一个最小公平比较，以区分不同解释。
-用 RDS 继续这个项目。先检查剩余预算和已完成的运行，再提出新工作。
+用 RDS 继续这个项目。先检查原始目标、剩余预算和已完成的运行，说明什么结果会改变下一决定。
+用 RDS 审阅这条失败路线。比较最小修补与另一种问题表述，在现有预算内提出能区分两者的检验。
 用 RDS 评估当前的收缩性假说，并为支持的形式化陈述生成经过检查的证据。
 ```
 
@@ -105,7 +112,7 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 **程序端** — 本地 CLI（`scripts/rds_cli.py`）将支持的行动绑定到源码、输入与资源，检查准入并保存结果和回执。具有冻结 `advisor_policy` 的项目会更新程序持有的状态，并由 Advisor 在派发前选择下一条允许的路线。
 
-闭环为 **目标与约束 → Advisor 决策 → 受约束执行 → 结果与回执 → 更新研究状态 → Advisor**。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
+闭环为 **研究目标 → 假说与候选路线 → Advisor 审阅或选择 → 受约束执行 → 证据 → 继续、修订问题或停止**。已授权修订沿用同一研究状态与资源核算；新提案不会重置已花费预算，也不能自行验证自身。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
 最新稳定发布版为 [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0)。开发 checkout 的版本标识为 `5.9.0-rc.2`，尚待发布。范围见[预览说明](docs/releases/5.9.0-rc.2-preview.md)，科研能力主张的验证方案见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
@@ -290,7 +297,7 @@ tests/                           完整回归测试套件
 
 ## 参与进来
 
-RDS 公开开发。眼下最有用的贡献不只是代码：
+**[招募开源贡献者与研究协作者](docs/RECRUITING.zh-CN.md)。** 从一项小成果开始：公开科研案例、可复现 bug 或教程，都能参与，不需要先修改内核：
 
 - **能难住 Agent 的任务。** 一个让不用 RDS 的 Agent 得出错误结论的合成任务，对我们比一个新功能更有价值。欢迎提交基准夹具、评分器和 Agent 试验报告（[#169](https://github.com/kongtou20070406/research-direction-selector/issues/169)）。
 - **你的科研工作流。** 告诉我们你的 Agent 在哪里弄丢了运行记录、预算或被否掉的想法。真实的失败模式决定路线图。
