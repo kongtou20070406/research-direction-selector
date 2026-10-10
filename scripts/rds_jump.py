@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 from rds_artifacts import strict_json
+from rds_bounded_io import read_regular_bytes
 from rds_project import ProjectStore, digest, require, TERMINAL
 import rds_structure as structure
 
@@ -840,8 +841,8 @@ def load_plan(store, state):
     require(len(bindings) == 1 and bindings[0]['role'] == 'config',
             'jump-generation.json requires one frozen config binding')
     path = store._path(POLICY_PATH)
-    require(path.stat().st_size <= 32768, 'Jump plan exceeds 32 KiB')
-    raw = path.read_bytes()
+    raw = read_regular_bytes(path, 32768, label='Jump plan',
+                             limit_message='Jump plan exceeds 32 KiB')
     require(hashlib.sha256(raw).hexdigest() == bindings[0]['sha256'], 'Jump plan binding changed')
     try:
         plan = strict_json(raw.decode('utf-8-sig'))
