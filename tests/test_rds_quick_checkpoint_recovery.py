@@ -99,7 +99,7 @@ class QuickCheckpointRecoveryTests(unittest.TestCase):
         self.assertEqual(current(self.f.ledger)['sha256'], map_sha)
         for key, value in before.items():
             self.assertEqual(decision[key], value)
-        self.assertEqual(decision['execution'], {'job_root': str(workspace),
+        self.assertEqual(decision['execution'], {'job_root': str(workspace.resolve()),
                          'receipt_sha256': receipt['sha256'], 'run_status': receipt['run_status']})
         self.assertEqual(decision['scientific_support'], 'UNKNOWN')
         with parent._db(True) as db:

@@ -426,7 +426,7 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
             completed = read_checkpoint(db, rds_quick._checkpoint_name('after', args.name), root=helper.root)
         self.assertEqual(completed['record']['contract_sha256'], prior['record']['contract_sha256'])
         self.assertEqual(completed['record']['decision']['execution'],
-                         {'job_root': str(workspace), 'receipt_sha256': result['receipt']['sha256'],
+                         {'job_root': str(workspace.resolve()), 'receipt_sha256': result['receipt']['sha256'],
                           'run_status': result['receipt']['run_status']})
         self.assertEqual(parent.snapshot()['contract_sha256'], before['contract_sha256'])
         preview = enable_advisor(parent, helper.policy)
