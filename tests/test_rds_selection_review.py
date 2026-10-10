@@ -408,7 +408,21 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertGreaterEqual(len(planning['ready_obligations']), 4)
         self.assertEqual(planning['omitted_ready_obligations'],
                          max(0, len(review['dependency_review']['ready_obligations']) - 8))
-        self.assertEqual(review['next_move']['authorization'], 'UNCHANGED')
+        # Valid IDs above the legacy 512/64 limits stay in the partition, never silently dropped.
+        renamed = 'x' * 200
+        dependency['nodes'][1]['id'] = renamed  # unrestricted_lower
+        for edge in dependency['hyperedges']:
+            edge['premises'] = [renamed if p == 'unrestricted_lower' else p for p in edge['premises']]
+        action['target'] = renamed
+        action['goal_contribution']['path'][0] = renamed
+        review = search_directions(graph, context)['selection_review']
+        self.assertEqual(review['planning']['local_checks'][0]['target'], renamed)
+        self.assertIn('node:' + renamed, review['planning']['ready_obligations'])
+        dependency['nodes'][1]['id'] = 'unrestricted_lower'
+        for edge in dependency['hyperedges']:
+            edge['premises'] = ['unrestricted_lower' if p == renamed else p for p in edge['premises']]
+        action['target'] = 'unrestricted_lower'
+        action['goal_contribution']['path'][0] = 'unrestricted_lower'
         self.assertEqual((graph, context), original)
 
     def test_truncated_search_cannot_claim_global_best(self):

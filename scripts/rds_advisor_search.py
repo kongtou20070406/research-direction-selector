@@ -588,9 +588,10 @@ def _planning_partition(candidates, goal, dependency_review):
                     and c["goal_contribution"].get("path")
                     and isinstance(c["goal_contribution"]["path"][0], str)]
     open_predicates = [condition["fact"] for condition in (goal or {}).get("conditions", [])
-                       if condition.get("truth") != TRUE and _text(condition.get("fact"))]
+                       if condition.get("truth") != TRUE and isinstance(condition.get("fact"), str)
+                       and condition["fact"].strip()]
     tokens = [row["token"] for row in (dependency_review or {}).get("ready_obligations", [])
-              if isinstance(row, dict) and _text(row.get("token"), 64)]
+              if isinstance(row, dict) and isinstance(row.get("token"), str) and row["token"].strip()]
     if local_checks and open_predicates:
         scope = "LOCAL"
     elif open_predicates:
