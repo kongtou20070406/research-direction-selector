@@ -20,7 +20,7 @@ def _compact(store, value):
                 'proposal_sha256', 'hypothesis_key', 'selected_run') if isinstance(value, dict) and k in value}
     result = {**identity, 'details_omitted': True, 'original': cas_json(store.root, value)}
     for key in ('original_observation', 'goal_status', 'trigger', 'allowed_trigger_purposes',
-                'blocked_hypothesis_key', 'discriminator', 'next_move', 'selection_basis'):
+                'blocked_hypothesis_key', 'discriminator', 'next_move', 'selection_basis', 'summary', 'comparison'):
         if isinstance(value, dict) and key in value:
             candidate = {**result, key: deepcopy(value[key])}
             if len(canonical(candidate).encode('utf-8')) <= DETAIL_BYTES:
@@ -146,6 +146,7 @@ def build(store, report):
             unresolved_hypotheses=_section(store, hypotheses), unresolved_dependencies=_section(store, unresolved),
             scoped_feedback=_section(store, feedback), route_review=_section(store, history),
             operational_results=_section(store, operational), outside_scope_proposals=outside_scope,
+            shadow_plan=_compact(store, report.get('shadow_plan', {})),
             continuation={'command': 'project next', 'structure_command': 'structure request',
                 'instruction': 'Consume final owned next_move. For structure exploration, use exact feedback trigger and declared conditions; UNKNOWN requires EVIDENCE. Reopen route review only through existing goal/scope/relevant-evidence gates. Read omitted originals before a consequential choice.'})
     except (ValueError, KeyError, TypeError, OSError) as exc:
