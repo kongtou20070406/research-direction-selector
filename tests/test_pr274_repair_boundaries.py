@@ -102,6 +102,29 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class ArchiveInputTests(unittest.TestCase):
+    def test_zip64_locator_in_comment_cannot_override_normal_directory_bounds(self):
+        f = archive_fixture.ArchiveTests('runTest')
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        source = f.write_zip(archive_fixture.encoded(archive_fixture.fixture()))
+        raw = bytearray(source.read_bytes())
+        end = raw.rfind(b'PK\x05\x06')
+        last_header = raw.rfind(b'PK\x01\x02', 0, end)
+        directory_bytes = struct.unpack_from('<L', raw, end + 12)[0]
+        # The normal count/size fields remain below the limits. CPython also
+        # interprets these ZIP64 bytes when they sit in the final entry comment.
+        record = struct.pack('<4sQ2H2L4Q', b'PK\x06\x06', 44, 45, 45, 0, 0, 3, 3, 2048, 0)
+        locator = struct.pack('<4sLQL', b'PK\x06\x07', 0, 0, 1)
+        comment = record + locator
+        struct.pack_into('<H', raw, last_header + 32, len(comment))
+        raw[end:end] = comment
+        struct.pack_into('<L', raw, end + len(comment) + 12, directory_bytes + len(comment))
+        source.write_bytes(raw)
+        with patch.object(archive, 'MAX_ZIP_DIRECTORY_BYTES', 1000), \
+                patch.object(archive.zipfile, 'ZipFile', side_effect=AssertionError('ZIP64 parser allocation')):
+            with self.assertRaisesRegex(ValueError, 'ZIP64 inventory is unsupported'):
+                archive.read_archive(source)
+
     def test_zip_inventory_limits_precede_parser_allocation(self):
         f = archive_fixture.ArchiveTests('runTest')
         f.setUp()

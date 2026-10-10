@@ -92,6 +92,13 @@ def _check_zip_inventory(stream):
     if directory_bytes > MAX_ZIP_DIRECTORY_BYTES:
         raise ValueError('Archive ZIP directory exceeds byte limit')
     end = size - len(tail) + offset
+    # Python also honors a ZIP64 locator immediately before EOCD when the
+    # ordinary fields have no ZIP64 sentinel. It could be embedded in the last
+    # entry's comment and replace the very directory bounds checked above.
+    if end >= 20:
+        stream.seek(end - 20)
+        if stream.read(4) == b'PK\x06\x07':
+            raise ValueError('Archive ZIP64 inventory is unsupported')
     start = end - directory_bytes
     if start < 0 or directory_offset > start:
         raise ValueError('Archive ZIP directory is invalid')
