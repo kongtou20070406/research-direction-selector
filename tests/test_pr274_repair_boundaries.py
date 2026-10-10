@@ -190,7 +190,7 @@ class PartialQuickTests(unittest.TestCase):
         self.addCleanup(self.f.doCleanups)
         self.f.f.script('print("original partial QUICK request")\n')
 
-    def recover_boundary(self, boundary, *, plain=False, interrupt_retention_move=False):
+    def recover_boundary(self, boundary, *, plain=False, interrupt_retention_move=False, retired_input=False):
         f = self.f.f
         if plain:
             f.initialize_policy_ledger()
@@ -200,6 +200,11 @@ class PartialQuickTests(unittest.TestCase):
             reviewed = None
         else:
             args, reviewed = self.f.reviewed_request('partial-' + boundary)
+        if retired_input:
+            copied_input = Path(args.root) / '.rds.retained/probe.py'
+            copied_input.parent.mkdir()
+            copied_input.write_bytes((Path(args.root) / 'probe.py').read_bytes())
+            args.argv[-1] = '.rds.retained/probe.py'
         # QUICK canonicalizes the source root. Keep a lexical alias in every
         # recovery case so fault injection and ledger queries must use that
         # same identity, including Windows temporary-directory aliases.
@@ -266,7 +271,7 @@ class PartialQuickTests(unittest.TestCase):
                     with self.assertRaisesRegex(OSError, 'retention move interruption'):
                         quick.execute(args, review=reviewed)
                 self.assertFalse((workspace / '.rds').exists())
-                self.assertTrue((workspace / '.rds.retained').is_dir())
+                self.assertEqual(len(list(workspace.glob('.rds.retained-*/state'))), 1)
                 self.assertEqual(parent.snapshot()['budget'], budget)
             with patch.object(quick, 'choice', side_effect=AssertionError('must preserve original choice')):
                 result = quick.execute(args, review=reviewed)
@@ -274,11 +279,13 @@ class PartialQuickTests(unittest.TestCase):
             self.assertEqual(parent.snapshot()['budget'], budget)
             retained = list((Path(args.root).resolve() / '.rds/quick-partials').glob('.partial-' + args.name + '-*'))
             self.assertEqual(len(retained), 1)
+            retired_states = list(retained[0].glob('.rds.retained-*/state'))
+            self.assertEqual(len(retired_states), int(any(p.parts[0] == '.rds' for p in observed)))
             def retained_file(relative):
                 # Only the operational directory name changes; every original
                 # file byte remains present in this inactive forensic snapshot.
                 if relative.parts[0] == '.rds':
-                    relative = Path('.rds.retained', *relative.parts[1:])
+                    return retired_states[0].joinpath(*relative.parts[1:])
                 return retained[0] / relative
             for relative, raw in observed.items():
                 self.assertEqual(retained_file(relative).read_bytes(), raw)
@@ -353,6 +360,18 @@ class PartialQuickTests(unittest.TestCase):
 
     def test_retry_after_retention_move_interruption(self):
         self.recover_boundary('register', plain=True, interrupt_retention_move=True)
+
+    def test_copied_retired_input_after_initialize(self):
+        self.recover_boundary('initialize', plain=True, retired_input=True)
+
+    def test_copied_retired_input_after_register(self):
+        self.recover_boundary('register', plain=True, retired_input=True)
+
+    def test_copied_retired_input_prospective_recovery(self):
+        self.recover_boundary('register', retired_input=True)
+
+    def test_copied_retired_input_with_retention_move_interruption(self):
+        self.recover_boundary('register', plain=True, retired_input=True, interrupt_retention_move=True)
 
 
 if __name__ == '__main__':

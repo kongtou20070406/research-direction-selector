@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import tempfile
 import time
 import uuid
 
@@ -1072,12 +1073,14 @@ def execute(args, review=None, *, _native_preparation_root=None):
             # Retire the namespace before moving: an interrupted move is safe
             # to retry and never leaves a live ledger in the forensic tree.
             partial_state = workspace / '.rds'
-            retired_state = workspace / '.rds.retained'
             if partial_state.exists() or partial_state.is_symlink():
                 require(partial_state.is_dir() and partial_state.resolve() == partial_state,
                         'Partial QUICK state must be its original contained directory')
-                require(not retired_state.exists() and not retired_state.is_symlink(),
-                        'Partial QUICK retired state already exists')
+                # Reserve a fresh container atomically. Bound inputs may have
+                # any inactive .rds.retained name; none may be overwritten or
+                # make the original charged request impossible to recover.
+                retired_container = Path(tempfile.mkdtemp(prefix='.rds.retained-', dir=workspace))
+                retired_state = retired_container / 'state'
                 partial_state.rename(retired_state)
             workspace.rename(retained_path)
         workspace.mkdir(parents=True)

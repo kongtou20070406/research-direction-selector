@@ -24,7 +24,9 @@ Quick execution checks the selected parent ledger under the same transaction tha
 
 For an exact pending request interrupted before any attempt or receipt, recovery
 preserves the partial files in `.rds/quick-partials`. Its old operational `.rds`
-directory is stored as `.rds.retained`, with every original file byte intact, so
+directory is stored in a freshly reserved `.rds.retained-*/state` container,
+with every original file byte intact. Existing inputs using inactive retained
+names remain untouched, and cannot collide with this container. Thus
 recursive campaign discovery cannot treat that forensic snapshot as a live
 project. The recovered job stays at its original location and reuses its
 original allowance and choice. An interruption while moving the retired
