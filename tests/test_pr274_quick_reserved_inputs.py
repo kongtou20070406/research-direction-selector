@@ -41,8 +41,9 @@ class ReservedQuickInputTests(unittest.TestCase):
             ordinary=root/'fixtures/.rds.retained/probe.py'
             ordinary.parent.mkdir()
             ordinary.write_bytes(native.read_bytes())
-            files=quick._inputs(root,[sys.executable,'-B','fixtures/.rds.retained/probe.py'],[])
+            files,raw=quick._inputs(root,[sys.executable,'-B','fixtures/.rds.retained/probe.py'],[])
             self.assertIn(ordinary,files)
+            self.assertEqual(raw[ordinary],native.read_bytes())
             self.assertEqual(ordinary.read_bytes(),native.read_bytes())
 
 
