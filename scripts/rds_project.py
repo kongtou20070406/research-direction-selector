@@ -1345,8 +1345,10 @@ class ProjectStore:
                         worker_options['env'] = {**os.environ,
                             'RDS_RUNTIME_SCRIPTS': str(Path(__file__).resolve().parent)}
                     executable_name = Path(argv[0]).name.casefold().removesuffix('.exe')
+                    is_bash = re.fullmatch(r'bash(?:[-_]?\d+(?:\.\d+)*)?', executable_name) is not None
                     startup_variable = ('node_options' if executable_name in {'node', 'nodejs'} else
-                                        'rubyopt' if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else None)
+                                        'rubyopt' if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else
+                                        'bash_env' if is_bash else None)
                     if startup_variable is not None:
                         # Recheck at launch, including host changes after admission.
                         # Preserve frozen argv and the parent environment; inherited
