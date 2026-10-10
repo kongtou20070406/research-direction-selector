@@ -15,6 +15,19 @@ from rds_project import ProjectStore, file_sha
 
 
 class StartupControlsTests(unittest.TestCase):
+    def test_bash_login_and_interactive_modes_cannot_bind_frozen_main(self):
+        for options in (['--login'], ['--login=force'], ['-l'], ['-i'], ['-il'], ['-li'], ['-xil']):
+            with self.subTest(options=options), self.assertRaisesRegex(
+                    ValueError, 'Bash login or interactive startup'):
+                jump._interpreter_script_operand(['bash', *options, 'worker.sh'])
+        self.assertEqual(jump._interpreter_script_operand(['bash', 'worker.sh']), (1, 'worker.sh'))
+        self.assertEqual(jump._interpreter_script_operand(['bash', '--noprofile', 'worker.sh']), (2, 'worker.sh'))
+        self.assertEqual(jump._interpreter_script_operand(['bash', '-o', '-i', 'worker.sh']), (3, 'worker.sh'))
+        self.assertEqual(jump._interpreter_script_operand(['bash', '+o', '-l', 'worker.sh']), (3, 'worker.sh'))
+        self.assertEqual(jump._interpreter_script_operand(['bash', '--', '-l']), (2, '-l'))
+        self.assertEqual(jump._interpreter_script_operand(['bash', 'worker.sh', '--login', '-i']), (1, 'worker.sh'))
+        self.assertIsNone(jump._interpreter_script_operand(['bash', '-ilc', 'inline']))
+
     def test_effective_startup_selectors_and_inline_shortcuts_reject(self):
         with tempfile.TemporaryDirectory() as directory:
             root, store = example.build(Path(directory) / 'project')

@@ -1,4 +1,4 @@
-"""Frozen ProjectStore Bash startup filtering; never invoke Bash or hooks."""
+"""Frozen ProjectStore interpreter startup filtering; never invoke workers or hooks."""
 import ast
 import os
 from pathlib import Path
@@ -44,15 +44,18 @@ def launch_code():
     return compile(module, str(SOURCE), 'exec')
 
 
-class BashEnvironmentLaunchTests(unittest.TestCase):
+class InterpreterEnvironmentLaunchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.launch = launch_code()
 
     def observe(self, executable, autonomy):
-        parent = {'PATH': 'retained-path', 'BASH_ENV': 'late-unbound-hook',
-                  'bash_env': 'case-variant-hook', 'BASHOPTS': 'retained-options',
+        parent = {'PATH': 'retained-path', 'BASH_ENV': 'late-bash-startup',
+                  'bash_env': 'case-variant-bash-startup', 'BASHOPTS': 'retained-options',
                   'RUBYOPT': 'retained-ruby-control', 'NODE_OPTIONS': 'retained-node-control',
+                  'PERL5OPT': 'late-perl-startup', 'perl5opt': 'case-variant-perl-startup',
+                  'PHPRC': 'late-php.ini', 'phprc': 'case-variant-php.ini',
+                  'PHP_INI_SCAN_DIR': 'late-php-conf.d', 'php_ini_scan_dir': 'case-variant-php-conf.d',
                   'RDS_RUNTIME_SCRIPTS': 'parent-runtime'}
         before = dict(parent)
         captured = {}
@@ -60,7 +63,7 @@ class BashEnvironmentLaunchTests(unittest.TestCase):
         def popen(argv, **options):
             captured['argv'] = list(argv)
             captured['options'] = options
-            return object()  # Observe the launch only; never invoke Bash or a hook.
+            return object()  # Observe only; no interpreter, worker or hook is invoked.
 
         argv = [str(Path('bin') / executable), '--noprofile', '--norc', 'worker.sh', 'exact-tail']
         namespace = {
@@ -80,27 +83,43 @@ class BashEnvironmentLaunchTests(unittest.TestCase):
         exec(self.launch, namespace)
         return captured, argv, parent, before
 
-    def assert_filtered_bash_env(self, autonomy):
-        for executable in ('bash', 'BASH.EXE', 'BaSh5.2.exe', 'bash-5.2'):
+    def assert_filtered(self, executable, blocked, autonomy):
+        all_startup = {'bash_env', 'perl5opt', 'phprc', 'php_ini_scan_dir', 'rubyopt', 'node_options'}
+        for executable in (executable,):
             with self.subTest(executable=executable):
                 captured, argv, parent, before = self.observe(executable, autonomy)
                 options = captured['options']
                 self.assertEqual(captured['argv'], argv)
                 self.assertIs(options['shell'], False)
-                self.assertFalse(any(key.casefold() == 'bash_env' for key in options['env']))
-                for key, value in (('PATH', 'retained-path'), ('BASHOPTS', 'retained-options'),
-                                   ('RUBYOPT', 'retained-ruby-control'),
-                                   ('NODE_OPTIONS', 'retained-node-control')):
-                    self.assertEqual(options['env'][key], value)
+                env = options['env']
+                for key in all_startup:
+                    matching = [name for name in env if name.casefold() == key]
+                    if key in blocked:
+                        self.assertEqual(matching, [])
+                    else:
+                        self.assertTrue(matching)
+                self.assertEqual(env['PATH'], 'retained-path')
+                self.assertEqual(env['BASHOPTS'], 'retained-options')
                 expected_runtime = str(SOURCE.resolve().parent) if autonomy else 'parent-runtime'
-                self.assertEqual(options['env']['RDS_RUNTIME_SCRIPTS'], expected_runtime)
+                self.assertEqual(env['RDS_RUNTIME_SCRIPTS'], expected_runtime)
                 self.assertEqual(parent, before)
 
-    def test_ordinary_frozen_launch_filters_post_admission_bash_env(self):
-        self.assert_filtered_bash_env(autonomy=False)
+    def assert_all_interpreters(self, autonomy):
+        cases = (
+            ('bash', {'bash_env'}), ('BASH.EXE', {'bash_env'}), ('BaSh5.2.exe', {'bash_env'}),
+            ('bash-5.2', {'bash_env'}), ('perl', {'perl5opt'}), ('Perl5.44.exe', {'perl5opt'}),
+            ('perl5.42', {'perl5opt'}), ('php', {'phprc', 'php_ini_scan_dir'}),
+            ('PHP8.5.exe', {'phprc', 'php_ini_scan_dir'}), ('php8.3', {'phprc', 'php_ini_scan_dir'}),
+            ('ruby3.4.exe', {'rubyopt'}), ('nodejs.exe', {'node_options'}),
+        )
+        for executable, blocked in cases:
+            self.assert_filtered(executable, blocked, autonomy)
 
-    def test_trusted_autonomy_frozen_launch_filters_post_admission_bash_env(self):
-        self.assert_filtered_bash_env(autonomy=True)
+    def test_ordinary_frozen_launch_filters_interpreter_startup_environment(self):
+        self.assert_all_interpreters(autonomy=False)
+
+    def test_trusted_autonomy_frozen_launch_filters_interpreter_startup_environment(self):
+        self.assert_all_interpreters(autonomy=True)
 
 
 if __name__ == '__main__':

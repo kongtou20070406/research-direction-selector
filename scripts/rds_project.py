@@ -1346,16 +1346,19 @@ class ProjectStore:
                             'RDS_RUNTIME_SCRIPTS': str(Path(__file__).resolve().parent)}
                     executable_name = Path(argv[0]).name.casefold().removesuffix('.exe')
                     is_bash = re.fullmatch(r'bash(?:[-_]?\d+(?:\.\d+)*)?', executable_name) is not None
-                    startup_variable = ('node_options' if executable_name in {'node', 'nodejs'} else
-                                        'rubyopt' if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else
-                                        'bash_env' if is_bash else None)
-                    if startup_variable is not None:
+                    startup_variables = (
+                        {'node_options'} if executable_name in {'node', 'nodejs'} else
+                        {'rubyopt'} if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else
+                        {'perl5opt'} if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', executable_name) else
+                        {'phprc', 'php_ini_scan_dir'} if re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', executable_name) else
+                        {'bash_env'} if is_bash else set())
+                    if startup_variables:
                         # Recheck at launch, including host changes after admission.
                         # Preserve frozen argv and the parent environment; inherited
                         # interpreter options must not introduce unbound startup code.
                         environment = dict(worker_options.get('env', os.environ))
                         for key in list(environment):
-                            if key.casefold() == startup_variable:
+                            if key.casefold() in startup_variables:
                                 del environment[key]
                         worker_options['env'] = environment
                     process = subprocess.Popen(argv, cwd=self.root, shell=False, stdin=subprocess.DEVNULL,

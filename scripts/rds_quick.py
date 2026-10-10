@@ -314,6 +314,18 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                 rows = [prior for prior in rows if Path(prior['job_root']).resolve() == workspace.resolve()]
                 require(len(rows) == 1 and rows[0]['request_sha256'] == digest(request),
                         'Execution policy: existing child has no matching parent allowance for this job and request')
+            else:
+                same_job = [prior for prior in rows if Path(prior['job_root']).resolve() == workspace.resolve()]
+                if same_job:
+                    require(len(same_job) == 1, 'Execution policy: child allowance is ambiguous; inspect retained state')
+                    prior = same_job[0]
+                    require(prior.get('contract_sha256') == digest(contract)
+                            and prior.get('execution_policy_sha256') == digest(contract['execution_policy']),
+                            'Execution policy: retained parent allowance binding differs')
+                    if not Path(workspace).exists():
+                        _is_unmaterialized_allowance(db, workspace, request, prior)
+                        return {'status': 'PENDING_MATERIALIZATION_RECOVERY', 'execution_started': False,
+                                'job_root': str(workspace), 'ledger_root': str(store.root)}
             for prior in rows:
                 require(prior.get('contract_sha256') == digest(contract)
                         and prior.get('execution_policy_sha256') == digest(contract['execution_policy']),
@@ -350,6 +362,21 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                     return result
             require(len(rows) < contract['execution_policy']['max_attempts'],
                     'Execution policy: unchanged route reached max_attempts; failures do not establish scientific impossibility')
+        elif dispatch:
+            rows = [json.loads(row['body']) for row in db.execute(
+                "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                "AND json_extract(body,'$.job_root')=? ORDER BY id", (str(workspace),))]
+            if rows:
+                require(len(rows) == 1, 'External job allowance is ambiguous; inspect retained state')
+                prior = rows[0]
+                require(prior.get('request_sha256') == digest(request)
+                        and prior.get('contract_sha256') == digest(contract),
+                        'External job allowance differs from the original request or contract')
+                if not Path(workspace).exists():
+                    _is_unmaterialized_allowance(db, workspace, request, prior)
+                    return {'status': 'PENDING_MATERIALIZATION_RECOVERY', 'execution_started': False,
+                            'job_root': str(workspace), 'ledger_root': str(store.root)}
+                raise ValueError('External job allowance already consumed; inspect its preserved state')
         from rds_steering import current
         require(current(db) is None,
                 'Human steering requires project create/execute; new quick child allowances cannot bypass it')
@@ -358,8 +385,11 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
         require(row['spent'] + row['charged'] + row['reserved'] + amount <= row['cap'] + 1e-9,
                 'Insufficient parent ledger wall_seconds budget')
         event = {'kind': 'EXTERNAL_RUN_ALLOWANCE', 'job_root': str(workspace), 'request_sha256': digest(request),
+                 'contract_sha256': digest(contract),
                  'resource': 'wall_seconds', 'amount': amount, 'accounting': 'CONSERVATIVE_ALLOWANCE',
                  'execution_authority': 'UNCHANGED'}
+        if dispatch:
+            event['materialization_state'] = 'PENDING'
         if dispatch and 'execution_policy' in contract:
             event.update(execution_route_sha256=key, contract_sha256=digest(contract),
                          execution_policy_sha256=digest(contract['execution_policy']), advisor_route_sha256=route)
@@ -372,6 +402,102 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
 def _checkpoint_name(stage, name):
     value = 'exec-' + stage + '-' + name
     return value if len(value) <= 64 else 'exec-' + stage + '-' + digest(name)[:48]
+
+
+def _validate_recorded_choice(db, root, checkpoint_id, candidate_id, expected_contract_sha256):
+    """Validate, but never recompute, the original QUICK choice during recovery."""
+    from rds_checkpoints import read_checkpoint
+    saved = read_checkpoint(db, checkpoint_id, root=root)
+    require(saved is not None and saved['record']['kind'] == 'project',
+            'Original prospective before checkpoint is missing; inspect the charged allowance')
+    require(saved['record']['contract_sha256'] == expected_contract_sha256,
+            'Original prospective choice contract changed; inspect the charged allowance')
+    decision = saved['record']['decision']
+    require(decision.get('outcome') == 'plan_locked'
+            and isinstance(decision.get('candidate'), dict)
+            and decision['candidate'].get('id') == candidate_id,
+            'Original prospective choice differs from the charged request')
+    return {'schema': 'rds-checkpoint-v1', 'status': 'ALREADY_SAVED', 'id': checkpoint_id,
+            'kind': 'project', 'sha256': saved['sha256'], 'contract_sha256': expected_contract_sha256,
+            'candidate_id': candidate_id}
+
+
+def _pending_quick_choices(root, owner, requested_name=None):
+    """Find only explicitly pending, not-yet-materialized prospective QUICK jobs."""
+    if owner is None:
+        return []
+    root = Path(root).resolve()
+    store = ProjectStore(owner)
+    exec_root = (root / '.rds' / 'exec').resolve()
+    require(exec_root.is_relative_to(root), 'Exec workspace escapes root')
+    from rds_checkpoints import read_checkpoint
+    from rds_campaign import QUICK_JOB_KIND
+    with store._db(True) as db:
+        db.execute('BEGIN')
+        contract_sha256 = digest(store._contract(db))
+        rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' ORDER BY id").fetchall()
+        pending = []
+        for row in rows:
+            prior = json.loads(row['body'])
+            raw_job = prior.get('job_root')
+            if not isinstance(raw_job, str):
+                continue
+            job = Path(raw_job)
+            resolved_job = job.resolve()
+            if os.path.normcase(str(resolved_job.parent)) != os.path.normcase(str(exec_root)):
+                continue
+            name = resolved_job.name
+            if requested_name is not None and name != requested_name:
+                continue
+            if job.exists():
+                continue
+            require(not job.is_symlink(), 'Retained QUICK workspace is a dangling symlink; inspect the original state')
+            if prior.get('materialization_state') != 'PENDING':
+                if requested_name is not None:
+                    raise ValueError('Charged QUICK child state is unavailable; inspect retained allowance, no refund or new launch')
+                continue
+            marker = db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')=? "
+                                "AND json_extract(body,'$.job_root')=? LIMIT 1", (QUICK_JOB_KIND, raw_job)).fetchone()
+            require(marker is None,
+                    'Charged QUICK child was previously materialized but is missing; inspect retained state, no new launch')
+            require(isinstance(prior.get('request_sha256'), str)
+                    and re.fullmatch('[0-9a-f]{64}', prior['request_sha256']),
+                    'Pending QUICK allowance identity is invalid')
+            require(prior.get('contract_sha256') == contract_sha256,
+                    'Pending QUICK allowance contract changed; inspect the original request')
+            checkpoint_id = _checkpoint_name('before', name)
+            saved = read_checkpoint(db, checkpoint_id, root=owner)
+            require(saved is not None and saved['record']['kind'] == 'project'
+                    and saved['record']['contract_sha256'] == contract_sha256,
+                    'Pending QUICK allowance has no original prospective checkpoint')
+            decision = saved['record']['decision']
+            candidate = decision.get('candidate') if isinstance(decision, dict) else None
+            require(decision.get('outcome') == 'plan_locked' and isinstance(candidate, dict)
+                    and isinstance(candidate.get('id'), str),
+                    'Pending QUICK allowance has no unambiguous original choice')
+            pending.append({'name': name, 'candidate_id': candidate['id'], 'candidate': candidate,
+                            'request_sha256': prior['request_sha256'], 'job_root': raw_job,
+                            'checkpoint_id': checkpoint_id})
+        return pending
+
+
+def _is_unmaterialized_allowance(db, workspace, request, prior):
+    """Permit the one charged request to resume only before its child marker exists."""
+    path = Path(workspace)
+    require(not path.exists() and not path.is_symlink(),
+            'Retained QUICK child is not an absent workspace; inspect its original state')
+    require(prior.get('materialization_state') == 'PENDING'
+            and prior.get('request_sha256') == digest(request),
+            'Charged QUICK child state is unavailable; inspect retained allowance, no refund or new launch')
+    require(prior.get('contract_sha256') is not None,
+            'Charged QUICK allowance lacks its original contract binding')
+    from rds_campaign import QUICK_JOB_KIND
+    raw_job = str(path)
+    marker = db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')=? "
+                        "AND json_extract(body,'$.job_root')=? LIMIT 1", (QUICK_JOB_KIND, raw_job)).fetchone()
+    require(marker is None,
+            'Charged QUICK child was previously materialized but is missing; inspect retained state, no new launch')
+    return True
 
 
 def _prospective_completion(workspace, request, receipt, regression=None, guard_ref=None, *, parent_db=None):
@@ -600,6 +726,9 @@ def execute(args, review=None, *, _native_preparation_root=None):
     require(argv, 'Supply the command after --')
     if argv[0].endswith('.py') and (root / argv[0]).is_file():
         argv = [sys.executable, '-B'] + argv
+    pending_choice_recoveries = []
+    deferred_choice_recovery = False
+    resume_materialization = False
     if review is not None:
         from rds_math import check_context
         binding = check_context(args.ledger, review[1])
@@ -616,8 +745,12 @@ def execute(args, review=None, *, _native_preparation_root=None):
                     'Job identity is frozen; changed choice needs a new --name')
             args.choose = frozen_context['candidate']
         else:
-            selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
-            args.choose = selected['candidate']['id']
+            pending_choice_recoveries = _pending_quick_choices(root, owner, args.name)
+            if pending_choice_recoveries:
+                deferred_choice_recovery = True
+            else:
+                selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
+                args.choose = selected['candidate']['id']
     argv[0] = ProjectStore._command(argv)
     from rds_math import bind_objective, blob, objective, objective_spec, read_bytes
     goal = objective(root)
@@ -693,7 +826,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
                     request['guard']['native_binding'] = {'path': str(native), 'sha256': fingerprint}
                 except (ValueError, OSError) as exc:
                     request['guard']['native_binding'] = {'status': 'UNKNOWN', 'reason': str(exc)}
-    if review is not None:
+    if review is not None and not deferred_choice_recovery:
         request['research_context'] = {'sha256': digest(review[1]), 'candidate': args.choose,
                                        'ledger': str(Path(args.ledger).resolve())}
         request['research_context']['dependency_snapshot_sha256'] = review[1].get('dependency_snapshot_sha256')
@@ -716,6 +849,33 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 'policy_sha256': digest(execution_policy), 'route_sha256': execution_route(request['argv'], request['inputs'],
                     request['outputs'], root, parent_contract.get('objective_sha256', request.get('objective_sha256')),
                     route=_policy_route(request, None), arm='tool', executor_sha256=executor_sha256)}
+    if deferred_choice_recovery:
+        matches = []
+        for prior in pending_choice_recoveries:
+            candidate = prior['candidate']
+            candidate_id = prior['candidate_id']
+            accepted_names = {candidate_id}
+            action_id = candidate.get('action', {}).get('id') if isinstance(candidate.get('action'), dict) else None
+            if isinstance(action_id, str):
+                accepted_names.add(action_id)
+            if args.choose is not None and args.choose not in accepted_names:
+                continue
+            candidate_request = deepcopy(request)
+            candidate_request['research_context'] = {'sha256': digest(review[1]), 'candidate': candidate_id,
+                                                      'ledger': str(Path(args.ledger).resolve())}
+            candidate_request['research_context']['dependency_snapshot_sha256'] = review[1].get('dependency_snapshot_sha256')
+            expected_name = args.name or 'exec-' + digest(candidate_request)[:20]
+            if (prior['name'] == expected_name
+                    and prior['request_sha256'] == digest(candidate_request)):
+                matches.append((prior, candidate_request))
+        require(len(matches) == 1,
+                'Original prospective QUICK request does not uniquely match the pending allowance; inspect retained state')
+        prior, request = matches[0]
+        args.choose = prior['candidate_id']
+        selected = {'candidate': prior['candidate']}
+        if args.name is None:
+            args.name = prior['name']
+        resume_materialization = True
     locked_parents = {}
 
     @contextmanager
@@ -743,7 +903,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
             finally:
                 locked_parents.clear()
 
-    def check_quick_parents():
+    def check_quick_parents(*, validate_choice=True):
         # Both materialization and attempt admission require these live checks.
         check_source_root()
         for parent_root, prepared_sha in parent_contracts.items():
@@ -760,11 +920,11 @@ def execute(args, review=None, *, _native_preparation_root=None):
                         'Configured stop/maintenance policies require project create/execute; quick exec cannot bypass them')
                 require(steering is None,
                         'Human steering changed before quick admission; use project create/execute')
-        if review is not None:
+        if review is not None and validate_choice:
             from rds_advisor_coverage import project_context
             choice(review[0], project_context(args.ledger, review[1]), args.choose)
     def admit_quick(_db, _run):
-        check_quick_parents()
+        check_quick_parents(validate_choice=not resume_materialization)
 
     args.name = args.name or 'exec-' + digest(request)[:20]
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args.name), 'Job name must contain 1–64 safe identifier characters')
@@ -804,23 +964,39 @@ def execute(args, review=None, *, _native_preparation_root=None):
         return result
     if owner is not None or review is not None:
         with admission_context():
-            check_quick_parents()
+            check_quick_parents(validate_choice=not resume_materialization)
             if owner is not None:
                 from rds_advisor import _loop_route
                 observation = _charge_ledger(owner, workspace, request, timeout,
                     route=_loop_route(selected['candidate']) if review is not None else None, source_root=root,
                     executor_sha256=executor_sha256, _parent_db=locked_parents[owner])
                 if observation is not None:
-                    return observation
+                    if observation.get('status') == 'PENDING_MATERIALIZATION_RECOVERY':
+                        if review is None:
+                            # Plain QUICK has no Advisor checkpoint to reselect.
+                            # The exact request hash and pending allowance were
+                            # validated by _charge_ledger, so resume its one
+                            # pre-materialization attempt without charging again.
+                            resume_materialization = True
+                        else:
+                            require(resume_materialization,
+                                    'Pending QUICK allowance was not matched to its original choice; inspect retained state')
+                    else:
+                        return observation
             if review is not None:
                 require(args.ledger and owner == Path(args.ledger).resolve(),
                         'Prospective choice and allowance must share the original owning ledger')
-                record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
-                              _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner])
+                if resume_materialization:
+                    _validate_recorded_choice(locked_parents[owner], args.ledger,
+                                              _checkpoint_name('before', args.name), args.choose,
+                                              parent_contracts[owner])
+                else:
+                    record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
+                                  _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner])
     if goal_raw is not None:
         bind_objective(root, goal_raw)
     with admission_context():
-        check_quick_parents()
+        check_quick_parents(validate_choice=not resume_materialization)
         workspace.mkdir(parents=True)
         bindings = []
         if goal_raw is not None:
@@ -878,10 +1054,11 @@ def execute(args, review=None, *, _native_preparation_root=None):
         for parent_db in locked_parents.values():
             if parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
                 parent_db.execute('INSERT INTO events(body) VALUES (?)',
-                    (canonical({'kind': QUICK_JOB_KIND, 'job_root': str(workspace)}),))
+                    (canonical({'kind': QUICK_JOB_KIND, 'job_root': str(workspace),
+                                'request_sha256': digest(request), 'materialization_state': 'MATERIALIZED'}),))
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
-    if review is not None:
+    if review is not None and not resume_materialization:
         from rds_advisor_coverage import project_context
         choice(review[0], project_context(args.ledger, review[1]), args.choose)
     receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,

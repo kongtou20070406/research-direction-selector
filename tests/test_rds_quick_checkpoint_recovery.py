@@ -3,6 +3,8 @@ import argparse
 from copy import deepcopy
 import json
 from pathlib import Path
+import os
+import shutil
 import sys
 import unittest
 from unittest.mock import patch
@@ -27,6 +29,141 @@ class QuickCheckpointRecoveryTests(unittest.TestCase):
         self.f.setUp()
         self.addCleanup(self.f.doCleanups)
         self.f.initialize_ledger()
+
+    def reviewed_request(self, name):
+        args = rds_cli.parser().parse_args([
+            '--root', str(self.f.root), 'exec', '--name', name, '--timeout', '5',
+            '--context', str(self.f.context_path), '--graph', str(self.f.graph_path),
+            '--ledger', str(self.f.ledger), '--', sys.executable, '-B', 'probe.py'])
+        review_args = argparse.Namespace(root=str(self.f.ledger), research_context=str(self.f.context_path),
+                                        graph=str(self.f.graph_path), saved_dependencies=False)
+        advice = rds_cli.cmd_advise(review_args, rds_cli.RDSState(self.f.ledger))
+        context = project_context(self.f.ledger, json.loads(self.f.context_path.read_text(encoding='utf-8')))
+        return args, (advice, context)
+
+    def test_pending_allowance_before_materialization_resumes_same_choice_once(self):
+        self.f.script('print("synthetic QUICK recovery")\n')
+        args, review = self.reviewed_request('before-materialization')
+        workspace = self.f.root / '.rds/exec' / args.name
+        original_mkdir = Path.mkdir
+        injected = {'done': False}
+
+        def fail_at_child_materialization(path, *positional, **keywords):
+            if path == workspace and not injected['done']:
+                injected['done'] = True
+                raise OSError('synthetic interruption before child workspace creation')
+            return original_mkdir(path, *positional, **keywords)
+
+        with patch.dict(os.environ, self.f.env):
+            with patch.object(Path, 'mkdir', autospec=True, side_effect=fail_at_child_materialization):
+                with self.assertRaisesRegex(OSError, 'before child workspace creation'):
+                    quick.execute(args, review=review)
+
+            self.assertTrue(injected['done'])
+            self.assertFalse(workspace.exists())
+            parent = ProjectStore(self.f.ledger)
+            parent_after_interruption = parent.snapshot()
+            pending_before, _ = quick.latest_decision(
+                self.f.ledger, quick._checkpoint_name('before', args.name))
+            self.assertEqual(pending_before['candidate']['id'], args.choose)
+            with parent._db(True) as db:
+                allowance_rows = db.execute(
+                    "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchall()
+                self.assertEqual(len(allowance_rows), 1)
+                allowance = json.loads(allowance_rows[0]['body'])
+                self.assertEqual(allowance['materialization_state'], 'PENDING')
+                self.assertEqual(db.execute(
+                    "SELECT count(*) FROM events WHERE json_extract(body,'$.kind')='QUICK_JOB_ADMITTED' "
+                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchone()[0], 0)
+
+            with patch.object(quick, 'choice', side_effect=AssertionError('recovery must retain the saved choice')):
+                recovered = quick.execute(args, review=review)
+            receipt = recovered['receipt']
+            self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+            self.assertTrue(recovered['execution_started'])
+            child = ProjectStore(workspace)
+            child_after_recovery = child.snapshot()
+            self.assertEqual(len(child_after_recovery['receipts']), 1)
+            parent_after_recovery = parent.snapshot()
+            self.assertEqual(parent_after_recovery['budget'], parent_after_interruption['budget'])
+            with parent._db(True) as db:
+                self.assertEqual(db.execute(
+                    "SELECT count(*) FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchone()[0], 1)
+                markers = db.execute(
+                    "SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_JOB_ADMITTED' "
+                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchall()
+                self.assertEqual(len(markers), 1)
+                marker = json.loads(markers[0]['body'])
+                self.assertEqual(marker['materialization_state'], 'MATERIALIZED')
+                self.assertEqual(marker['request_sha256'], allowance['request_sha256'])
+
+            with (patch.object(quick, 'choice', side_effect=AssertionError('completed job must not reselect')),
+                  patch.object(ProjectStore, 'execute', side_effect=AssertionError('completed job must not redispatch'))):
+                repeated = quick.execute(args, review=review)
+            self.assertFalse(repeated['execution_started'])
+            self.assertEqual(repeated['receipt'], receipt)
+            self.assertEqual(child.snapshot(), child_after_recovery)
+            self.assertEqual(parent.snapshot()['budget'], parent_after_interruption['budget'])
+
+            # If a materialized child disappears after its durable marker,
+            # fail closed instead of treating it as the pre-creation gap.
+            shutil.rmtree(workspace)
+            with patch.object(quick, 'choice', side_effect=AssertionError('must reject before reselection')):
+                with self.assertRaisesRegex(ValueError, 'previously materialized but is missing'):
+                    quick.execute(args, review=review)
+            self.assertEqual(parent.snapshot()['budget'], parent_after_interruption['budget'])
+
+    def test_plain_quick_pending_allowance_resumes_without_reselection(self):
+        self.f.initialize_policy_ledger()
+        source_root = self.f.ledger
+        parent = ProjectStore(source_root)
+        args = rds_cli.parser().parse_args([
+            '--root', str(source_root), 'exec', '--name', 'plain-before-materialization', '--timeout', '5',
+            '--', sys.executable, '-B', 'probe.py'])
+        workspace = source_root / '.rds/exec' / args.name
+        original_mkdir = Path.mkdir
+        injected = {'done': False}
+
+        def fail_at_child_materialization(path, *positional, **keywords):
+            if path == workspace and not injected['done']:
+                injected['done'] = True
+                raise OSError('synthetic plain interruption before child workspace creation')
+            return original_mkdir(path, *positional, **keywords)
+
+        with patch.dict(os.environ, self.f.env):
+            with patch.object(Path, 'mkdir', autospec=True, side_effect=fail_at_child_materialization):
+                with self.assertRaisesRegex(OSError, 'before child workspace creation'):
+                    quick.execute(args)
+            self.assertTrue(injected['done'])
+            self.assertFalse(workspace.exists())
+            before = parent.snapshot()
+            with parent._db(True) as db:
+                allowance = json.loads(db.execute(
+                    "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchone()['body'])
+            self.assertEqual(allowance['materialization_state'], 'PENDING')
+
+            recovered = quick.execute(args)
+            self.assertEqual(recovered['receipt']['run_status'], 'SUCCEEDED')
+            self.assertTrue(recovered['execution_started'])
+            after = parent.snapshot()
+            self.assertEqual(after['budget'], before['budget'])
+            with parent._db(True) as db:
+                self.assertEqual(db.execute(
+                    "SELECT count(*) FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchone()[0], 1)
+                marker = json.loads(db.execute(
+                    "SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_JOB_ADMITTED' "
+                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchone()['body'])
+            self.assertEqual(marker['materialization_state'], 'MATERIALIZED')
+            self.assertEqual(marker['request_sha256'], allowance['request_sha256'])
+
+            repeated = quick.execute(args)
+            self.assertFalse(repeated['execution_started'])
+            self.assertEqual(repeated['receipt']['sha256'], recovered['receipt']['sha256'])
+            self.assertEqual(parent.snapshot()['budget'], before['budget'])
 
     def test_terminal_receipt_recovers_original_after_checkpoint_without_reselection(self):
         self.f.script('from pathlib import Path\nPath("launch-marker").write_text("started")\n')
