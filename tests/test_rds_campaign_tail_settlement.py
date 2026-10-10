@@ -55,7 +55,18 @@ class CampaignTailSettlementTests(unittest.TestCase):
                         if route['manifest']['id'] == event['run_id'])
         helper.store.register(manifest)
         receipt = helper.store.execute(event['run_id'])
-        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+        diagnostic = None
+        if receipt['run_status'] != 'SUCCEEDED':
+            streams = {}
+            for artifact in receipt['artifacts']:
+                if artifact['kind'] in {'stdout.bin', 'stderr.bin', 'project_output'}:
+                    try:
+                        with (helper.root / artifact['path']).open('rb') as stream:
+                            streams[artifact['path']] = stream.read(4096).decode('utf-8', errors='replace')
+                    except OSError as exc:
+                        streams[artifact['path']] = {'read_error': str(exc)}
+            diagnostic = {'original_receipt': receipt, 'streams_first_4096_bytes': streams}
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED', diagnostic)
         self.assertEqual(helper.calls(), ['repair1'])
         return helper, event, receipt
 

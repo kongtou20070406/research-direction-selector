@@ -262,3 +262,7 @@ of this declared search, not evidence that no explanation exists. A generated
 proposal remains `UNKNOWN` until the existing independent experiment provides
 evidence. Even a successful finite test does not establish general abductive
 ability or improved scientific outcomes.
+Project-bound executables that start with a shebang are refused as direct Jump
+commands. Call their interpreter explicitly with the required startup flags,
+so admission can check the effective interpreter and its environment before
+the frozen script. Binding script bytes alone does not freeze shebang startup.

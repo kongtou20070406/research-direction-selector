@@ -12,11 +12,74 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT / 'scripts'))
 import rds_campaign as campaign
 import rds_hypergraph_readable as readable
+import rds_jump as jump
 from rds_dialogue import _report
 from rds_project import ProjectStore, canonical
 from rds_quick import cas_json
+import test_jump_interpreter_boundary as interpreter_fixture
+import test_rds_campaign_binding as campaign_fixture
 
 REPORT_LIMIT = 32 * 1024 * 1024
+
+class UnsafeAdmissionTests(unittest.TestCase):
+    def test_unsafe_bound_shebang(self):
+        for shebang in ('#!/usr/bin/env python3', '#!/bin/bash --login'):
+            for legacy in (False,True):
+                with self.subTest(shebang=shebang,legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                    def change(store,contract,plan):
+                        worker=store.root/'worker.exec'
+                        worker.write_text(shebang+'\nprint("frozen body")\n',encoding='utf-8')
+                        binding=next(b for b in contract['bindings'] if b['path']=='worker.py')
+                        binding.update(path='worker.exec',sha256=interpreter_fixture.file_sha(worker))
+                        plan['generator_code_paths'][0]='worker.exec'
+                        if legacy:
+                            plan.pop('generator_code_paths')
+                        for stage in plan['stages']:
+                            argv=next(a for a in contract['allowed_commands'] if a==stage['run']['argv'])
+                            argv[:]=['worker.exec',*argv[3:]]
+                            stage['run']['argv']=argv
+                    with patch.object(ProjectStore,'_command',lambda store,argv:str(store.root/'worker.exec')):
+                        root,store=interpreter_fixture.InterpreterBoundaryTests().freeze(Path(directory)/'project',change)
+                        before=store.snapshot()
+                        with patch.object(store,'register',side_effect=AssertionError('no registration')):
+                            with self.assertRaisesRegex(ValueError,'shebang'):
+                                jump.load_plan(store,before)
+                        self.assertEqual(store.snapshot(),before)
+
+    def test_unsafe_native_state_file(self):
+        helper=campaign_fixture.CampaignBindingTests('runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        sibling=helper.workspace/'damaged-sibling'
+        sibling.mkdir()
+        state=sibling/'.rds'
+        state.write_bytes(b'original damaged native scope')
+        before=helper.store.snapshot()
+        with self.assertRaisesRegex(ValueError,'state directory'):
+            campaign.bind(helper.store,helper.workspace)
+        self.assertFalse(helper.marker.exists())
+        self.assertEqual(helper.events(),[])
+        self.assertEqual(helper.store.snapshot(),before)
+        self.assertEqual(state.read_bytes(),b'original damaged native scope')
+
+    def test_unsafe_native_state_dangling_symlink(self):
+        helper=campaign_fixture.CampaignBindingTests('runTest')
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        sibling=helper.workspace/'dangling-sibling'
+        sibling.mkdir()
+        state=sibling/'.rds'
+        try:
+            state.symlink_to(sibling/'missing-state',target_is_directory=True)
+        except (OSError,NotImplementedError) as exc:
+            self.skipTest('Symlink privilege unavailable: '+str(exc))
+        before=helper.store.snapshot()
+        with self.assertRaisesRegex(ValueError,'state directory'):
+            campaign.bind(helper.store,helper.workspace)
+        self.assertFalse(helper.marker.exists())
+        self.assertEqual(helper.events(),[])
+        self.assertEqual(helper.store.snapshot(),before)
+        self.assertTrue(state.is_symlink())
 
 class BoundedReaderTests(unittest.TestCase):
     def test_readable_rejects_character_device(self):

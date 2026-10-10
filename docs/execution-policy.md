@@ -38,3 +38,7 @@ If the quick source root itself owns a configured project policy, quick applies 
 This is exact structured comparison, not a detector for every semantic rewrite. Declared content/role normalization intentionally ignores file names; relocation, dynamic imports, environment reads and other hidden dependencies can still change program semantics. Bind relevant inputs explicitly. Allowed code remains trusted local code; this is not an OS sandbox. A finite attempt limit refuses further spending under the configured agreement. It does not establish scientific impossibility, convergence, task gain or a method's superiority.
 
 Regression coverage: [project tests](../tests/test_rds_project.py) and [real quick CLI tests](../tests/test_rds_quick.py) check refusal before launch/reservation/charge, concurrent requests, renamed identities/files, changed input bytes, verified output reuse and the charged crash window.
+Campaign workspace inventory treats every `.rds` directory entry as native
+state, including unresolved symlinks and damaged file entries. Such unavailable
+state refuses binding before marker publication; it cannot silently disappear
+from the original project inventory.

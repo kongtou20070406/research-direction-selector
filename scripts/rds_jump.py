@@ -770,6 +770,11 @@ def _generator_bindings(store, contract, plan):
                 'Command-launching wrapper cannot be a Jump generator executable')
         operand = _interpreter_script_operand([str(executable), *argv[1:]], frozen_startup=True)
         executable_identity = os.path.normcase(str(executable))
+        if executable_identity in code:
+            with executable.open('rb') as stream:
+                prefix = stream.read(2)
+            require(prefix != b'#!',
+                    'Bound shebang executable requires an explicit validated interpreter in Jump argv')
         executable_name = executable.name.casefold().removesuffix('.exe')
         recognized_interpreter = bool(
             re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', executable_name)

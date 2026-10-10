@@ -206,16 +206,19 @@ def _workspace_roots(workspace, inventory):
                 for entry in entries:
                     inventory.entry()
                     path = Path(entry.path)
+                    native_state = os.path.normcase(entry.name) == os.path.normcase('.rds')
+                    if native_state:
+                        require(entry.is_dir() and path.resolve().is_relative_to(directory),
+                                'Campaign native state directory is unavailable or escapes its owner')
+                        # Discover through the logical owner before resolve
+                        # changes an in-root symlink/junction's basename.
+                        for name in ('project.sqlite3', 'state.sqlite3'):
+                            ledger = path / name
+                            if ledger.exists() or ledger.is_symlink():
+                                require(ledger.is_file() and ledger.resolve().is_relative_to(directory),
+                                        'Campaign native ledger is unavailable or escapes its owner')
+                                yield directory, name
                     if entry.is_dir():
-                        if os.path.normcase(entry.name) == os.path.normcase('.rds'):
-                            # Discover through the logical owner before resolve
-                            # changes an in-root symlink/junction's basename.
-                            for name in ('project.sqlite3', 'state.sqlite3'):
-                                ledger = path / name
-                                if ledger.exists() or ledger.is_symlink():
-                                    require(ledger.is_file() and ledger.resolve().is_relative_to(directory),
-                                            'Campaign native ledger is unavailable or escapes its owner')
-                                    yield directory, name
                         pending.append((path, depth + 1))
         except OSError as exc:
             raise ValueError('Campaign workspace inventory is unreadable or incomplete') from exc
