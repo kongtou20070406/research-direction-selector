@@ -125,11 +125,18 @@ def build(state, report, *, admitted_runs=(), goal=None):
         # Lifecycle predicates are operational declarations, not scientific goals.
         if fid.startswith('run.'):
             producer_ids = [rid for rid in routes if fid.startswith('run.' + rid + '.')]
+        original_goals = policy['context']['decision']['goal_conditions']
+        source = {'locator': f'advisor_policy.context.decision.goal_conditions[{index}]'}
+        if index >= len(original_goals):
+            source = {'locator': f'owned review.context.decision.goal_conditions[{index}]',
+                      'declaration_locator': 'advisor_policy.confirmation'}
+            if fid == 'confirmation.task_status':
+                producer_ids = policy['confirmation']['confirmation_runs']
         milestones.append({'id': 'goal:' + str(index), 'fact': fid, 'condition': deepcopy(condition),
             'status': evaluation['truth'], 'evaluation': evaluation,
             'producers': [{'run_id': rid, 'process_status': receipts.get(rid, {}).get('run_status',
                             runs.get(rid, {}).get('status', 'NOT_STARTED'))} for rid in producer_ids],
-            'source': {'locator': f'advisor_policy.context.decision.goal_conditions[{index}]'},
+            'source': source,
             'closure': 'Only the current goal predicate comparison closes this milestone; a producer receipt alone does not'})
     open_facts = {m['fact'] for m in milestones if m['status'] != 'TRUE'}
     admitted = set(admitted_runs)
@@ -252,7 +259,7 @@ def build(state, report, *, admitted_runs=(), goal=None):
     focused = [r for r in ranked if r['open_goal_links']]
     alternatives = alternatives or focused + [r for r in route_views if r not in focused]
     summary = {'scope': 'ONE_FROZEN_GOAL' if goal is not None else 'ALL_DECLARED_GOALS',
-               'open_goal_count': len(open_facts), 'goal_count': len(milestones),
+               'open_goal_count': sum(m['status'] != 'TRUE' for m in milestones), 'goal_count': len(milestones),
                'global_goal_count': len(conditions),
                'global_open_goal_count': sum(evaluate_condition(c, facts)['truth'] != 'TRUE' for c in conditions),
                'declared_complete_plans': len(declared), 'admitted_local_routes': len(admitted_views),
@@ -265,8 +272,8 @@ def build(state, report, *, admitted_runs=(), goal=None):
         'dependency_map_sha256': digest(spec), 'decision_sha256': digest(context['decision']),
         'decision_id': context['decision']['id'], 'focused_goal': goal},
         admitted_runs=sorted(admitted),
-        summary=summary, milestones=_section(milestones, 'advisor_policy.context.decision.goal_conditions'),
-        critical_unknowns=_section([m for m in milestones if m['status'] != 'TRUE'], 'advisor_policy.context.decision.goal_conditions'),
+        summary=summary, milestones=_section(milestones, 'owned review.context.decision.goal_conditions'),
+        critical_unknowns=_section([m for m in milestones if m['status'] != 'TRUE'], 'owned review.context.decision.goal_conditions'),
         strategic_alternatives=_section(alternatives, 'advisor_policy.feasibility.plans' if declared else 'advisor_policy.routes', ROUTE_LIMIT),
         local_routes=_section(route_views, 'advisor_policy.routes', ROUTE_LIMIT),
         replan_requests=_section(requests, 'goal predicates and recommendations.search.loop_review.flags'), goal_cone=cone,

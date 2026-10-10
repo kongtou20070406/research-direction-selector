@@ -37,6 +37,7 @@ class GlobalPlanningTests(unittest.TestCase):
             self.independent(policy)
             policy['observations'].append({**deepcopy(policy['observations'][1]), 'fact': 'repair.second'})
             policy['context']['decision']['goal_conditions'].append({'fact': 'repair.second', 'op': 'gte', 'value': .5})
+            policy['context']['decision']['goal_conditions'].append({'fact': 'baseline.score', 'op': 'gte', 'value': .6})
         self.f.initialize(mode='positive', mutate_policy=mutate)
         store = ProjectStore(self.f.root)
         before = self.f.snapshot()
@@ -44,7 +45,8 @@ class GlobalPlanningTests(unittest.TestCase):
             events_before = db.execute('SELECT COUNT(*) FROM events').fetchone()[0]
         plan = self.f.output('project', 'plan', '--shadow')
         self.assertEqual(plan['status'], 'CURRENT')
-        self.assertEqual(plan['summary']['open_goal_count'], 3)
+        self.assertEqual(plan['summary']['open_goal_count'], 4)
+        self.assertEqual(plan['summary']['global_open_goal_count'], 4)
         self.assertEqual(plan['comparison']['current_advisor_run'], 'baseline')
         self.assertEqual(plan['comparison']['shadow_suggested_run'], 'repair')
         self.assertTrue(plan['comparison']['different'])
@@ -210,6 +212,24 @@ class GlobalPlanningTests(unittest.TestCase):
         self.assertTrue(all(r['status'] == 'UNKNOWN' for r in plan['strategic_alternatives']['items']))
         self.assertEqual(ProjectStore(self.f.root).snapshot()['budget'], before['budget'])
         self.assertEqual(self.f.starts(), [])
+
+    def test_program_enforced_confirmation_goal_has_its_real_source_and_unexecuted_verifier(self):
+        from test_rds_domain_confirmation import DomainConfirmationTests
+        fixture = DomainConfirmationTests('runTest')
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.build()
+        self.f.root = fixture.root
+        before = fixture.store.snapshot()
+        plan = self.f.output('project', 'plan', '--shadow', '--goal', 'confirmation.task_status')
+        goal = plan['milestones']['items'][0]
+        self.assertEqual(goal['status'], 'UNKNOWN')
+        self.assertEqual(goal['source']['locator'], 'owned review.context.decision.goal_conditions[1]')
+        self.assertEqual(goal['source']['declaration_locator'], 'advisor_policy.confirmation')
+        self.assertEqual(goal['producers'], [{'run_id': 'confirmation', 'process_status': 'NOT_STARTED'}])
+        self.assertNotIn('REPAIR_GOAL_BRIDGE', plan['summary']['request_kinds'])
+        self.assertEqual(fixture.store.snapshot()['runs'], before['runs'])
+        self.assertEqual(fixture.store.snapshot()['budget'], before['budget'])
 
     def test_concurrent_cut_is_unavailable_and_does_not_export_a_current_suggestion(self):
         self.f.initialize()
