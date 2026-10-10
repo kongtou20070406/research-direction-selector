@@ -1076,20 +1076,29 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
                     self.contract_with(maintenance_allowance=allowance)
 
     def test_campaign_deadline_stops_hang_and_preserves_partial_stdout(self):
+        # ProjectStore resolves its root. Exercise an equivalent path spelling so
+        # the readiness hook cannot depend on literal cwd equality (e.g. TEMP aliases).
+        alias = self.root / 'deadline-path-alias'
+        alias.mkdir()
+        self.root = alias / '..'
+        expected_stdout = (self.root / '.rds/project-artifacts/r1/stdout.bin').resolve()
         # Retained output requires a child that has actually flushed output. Drive the
         # fixture clocks across the five-second campaign deadline only after that
         # precondition. The real runner checks/stops the real hanging process; no
         # deadline predicate, stop result or process cleanup is mocked.
         wall_origin, monotonic_origin = time.time(), time.monotonic()
         elapsed = [0.0]
+        fixture_launches = []
         real_popen = subprocess.Popen
 
         def flush_before_deadline(*args, **kwargs):
             process = real_popen(*args, **kwargs)
-            if args[0][1:] != ['-B', 'code.py'] or kwargs.get('cwd') != self.root:
+            output_name = getattr(kwargs.get('stdout'), 'name', None)
+            if output_name is None or Path(output_name).resolve() != expected_stdout:
                 return process
+            fixture_launches.append(process.pid)
             try:
-                output = Path(kwargs['stdout'].name)
+                output = Path(output_name)
                 # This independent real clock bounds fixture readiness, including
                 # startup under load, while the runner's fixture clocks are held.
                 readiness_deadline = time.monotonic_ns() + 10_000_000_000
@@ -1112,6 +1121,7 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
             store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": 5,
                                                     "progress": {"window_seconds": 3600, "min_bytes": 0}})
             receipt = self.run_spec(self.spec(timeout=15))
+        self.assertEqual(len(fixture_launches), 1, 'Fixture readiness hook did not attach exactly once')
         self.assertEqual(receipt["run_status"], "FAILED")
         self.assertEqual(receipt["stop_reason"], "CAMPAIGN_DEADLINE")
         self.assertFalse(receipt["timeout"])
