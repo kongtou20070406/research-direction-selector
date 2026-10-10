@@ -718,7 +718,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                 (root / filename).write_text('print "frozen literal worker"\n', encoding='utf-8')
                 # A cwd-looking argument after the main is a script argument;
                 # after -- even the main filename itself must remain literal.
-                argv = [executable, *options, filename, '-xsub', '-S']
+                argv = [executable, '-f', *options, filename, '-xsub', '-S']
                 self.assertEqual(jump._interpreter_script_operand(argv), (len(argv) - 3, filename))
                 for declaration in ('explicit', 'legacy'):
                     for role in ('missing', 'data', 'code'):

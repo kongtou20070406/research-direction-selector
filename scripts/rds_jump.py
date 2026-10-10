@@ -411,7 +411,7 @@ def _ruby_script_operand(argv):
     return None
 
 
-def _perl_script_operand(argv):
+def _perl_script_operand(argv, *, frozen_startup=False):
     """Locate Perl's literal main, rejecting unsupported cwd/PATH lookup.
 
     Short-option consumption follows Perl 5.44 perl.c parse_body/moreswitches;
@@ -419,13 +419,20 @@ def _perl_script_operand(argv):
     This checks main identity, not arbitrary imported dependencies.
     """
     index = 1
+    isolated = False
     while index < len(argv):
         option = argv[index]
         if option == '--':
+            require(not frozen_startup or isolated,
+                    'Perl startup files must be disabled with effective pre-main -f for frozen Jump code')
             return index + 1 if index + 1 < len(argv) else None
         if option == '-':
+            require(not frozen_startup or isolated,
+                    'Perl startup files must be disabled with effective pre-main -f for frozen Jump code')
             return None
         if not option.startswith('-'):
+            require(not frozen_startup or isolated,
+                    'Perl startup files must be disabled with effective pre-main -f for frozen Jump code')
             return index
         if option in {'--help', '--version'}:
             return None
@@ -440,6 +447,8 @@ def _perl_script_operand(argv):
                 break  # Bare -x strips the script prefix; no directory argument.
             require(flag not in 'mMd', 'Perl module/debugger startup is unsupported for frozen Jump code')
             require(flag not in 'eEV', 'Perl inline/configuration execution is unsupported for frozen Jump code')
+            if flag == 'f':
+                isolated = True  # Disable optional sitecustomize.pl before the frozen main.
             if flag in 'hv?':
                 return None  # These options exit rather than continue startup.
             if flag == 'I':
@@ -474,6 +483,8 @@ def _perl_script_operand(argv):
                 require(flag in 'acfg npsutTUwWX'.replace(' ', ''),
                         'Unsupported Perl option before main script')
         index += 1
+    require(not frozen_startup or isolated,
+            'Perl startup files must be disabled with effective pre-main -f for frozen Jump code')
     return None
 
 
@@ -505,7 +516,7 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
     if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', name):
         return file_at(_ruby_script_operand(argv))
     if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', name):
-        return file_at(_perl_script_operand(argv))
+        return file_at(_perl_script_operand(argv, frozen_startup=frozen_startup))
     if name == 'rscript':
         return file_at(_rscript_script_operand(argv))
     if name in {'node', 'nodejs'}:
@@ -520,21 +531,31 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
         return None
     index = 1
     isolated = False
+
+    def require_zsh_startup_isolated():
+        # Even -f cannot suppress the global zshenv. Match the kernel's shell
+        # refusal rather than claiming NO_RCS freezes all startup code.
+        require(name != 'zsh' or not frozen_startup,
+                'zsh startup files are unsupported for frozen Jump code')
+
     while index < len(argv):
         option = argv[index]
         if option == '--':
+            require_zsh_startup_isolated()
             if name == 'php' and frozen_startup:
                 require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
                     name + ' startup isolation is required before frozen main script')
             return file_at(index + 1)
         if option == '-':
+            require_zsh_startup_isolated()
             if name == 'php' and frozen_startup:
                 require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
                     name + ' startup isolation is required before frozen code')
             return None
         if not option.startswith(('-', '+')):
+            require_zsh_startup_isolated()
             if name == 'php' and frozen_startup:
                 require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
@@ -544,6 +565,7 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
             require(option.split('=', 1)[0] not in {'--rcfile', '--init-file'},
                     'Shell explicit startup files are unsupported for frozen Jump code')
             if option.startswith('-') and not option.startswith('--') and any(c in option[1:] for c in 'cs'):
+                require_zsh_startup_isolated()
                 return None  # Inline command or stdin, not a main script file.
             if name == 'bash' and option.startswith('--'):
                 long_option = option.split('=', 1)[0]
@@ -614,6 +636,7 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
                                   (option.startswith(('-f', '-F')) and len(option) > 2)):
                 return php_explicit_file((index, option.split('=', 1)[1] if option.startswith('--') else option[2:].removeprefix('=')))
             index += 2 if option in values else 1
+    require_zsh_startup_isolated()
     if name == 'php' and frozen_startup:
         require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
     require(name not in {'lua', 'julia'} or isolated,

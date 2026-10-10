@@ -50,7 +50,7 @@ def discover(root):
             continue
         require(state.resolve().is_relative_to(candidate), 'State directory escapes project root')
         project_db_path = state / 'project.sqlite3'
-        has_project_db = project_db_path.exists()
+        has_project_db = project_db_path.exists() or project_db_path.is_symlink()
         if has_project_db:
             require(project_db_path.is_file() and project_db_path.resolve().is_relative_to(candidate),
                     'Project ledger escapes project root')

@@ -14,6 +14,7 @@ import re
 import sqlite3
 import sys
 import time
+import uuid
 
 from rds_project import ProjectStore, canonical, digest, execution_route, file_sha, number, require
 from rds_mutation import mutation
@@ -322,7 +323,7 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                     require(prior.get('contract_sha256') == digest(contract)
                             and prior.get('execution_policy_sha256') == digest(contract['execution_policy']),
                             'Execution policy: retained parent allowance binding differs')
-                    if not Path(workspace).exists():
+                    if not Path(workspace).exists() or _pending_partial_child(db, workspace):
                         _is_unmaterialized_allowance(db, workspace, request, prior)
                         return {'status': 'PENDING_MATERIALIZATION_RECOVERY', 'execution_started': False,
                                 'job_root': str(workspace), 'ledger_root': str(store.root)}
@@ -372,7 +373,7 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                 require(prior.get('request_sha256') == digest(request)
                         and prior.get('contract_sha256') == digest(contract),
                         'External job allowance differs from the original request or contract')
-                if not Path(workspace).exists():
+                if not Path(workspace).exists() or _pending_partial_child(db, workspace):
                     _is_unmaterialized_allowance(db, workspace, request, prior)
                     return {'status': 'PENDING_MATERIALIZATION_RECOVERY', 'execution_started': False,
                             'job_root': str(workspace), 'ledger_root': str(store.root)}
@@ -449,7 +450,7 @@ def _pending_quick_choices(root, owner, requested_name=None):
             name = resolved_job.name
             if requested_name is not None and name != requested_name:
                 continue
-            if job.exists():
+            if job.exists() and not _pending_partial_child(db, job):
                 continue
             require(not job.is_symlink(), 'Retained QUICK workspace is a dangling symlink; inspect the original state')
             if prior.get('materialization_state') != 'PENDING':
@@ -481,11 +482,34 @@ def _pending_quick_choices(root, owner, requested_name=None):
         return pending
 
 
+def _publish_quick_request(workspace, request):
+    """A process interruption leaves either no identity or its complete bytes."""
+    target = workspace / 'rds-exec-request.json'
+    temporary = workspace / ('.request-' + uuid.uuid4().hex + '.tmp')
+    with temporary.open('xb') as handle:
+        handle.write(canonical(request).encode('utf-8'))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, target)
+
+
+def _pending_partial_child(db, workspace):
+    """An owning allowance, without a durable publication marker, is intent only."""
+    from rds_campaign import QUICK_JOB_KIND
+    raw_job = str(workspace)
+    marker = db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')=? "
+                        "AND json_extract(body,'$.job_root')=? LIMIT 1", (QUICK_JOB_KIND, raw_job)).fetchone()
+    if marker is not None:
+        return False
+    rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                      "AND json_extract(body,'$.job_root')=?", (raw_job,)).fetchall()
+    return len(rows) == 1 and json.loads(rows[0]['body']).get('materialization_state') == 'PENDING'
+
+
 def _is_unmaterialized_allowance(db, workspace, request, prior):
     """Permit the one charged request to resume only before its child marker exists."""
     path = Path(workspace)
-    require(not path.exists() and not path.is_symlink(),
-            'Retained QUICK child is not an absent workspace; inspect its original state')
+    require(not path.is_symlink(), 'Retained QUICK child is a symlink; inspect its original state')
     require(prior.get('materialization_state') == 'PENDING'
             and prior.get('request_sha256') == digest(request),
             'Charged QUICK child state is unavailable; inspect retained allowance, no refund or new launch')
@@ -497,6 +521,29 @@ def _is_unmaterialized_allowance(db, workspace, request, prior):
                         "AND json_extract(body,'$.job_root')=? LIMIT 1", (QUICK_JOB_KIND, raw_job)).fetchone()
     require(marker is None,
             'Charged QUICK child was previously materialized but is missing; inspect retained state, no new launch')
+    if path.exists():
+        require(path.is_dir(), 'Retained QUICK child is not a directory')
+        request_path = path / 'rds-exec-request.json'
+        if request_path.exists() or request_path.is_symlink():
+            from rds_project import load_json
+            require(not request_path.is_symlink() and load_json(request_path) == request,
+                    'Job identity is frozen; changed inputs need a new --name')
+        child = ProjectStore(path)
+        if child.path.exists() or child.path.is_symlink():
+            # Never recreate a launched child, even if its parent marker is lost.
+            # Read incomplete initialization without requiring a contract table.
+            with child._db(True) as child_db:
+                tables = {r[0] for r in child_db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                for table in ('receipts', 'exposures'):
+                    if table in tables:
+                        require(child_db.execute('SELECT count(*) FROM ' + table).fetchone()[0] == 0,
+                                'Retained QUICK child has execution evidence; no new launch')
+                if 'runs' in tables:
+                    for row in child_db.execute('SELECT body FROM runs'):
+                        run = json.loads(row['body'])
+                        require(run.get('status') == 'RESERVED' and run.get('attempt_id') is None
+                                and run.get('started_at') is None,
+                                'Retained QUICK child has an attempt; no new launch')
     return True
 
 
@@ -737,7 +784,10 @@ def execute(args, review=None, *, _native_preparation_root=None):
             review = (review[0], context)
         retained = (root / '.rds/exec' / args.name
                     if args.name and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args.name) else None)
-        if retained is not None and retained.exists():
+        pending_choice_recoveries = _pending_quick_choices(root, owner, args.name)
+        if pending_choice_recoveries:
+            deferred_choice_recovery = True
+        elif retained is not None and retained.exists():
             require(retained.resolve().is_relative_to(root), 'Exec workspace escapes root')
             from rds_project import load_json
             frozen_context = load_json(retained / 'rds-exec-request.json').get('research_context')
@@ -745,12 +795,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                     'Job identity is frozen; changed choice needs a new --name')
             args.choose = frozen_context['candidate']
         else:
-            pending_choice_recoveries = _pending_quick_choices(root, owner, args.name)
-            if pending_choice_recoveries:
-                deferred_choice_recovery = True
-            else:
-                selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
-                args.choose = selected['candidate']['id']
+            selected = choice(review[0], review[1], args.choose)  # Reject ambiguity before creating a job.
+            args.choose = selected['candidate']['id']
     argv[0] = ProjectStore._command(argv)
     from rds_math import bind_objective, blob, objective, objective_spec, read_bytes
     goal = objective(root)
@@ -930,7 +976,11 @@ def execute(args, review=None, *, _native_preparation_root=None):
     require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args.name), 'Job name must contain 1–64 safe identifier characters')
     workspace = root / '.rds' / 'exec' / args.name
     require(workspace.resolve().is_relative_to(root), 'Exec workspace escapes root')
-    if workspace.exists():
+    partial_child = False
+    if workspace.exists() and owner is not None:
+        with ProjectStore(owner)._db(True) as parent_db:
+            partial_child = _pending_partial_child(parent_db, workspace)
+    if workspace.exists() and not partial_child:
         from rds_project import load_json
         previous = load_json(workspace / 'rds-exec-request.json')
         require(previous == request, 'Job identity is frozen; changed inputs need a new --name')
@@ -997,7 +1047,22 @@ def execute(args, review=None, *, _native_preparation_root=None):
         bind_objective(root, goal_raw)
     with admission_context():
         check_quick_parents(validate_choice=not resume_materialization)
+        if workspace.exists():
+            require(owner is not None and resume_materialization,
+                    'Retained QUICK child is not an admitted materialization recovery')
+            parent_db = locked_parents[owner]
+            row = parent_db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                                    "AND json_extract(body,'$.job_root')=?", (str(workspace),)).fetchone()
+            require(row is not None, 'Original QUICK allowance is missing')
+            _is_unmaterialized_allowance(parent_db, workspace, request, json.loads(row['body']))
+            # Preserve every partial byte instead of deleting/overwriting it.
+            retained_path = workspace.with_name('.partial-' + workspace.name + '-' + uuid.uuid4().hex)
+            require(workspace.resolve().is_relative_to(root) and retained_path.resolve().is_relative_to(root),
+                    'Partial QUICK retention escapes root')
+            workspace.rename(retained_path)
         workspace.mkdir(parents=True)
+        # Publish identity before any input copy or SQLite initialization.
+        _publish_quick_request(workspace, request)
         bindings = []
         if goal_raw is not None:
             bind_objective(workspace, goal_raw)
@@ -1014,7 +1079,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
                     'input_discovery': 'ARGV_FILES_AND_STATIC_LOCAL_PYTHON_IMPORTS',
                     'hidden_inputs': 'UNKNOWN', 'evaluator': 'EXIT_CODE_AND_DECLARED_OUTPUT_EXISTENCE_ONLY',
                     'scientific_support': 'UNKNOWN'}
-        for name, value in [('rds-exec-request.json', request), ('rds-exec-metadata.json', metadata)]:
+        for name, value in [('rds-exec-metadata.json', metadata)]:
             (workspace / name).write_text(canonical(value), encoding='utf-8')
         bindings.append({'path': 'rds-exec-request.json', 'sha256': file_sha(workspace / 'rds-exec-request.json'), 'role': 'config'})
         for role in ('config', 'data', 'evaluator'):

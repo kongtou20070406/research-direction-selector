@@ -259,6 +259,8 @@ def build_archive_display(graph):
     if len(originals) > MAX_EDGES:
         raise ValueError("Archive exceeds edge limit")
     declared_goals = graph.get("goals", []) if native else []
+    if isinstance(declared_goals, list) and len(declared_goals) > MAX_NODES:
+        raise ValueError("Archive exceeds declared goal limit")
     goals = set(declared_goals) if isinstance(declared_goals, list) and all(isinstance(g, str) for g in declared_goals) else set()
     goals.intersection_update(row["id"] for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str))
     node_ids, edge_ids = set(), set()
