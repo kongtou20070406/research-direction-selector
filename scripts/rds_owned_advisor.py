@@ -21,6 +21,7 @@ ASSURANCE = 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
 MAX_RUNS = 128
 MAX_ARTIFACTS = 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_REPORT_BYTES = 32 * 1024 * 1024
 TERMINAL = {'COMPLETED', 'FAILED', 'INTERRUPTED'}
 CONTEXT_FIELDS = {'decision', 'research_mode', 'method_constraints', 'scope',
                   'max_depth', 'max_candidates', 'target_types', 'targets'}
@@ -744,7 +745,7 @@ def review(store, persist=True):
                 result.update(status='COLLECTION_FAILED', selected_run=None, selected_manifest=None)
                 result['warnings'].append({'kind': 'DOMAIN_CONFIRMATION_INTEGRITY', 'error': str(exc)})
     if persist:
-        ref = cas_json(store.root, result)
+        ref = cas_json(store.root, result, max_bytes=MAX_REPORT_BYTES)
         if result.get('tool_utilization'):
             from rds_owned_tools import record_consumption
             record_consumption(store, result['tool_utilization'], ref)

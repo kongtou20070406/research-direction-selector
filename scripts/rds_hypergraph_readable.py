@@ -2,6 +2,8 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 import re
 
@@ -84,7 +86,13 @@ def load_readable(path, result):
     def invalid_number(value):
         raise ValueError("Non-finite readable JSON number: " + value)
 
-    with Path(path).open("rb") as handle:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
+    with os.fdopen(descriptor, 'rb') as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError('Readable information must be a regular file')
+        if info.st_size > MAX_BYTES:
+            raise ValueError('Readable information exceeds 8 MiB')
         raw = handle.read(MAX_BYTES + 1)
     if len(raw) > MAX_BYTES:
         raise ValueError("Readable information exceeds 8 MiB")

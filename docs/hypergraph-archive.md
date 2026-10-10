@@ -126,3 +126,8 @@ details; raw JSON, hashes and machine paths remain program-facing information.
 The original `--hypergraph`, saved TMS and snapshot-bound `--readable-json`
 routes continue to handle dependency maps with their existing validation and
 scientific-analysis budgets. Archive browsing does not relax those budgets.
+## Readable sidecar input
+
+Readable JSON sidecars retain their 8 MiB limit. The reader opens nonblocking
+and requires a regular file before reading the same descriptor; FIFO and
+device paths are refused before any JSON parse or wait for a writer.

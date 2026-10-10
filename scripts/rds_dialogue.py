@@ -32,25 +32,8 @@ def _section(rows, source, pointer):
 
 def _report(store, ref):
     """Only the ledger's CAS reference is accepted, never an external JSON path."""
-    require(isinstance(ref, dict), 'Owned report reference missing')
-    sha = ref.get('sha256')
-    require(isinstance(sha, str) and len(sha) == 64 and
-            all(c in '0123456789abcdef' for c in sha), 'Owned report hash invalid')
-    path = (store.root / ref['path']).resolve()
-    require(path.parent == (store.root / '.rds' / 'cas').resolve()
-            and path.name == sha + '.json' and path.is_relative_to(store.root),
-            'Owned report is outside its project CAS')
-    size = ref.get('bytes')
-    require(type(size) is int and size > 0, 'Owned report byte count invalid')
-    # Reports embed the dependency map plus review metadata; the 8 MiB
-    # research-asset cap is not their bound. Verify before allocating and read
-    # at most the retained count plus one byte to detect concurrent growth.
-    require(path.stat().st_size == size, 'Owned report CAS integrity failure')
-    with path.open('rb') as stream:
-        raw = stream.read(size + 1)
-    require(len(raw) == size and hashlib.sha256(raw).hexdigest() == sha,
-            'Owned report CAS integrity failure')
-    value = strict_json(raw.decode('utf-8'))
+    from rds_campaign import _json_cas
+    value = _json_cas(store.root, ref)
     require(isinstance(value, dict), 'Owned report is not an object')
     return value
 

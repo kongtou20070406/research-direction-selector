@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -54,13 +55,14 @@ class CampaignReportBoundaryTests(unittest.TestCase):
             root = Path(directory).resolve()
             ref = cas_json(root, {'status':'UNKNOWN'})
             path = (root / ref['path']).resolve()
-            original_open = Path.open
-            def grow(target, *args, **kwargs):
-                if target == path and args == ('rb',):
-                    with original_open(target, 'ab') as stream:
-                        stream.write(b' ')
-                return original_open(target, *args, **kwargs)
-            with patch.object(Path, 'open', grow), self.assertRaisesRegex(ValueError, 'integrity'):
+            original_fstat = os.fstat
+            def grow(descriptor):
+                info = original_fstat(descriptor)
+                # Grow after validation observes the original descriptor size.
+                with path.open('ab') as stream:
+                    stream.write(b' ')
+                return info
+            with patch.object(os, 'fstat', grow), self.assertRaisesRegex(ValueError, 'integrity'):
                 campaign._json_cas(root, ref)
 
     def test_actual_foreign_non_success_settlement_accepts_large_original_report_without_rerun(self):
@@ -70,10 +72,10 @@ class CampaignReportBoundaryTests(unittest.TestCase):
         import rds_owned_advisor as owned
         import rds_quick
         original_cas = rds_quick.cas_json
-        def large(root, report):
+        def large(root, report, **kwargs):
             report = deepcopy(report)
             report['retained_detail'] = 'x' * (8 * 1024 * 1024 + 1)
-            return original_cas(root, report)
+            return original_cas(root, report, **kwargs)
         with patch.object(rds_quick, 'cas_json', large):
             foreign, store, receipt = helper.foreign_owned(mode='badjson')
         self.assertEqual(store.last_advisor_review['status'], 'COLLECTION_FAILED')

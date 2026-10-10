@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import tempfile
 import uuid
 
@@ -387,18 +388,24 @@ def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *
 
 
 def _json_cas(root, ref):
+    from rds_owned_advisor import MAX_REPORT_BYTES
     require(isinstance(ref, dict) and isinstance(ref.get('path'), str)
             and isinstance(ref.get('sha256'), str) and re.fullmatch('[0-9a-f]{64}', ref['sha256'])
             and type(ref.get('bytes')) is int and ref['bytes'] > 0,
             'Native settlement report binding is invalid')
+    require(ref['bytes'] <= MAX_REPORT_BYTES, 'Native settlement report exceeds its 32 MiB byte limit')
     path = (root / ref['path']).resolve()
-    require(path.parent == (root / '.rds/cas').resolve() and path.name == ref['sha256'] + '.json',
+    require(path.parent == (root / '.rds/cas').resolve() and path.name == ref['sha256'] + '.json'
+            and path.is_relative_to(root.resolve()),
             'Native settlement report is outside its original CAS')
     size = ref['bytes']
-    # Native reports include collected dependency/review metadata. Their CAS
-    # reference, not the research asset cap, supplies the bounded read size.
-    require(path.stat().st_size == size, 'Native settlement report CAS integrity failure')
-    with path.open('rb') as stream:
+    # Native metadata has its own publication limit, distinct from the
+    # smaller research asset cap. Pin type and size to the descriptor read.
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
+    with os.fdopen(descriptor, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode), 'Native settlement report must be a regular file')
+        require(info.st_size == size, 'Native settlement report CAS integrity failure')
         raw = stream.read(size + 1)
     from hashlib import sha256
     require(sha256(raw).hexdigest() == ref['sha256'] and len(raw) == ref['bytes'],

@@ -188,3 +188,13 @@ A parsed number is an observed output, not independent proof that the training/e
 The end-to-end regression uses real CLI calls and real lightweight child processes. It checks omitted negative results, result-dependent selection, forged context/manifest attempts, missing or changed outputs, bad parsing, timeout/failure, recovery, concurrency and protected graph updates. It checks launch counts, budgets and receipt identities as well as output labels.
 
 These checks establish constrained engineering behavior. Scientific decision benefit needs a fair prospective comparison of whole research trajectories on unused cases with equal total budgets, including failed attempts, verification and evaluation. That benefit has not been established by this workflow; scientific support remains `UNKNOWN` where no separate validation exists. See [autonomy and RSI evidence boundaries](research-autonomy.md).
+## Native review report byte limit
+
+Persisted owned Advisor JSON reports have a 32 MiB publication limit. Campaign
+settlement and dialogue enforce that same limit before opening a CAS object,
+then validate regular-file type, recorded size and hash on the descriptor read.
+The distinct 8 MiB research-asset limit still applies to research assets;
+valid larger native review metadata remains acceptable within 32 MiB. An
+oversized native report remains an unsettled review error and does not erase
+the original worker receipt, authorize another run, or establish scientific
+support.

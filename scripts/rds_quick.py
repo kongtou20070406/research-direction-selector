@@ -25,8 +25,12 @@ MAX_FILES = 128
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
 
 
-def cas_json(root, value):
-    return cas_bytes(root, canonical(value).encode('utf-8'), 'json')
+def cas_json(root, value, *, max_bytes=None):
+    require(max_bytes is None or type(max_bytes) is int and max_bytes > 0,
+            'Invalid CAS JSON publication byte limit')
+    raw = canonical(value).encode('utf-8')
+    require(max_bytes is None or len(raw) <= max_bytes, 'CAS JSON exceeds its publication byte limit')
+    return cas_bytes(root, raw, 'json')
 
 
 @mutation()
