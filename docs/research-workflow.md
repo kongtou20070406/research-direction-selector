@@ -2,7 +2,7 @@
 
 [简体中文](research-workflow.zh-CN.md) · [Documentation](README.md) · [Formal verification](formal-verification.md)
 
-RDS automates parts of research collaboration to help a human researcher choose the next experiment, carry it out within an authorized scope, and use the evidence to decide what follows. The researcher sets the goal and resources; observed evidence determines the strength of a claim. Keep three things separate: components describe software responsibilities; the adopted L0–L5 framework describes scientific-discovery automation; the CLI records execution states. Each claim has its own evidence assessment.
+RDS is our chosen form for helping AI better assist people in scientific research. It connects the researcher's question to candidate directions, a testable next step and evidence for continuation or reformulation. The [vision and acceptance criteria](rds-purpose.md) explain the intended benefit; this guide describes the responsibilities and evidence contracts that support it. The researcher sets the goal and resources; observed evidence determines the strength of a claim. Keep three things separate: components describe software responsibilities; the adopted L0–L5 framework describes scientific-discovery automation; the CLI records execution states. Each claim has its own evidence assessment.
 
 ## Five components and their responsibilities
 
