@@ -1076,26 +1076,49 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
                     self.contract_with(maintenance_allowance=allowance)
 
     def test_campaign_deadline_stops_hang_and_preserves_partial_stdout(self):
-        # The deadline starts at reservation; allow Windows process startup and scheduling
-        # before asserting that deadline cleanup preserves the child's flushed output.
-        # CI runners can need seconds to launch python.exe under load, so the campaign
-        # deadline must outlast interpreter startup: otherwise the child is killed before
-        # its first flushed line and stdout.bin is legitimately empty. Measure a real bare
-        # spawn now and scale it: the deadline is fixture data, not a weakened assertion;
-        # the hang still cannot reach its own 15s timeout, and every CAMPAIGN_DEADLINE/
-        # size/cost assertion below is unchanged.
-        spawn_probe = time.perf_counter()
-        subprocess.run([sys.executable, "-c", "pass"], capture_output=True)
-        startup_headroom = round(max(5.0, 40.0 * (time.perf_counter() - spawn_probe)), 3)
-        store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": startup_headroom,
-                                                "progress": {"window_seconds": 3600, "min_bytes": 0}})
-        receipt = self.run_spec(self.spec(timeout=15))
+        # Retained output requires a child that has actually flushed output. Drive the
+        # fixture clocks across the five-second campaign deadline only after that
+        # precondition. The real runner checks/stops the real hanging process; no
+        # deadline predicate, stop result or process cleanup is mocked.
+        wall_origin, monotonic_origin = time.time(), time.monotonic()
+        elapsed = [0.0]
+        real_popen = subprocess.Popen
+
+        def flush_before_deadline(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            if args[0][1:] != ['-B', 'code.py'] or kwargs.get('cwd') != self.root:
+                return process
+            try:
+                output = Path(kwargs['stdout'].name)
+                # This independent real clock bounds fixture readiness, including
+                # startup under load, while the runner's fixture clocks are held.
+                readiness_deadline = time.monotonic_ns() + 10_000_000_000
+                while output.stat().st_size == 0 and process.poll() is None:
+                    if time.monotonic_ns() >= readiness_deadline:
+                        self.fail('Fixture child did not flush stdout within ten real seconds')
+                    time.sleep(0.01)
+                self.assertGreater(output.stat().st_size, 0, 'Fixture child exited without stdout')
+                elapsed[0] = 5.25
+                return process
+            except BaseException:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                raise
+
+        with patch('rds_project.time.time', side_effect=lambda: wall_origin + elapsed[0]), \
+             patch('rds_project.time.monotonic', side_effect=lambda: monotonic_origin + elapsed[0]), \
+             patch('rds_project.subprocess.Popen', side_effect=flush_before_deadline):
+            store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": 5,
+                                                    "progress": {"window_seconds": 3600, "min_bytes": 0}})
+            receipt = self.run_spec(self.spec(timeout=15))
         self.assertEqual(receipt["run_status"], "FAILED")
         self.assertEqual(receipt["stop_reason"], "CAMPAIGN_DEADLINE")
         self.assertFalse(receipt["timeout"])
         self.assertTrue(any("Stop policy: CAMPAIGN_DEADLINE" in error for error in receipt["errors"]))
         stdout = next(artifact for artifact in receipt["artifacts"] if artifact["kind"] == "stdout.bin")
         self.assertGreater(stdout["size"], 0)
+        self.assertEqual((self.root / '.rds/project-artifacts/r1/stdout.bin').read_bytes().strip(), b'started')
         self.assertLess(receipt["resources"]["wall_seconds"]["measured"], 15)
         self.assertEqual(store.snapshot()["budget"]["cpu_seconds"]["charged_estimate"], 1)
         with self.assertRaises(ValueError):
