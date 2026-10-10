@@ -241,9 +241,9 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(len(events), 1)  # no second identity event
         # The rebuilt pointer is admitted against the recorded identity.
         # Windows may render the same temp dir as 8.3 or long form; identity is
-        # the normalized path, not its rendering.
-        self.assertEqual(os.path.normcase(str(check_admission(self.root).root)),
-                         os.path.normcase(str(self.root)))
+        # the resolved path, not its rendering.
+        self.assertEqual(os.path.normcase(str(check_admission(self.root).root.resolve())),
+                         os.path.normcase(str(self.root.resolve())))
         self.assertEqual(rebuilt["schema"], 1)
 
     def test_bind_still_refuses_a_genuinely_different_recorded_identity(self):
