@@ -140,7 +140,12 @@ class PartialQuickTests(unittest.TestCase):
             reviewed = None
         else:
             args, reviewed = self.f.reviewed_request('partial-' + boundary)
-        workspace = Path(args.root) / '.rds/exec' / args.name
+        # QUICK canonicalizes the source root. Keep a lexical alias in every
+        # recovery case so fault injection and ledger queries must use that
+        # same identity, including Windows temporary-directory aliases.
+        source = Path(args.root)
+        args.root = str(source / '..' / source.name)
+        workspace = (Path(args.root) / '.rds/exec' / args.name).resolve()
         observed = {}
         if boundary == 'mkdir':
             original = Path.mkdir

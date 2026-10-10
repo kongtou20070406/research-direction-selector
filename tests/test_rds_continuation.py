@@ -643,13 +643,24 @@ class ModelContinuationTests(unittest.TestCase):
         event = self.f.request()
         manifest = next(r['manifest'] for r in self.f.contract['advisor_policy']['routes'] if r['manifest']['id'] == event['run_id'])
         self.f.store.register(manifest)
-        self.f.store.execute(event['run_id'])
+        receipt = self.f.store.execute(event['run_id'])
         before = self.f.store.snapshot()
         out = self.f.cli('project', 'drive', '--until-judgment')
         self.assertEqual(out['status'], 'RECONCILE_MODEL_DELIVERY_REQUIRED')
         self.assertEqual(out['handoff']['response_class'], 'RECONCILE_ORIGINAL_DELIVERY')
         self.f.assert_single_model_cost(before)
-        self.assertEqual(self.f.calls(), ['repair1'])
+        calls = self.f.calls()
+        diagnostic = None
+        if calls != ['repair1']:
+            # Preserve original startup/timeout evidence before fixture cleanup;
+            # the paid-call assertion and all original allowances stay exact.
+            streams = {}
+            for artifact in receipt['artifacts']:
+                if artifact['kind'] in {'stdout.bin', 'stderr.bin', 'project_output'}:
+                    with (self.f.root / artifact['path']).open('rb') as stream:
+                        streams[artifact['path']] = stream.read(4096).decode('utf-8', errors='replace')
+            diagnostic = {'receipt': receipt, 'streams_first_4096_bytes': streams}
+        self.assertEqual(calls, ['repair1'], diagnostic)
         self.assertEqual(len(self.f.events(autonomy.REQUESTED)), 1)
 
     def test_frozen_autonomy_allowance_is_not_overridden(self):
