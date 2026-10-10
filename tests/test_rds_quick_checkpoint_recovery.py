@@ -49,7 +49,7 @@ class QuickCheckpointRecoveryTests(unittest.TestCase):
         injected = {'done': False}
 
         def fail_at_child_materialization(path, *positional, **keywords):
-            if path == workspace and not injected['done']:
+            if Path(path).resolve() == workspace.resolve() and not injected['done']:
                 injected['done'] = True
                 raise OSError('synthetic interruption before child workspace creation')
             return original_mkdir(path, *positional, **keywords)
@@ -127,7 +127,7 @@ class QuickCheckpointRecoveryTests(unittest.TestCase):
         injected = {'done': False}
 
         def fail_at_child_materialization(path, *positional, **keywords):
-            if path == workspace and not injected['done']:
+            if Path(path).resolve() == workspace.resolve() and not injected['done']:
                 injected['done'] = True
                 raise OSError('synthetic plain interruption before child workspace creation')
             return original_mkdir(path, *positional, **keywords)
