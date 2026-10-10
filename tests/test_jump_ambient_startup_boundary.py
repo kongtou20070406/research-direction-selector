@@ -10,7 +10,8 @@ import unittest
 from unittest.mock import patch
 
 import test_jump_interpreter_boundary as f
-import test_rds_autonomy as af
+import ast
+import subprocess
 
 
 class AmbientStartupTests(unittest.TestCase):
@@ -121,57 +122,45 @@ class AmbientStartupTests(unittest.TestCase):
             self.assertEqual(state['receipts'][0]['argv'][1:3], ['-r', './preload.js'])
             self.assertEqual(state['budget']['wall_seconds']['reserved'], 0)
 
-    def test_actual_frozen_adapter_node_launch_preserves_runtime_and_parent_environment(self):
+    def test_adapter_node_launch_block_preserves_runtime_and_parent_environment(self):
         node = shutil.which('node')
         if node is None:
             self.skipTest('Native Node unavailable')
-        helper = af.AutonomyTests('runTest')
-        helper.setUp()
-        self.addCleanup(helper.doCleanups)
-        initialize = f.ProjectStore.initialize
-        def prepare(store, contract):
-            contract = deepcopy(contract)
-            helper.write('node-fixture.js', "if (process.env.NODE_OPTIONS) throw Error('unbound preload');\n"
-                "if (!process.env.RDS_RUNTIME_SCRIPTS) throw Error('runtime lost');\n"
-                "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify("
-                "{status:'unknown',source:'',policy_json:'',reason:'bounded local node fixture'})));\n")
-            helper.write('frozen-preload.js', "global.frozen = true;")
-            worker = store.root / 'worker.py'
-            raw = worker.read_text(encoding='utf-8')
-            # Bounded local provider-command fixture exercises the actual adapter
-            # launch. It makes no claim of a Node provider admission or model call.
-            raw = raw.replace("if __name__ == '__main__':", "def provider_command(provider, paths, root):\n    return "
-                              + repr([node, '-r', './frozen-preload.js', 'node-fixture.js']) +
-                              "\n\nif __name__ == '__main__':")
-            worker.write_text(raw, encoding='utf-8')
-            next(b for b in contract['bindings'] if b['path'] == 'worker.py')['sha256'] = f.file_sha(worker)
-            for name in ('node-fixture.js', 'frozen-preload.js'):
-                contract['bindings'].append({'path':name, 'role':'code', 'sha256':f.file_sha(store.root / name)})
-            protocol = json.loads((store.root / 'protocol.json').read_text(encoding='utf-8'))
-            protocol.update({role + '_sha256': f.ProjectStore._role_sha(contract, role)
-                             for role in ('code', 'config', 'data')})
-            helper.write('protocol.json', protocol)
-            protocol_ref = {'path':'protocol.json', 'sha256':f.file_sha(store.root / 'protocol.json')}
-            next(b for b in contract['bindings'] if b['path'] == 'protocol.json').update(protocol_ref)
-            for route in contract['advisor_policy']['routes']:
-                route['manifest']['protocol'] = protocol_ref
-            helper.contract = contract
-            return initialize(store, contract)
-        with patch.object(f.ProjectStore, 'initialize', prepare):
-            helper.build()
-        hook = helper.root / 'unbound.js'
-        hook.write_text("throw Error('unbound NODE_OPTIONS executed');", encoding='utf-8')
-        ambient = '--require ' + json.dumps(str(hook))
-        with patch.dict(os.environ, {'NODE_OPTIONS': ambient}):
-            event, receipt = helper.run_repair()
-            self.assertEqual(os.environ['NODE_OPTIONS'], ambient)
-        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
-        envelope = json.loads((helper.root / 'outputs/repair1.json').read_text(encoding='utf-8'))
-        self.assertEqual(envelope['returncode'], 0)
-        self.assertEqual(envelope['reason'], 'bounded local node fixture')
-        self.assertEqual(envelope['status'], 'unknown')
-        self.assertEqual(helper.calls(), [])
-        self.assertEqual(len(helper.store.snapshot()['receipts']), 1)
+        # The provider admission gate only accepts Python fixture/Codex routes.
+        # Exercise the unchanged adapter launch block in isolation rather than
+        # changing that gate or substituting a new frozen adapter identity.
+        source = Path(__file__).resolve().parents[1] / 'scripts/rds_autonomy_worker.py'
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        execute = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'execute')
+        blocks = [n for n in ast.walk(execute) if isinstance(n, ast.Try)
+                  and len(n.body) >= 3 and isinstance(n.body[0], ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == 'options' for t in n.body[0].targets)]
+        self.assertEqual(len(blocks), 1)
+        launch = ast.fix_missing_locations(ast.Module(body=blocks[0].body[:3], type_ignores=[]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / 'frozen.js').write_text("global.frozen = true;", encoding='utf-8')
+            (root / 'worker.js').write_text("if (!global.frozen) throw Error('frozen preload lost');\n"
+                "if (process.env.NODE_OPTIONS) throw Error('unbound preload');\n"
+                "if (process.env.RDS_RUNTIME_SCRIPTS !== 'retained-runtime') throw Error('runtime lost');\n"
+                "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('isolated-adapter-ok'));\n",
+                encoding='utf-8')
+            hook = root / 'unbound.js'
+            hook.write_text("throw Error('unbound NODE_OPTIONS executed');", encoding='utf-8')
+            ambient = '--require ' + json.dumps(str(hook))
+            with (root / 'trace').open('wb') as trace, (root / 'error').open('wb') as stderr:
+                namespace = {'Path':Path, 'os':os, 'subprocess':subprocess, 'root':root,
+                             'trace':trace, 'stderr':stderr,
+                             'argv':[node, '-r', './frozen.js', 'worker.js']}
+                with patch.dict(os.environ, {'NODE_OPTIONS':ambient, 'RDS_RUNTIME_SCRIPTS':'retained-runtime'}):
+                    exec(compile(launch, str(source), 'exec'), namespace)
+                    process = namespace['process']
+                    process.communicate(b'bounded local control', timeout=8)
+                    self.assertEqual(process.returncode, 0)
+                    self.assertEqual(os.environ['NODE_OPTIONS'], ambient)
+                    self.assertEqual(os.environ['RDS_RUNTIME_SCRIPTS'], 'retained-runtime')
+            self.assertEqual((root / 'trace').read_text(), 'isolated-adapter-ok')
+            self.assertEqual((root / 'error').read_bytes(), b'')
 
 
 if __name__ == '__main__':
