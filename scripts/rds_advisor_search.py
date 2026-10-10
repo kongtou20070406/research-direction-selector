@@ -587,9 +587,16 @@ def _planning_partition(candidates, goal, dependency_review):
                     if c.get("goal_contribution", {}).get("status") == "DECLARED_PATH"
                     and c["goal_contribution"].get("path")
                     and isinstance(c["goal_contribution"]["path"][0], str)]
-    open_predicates = [condition["fact"] for condition in (goal or {}).get("conditions", [])
+    conditions = (goal or {}).get("conditions", [])
+    open_predicates = [condition["fact"] for condition in conditions
                        if condition.get("truth") != TRUE and isinstance(condition.get("fact"), str)
                        and condition["fact"].strip()]
+    triple = (goal or {}).get("triple_affirmative") or {}
+    # Open Triple Affirmative obligations stay visible even when goal predicates
+    # compare TRUE; an undeclared affirmative is an open obligation, not vacuous.
+    for name in ("FOUND", "PORTABLE", "APPLICABLE"):
+        if name in triple.get("open", []):
+            open_predicates.append("affirmation:" + name.lower())
     tokens = [row["token"] for row in (dependency_review or {}).get("ready_obligations", [])
               if isinstance(row, dict) and isinstance(row.get("token"), str) and row["token"].strip()]
     if local_checks and open_predicates:

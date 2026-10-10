@@ -384,6 +384,55 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertEqual(review['planning']['local_checks'], [])
         self.assertEqual(review['planning']['open_predicates'], [])
 
+    def test_planning_partition_reports_open_affirmative_obligations(self):
+        def observed(value, locator):
+            from rds_artifacts import ArtifactFact
+            return ArtifactFact({'kind': 'OBSERVED', 'value': value,
+                                 'source': {'path': 'metrics.json', 'sha256': 'a' * 64, 'locator': locator}},
+                                reading_identity=('metrics.json', locator))
+
+        graph, context = fixture()
+        context['decision']['goal_conditions'] = [{'fact': 'goal', 'value': True}]
+        context['decision']['affirmations'] = {'portable': [{'fact': 'replay_error', 'op': 'lte', 'value': 0.1}]}
+        context['facts'] = {'goal': observed(True, '/goal'), 'replay_error': observed(0.2, '/replay_error')}
+        review = search_directions(graph, context)['selection_review']
+        self.assertEqual(review['goal']['status'], 'TRUE')
+        # An undeclared affirmative is an open obligation, not vacuous.
+        self.assertEqual(review['planning']['scope'], 'GLOBAL')
+        self.assertEqual(review['planning']['open_predicates'],
+                         ['affirmation:portable', 'affirmation:applicable'])
+        context['facts']['replay_error'] = observed(0.05, '/replay_error')
+        review = search_directions(graph, context)['selection_review']
+        self.assertEqual(review['planning']['open_predicates'], ['affirmation:applicable'])
+        context['decision']['affirmations'] = {
+            'portable': [{'fact': 'replay_error', 'op': 'lte', 'value': 0.1}],
+            'applicable': [{'fact': 'cohort_error', 'op': 'lte', 'value': 0.1}]}
+        context['facts']['cohort_error'] = observed(0.05, '/cohort_error')
+        review = search_directions(graph, context)['selection_review']
+        self.assertEqual(review['planning']['open_predicates'], [])
+
+    def test_brief_planning_projection_stays_bounded(self):
+        graph, context = fixture()
+        long_fact = 'long_fact_' * 50  # 500 characters: valid input, above the legacy 128 projection cap
+        action = graph['nodes'][0]['executable']['action']
+        action.update(kind='OBLIGATION_CHECK', target='unrestricted_lower', claim='a bound',
+                      outcomes=[{'observation': label, 'next_decision': label} for label in ('verified', 'counterexample', 'unresolved')])
+        action.pop('competing_explanations')
+        context['decision']['goal_conditions'] = [{'fact': long_fact, 'value': True}]
+        context['facts'] = {long_fact: {'value': False, 'source': 'reported-goal.json'}}
+        action['goal_contribution'] = {'target': long_fact, 'path': ['unrestricted_lower'],
+                                       'source': 'proof-plan.json'}
+        search = search_directions(graph, context)
+        advice = {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH', 'search': search}]}
+        with tempfile.TemporaryDirectory() as root:
+            summary = brief(root, advice, 'test')
+        projected = summary['planning']
+        # The digest keeps a bounded projection; the CAS record keeps the full partition.
+        self.assertEqual(projected['scope'], 'LOCAL')
+        self.assertEqual(len(projected['open_predicates'][0]), 128)
+        self.assertTrue(all(len(check['target']) <= 128 for check in projected['local_checks']))
+        self.assertEqual(projected['open_predicates_omitted'], 0)
+
     def test_planning_partition_lists_capped_ready_obligation_tokens(self):
         graph, context = fixture()
         dependency = json.loads((ROOT / 'examples/goal-linked-hypergraph.json').read_text())
