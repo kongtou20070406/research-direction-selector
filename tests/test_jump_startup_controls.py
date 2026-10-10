@@ -15,11 +15,34 @@ from rds_project import ProjectStore, file_sha
 
 
 class StartupControlsTests(unittest.TestCase):
+    def test_bash_explicit_debugger_startup_cannot_bypass_frozen_admission(self):
+        from test_jump_ambient_startup_boundary import AmbientStartupTests
+        for options in (['--debugger'], ['--debug'], ['--debugger=enabled'],
+                        ['-O', 'extdebug'], ['-Oextdebug'], ['-xO', 'extdebug'],
+                        ['+O', 'extdebug'], ['-cO', 'extdebug', 'true'],
+                        ['-sO', 'extdebug'], ['-Ocheckwinsize'], ['-ilc', 'true'],
+                        ['-c', '--debugger', 'true'], ['-c', '-O', 'extdebug', 'true'],
+                        ['-c', '--login', 'true'], ['-s', '-O', 'extdebug']):
+            for legacy in (False, True):
+                with self.subTest(options=options, legacy=legacy):
+                    AmbientStartupTests().admission('bash', [*options, 'worker.opaque'],
+                        legacy=legacy, refusal='(?:Bash|Shell).*startup.*unsupported')
+        self.assertEqual(jump._interpreter_script_operand(
+            ['bash', 'worker.sh', '--debugger', '-O', 'extdebug']), (1, 'worker.sh'))
+        self.assertEqual(jump._interpreter_script_operand(
+            ['bash', '-o', '--debugger', 'worker.sh']), (3, 'worker.sh'))
+        self.assertEqual(jump._interpreter_script_operand(
+            ['bash', '--', '--debugger']), (2, '--debugger'))
+        self.assertIsNone(jump._interpreter_script_operand(
+            ['bash', '-c', 'printf okay', '--debugger', '-O', 'extdebug']))
+        self.assertIsNone(jump._interpreter_script_operand(
+            ['bash', '-c', '--', '--debugger']))
+
     def test_bash_login_and_interactive_modes_cannot_bind_frozen_main(self):
         for options in (['--login'], ['--login=force'], ['--l'], ['--lo'], ['--log'],
                         ['--logi'], ['--logi=force'], ['-l'], ['-i'], ['-il'], ['-li'], ['-xil']):
             with self.subTest(options=options), self.assertRaisesRegex(
-                    ValueError, 'Bash login or interactive startup'):
+                    ValueError, 'Shell login or interactive startup'):
                 jump._interpreter_script_operand(['bash', *options, 'worker.sh'])
         self.assertEqual(jump._interpreter_script_operand(['bash', 'worker.sh']), (1, 'worker.sh'))
         self.assertEqual(jump._interpreter_script_operand(['bash', '--noprofile', 'worker.sh']), (2, 'worker.sh'))
@@ -27,7 +50,23 @@ class StartupControlsTests(unittest.TestCase):
         self.assertEqual(jump._interpreter_script_operand(['bash', '+o', '-l', 'worker.sh']), (3, 'worker.sh'))
         self.assertEqual(jump._interpreter_script_operand(['bash', '--', '-l']), (2, '-l'))
         self.assertEqual(jump._interpreter_script_operand(['bash', 'worker.sh', '--login', '-i']), (1, 'worker.sh'))
-        self.assertIsNone(jump._interpreter_script_operand(['bash', '-ilc', 'inline']))
+        with self.assertRaisesRegex(ValueError, 'Shell login or interactive startup'):
+            jump._interpreter_script_operand(['bash', '-ilc', 'inline'])
+        self.assertIsNone(jump._interpreter_script_operand(['bash', '-c', 'inline']))
+
+    def test_other_shells_cannot_enable_ambient_interactive_or_login_startup(self):
+        from test_jump_ambient_startup_boundary import AmbientStartupTests
+        for shell in ('dash', 'sh', 'ksh'):
+            for options in (['-i'], ['-l'], ['-ilc', 'true'], ['-c', '-i', 'true'],
+                            ['-s', '-i'], ['-o', 'interactive'], ['--login']):
+                for legacy in (False, True):
+                    with self.subTest(shell=shell, options=options, legacy=legacy):
+                        AmbientStartupTests().admission(shell, [*options, 'worker.opaque'],
+                            legacy=legacy, refusal='Shell.*startup.*unsupported')
+            self.assertEqual(jump._interpreter_script_operand([shell, 'worker.sh', '-i']), (1, 'worker.sh'))
+            self.assertEqual(jump._interpreter_script_operand([shell, '-o', '-i', 'worker.sh']), (3, 'worker.sh'))
+            self.assertEqual(jump._interpreter_script_operand([shell, '--', '-i']), (2, '-i'))
+            self.assertIsNone(jump._interpreter_script_operand([shell, '-c', 'printf okay', '-i']))
 
     def test_effective_startup_selectors_and_inline_shortcuts_reject(self):
         with tempfile.TemporaryDirectory() as directory:

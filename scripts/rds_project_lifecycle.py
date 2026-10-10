@@ -46,16 +46,17 @@ def discover(root):
         state = candidate / '.rds'
         # A native objective/CAS is also an existing research workspace, even
         # before its external-execution contract has been initialized.
-        if not state.exists():
+        if not (state.exists() or state.is_symlink()):
             continue
-        require(state.resolve().is_relative_to(candidate), 'State directory escapes project root')
+        require(state.is_dir() and state.resolve().is_relative_to(candidate),
+                'State directory escapes project root or is not a directory')
         project_db_path = state / 'project.sqlite3'
         has_project_db = project_db_path.exists() or project_db_path.is_symlink()
         if has_project_db:
             require(project_db_path.is_file() and project_db_path.resolve().is_relative_to(candidate),
                     'Project ledger escapes project root')
         reference = state / 'state.sqlite3'
-        has_reference = reference.exists()
+        has_reference = reference.exists() or reference.is_symlink()
         if not has_project_db and not has_reference:
             continue
         if has_reference:

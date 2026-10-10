@@ -420,6 +420,7 @@ def _perl_script_operand(argv, *, frozen_startup=False):
     """
     index = 1
     isolated = False
+
     while index < len(argv):
         option = argv[index]
         if option == '--':
@@ -531,6 +532,7 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
         return None
     index = 1
     isolated = False
+    shell_inline = False
 
     def require_zsh_startup_isolated():
         # Even -f cannot suppress the global zshenv. Match the kernel's shell
@@ -542,6 +544,8 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
         option = argv[index]
         if option == '--':
             require_zsh_startup_isolated()
+            if name in shells and shell_inline:
+                return None
             if name == 'php' and frozen_startup:
                 require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
@@ -556,6 +560,8 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
             return None
         if not option.startswith(('-', '+')):
             require_zsh_startup_isolated()
+            if name in shells and shell_inline:
+                return None
             if name == 'php' and frozen_startup:
                 require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
@@ -564,21 +570,35 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
         if name in shells:
             require(option.split('=', 1)[0] not in {'--rcfile', '--init-file'},
                     'Shell explicit startup files are unsupported for frozen Jump code')
-            if option.startswith('-') and not option.startswith('--') and any(c in option[1:] for c in 'cs'):
-                require_zsh_startup_isolated()
-                return None  # Inline command or stdin, not a main script file.
-            if name == 'bash' and option.startswith('--'):
+            if option.startswith('--'):
                 long_option = option.split('=', 1)[0]
-                if '--login'.startswith(long_option):
-                    require(False, 'Bash login or interactive startup is unsupported for frozen Jump code')
-            if name == 'bash' and option.startswith('-') and not option.startswith('--'):
+                require(name != 'bash' or not '--debugger'.startswith(long_option),
+                        'Bash debugger startup is unsupported for frozen Jump code')
+                require(not any(flag.startswith(long_option) for flag in ('--login', '--interactive')),
+                        'Shell login or interactive startup is unsupported for frozen Jump code')
+            if option.startswith('-') and not option.startswith('--'):
                 short_options = option[1:]
+                require(name != 'bash' or 'O' not in short_options,
+                        'Bash shopt startup options are unsupported for frozen Jump code')
                 require('i' not in short_options and 'l' not in short_options,
-                        'Bash login or interactive startup is unsupported for frozen Jump code')
+                        'Shell login or interactive startup is unsupported for frozen Jump code')
                 require('o' not in short_options or short_options.endswith('o'),
                         'Unsupported Bash option cluster before frozen main script')
+            if name == 'bash' and option.startswith('+'):
+                require('O' not in option[1:],
+                        'Bash shopt startup options are unsupported for frozen Jump code')
+            if option.startswith('-') and not option.startswith('--') and any(c in option[1:] for c in 'cs'):
+                require_zsh_startup_isolated()
+                # Shells continue parsing flags until their first non-option
+                # command string (or stdin positional argument). Check all
+                # effective startup selectors before that cutoff.
+                shell_inline = True
             if option in {'-o', '+o', '--rcfile', '--init-file'} or (
                     option[:1] in {'-', '+'} and not option.startswith('--') and option.endswith('o')):
+                if option.startswith('-'):
+                    require(index + 1 < len(argv), 'Shell option value is missing')
+                    require(argv[index + 1] not in {'interactive', 'login', 'login_shell'},
+                            'Shell login or interactive startup is unsupported for frozen Jump code')
                 index += 2
             else:
                 index += 1

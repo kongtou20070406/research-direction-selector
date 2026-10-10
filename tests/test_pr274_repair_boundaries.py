@@ -2,9 +2,13 @@
 from copy import deepcopy
 import json
 import os
+import stat
+import subprocess
 from pathlib import Path
 import sys
 import unittest
+import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,26 +58,69 @@ class DiscoveryTests(unittest.TestCase):
         self.addCleanup(self.f.doCleanups)
         self.f.init_quick()
 
+    def test_damaged_state_directory_entry_cannot_select_ancestor(self):
+        for kind in ('file', 'dangling-directory'):
+            child = self.f.root / ('child-' + kind)
+            child.mkdir()
+            state = child / '.rds'
+            original = Path.is_symlink
+            if kind == 'file':
+                state.write_text('retained damaged state entry', encoding='utf-8')
+            with self.subTest(kind=kind), patch.object(Path, 'is_symlink', autospec=True,
+                    side_effect=lambda path: (kind == 'dangling-directory' and path == state) or original(path)):
+                with self.assertRaisesRegex(ValueError, 'State directory escapes'):
+                    lifecycle.discover(child)
+            if kind == 'file':
+                self.assertEqual(state.read_text(encoding='utf-8'), 'retained damaged state entry')
+
     def test_dangling_entry_refuses_ancestor_with_portable_path_evidence(self):
-        child = self.f.root / 'child'
-        (child / '.rds').mkdir(parents=True)
-        ledger = child / '.rds/project.sqlite3'
-        original = Path.is_symlink
-        # Exercise the real discovery path on Windows without symlink privilege.
-        with patch.object(Path, 'is_symlink', autospec=True,
-                          side_effect=lambda path: path == ledger or original(path)):
-            with self.assertRaisesRegex(ValueError, 'Project ledger escapes'):
-                lifecycle.discover(child)
+        for name, label in (('project.sqlite3', 'Project'), ('state.sqlite3', 'Reference')):
+            child = self.f.root / ('child-' + name)
+            (child / '.rds').mkdir(parents=True)
+            ledger = child / '.rds' / name
+            original = Path.is_symlink
+            # Exercise real discovery on Windows without symlink privilege.
+            with self.subTest(name=name), patch.object(Path, 'is_symlink', autospec=True,
+                              side_effect=lambda path: path == ledger or original(path)):
+                with self.assertRaisesRegex(ValueError, label + ' ledger escapes'):
+                    lifecycle.discover(child)
 
     def test_actual_dangling_link_refuses_ancestor(self):
-        child = self.f.root / 'child'
-        (child / '.rds').mkdir(parents=True)
-        try:
-            os.symlink(child / 'missing.sqlite3', child / '.rds/project.sqlite3')
-        except (OSError, NotImplementedError) as exc:
-            self.skipTest(f'Symlink privilege unavailable: {exc}')
-        rejected = self.f.call('project', 'discover', root=child, ok=False)
-        self.assertIn('Project ledger escapes', rejected.stderr)
+        for name, label in (('project.sqlite3', 'Project'), ('state.sqlite3', 'Reference')):
+            child = self.f.root / ('child-' + name)
+            (child / '.rds').mkdir(parents=True)
+            try:
+                os.symlink(child / 'missing.sqlite3', child / '.rds' / name)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f'Symlink privilege unavailable: {exc}')
+            rejected = self.f.call('project', 'discover', root=child, ok=False)
+            self.assertIn(label + ' ledger escapes', rejected.stderr)
+
+
+class ArchiveInputTests(unittest.TestCase):
+    def test_descriptor_type_checked_before_zip_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'graph.json'
+            source.write_text('{}', encoding='utf-8')
+            with patch.object(archive.os, 'fstat', return_value=SimpleNamespace(st_mode=stat.S_IFIFO)), \
+                    patch.object(archive.zipfile, 'is_zipfile', side_effect=AssertionError('probe before type check')):
+                with self.assertRaisesRegex(ValueError, 'regular file'):
+                    archive.read_archive(source)
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'POSIX FIFO unavailable')
+    def test_fifo_without_writer_rejected_by_public_reader_with_bounded_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'archive.fifo'
+            os.mkfifo(source)
+            code = 'import sys; sys.path.insert(0,sys.argv[1]); from rds_hypergraph_archive import read_archive; read_archive(sys.argv[2])'
+            result = subprocess.run([sys.executable, '-B', '-c', code, str(ROOT / 'scripts'), str(source)],
+                                    capture_output=True, text=True, timeout=8)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Archive input must be a regular file', result.stderr)
+
+    def test_character_device_rejected_before_read(self):
+        with self.assertRaisesRegex(ValueError, 'regular file'):
+            archive.read_archive(os.devnull)
 
 
 class PartialQuickTests(unittest.TestCase):

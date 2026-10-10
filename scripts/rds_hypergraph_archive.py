@@ -10,8 +10,10 @@ import gzip
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
+import stat
 import zipfile
 import zlib
 
@@ -75,35 +77,44 @@ def read_archive(path, *, entry=None):
 def _read_archive(path, *, entry=None):
     """Read an explicit ZIP/JSON; do not extract files or execute bundle code."""
     path = Path(path)
-    if zipfile.is_zipfile(path):
-        with zipfile.ZipFile(path) as archive:
-            names = set(archive.namelist())
-            entry = entry or next((name for name in ZIP_ENTRIES if name in names), None)
-            if not entry or entry.startswith(("/", "\\")) or "\\" in entry or any(
-                    part in ("", ".", "..") for part in entry.split("/")) or ":" in entry:
-                raise ValueError("An explicit safe archive graph entry is required")
-            manifest = _json(_read_zip_entry(archive, "MANIFEST.json", 8 * 1024 * 1024))
-            files = manifest.get("files") if isinstance(manifest, dict) else None
-            if not isinstance(files, list):
-                raise ValueError("Archive manifest must list bound files")
-            bindings = [item for item in files if isinstance(item, dict) and item.get("path") == entry]
-            if len(bindings) != 1:
-                raise ValueError("Selected graph requires one manifest binding")
-            binding = bindings[0]
-            if type(binding.get("bytes")) is not int or not isinstance(binding.get("sha256"), str):
-                raise ValueError("Invalid graph manifest binding")
-            raw = _read_zip_entry(archive, entry)
-            if len(raw) != binding["bytes"] or hashlib.sha256(raw).hexdigest() != binding["sha256"]:
-                raise ValueError("Selected graph manifest length/SHA mismatch")
-    else:
-        if entry is not None:
-            raise ValueError("Entry selection applies only to ZIP archives")
-        if path.stat().st_size > MAX_BYTES:
-            raise ValueError("Archive JSON exceeds byte limit")
-        with path.open("rb") as stream:
+    # Nonblocking open prevents a FIFO from hanging before type validation.
+    # Probe and read the same descriptor, so pathname replacement cannot swap
+    # a validated regular file for an unbounded device or a different input.
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
+    with os.fdopen(descriptor, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError('Archive input must be a regular file')
+        if zipfile.is_zipfile(stream):
+            stream.seek(0)
+            with zipfile.ZipFile(stream) as archive:
+                names = set(archive.namelist())
+                entry = entry or next((name for name in ZIP_ENTRIES if name in names), None)
+                if not entry or entry.startswith(("/", "\\")) or "\\" in entry or any(
+                        part in ("", ".", "..") for part in entry.split("/")) or ":" in entry:
+                    raise ValueError("An explicit safe archive graph entry is required")
+                manifest = _json(_read_zip_entry(archive, "MANIFEST.json", 8 * 1024 * 1024))
+                files = manifest.get("files") if isinstance(manifest, dict) else None
+                if not isinstance(files, list):
+                    raise ValueError("Archive manifest must list bound files")
+                bindings = [item for item in files if isinstance(item, dict) and item.get("path") == entry]
+                if len(bindings) != 1:
+                    raise ValueError("Selected graph requires one manifest binding")
+                binding = bindings[0]
+                if type(binding.get("bytes")) is not int or not isinstance(binding.get("sha256"), str):
+                    raise ValueError("Invalid graph manifest binding")
+                raw = _read_zip_entry(archive, entry)
+                if len(raw) != binding["bytes"] or hashlib.sha256(raw).hexdigest() != binding["sha256"]:
+                    raise ValueError("Selected graph manifest length/SHA mismatch")
+        else:
+            if entry is not None:
+                raise ValueError("Entry selection applies only to ZIP archives")
+            if info.st_size > MAX_BYTES:
+                raise ValueError("Archive JSON exceeds byte limit")
+            stream.seek(0)
             raw = stream.read(MAX_BYTES + 1)
-        if len(raw) > MAX_BYTES:
-            raise ValueError("Archive JSON exceeds byte limit")
+            if len(raw) > MAX_BYTES:
+                raise ValueError("Archive JSON exceeds byte limit")
     graph = _json(raw)
     display = build_archive_display(graph)
     digest = hashlib.sha256(raw).hexdigest()
