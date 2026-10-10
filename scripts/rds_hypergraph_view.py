@@ -90,7 +90,8 @@ def read_graph(root, graph_path=None, *, demo=False, large=False):
             graph_path = Path(__file__).resolve().parents[1] / "examples" / "hypergraph-view.json"
         if graph_path is not None:
             path = Path(graph_path).resolve()
-            raw = read_regular_bytes(path, MAX_INPUT_BYTES, label='Hypergraph input (8 MiB)')
+            raw = read_regular_bytes(path, MAX_INPUT_BYTES, label='Hypergraph input',
+                                     limit_message='Hypergraph input exceeds 8 MiB')
             value, repairs = load_input(raw.decode("utf-8-sig"))
             result = graph_view(value, path, demo=demo)
             result["input_review"]["repairs"][:0] = [{"path": "$", "reason": repair} for repair in repairs]

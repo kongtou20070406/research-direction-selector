@@ -577,7 +577,8 @@ def main(argv=None):
     parser.add_argument('--output-dir', required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        raw = read_regular_bytes(args.manifest, MAX_INPUT_BYTES, label='Manifest')
+        raw = read_regular_bytes(args.manifest, MAX_INPUT_BYTES, label='Manifest',
+                                 limit_message='Manifest exceeds byte bound')
         manifest = strict_json(raw.decode('utf-8'))
         required = {'schema', 'request', 'worker', 'runtime'}
         optional = {'public_files', 'private_roots', 'timeout_seconds', 'max_output_bytes', 'memory_bytes'}
