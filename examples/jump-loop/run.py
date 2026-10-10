@@ -66,7 +66,7 @@ def build(root, native=None):
     for i, kind in enumerate(('probe', 'refresh', 'synthesize')):
         rid = 'jump-' + kind
         before = 'baseline' if i == 0 else ('jump-probe' if i == 1 else 'jump-refresh')
-        specs.append((rid, [python, '-B', 'generator.py', kind, 'out/' + kind + '.json'], ['out/' + kind + '.json'], ready(before), 10))
+        specs.append((rid, [python, '-BES', 'generator.py', kind, 'out/' + kind + '.json'], ['out/' + kind + '.json'], ready(before), 10))
     for i in (1, 2):
         rid, response = 'repair' + str(i), 'out/repair' + str(i) + '.json'
         specs.append((rid, [python, '-B', 'adapter.py', '--run', rid], output_paths(response),
