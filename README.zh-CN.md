@@ -16,7 +16,7 @@
 
 **面向学术研究、由证据驱动的 autoresearch。**
 
-面向学术研究及 Codex、Claude Code 等编程 Agent 实验工作流的科研 Skill 与本地内核。它在执行前冻结目标、输入与评估器，预留预算，保留执行回执，并跨会话延续已记录的证据。用它规划有界实验、恢复中断工作，并核验受支持的结果。
+面向学术研究及 Codex、Claude Code 等编程 Agent 实验工作流的科研 Skill 与本地内核。RDS 可在执行前冻结目标、输入与评估器，预留预算；包裹命令可记录执行，并跨会话保留输入、失败证据、回执、剩余预算及已记录的证据。用 Skill 规划有界实验、讨论证据、恢复中断工作并核验受支持的结果，也可配置由 Advisor 管理的研究项目，让程序从允许的路线中选择下一步。
 
 [RDS 如何参与 autoresearch 工作流](docs/autoresearch.md) · [CPU 回执与恢复示例](examples/autoresearch-receipts/README.md) · [引用本软件](CITATION.cff)
 
@@ -34,7 +34,7 @@ RDS 把其中所有不需要判断的记账工作从 Agent 身上移走，放进
 
 | 没有 RDS，Agent 会…… | 有了 RDS…… |
 | :--- | :--- |
-| 忘了慢任务已经在跑，又重跑一次、花两份钱 | 每个已注册的运行只执行一次；相同调用直接返回已有回执 |
+| 忘了慢任务已经在跑，又重跑一次、花两份钱 | 相同的已注册调用复用原运行及其回执 |
 | 看到结果后再改指标或阈值 | 指标、阈值、数据和评价器在首次运行前按哈希绑定 |
 | 把退出码 0 当成"成功了" | 未满足的目标谓词保持 `FALSE`；缺失或不确定的支持保持 `UNKNOWN` |
 | 换个会话又去试一条早被否掉的路线 | 账本跨会话保存；Advisor 会标记重复已否决路线和来回摇摆的决定 |
@@ -51,7 +51,9 @@ RDS 把其中所有不需要判断的记账工作从 Agent 身上移走，放进
 
 ## 两分钟上手
 
-**1. 让 Agent 安装。** 把下面这段交给 Codex、Claude Code 或任何具备终端访问能力的 Agent：
+需要 Git 和 Python 3.11+；这个 CPU 示例只使用标准库。
+
+**1. 让 Agent 安装。** 把下面这段交给 Codex、Claude Code 或具备终端访问能力的 Agent：
 
 ```text
 从以下地址安装 Research Direction Selector：
@@ -62,13 +64,25 @@ https://github.com/kongtou20070406/research-direction-selector
 然后阅读 SKILL.md，从我的实际研究问题开始协作。
 ```
 
-**2. 包裹一条昂贵命令。** 不需要契约或 JSON。在你的项目目录中运行（Python 3.11+，仅需标准库）：
+**2. 运行自带的 CPU 示例。** 在你的项目目录中运行，选择一个全新空目录 `./rds-demo`：
 
 ```powershell
-python -B .agents/skills/research-direction-selector/scripts/rds_cli.py --root . exec --name train-001 -t 600 -o outputs/result.json train.py
+python -B .agents/skills/research-direction-selector/examples/autoresearch-receipts/run.py --workspace ./rds-demo
 ```
 
-RDS 会把输入复制到冻结的任务目录，预留时间上限，运行任务，并在 `.rds/` 中记录回执。再次运行同一条命令，它返回 `EXISTING_JOB`，不会再花一次钱。绑定、输出和限制见[包裹命令](docs/agent-entry.md#wrap-a-command)。
+示例用自带的合成数据分别拟合常数和直线。每组通过 RDS 执行后，再发出相同调用，检查原始回执、运行数量和预算是否保持不变。终端结果和 `rds-demo/summary.json` 中包含这些字段：
+
+```json
+{
+  "results": {
+    "control": {"reuse": "EXISTING_JOB"},
+    "treatment": {"reuse": "EXISTING_JOB"}
+  },
+  "scientific_support": "UNKNOWN"
+}
+```
+
+这里只摘录部分字段；完整报告还包含指标和回执身份。[示例指南](examples/autoresearch-receipts/README.md)说明了保留的输出。要包裹你自己的任务，请换成已有脚本，并按[包裹命令](docs/agent-entry.md#wrap-a-command)声明输入与输出。
 
 **3. 用日常语言提问。** 例如：
 
@@ -79,7 +93,7 @@ RDS 会把输入复制到冻结的任务目录，预留时间上限，运行任�
 用 RDS 评估当前的收缩性假说，并为支持的形式化陈述生成经过检查的证据。
 ```
 
-更多可复制的提示词，以及遇到 `[RDS-REJECT]` 时该怎么做，见[快速入门](docs/quickstart.zh-CN.md)。
+更多提示词和 `[RDS-REJECT]` 的处理方法见[快速入门](docs/quickstart.zh-CN.md)。
 
 ---
 
@@ -93,13 +107,13 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 闭环为 **目标与约束 → Advisor 决策 → 受约束执行 → 结果与回执 → 更新研究状态 → Advisor**。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
-5.8.0 仍是最新稳定版。下一份 5.9 预览版为 `5.9.0-rc.2`，范围及发布验证见[预览说明](docs/releases/5.9.0-rc.2-preview.md)。它尚未证明科研能力提升；验证方案见 [5.9 评估计划 #166](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
+最新稳定发布版为 [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0)。开发 checkout 的版本标识为 `5.9.0-rc.2`，尚待发布。范围见[预览说明](docs/releases/5.9.0-rc.2-preview.md)，科研能力主张的验证方案见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
 ---
 
 ## 5 个核心功能组件
 
-按职责划分，RDS 有 **5 个核心组件**：3 个基础组件和 2 个增强组件。
+五个组件共享同一份已记录的研究状态：
 
 | 核心组件 | 主要职责 | 它回答的问题 |
 | :--- | :--- | :--- |
@@ -120,19 +134,7 @@ flowchart TD
     R -. 有范围的评估与审查后采用 .-> M
 ```
 
-### 容易混淆的三组关系
-
-- **Skill 和 Advisor：** Skill 定义研究的基本做法，例如公平对照，以及指标与机制的区别。Advisor 针对当前情况提出行动建议，例如检查训练是否充分，或尝试另一条候选路线。
-- **记忆和 Advisor：** 记忆保存发生过什么及其证据。Advisor 利用这些记录，建议接下来值得检查什么。
-- **Advisor 和 RSI：** Advisor 支持当前科研决策；有用的建议不等于任务收益已获证明。RSI 评估 **RDS 自身的规则、工具和决策策略** 变更；工程验收与科学决策收益提高需要不同证据。
-
-### 其他名称属于哪里？
-
-- **预算控制、基线缓存、日志提取、探针和形式化检查**主要属于 **② 执行与验收内核** 的底层模块。
-- **`.rds/` 项目记录、Obelisk 历史接口和判断图谱（`judgment-graph.yaml`）**主要属于 **③ 研究状态与记忆**，供其他组件读取。
-- **L1–L5** 是研究框架中讨论的[能力层级](docs/research-autonomy.md)，不是额外组件。
-
-五个组件是同一闭环中的五项职责。Advisor 是证据与下一行动之间的决策接口；这不意味着每个连接都已自主执行，也不证明闭环提高了科学收益。见[科研工作流](docs/research-workflow.zh-CN.md)和[自主程度边界](docs/research-autonomy.md)。
+Skill 指导 Agent 的科研推理；Advisor 利用已有证据建议或选择下一路线；RSI 评估 RDS 自身规则、工具和策略的变更。各自的输入与证据边界见[科研工作流](docs/research-workflow.zh-CN.md)。[自主程度边界](docs/research-autonomy.md)说明了能力层级，以及仍需科研评估的主张。
 
 ---
 
@@ -150,16 +152,35 @@ Skill 是 Agent 阅读的部分。它告诉 Agent 何时调用内核、如何表
 
 #### 手动安装
 
+要使用上面的项目内安装方式，在你的项目目录中运行：
+
+```powershell
+New-Item -ItemType Directory -Path .agents/skills -Force | Out-Null
+git clone https://github.com/kongtou20070406/research-direction-selector.git .agents/skills/research-direction-selector
+python -B .agents/skills/research-direction-selector/scripts/rds_cli.py --version
+```
+
+若希望多个项目共用一份安装，改用用户目录：
+
 ```powershell
 New-Item -ItemType Directory -Path "$env:USERPROFILE/.agents/skills" -Force | Out-Null
 git clone https://github.com/kongtou20070406/research-direction-selector.git "$env:USERPROFILE/.agents/skills/research-direction-selector"
+python -B "$env:USERPROFILE/.agents/skills/research-direction-selector/scripts/rds_cli.py" --version
 ```
+
+用户目录安装后，使用加引号的完整路径运行演示：
+
+```powershell
+python -B "$env:USERPROFILE/.agents/skills/research-direction-selector/examples/autoresearch-receipts/run.py" --workspace ./rds-demo
+```
+
+当前目录仍保持为你的项目，并向 CLI 传入项目根目录。本文后续以 `scripts/` 或 `examples/` 开头的命令假定从仓库根目录运行；安装后的路径解析见[入口指南](docs/agent-entry.md)。已有安装目录应先检查，再决定如何更新。
 
 ---
 
 ## 确定性的执行与验收内核
 
-内核（`scripts/rds_cli.py`）仅使用 Python 3.11+ 标准库。单条命令用 `exec` 包裹；需要预先登记的对照比较时，使用项目契约。
+内核（`scripts/rds_cli.py`）使用 Python 3.11+ 标准库。`exec` 记录单条命令，项目契约绑定预先登记的对照比较。相同的已注册调用复用原执行；从 RDS 之外启动的命令不在这一控制范围内。
 
 从仓库根目录运行以下 CPU 演示，并使用全新的空目录 `./my-project`。准备步骤会为对照组和实验组创建绑定契约及清单；本演示不构成科学结论的确认。执行与回执细节见[项目执行器示例](examples/project-runner/README.md)。
 
@@ -195,30 +216,13 @@ CLI 默认在本机记录调用。用 `python -B scripts/rds_cli.py usage --days
 
 ## Lean4 风格的声明式形式化验证
 
-`scripts/rds_verify.py` 提供有限声明式陈述、已注册的领域规则和独立证书检查。其有限战术接口借鉴了 Lean 风格的证明工作流；它不是通用的 Lean 或 Mathlib 证明器。
+`scripts/rds_verify.py` 检查已声明的数学陈述，返回状态、保证等级及可用证书。它适用于下列受支持的领域；更广泛的主张需要对应的验证器或证明。其有限战术接口借鉴了 Lean 风格的工作流。
 
-- **可信规则注册表** — 注册了 15 条原子数学规则，覆盖有理数标量阈值、仿射动力学、适用范围明确的矩阵谱检查、支持的 Linear/ReLU 性质、具体张量、精确单位圆盘几何覆盖，以及原生 Lean 证明义务（封闭有理数关系与一项范围明确的统计义务）。有限定理模块组合这些陈述。该注册表与包含 23 个节点的方法论判断图谱彼此独立。
+- **支持的陈述** — 核验有理数关系、仿射动力学、适用范围明确的矩阵谱界、支持的 Linear/ReLU 性质、具体张量、精确单位圆盘覆盖，以及已注册的原生 Lean 证明义务。有限定理模块可以组合受支持的陈述。[形式化参考](docs/formal-verification.md)说明了规则和保证等级；方法论建议由独立的判断图谱提供。
 - **有限战术分派器** — `LeanFormalEngine().verify(spec, tactics)` 接受 `rule`、`gershgorin`、`spectral_radius`、`scale_invariance`、`interval` 和 `lean4`。战术选择兼容的已注册检查；不支持或无法确定的输入返回 `UNKNOWN`。
 - **原生 Lean 4 适配器** — 配置原生 Lean 可执行程序后，固定模板的封闭有理数 `eq`、`lt` 或 `le` 证明义务，经原生复检及空公理审计后获得 `LEAN_KERNEL_CHECKED`。它不接受任意 Lean 源码或用户战术。
 
-从仓库根目录运行以下 Python 示例：
-
-```python
-import json
-import sys
-from pathlib import Path
-
-sys.path.insert(0, "scripts")
-from rds_verify import LeanFormalEngine, check_certificate
-
-spec = json.loads(Path("examples/formal/theorem_module.json").read_text(encoding="utf-8"))
-result = LeanFormalEngine().verify(spec, tactics=("rule",))
-assert result["status"] == "PASS"
-assert result["assurance"] == "CERTIFICATE_CHECKED"
-assert check_certificate(spec, result["certificate"])
-```
-
-同一声明也可通过 CLI 验证：
+从仓库根目录核验自带的陈述，再复检生成的证书：
 
 ```powershell
 python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/theorem_module.json --output proof.json --no-cache
@@ -264,16 +268,7 @@ python -B scripts/rds_cli.py history query --query 'C:\queries\obq-c7-unique-tok
 
 ## 验证与测试
 
-```powershell
-# 运行完整测试套件
-python -m unittest discover -s tests -p "test_*.py" -v
-
-# 运行历史案例回放
-python benchmark/run.py
-
-# 运行对抗性红队压力测试
-python benchmark/redteam/runner.py
-```
+回归套件、可选形式化依赖和开发检查见[贡献指南](CONTRIBUTING.zh-CN.md)。历史回放与红队检查的范围见[基准指南](benchmark/README.md)。
 
 ---
 

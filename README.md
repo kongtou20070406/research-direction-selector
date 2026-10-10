@@ -16,7 +16,7 @@
 
 **Evidence-driven autoresearch for academic research.**
 
-A research Skill and local kernel for academic research and agent-driven experiment workflows with Codex, Claude Code and other coding agents. It freezes goals, inputs and evaluators before execution, reserves budgets, preserves execution receipts and carries recorded evidence across sessions. Use it to plan bounded experiments, recover interrupted work and verify supported results.
+A research Skill and local kernel for academic research and agent-driven experiment workflows with Codex, Claude Code and other coding agents. Freeze goals, inputs and evaluators before execution, reserve budgets, wrap commands to record execution, and preserve failures, receipts, remaining budget and evidence across sessions. Use the Skill to plan bounded experiments, discuss evidence and recover interrupted work, or configure an Advisor-owned campaign to select permitted routes and verify supported results.
 
 [RDS in autoresearch workflows](docs/autoresearch.md) · [CPU receipt and recovery example](examples/autoresearch-receipts/README.md) · [Cite this software](CITATION.cff)
 
@@ -34,7 +34,7 @@ RDS moves every part of that bookkeeping that needs no judgment out of the agent
 
 | Without RDS, an agent… | With RDS… |
 | :--- | :--- |
-| relaunches a slow job it lost track of and pays twice | each registered run executes once; an identical call returns the existing receipt |
+| relaunches a slow job it lost track of and pays twice | an identical registered call reuses its recorded run and receipt |
 | moves the metric or threshold after seeing the result | metric, threshold, data and evaluator are hash-bound before the first run |
 | reads exit code 0 as "it worked" | a failed goal predicate stays `FALSE`; missing or inconclusive support stays `UNKNOWN` |
 | starts a new session and retries a route that was already rejected | the ledger survives sessions; Advisor flags repeated rejected routes and oscillating decisions |
@@ -51,7 +51,9 @@ These are small samples with one model family. They support a narrow claim: the 
 
 ## Try it in two minutes
 
-**1. Let your agent install it.** Give this to Codex, Claude Code or any agent with shell access:
+Requires Git and Python 3.11+; this CPU example uses only the standard library.
+
+**1. Let your agent install it.** Give this to Codex, Claude Code or an agent with shell access:
 
 ```text
 Install Research Direction Selector from
@@ -62,13 +64,25 @@ Use this project's .agents/skills directory and verify the CLI version.
 Then read SKILL.md and help me start from my actual research question.
 ```
 
-**2. Wrap one costly command.** No contract or JSON is needed. From your project directory (Python 3.11+, standard library only):
+**2. Run the included CPU example.** From your project directory, choose a new empty `./rds-demo` directory:
 
 ```powershell
-python -B .agents/skills/research-direction-selector/scripts/rds_cli.py --root . exec --name train-001 -t 600 -o outputs/result.json train.py
+python -B .agents/skills/research-direction-selector/examples/autoresearch-receipts/run.py --workspace ./rds-demo
 ```
 
-RDS copies the inputs into a frozen job directory, reserves the time limit, runs the job and records a receipt in `.rds/`. Run the identical command again and it returns `EXISTING_JOB` instead of paying a second time. See [wrap a command](docs/agent-entry.md#wrap-a-command) for bindings, outputs and limits.
+The example fits a constant and a line to the included synthetic data. It runs each arm through RDS, repeats the identical call and checks that the original receipt, run count and budget remain unchanged. The printed result and `rds-demo/summary.json` include these fields:
+
+```json
+{
+  "results": {
+    "control": {"reuse": "EXISTING_JOB"},
+    "treatment": {"reuse": "EXISTING_JOB"}
+  },
+  "scientific_support": "UNKNOWN"
+}
+```
+
+This is an excerpt; the full report includes metrics and receipt identities. The [example guide](examples/autoresearch-receipts/README.md) explains the retained outputs. To wrap your own job, replace the example command with your existing script and declare its inputs and outputs as described in [wrap a command](docs/agent-entry.md#wrap-a-command).
 
 **3. Ask in plain language.** For example:
 
@@ -79,7 +93,7 @@ Use RDS to continue this project. Check the remaining budget and completed runs 
 Use RDS to evaluate the current contraction hypothesis and generate checked evidence for a supported formal statement.
 ```
 
-More copyable prompts, and what to do on `[RDS-REJECT]`, are in the [quick start](docs/quickstart.md).
+More prompts and help with `[RDS-REJECT]` are in the [quick start](docs/quickstart.md).
 
 ---
 
@@ -93,13 +107,13 @@ RDS is an Advisor-centered research decision system with two cooperating sides a
 
 The loop is **goal and constraints → Advisor decision → constrained execution → results and receipts → updated research state → Advisor**. Project records live in `.rds/`; `references/judgment-graph.yaml` supplies scoped methodology rules, not an automatically rewritten collection of proven causal laws.
 
-5.8.0 remains the latest stable release. The next 5.9 preview is `5.9.0-rc.2`; see the [preview notes](docs/releases/5.9.0-rc.2-preview.md) for scope and release validation. Its research-capability claims remain unproven; see the [5.9 evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166).
+The latest stable release is [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0). The development checkout identifies itself as `5.9.0-rc.2`; publication is pending. See the [preview notes](docs/releases/5.9.0-rc.2-preview.md) for its scope and the [evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166) for research-capability claims.
 
 ---
 
 ## 5 Core Functional Components
 
-Organized by responsibility, RDS has **5 core components**: 3 foundational components and 2 enhancement components.
+The five components share one recorded research state:
 
 | Core component | Main responsibility | Question it answers |
 | :--- | :--- | :--- |
@@ -120,19 +134,7 @@ flowchart TD
     R -. Scoped evaluation and reviewed adoption .-> M
 ```
 
-### Three relationships that are easy to confuse
-
-- **Skill and Advisor:** Skill defines research practices, such as fair controls and the distinction between metrics and mechanisms. Advisor proposes actions for the current situation, such as checking whether training is sufficient or trying another candidate route.
-- **Memory and Advisor:** Memory preserves what happened and its evidence. Advisor uses those records to suggest what is worth checking next.
-- **Advisor and RSI:** Advisor supports the current research decision; a useful suggestion is not proof of task gain. RSI evaluates changes to **RDS's own rules, tools and decision policies**; engineering acceptance and improved scientific decision benefit require different evidence.
-
-### Where do the other names belong?
-
-- **Budget controls, baseline caching, log extraction, probes, and formal checks** mainly belong to the underlying modules of **② Execution & Acceptance Kernel**.
-- **`.rds/` project records, the Obelisk history interface, and the judgment graph (`judgment-graph.yaml`)** mainly belong to **③ Research State & Memory**, where other components can read them.
-- **L1–L5** are [capability levels](docs/research-autonomy.md) discussed in the research framework, not additional components.
-
-The five components are responsibilities in one loop. Advisor is the decision interface between evidence and the next action; this does not make every connection autonomous or prove that the loop improves scientific outcomes. See [research workflow](docs/research-workflow.md) and [autonomy scope](docs/research-autonomy.md).
+Skill guides the agent's research reasoning; Advisor uses recorded evidence to suggest or select the next route; RSI evaluates changes to RDS's own rules, tools and policies. Their inputs and evidence limits are explained in [research workflow](docs/research-workflow.md). [Autonomy scope](docs/research-autonomy.md) describes capability levels and the claims that still require research evaluation.
 
 ---
 
@@ -161,16 +163,35 @@ The recommended agent-driven install is in [Try it in two minutes](#try-it-in-tw
 
 #### Manual install
 
+For the project-local installation used above, run these commands from your project directory:
+
+```powershell
+New-Item -ItemType Directory -Path .agents/skills -Force | Out-Null
+git clone https://github.com/kongtou20070406/research-direction-selector.git .agents/skills/research-direction-selector
+python -B .agents/skills/research-direction-selector/scripts/rds_cli.py --version
+```
+
+For a user-wide installation, use the following paths instead:
+
 ```powershell
 New-Item -ItemType Directory -Path "$env:USERPROFILE/.agents/skills" -Force | Out-Null
 git clone https://github.com/kongtou20070406/research-direction-selector.git "$env:USERPROFILE/.agents/skills/research-direction-selector"
+python -B "$env:USERPROFILE/.agents/skills/research-direction-selector/scripts/rds_cli.py" --version
 ```
+
+For the user-wide install, run the demo with the quoted installed path:
+
+```powershell
+python -B "$env:USERPROFILE/.agents/skills/research-direction-selector/examples/autoresearch-receipts/run.py" --workspace ./rds-demo
+```
+
+Keep your project as the current directory and pass its root to the CLI. Commands beginning with `scripts/` or `examples/` later in this README assume the repository root; the [entry guide](docs/agent-entry.md) explains how to resolve installed paths. Existing installation directories should be inspected rather than overwritten.
 
 ---
 
 ## Deterministic Execution & Acceptance Kernel
 
-The kernel (`scripts/rds_cli.py`) runs on pure Python 3.11+ standard library. Use `exec` for a single wrapped command, or a project contract when you want a pre-registered comparison.
+The kernel (`scripts/rds_cli.py`) runs on Python 3.11+ with the standard library. `exec` records one wrapped command; a project contract binds a pre-registered comparison. Registered calls reuse their recorded execution; commands launched outside RDS remain outside that control.
 
 Run the following CPU demonstration from the repository root, using a new empty `./my-project` directory. The preparation step creates the bound contract and manifests for both arms; this demonstration does not establish scientific confirmation. See the [project-runner example](examples/project-runner/README.md) for execution and receipt details.
 
@@ -208,30 +229,13 @@ and the local log location.
 
 ## Lean4-style Declarative Formal Verification
 
-`scripts/rds_verify.py` provides finite declarative statements, registered domain rules, and independent certificate checking. Its bounded tactic facade is inspired by Lean-style proof workflows; it is not a general Lean or Mathlib prover.
+`scripts/rds_verify.py` checks a declared mathematical statement and returns its status, assurance and any certificate. Use it for the supported domains below; broader claims need their own verifier or proof. Its bounded tactic interface is inspired by Lean-style workflows.
 
-- **Trusted rule registry** — Registers 15 atomic mathematical rules covering rational scalar thresholds, affine dynamics, scoped matrix spectral checks, supported Linear/ReLU properties, concrete tensors, exact unit-disk geometry covers, and native Lean obligations (closed rational relations and a scoped statistical obligation). Finite theorem modules compose these statements. This registry is separate from the 23-node methodology judgment graph.
+- **Supported statements** — Checks rational relations, affine dynamics, scoped matrix spectral bounds, supported Linear/ReLU properties, concrete tensors, exact unit-disk covers and registered native Lean obligations. Finite theorem modules compose supported statements. The [formal reference](docs/formal-verification.md) describes the rules and assurance labels; methodology guidance lives separately in the judgment graph.
 - **Bounded tactic dispatcher** — `LeanFormalEngine().verify(spec, tactics)` accepts `rule`, `gershgorin`, `spectral_radius`, `scale_invariance`, `interval`, and `lean4`. Tactics select compatible registered checks; unsupported or inconclusive inputs return `UNKNOWN`.
 - **Native Lean 4 adapter** — With a configured native Lean executable, fixed-template closed rational `eq`, `lt`, or `le` obligations receive `LEAN_KERNEL_CHECKED` after native rechecking and an empty-axiom audit. It does not accept arbitrary Lean source or user tactics.
 
-Run this Python example from the repository root:
-
-```python
-import json
-import sys
-from pathlib import Path
-
-sys.path.insert(0, "scripts")
-from rds_verify import LeanFormalEngine, check_certificate
-
-spec = json.loads(Path("examples/formal/theorem_module.json").read_text(encoding="utf-8"))
-result = LeanFormalEngine().verify(spec, tactics=("rule",))
-assert result["status"] == "PASS"
-assert result["assurance"] == "CERTIFICATE_CHECKED"
-assert check_certificate(spec, result["certificate"])
-```
-
-The same declaration is available through the CLI:
+From the repository root, verify the included declaration and replay its certificate:
 
 ```powershell
 python -B scripts/rds_cli.py --root . formal verify --spec examples/formal/theorem_module.json --output proof.json --no-cache
@@ -277,16 +281,7 @@ python -B scripts/rds_cli.py history query --query 'C:\queries\obq-c7-unique-tok
 
 ## Verification & Tests
 
-```powershell
-# Run the complete test suite
-python -m unittest discover -s tests -p "test_*.py" -v
-
-# Run historical case replays
-python benchmark/run.py
-
-# Run adversarial red-team stress tests
-python benchmark/redteam/runner.py
-```
+For the regression suite, optional formal dependencies and development checks, follow [CONTRIBUTING](CONTRIBUTING.md#performance-and-final-acceptance). Historical replay and red-team scope are described in the [benchmark guide](benchmark/README.md).
 
 ---
 
@@ -298,7 +293,7 @@ scripts/rds_cli.py               Execution kernel & transactional budget ledger 
 scripts/rds_probe.py             Restricted AST and scalar formal admission checks (Component ②)
 scripts/rds_verify.py            Declarative rules, bounded tactics & certificate checking (Component ②)
 scripts/rds_compress.py          Telemetry log compression & spike monitor (Component ②)
-references/judgment-graph.yaml   23-node methodology judgment graph (Component ③)
+references/judgment-graph.yaml   Methodology judgment graph (Component ③)
 references/                      State machine contracts & RSI evidence (Component ③)
 scripts/rds_obelisk.py           Obelisk session history bridge (Component ③)
 scripts/rds_advisor.py           Evidence-grounded Advisor engine (Component ④)
