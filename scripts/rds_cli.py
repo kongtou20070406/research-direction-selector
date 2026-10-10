@@ -1141,8 +1141,9 @@ def cmd_project(args):
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
             from rds_project_assembly import initialize
-            return initialize(store, args.recipe)
-        return store.initialize(load_spec(args.contract), supersedes=args.supersedes)
+            return initialize(store, args.recipe, separate_project=args.separate_project)
+        return store.initialize(load_spec(args.contract), supersedes=args.supersedes,
+                                separate_project=args.separate_project)
     if args.action == "revise":
         from rds_method_revision import apply
         return apply(store, load_spec(args.proposal))
@@ -1545,6 +1546,8 @@ def parser():
     pr_source.add_argument("--recipe", help="Compile explicit research declarations into an owned contract")
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
                          help="Link this new root to a frozen project root by digest; the predecessor is never modified")
+    pr_init.add_argument("--separate-project", action="store_true",
+                         help="Declare a deliberately independent project in this workspace; refused when the workspace is bound to a canonical ledger")
     pr_actions.add_parser("revise", help="Adopt a bounded method revision in the same ledger without resetting budget or deadline").add_argument("--proposal", required=True)
     pr_improve = pr_actions.add_parser("improve", help="Prepare receipt diagnostics, editable tool code and a same-ledger revision proposal")
     pr_improve.add_argument("--code-path", required=True)
@@ -1582,6 +1585,13 @@ def parser():
     hook_validate = hook_actions.add_parser("validate")
     hook_validate.add_argument("--request", required=True)
     for child in hook_actions.choices.values():
+        child.add_argument("--json", action="store_true")
+
+    workspace = commands.add_parser("workspace", help="Bind this workspace to one canonical project ledger (#282); identity, not authority")
+    workspace_actions = workspace.add_subparsers(dest="action", required=True)
+    workspace_actions.add_parser("bind", help="Bind once to the existing ledger; idempotent recovery on re-run")
+    workspace_actions.add_parser("coverage")
+    for child in workspace_actions.choices.values():
         child.add_argument("--json", action="store_true")
 
     checkpoints = commands.add_parser("checkpoint", help="Record decisions and recover against live project state")
@@ -1893,6 +1903,12 @@ def _main():
                 result = coverage(args.root)
             else:
                 result = validate_request(args.root, load_spec(args.request))
+        elif args.command == "workspace":
+            from rds_workspace import bind as bind_workspace, coverage as workspace_coverage
+            if args.action == "bind":
+                result = bind_workspace(args.root)
+            else:
+                result = workspace_coverage(args.root)
         elif args.command == "checkpoint":
             result = cmd_checkpoint(args, rds)
         elif args.command == "artifacts":
@@ -1941,6 +1957,8 @@ def _main():
                                               or result.get('status') == 'CONFLICT'):
             return 2
         if args.command == 'host-hook' and result.get('status') == 'HOST_GUARD_MISSING':
+            return 2
+        if args.command == 'workspace' and args.action == 'coverage' and result.get('status') == 'MISMATCH':
             return 2
         if args.command == 'rsi' and args.action == 'validate':
             return {'LOCAL_CASES_PASSED': 0, 'FAILED': 1, 'UNKNOWN': 2}[result['status']]

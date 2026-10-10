@@ -623,7 +623,16 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
-    def initialize(self, contract, supersedes=None):
+    def initialize(self, contract, supersedes=None, separate_project=False):
+        # #282: a bound workspace admits only its canonical ledger. This check
+        # precedes every write, so a refusal leaves attempts, receipts and
+        # budget unchanged. Unbound legacy workflows are unaffected.
+        from rds_workspace import check_admission
+        # #282: a bound workspace admits only its canonical ledger, including a
+        # ledger deleted for replacement. This check precedes every write, so a
+        # refusal leaves attempts, receipts and budget unchanged. Unbound legacy
+        # workflows are unaffected (no pointer to check).
+        check_admission(self.root, supersedes=supersedes, separate_project=separate_project)
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
@@ -1472,6 +1481,10 @@ class ProjectStore:
         if chain:  # Only successor roots carry the field; every other snapshot is unchanged.
             # Pinned checkpoint digests stay in the link record; the snapshot names the IDs only.
             snapshot["predecessor_chain"] = [{k: v for k, v in hop.items() if k != "checkpoint_shas"} for hop in chain]
+        from rds_workspace import coverage
+        binding = coverage(self.root)
+        if binding["status"] != "UNBOUND":  # Unbound legacy workflows keep their original snapshot shape.
+            snapshot["workspace_binding"] = binding
         return snapshot
 
     def _receipt_result(self, receipt):

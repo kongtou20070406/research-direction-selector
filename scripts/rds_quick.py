@@ -513,6 +513,11 @@ def execute(args, review=None):
         if execution_policy is not None:
             return _charge_ledger(owner, workspace, request, timeout, source_root=root,
                                   executor_sha256=executor_sha256, existing_only=True)
+        if owner is None:
+            # #282: a resumed job workspace of a bound owner keeps its binding even
+            # when this invocation resolves no owner ledger.
+            from rds_workspace import check_admission
+            check_admission(workspace)
         state = ProjectStore(workspace).snapshot(check_bindings=True)
         require(not state['binding_check']['errors'], 'Frozen job bindings changed')
         receipt = next((r for r in state['receipts'] if r['run_id'] == args.name), None)
@@ -583,6 +588,15 @@ def execute(args, review=None):
     if execution_policy is not None:
         contract['execution_policy'] = deepcopy(execution_policy)
     store.initialize(contract)
+    if owner is not None:
+        # #282: a child exec workspace of a bound owner carries the owner's
+        # binding, so a child ledger cannot become a second accounting identity.
+        from rds_workspace import bind as bind_workspace, check_admission, pointer_path
+        check_admission(owner)
+        bind_workspace(workspace)
+        if pointer_path(owner).is_file():
+            pointer_path(workspace).write_text(
+                pointer_path(owner).read_text(encoding="utf-8"), encoding="utf-8")
     if review is not None:
         require(args.ledger, '--context for exec needs an existing --ledger for prospective decisions')
         record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name))

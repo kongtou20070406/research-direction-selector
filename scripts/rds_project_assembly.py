@@ -191,8 +191,10 @@ def compile_recipe(store, recipe):
         'execution_started': False, 'scientific_support': 'UNKNOWN', 'llm_tokens': 'NOT_MEASURED'}
 
 
-def initialize(store, recipe_path):
+def initialize(store, recipe_path, separate_project=False):
     """Prepare an immutable protocol, then use the original initializer."""
+    from rds_workspace import check_admission
+    check_admission(store.root, supersedes=None, separate_project=separate_project)
     source = Path(recipe_path).resolve()
     raw = _read(source)
     recipe = strict_json(raw.decode('utf-8-sig'))

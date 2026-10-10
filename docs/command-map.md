@@ -67,6 +67,8 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `project costs` | Inspect measured costs and charged estimates | Existing project records; failed attempts and unknown resource values remain visible | [Cost accounting](development-loop.md) |
 | `project trajectory` | Reconcile supplied provider/tool costs and evaluator-reported outcomes | `--manifest`; hash-bound original exports; no execution or independent scientific certification | [Trajectory accounting](trajectory-accounting.md) |
 | `project control-check` | Check whether a completed control is reusable | `--candidate` receipt and `--current` expected operation/protocol; source and output identity must match | [Control reuse](../examples/project-runner/README.md) |
+| `workspace bind` | Bind this workspace once to its canonical project ledger | Initialized project ledger; idempotent recovery; concurrent binders agree on one identity | [Project runner](development-loop.md) |
+| `workspace coverage` | Report binding coverage and identity match | `UNBOUND` keeps legacy behavior; `MISMATCH` exits 2 and refuses accounting resets | [Project runner](development-loop.md) |
 
 ## Native mathematical assets and local tools
 
