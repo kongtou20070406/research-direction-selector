@@ -214,8 +214,18 @@ class InterpreterBoundaryTests(unittest.TestCase):
                     with self.subTest(option=option):
                         with self.assertRaisesRegex(ValueError,'PHP startup configuration'):
                             jump._generator_bindings(store,contract,make(option, executable))
-                for option in ([],['-n'],['--no-php-ini'],['-n','-f']):
+                with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                    jump._generator_bindings(store,contract,make([], executable))
+                for option in (['-n'],['--no-php-ini'],['-n','-f']):
                     self.assertTrue(jump._generator_bindings(store,contract,make(option, executable)))
+                for argv in ([executable, '-r', 'echo "frozen";'],
+                             [executable, '-n', '-r', 'echo "frozen";']):
+                    with self.assertRaisesRegex(ValueError, 'PHP startup configuration/unsupported options'):
+                        jump._interpreter_script_operand(argv, frozen_startup=True)
+                with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                    jump._interpreter_script_operand([executable, '-'], frozen_startup=True)
+                self.assertIsNone(jump._interpreter_script_operand(
+                    [executable, '-n', '-'], frozen_startup=True))
             # Deterministic resolved metadata covers direct versioned names and
             # raw php aliases. This does not claim native PHP execution.
             for name in ('php8.3', 'php8.5.exe'):
@@ -232,12 +242,19 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                 with self.subTest(raw=raw, file_option=file_option, startup_tail=option):
                                     with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
                                         jump._generator_bindings(store, contract, make(file_option+option, raw))
+                            for no_ini in (['-n'], ['--no-php-ini']):
+                                self.assertTrue(jump._generator_bindings(
+                                    store, contract, make(no_ini + file_option, raw)))
+                                self.assertTrue(jump._generator_bindings(
+                                    store, contract, make(file_option + no_ini, raw)))
                             # Only -- or an ordinary runtime argument ends PHP
                             # option parsing after an explicit main file.
-                            for arguments in (['--', '-d', 'runtime=value'], ['-', '-d', 'runtime=value'],
-                                              ['literal', '-d', 'runtime=value'], ['-n']):
-                                self.assertTrue(jump._generator_bindings(store, contract, make(file_option+arguments, raw)))
-                        for option in ([], ['-n'], ['--no-php-ini'], ['-n', '-f'], ['-n', '-F']):
+                            for arguments in (['--', '-n'], ['-', '-n'], ['literal', '-n']):
+                                with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                                    jump._generator_bindings(store, contract, make(file_option+arguments, raw))
+                        with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                            jump._generator_bindings(store, contract, make([], raw))
+                        for option in (['-n'], ['--no-php-ini'], ['-n', '-f'], ['-n', '-F']):
                             self.assertTrue(jump._generator_bindings(store, contract, make(option, raw)))
             self.assertEqual(store.snapshot(),before)
 
@@ -740,7 +757,7 @@ class InterpreterBoundaryTests(unittest.TestCase):
                                 if declaration == 'explicit':
                                     plan['generator_code_paths'].append('worker')
                             for stage in plan['stages']:
-                                stage['run']['argv'] = [parser_executable, *option, '--', stage['kind'], stage['output']]
+                                stage['run']['argv'] = [parser_executable, '-n', *option, '--', stage['kind'], stage['output']]
                             # Only resolver metadata is a stub for this PHP
                             # parser-only case; native Node uses the real kernel.
                             with patch.object(store, '_command', return_value=parser_executable):

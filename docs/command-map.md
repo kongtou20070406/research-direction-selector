@@ -179,7 +179,7 @@ In an `advisor_policy` project, `advise --brief` derives inputs from its ledger 
 - **Frontier exploration/reformulation:** `--frontier <spec>` and optional `--frontier-proposals <proposals>` generate/review bounded tasks beyond the current graph. Novel labels and graph reachability do not certify science. [Frontier](advisor-frontier.md), [Theory reformulation](theory-reformulation.md).
 - **Plan, trace and fit diagnostics:** `--plan`, `--telemetry`, `--doc`, `--train-loss`, `--val-loss`, `--baseline-loss`, `--fit-telemetry`; supply the matching recorded data instead of invented metrics. [Advisor implementation](../scripts/rds_advisor.py).
 - **Scoped local literature:** `--literature` with optional `--topic` uses explicit local primary-source records. It is not a general web search. [Advisor implementation](../scripts/rds_advisor.py).
-- **Retired option:** `--research-note` is retained to return migration guidance. Use `checkpoint save --decision` and scoped context instead; it is not a working alternative archive. [Local decision workflow](lightweight-workflow.md).
+- **Retired option:** `--research-note` is retained to return migration guidance. Caller-managed decisions use `checkpoint save --decision` and scoped context; program-owned Advisor decisions must use `project next`/`project advance` so checkpoints retain their native run identity. [Local decision workflow](lightweight-workflow.md).
 
 ## Documented helper entry points
 

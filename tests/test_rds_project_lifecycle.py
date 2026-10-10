@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -708,6 +709,25 @@ class ProjectLifecycleTests(unittest.TestCase):
                 rejected = self.call('project', 'discover', root=child, ok=False)
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertEqual(path.read_bytes(), b'not a sqlite database')
+
+    def test_project_ledger_symlink_cannot_escape_discovered_root(self):
+        child = self.root / 'symlink-project'
+        state = child / '.rds'
+        state.mkdir(parents=True)
+        with tempfile.TemporaryDirectory(prefix='rds-external-ledger-') as external_dir:
+            external = Path(external_dir) / 'project.sqlite3'
+            db = sqlite3.connect(external)
+            db.close()
+            before = external.read_bytes()
+            link = state / 'project.sqlite3'
+            try:
+                os.symlink(external, link)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f'File symlinks are unavailable: {exc}')
+            rejected = self.call('project', 'discover', root=child, ok=False)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('Project ledger escapes project root', rejected.stderr)
+            self.assertEqual(external.read_bytes(), before)
 
 
 if __name__ == '__main__':

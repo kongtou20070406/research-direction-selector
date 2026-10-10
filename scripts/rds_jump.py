@@ -488,12 +488,16 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
     def php_explicit_file(main):
         # -f/-F consumes its file as an option value. PHP continues getopt
         # until -- or the first ordinary argument; the file alone is no cutoff.
+        no_ini = isolated
         if main is not None:
             for option in argv[main[0] + 1:]:
                 if option in {'-', '--'} or not option.startswith('-'):
                     break
                 require(option in {'-n', '--no-php-ini', '-q'},
                         'PHP startup configuration/unsupported options cannot bind frozen code')
+                no_ini = no_ini or option in {'-n', '--no-php-ini'}
+            if frozen_startup:
+                require(no_ini, 'PHP startup configuration must be disabled for frozen Jump code')
         return main
     name = Path(argv[0]).name.casefold().removesuffix('.exe')
     if re.fullmatch(r'python(?:w|\d+(?:\.\d+)*)?', name):
@@ -519,14 +523,20 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
     while index < len(argv):
         option = argv[index]
         if option == '--':
+            if name == 'php' and frozen_startup:
+                require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
                     name + ' startup isolation is required before frozen main script')
             return file_at(index + 1)
         if option == '-':
+            if name == 'php' and frozen_startup:
+                require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
                     name + ' startup isolation is required before frozen code')
             return None
         if not option.startswith(('-', '+')):
+            if name == 'php' and frozen_startup:
+                require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
             require(name not in {'lua', 'julia'} or isolated,
                     name + ' startup isolation is required before frozen main script')
             return file_at(index)
@@ -578,6 +588,7 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
                         or option.startswith(('--file=', '--process-file='))
                         or (option.startswith(('-f', '-F')) and len(option) > 2),
                         'PHP startup configuration/unsupported options cannot bind frozen code')
+                isolated = isolated or option in {'-n', '--no-php-ini'}
             # Preload/loop flags are not interchangeable with inline execution.
             inline = {'node': ('-e', '-p', '--eval', '--print'),
                       'nodejs': ('-e', '-p', '--eval', '--print'),

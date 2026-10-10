@@ -49,10 +49,16 @@ def discover(root):
         if not state.exists():
             continue
         require(state.resolve().is_relative_to(candidate), 'State directory escapes project root')
-        if not any((state / name).exists() for name in ('project.sqlite3', 'state.sqlite3')):
-            continue
+        project_db_path = state / 'project.sqlite3'
+        has_project_db = project_db_path.exists()
+        if has_project_db:
+            require(project_db_path.is_file() and project_db_path.resolve().is_relative_to(candidate),
+                    'Project ledger escapes project root')
         reference = state / 'state.sqlite3'
-        if reference.exists():
+        has_reference = reference.exists()
+        if not has_project_db and not has_reference:
+            continue
+        if has_reference:
             require(reference.is_file() and reference.resolve().is_relative_to(candidate),
                     'Reference ledger escapes project root')
             # A native reference ledger is a legitimate local scope, but not
@@ -62,7 +68,7 @@ def discover(root):
             with RDSState(candidate).snapshot() as (reference_db, reference_state):
                 if reference_state:
                     RDSState.invariants(reference_state)
-        if (state / 'project.sqlite3').exists() and not (state / 'state.sqlite3').exists():
+        if has_project_db and not has_reference:
             # QUICK may create an empty same-DB lock anchor for admission. It
             # has no research records; malformed/nonempty databases still fail
             # or participate in discovery instead of being silently ignored.
