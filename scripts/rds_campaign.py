@@ -16,6 +16,7 @@ import uuid
 
 from rds_project import canonical, digest, require
 from rds_source_documents import strict_json
+from rds_bounded_io import read_regular_bytes
 
 MARKER = '.rds-campaign.json'
 ENVIRONMENT = 'RDS_CAMPAIGN_BINDING'
@@ -76,8 +77,8 @@ def _decode(raw):
 
 def _read(path):
     try:
-        with path.open('rb') as stream:
-            return _decode(stream.read(MAX_BYTES + 1))
+        return _decode(read_regular_bytes(path, MAX_BYTES, label='Campaign binding marker',
+                                         limit_message='Campaign binding exceeds 16 KiB'))
     except OSError as exc:
         raise ValueError('Campaign binding marker is missing or unreadable: ' + str(path)) from exc
 
