@@ -1352,7 +1352,7 @@ class ProjectStore:
                         {'rubyopt', 'rubylib', 'rubygems_gemdeps'} if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else
                         {'perl5opt'} if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', executable_name) else
                         {'phprc', 'php_ini_scan_dir'} if re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', executable_name) else
-                        {'bash_env'} if is_bash else set())
+                        {'bash_env', 'bashopts', 'shellopts'} if is_bash else set())
                     if startup_variables:
                         # Recheck at launch, including host changes after admission.
                         # Preserve frozen argv and the parent environment; inherited

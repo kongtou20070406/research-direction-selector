@@ -1,8 +1,11 @@
-"""Frozen ProjectStore interpreter startup filtering; never invoke workers or hooks."""
+"""Production launch environment controls and a benign native Bash worker."""
 import ast
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -51,8 +54,10 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
 
     def observe(self, executable, autonomy):
         parent = {'PATH': 'retained-path', 'BASH_ENV': 'late-bash-startup',
-                  'bash_env': 'case-variant-bash-startup', 'BASHOPTS': 'retained-options',
+                  'bash_env': 'case-variant-bash-startup', 'BASHOPTS': 'extdebug',
+                  'BaShOpTs': 'extdebug', 'SHELLOPTS': 'xtrace', 'ShElLoPtS': 'xtrace',
                   'RUBYOPT': 'retained-ruby-control', 'NODE_OPTIONS': 'retained-node-control',
+                  'RUBYLIB': 'late-library', 'RUBYGEMS_GEMDEPS': 'late-Gemfile',
                   'PERL5OPT': 'late-perl-startup', 'perl5opt': 'case-variant-perl-startup',
                   'PHPRC': 'late-php.ini', 'phprc': 'case-variant-php.ini',
                   'PHP_INI_SCAN_DIR': 'late-php-conf.d', 'php_ini_scan_dir': 'case-variant-php-conf.d',
@@ -84,7 +89,8 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
         return captured, argv, parent, before
 
     def assert_filtered(self, executable, blocked, autonomy):
-        all_startup = {'bash_env', 'perl5opt', 'phprc', 'php_ini_scan_dir', 'rubyopt', 'node_options'}
+        all_startup = {'bash_env', 'bashopts', 'shellopts', 'perl5opt', 'phprc',
+                       'php_ini_scan_dir', 'rubyopt', 'rubylib', 'rubygems_gemdeps', 'node_options'}
         for executable in (executable,):
             with self.subTest(executable=executable):
                 captured, argv, parent, before = self.observe(executable, autonomy)
@@ -99,18 +105,18 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
                     else:
                         self.assertTrue(matching)
                 self.assertEqual(env['PATH'], 'retained-path')
-                self.assertEqual(env['BASHOPTS'], 'retained-options')
                 expected_runtime = str(SOURCE.resolve().parent) if autonomy else 'parent-runtime'
                 self.assertEqual(env['RDS_RUNTIME_SCRIPTS'], expected_runtime)
                 self.assertEqual(parent, before)
 
     def assert_all_interpreters(self, autonomy):
         cases = (
-            ('bash', {'bash_env'}), ('BASH.EXE', {'bash_env'}), ('BaSh5.2.exe', {'bash_env'}),
-            ('bash-5.2', {'bash_env'}), ('perl', {'perl5opt'}), ('Perl5.44.exe', {'perl5opt'}),
+            ('bash', {'bash_env', 'bashopts', 'shellopts'}), ('BASH.EXE', {'bash_env', 'bashopts', 'shellopts'}),
+            ('BaSh5.2.exe', {'bash_env', 'bashopts', 'shellopts'}),
+            ('bash-5.2', {'bash_env', 'bashopts', 'shellopts'}), ('perl', {'perl5opt'}), ('Perl5.44.exe', {'perl5opt'}),
             ('perl5.42', {'perl5opt'}), ('php', {'phprc', 'php_ini_scan_dir'}),
             ('PHP8.5.exe', {'phprc', 'php_ini_scan_dir'}), ('php8.3', {'phprc', 'php_ini_scan_dir'}),
-            ('ruby3.4.exe', {'rubyopt'}), ('nodejs.exe', {'node_options'}),
+            ('ruby3.4.exe', {'rubyopt', 'rubylib', 'rubygems_gemdeps'}), ('nodejs.exe', {'node_options'}),
         )
         for executable, blocked in cases:
             self.assert_filtered(executable, blocked, autonomy)
@@ -120,6 +126,47 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
 
     def test_trusted_autonomy_frozen_launch_filters_interpreter_startup_environment(self):
         self.assert_all_interpreters(autonomy=True)
+
+    def test_native_bash_launch_ignores_late_debugger_and_startup_options(self):
+        bash = shutil.which('bash')
+        if os.name == 'nt' and bash and 'WindowsApps' in bash:
+            bash = None  # WSL app alias is not a native Bash interpreter.
+        if bash is None and os.name == 'nt':
+            candidate = Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Git/bin/bash.exe'
+            bash = str(candidate) if candidate.is_file() else None
+        if bash is None:
+            self.skipTest('Native Bash unavailable')
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            hook = root / 'late-startup.sh'
+            hook.write_text('echo ambient-startup-executed; exit 9\n', encoding='utf-8')
+            worker = root / 'worker.sh'
+            worker.write_text('[[ :$BASHOPTS: != *:extdebug:* ]] || exit 10\n'
+                              '[[ :$SHELLOPTS: != *:xtrace:* ]] || exit 11\n'
+                              'printf frozen-bash-ok\n', encoding='utf-8')
+            for autonomy in (False, True):
+                with self.subTest(autonomy=autonomy), patch.dict(os.environ,
+                        {'BASH_ENV': str(hook), 'BASHOPTS': 'extdebug', 'SHELLOPTS': 'xtrace'}):
+                    before = dict(os.environ)
+                    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+                        namespace = {'argv': [bash, str(worker)],
+                                     'current': {'autonomy_request': {}} if autonomy else {},
+                                     'os': os, 'Path': Path, 're': re, 'subprocess': subprocess,
+                                     'self': SimpleNamespace(root=root), 'flags': 0,
+                                     'out': out, 'err': err, '__file__': str(SOURCE)}
+                        exec(self.launch, namespace)
+                        process = namespace['process']
+                        try:
+                            process.wait(timeout=8)
+                        finally:
+                            if process.poll() is None:
+                                process.kill()
+                                process.wait()
+                        out.seek(0); err.seek(0)
+                        self.assertEqual(process.returncode, 0, err.read())
+                        self.assertEqual(out.read(), b'frozen-bash-ok')
+                    self.assertEqual(dict(os.environ), before)
 
 
 if __name__ == '__main__':

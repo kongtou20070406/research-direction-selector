@@ -73,7 +73,8 @@ class StartupControlsTests(unittest.TestCase):
                                     plan['generator_code_paths'] = [worker.name, hook.name]
                                 for stage in plan['stages']:
                                     # Raw alias deliberately differs from the resolved numeric family.
-                                    stage['run']['argv'] = [language, *options, worker.name]
+                                    isolation = ['-f'] if language == 'perl' else []
+                                    stage['run']['argv'] = [language, *isolation, *options, worker.name]
                                 with patch.object(store, '_command', return_value=executable):
                                     with self.assertRaisesRegex(ValueError, 'unsupported|Unsupported'):
                                         jump._generator_bindings(store, contract, plan)
@@ -97,7 +98,8 @@ class StartupControlsTests(unittest.TestCase):
                 worker.write_text('literal frozen code', encoding='utf-8')
                 for original_options in options_list + [['--']]:
                     isolation = (['-E'] if name.startswith('lua') else
-                                 ['--startup-file=no'] if name.startswith('julia') else [])
+                                 ['--startup-file=no'] if name.startswith('julia') else
+                                 ['-f'] if name.startswith('perl') else [])
                     options = isolation + original_options
                     if original_options == ['--']:
                         worker = root / '-lworker.opaque'
