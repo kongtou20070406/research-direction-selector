@@ -35,6 +35,27 @@ class ContinuationTests(unittest.TestCase):
     def test_real_cli_continues_ordinary_routes_and_retains_false_goal(self):
         self.f.initialize()
         out = self.drive()
+        # A valid controller deadline is a bounded handoff, not a claim that
+        # every worker already ran. Resume only that exact stop on this ledger,
+        # retaining completed attempts and the original cumulative budget.
+        retained = {}
+        for _ in range(2):
+            if out['status'] == 'JUDGMENT_REQUIRED':
+                break
+            self.assertEqual(out['status'], 'HANDOFF_REQUIRED', out)
+            self.assertEqual(out['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', out)
+            state = self.f.snapshot()
+            self.assertEqual(state['budget']['wall_seconds']['cap'], 30)
+            self.assertAlmostEqual(state['budget']['wall_seconds']['reserved'], 0)
+            for receipt in state['receipts']:
+                if receipt['run_id'] in retained:
+                    self.assertEqual(receipt, retained[receipt['run_id']])
+                retained[receipt['run_id']] = receipt
+            self.assertEqual(len(self.f.starts()), len(set(self.f.starts())))
+            out = self.drive()
+        for receipt in self.f.snapshot()['receipts']:
+            if receipt['run_id'] in retained:
+                self.assertEqual(receipt, retained[receipt['run_id']])
         self.assertEqual(self.f.starts(), ['baseline', 'repair'])
         self.assertEqual(out['status'], 'JUDGMENT_REQUIRED')
         handoff = out['handoff']

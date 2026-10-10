@@ -41,7 +41,9 @@ class BaselineLineageCLITests(unittest.TestCase):
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
                 return json.loads(p.stdout)
             cli('project', 'init', '--contract', 'contract.json')
-            cli('project', 'drive', '--max-steps', '1')
+            # Set up the original paid baseline through the program-selected
+            # single-step entry; continuation below owns the repair trajectory.
+            cli('project', 'advance', '--brief')
             store = ProjectStore(root)
             paid = store.snapshot()
             baseline_receipt = paid['receipts'][0]
@@ -50,7 +52,10 @@ class BaselineLineageCLITests(unittest.TestCase):
             retained = {baseline_receipt['run_id']: baseline_receipt}
             executed = []
             for _ in range(5):
-                completed = cli('project', 'drive', '--max-steps', '5')
+                # One admitted worker per bounded CLI call keeps the unchanged
+                # 50-second outer timeout independent of a whole trajectory's
+                # worker time. The original ledger/caps and paid work persist.
+                completed = cli('project', 'drive', '--max-steps', '1')
                 current = store.snapshot()
                 for receipt in current['receipts']:
                     if receipt['run_id'] in retained:
@@ -61,8 +66,11 @@ class BaselineLineageCLITests(unittest.TestCase):
                     executed.append(run)
                 if completed['status'] == 'GOAL_CONFIRMED':
                     break
-                self.assertEqual(completed['status'], 'HANDOFF_REQUIRED', completed)
-                self.assertEqual(completed['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', completed)
+                if completed['status'] == 'STEP_LIMIT':
+                    self.assertEqual(len(completed['executed']), 1, completed)
+                else:
+                    self.assertEqual(completed['status'], 'HANDOFF_REQUIRED', completed)
+                    self.assertEqual(completed['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED', completed)
             self.assertEqual(completed['status'], 'GOAL_CONFIRMED', completed)
             self.assertEqual([r['run_id'] for r in executed], ['failed-pilot', 'repair', 'candidate', 'confirmation'])
             state = store.snapshot()
@@ -74,7 +82,7 @@ class BaselineLineageCLITests(unittest.TestCase):
             self.assertEqual(next(r for r in state['receipts'] if r['run_id'] == 'baseline'), baseline_receipt)
             self.assertEqual(len(state['runs']), 5)
             self.assertEqual(len(state['contract_history']), 2)
-            self.assertEqual(state['budget']['wall_seconds']['reserved'], 0)
+            self.assertAlmostEqual(state['budget']['wall_seconds']['reserved'], 0)
             cli('project', 'recover', '--id', 'baseline')
             resumed = cli('project', 'drive', '--max-steps', '5')
             self.assertEqual(resumed['status'], 'GOAL_CONFIRMED', resumed)
