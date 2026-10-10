@@ -646,7 +646,10 @@ def _inputs(root, argv, binds):
 
     def add(value, role):
         path = (root / value).resolve()
-        require(path.is_relative_to(root) and not path.is_relative_to((root / '.rds').resolve()), 'Input escapes source root or addresses operational state')
+        require(path.is_relative_to(root) and not path.is_relative_to((root / '.rds').resolve())
+                and all(os.path.normcase(part) != os.path.normcase('.rds')
+                        for part in path.relative_to(root).parts),
+                'Input escapes source root or addresses operational state')
         require(path.is_file(), 'Input file unavailable: ' + value)
         if path not in raw_by_path:
             with path.open('rb') as handle:
