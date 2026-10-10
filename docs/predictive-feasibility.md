@@ -87,10 +87,11 @@ same ledger. Pending adoption blocks execution and resumes only with the exact
 proposal; partial copies accept only retained old/new bytes. Original attempts,
 exposure and spending survive. Verified historical checkpoints in the owning
 ledger supply context while restoration uses live costs and current bindings.
-Inherited history through `supersedes` currently becomes conservatively unavailable
-when its predecessor has method revisions; the Advisor reports that warning and
-continues using local history. This feature does not extend the predecessor
-history verifier. Legacy contracts without
+Inherited history through `supersedes` remains conservatively unavailable
+when the predecessor's pinned contract history or checkpoints cannot be verified;
+the Advisor reports that warning and continues using local history. Intact method
+revisions are verified through their native contract history, and each pinned
+checkpoint is checked against its own revision. Legacy contracts without
 these optional fields retain their existing workflow.
 
 The agent must propose an executable improvement or state that no authorized
