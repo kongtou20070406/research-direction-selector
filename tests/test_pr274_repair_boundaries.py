@@ -107,19 +107,22 @@ class ArchiveInputTests(unittest.TestCase):
         f.setUp()
         self.addCleanup(f.doCleanups)
         source = f.write_zip(archive_fixture.encoded(archive_fixture.fixture()))
-        raw = bytearray(source.read_bytes())
+        # Keep the record offset larger than its counterfeit directory size.
+        # A bounded prepended stub is supported by ordinary ZIP readers.
+        raw = bytearray(b'fixture-prefix' * 300 + source.read_bytes())
         end = raw.rfind(b'PK\x05\x06')
         last_header = raw.rfind(b'PK\x01\x02', 0, end)
         directory_bytes = struct.unpack_from('<L', raw, end + 12)[0]
         # The normal count/size fields remain below the limits. CPython also
         # interprets these ZIP64 bytes when they sit in the final entry comment.
-        record = struct.pack('<4sQ2H2L4Q', b'PK\x06\x06', 44, 45, 45, 0, 0, 3, 3, 2048, 0)
-        locator = struct.pack('<4sLQL', b'PK\x06\x07', 0, 0, 1)
+        record = struct.pack('<4sQ2H2L4Q', b'PK\x06\x06', 44, 45, 45, 0, 0, 3, 3, 2048, end - 2048)
+        locator = struct.pack('<4sLQL', b'PK\x06\x07', 0, end, 1)
         comment = record + locator
         struct.pack_into('<H', raw, last_header + 32, len(comment))
         raw[end:end] = comment
         struct.pack_into('<L', raw, end + len(comment) + 12, directory_bytes + len(comment))
         source.write_bytes(raw)
+        self.assertTrue(archive.zipfile.is_zipfile(source), 'fixture must reach the ZIP inventory boundary')
         with patch.object(archive, 'MAX_ZIP_DIRECTORY_BYTES', 1000), \
                 patch.object(archive.zipfile, 'ZipFile', side_effect=AssertionError('ZIP64 parser allocation')):
             with self.assertRaisesRegex(ValueError, 'ZIP64 inventory is unsupported'):
