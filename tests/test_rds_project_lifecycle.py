@@ -729,6 +729,45 @@ class ProjectLifecycleTests(unittest.TestCase):
             self.assertIn('Project ledger escapes project root', rejected.stderr)
             self.assertEqual(external.read_bytes(), before)
 
+    def test_readonly_project_database_rejects_resolved_escape_before_connect(self):
+        self.init_quick()
+        before = self.store.snapshot()
+        external = self.root.parent / 'external-project.sqlite3'
+        original_resolve = Path.resolve
+        original_is_file = Path.is_file
+
+        def resolve(path, *args, **kwargs):
+            if path == self.store.path:
+                return external
+            return original_resolve(path, *args, **kwargs)
+
+        def is_file(path, *args, **kwargs):
+            if path == self.store.path:
+                return True
+            return original_is_file(path, *args, **kwargs)
+
+        with patch.object(Path, 'resolve', autospec=True, side_effect=resolve), \
+                patch.object(Path, 'is_file', autospec=True, side_effect=is_file), \
+                patch('rds_project.sqlite3.connect') as connect:
+            actions = (
+                ('open_db', lambda: self.store._db(True), 'Project database escapes root'),
+                ('snapshot', self.store.snapshot, 'Project database escapes root'),
+                ('describe', lambda: lifecycle.describe(self.root), 'Project database escapes root'),
+                ('discover', lambda: lifecycle.discover(self.root), 'Project ledger escapes project root'),
+            )
+            for name, action, message in actions:
+                with self.subTest(entrypoint=name), self.assertRaisesRegex(ValueError, message):
+                    if name == 'open_db':
+                        with action():
+                            self.fail('External project database must be rejected before connection')
+                    else:
+                        action()
+            connect.assert_not_called()
+
+        self.assertEqual(self.store.snapshot(), before)
+        self.assertEqual(lifecycle.describe(self.root)['mode'], 'QUICK')
+        self.assertEqual(lifecycle.discover(self.root)['project_root'], str(self.root))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -614,6 +614,8 @@ def _interpreter_script_operand(argv, *, frozen_startup=False):
                                   (option.startswith(('-f', '-F')) and len(option) > 2)):
                 return php_explicit_file((index, option.split('=', 1)[1] if option.startswith('--') else option[2:].removeprefix('=')))
             index += 2 if option in values else 1
+    if name == 'php' and frozen_startup:
+        require(isolated, 'PHP startup configuration must be disabled for frozen Jump code')
     require(name not in {'lua', 'julia'} or isolated,
             name + ' startup isolation is required before frozen code')
     return None

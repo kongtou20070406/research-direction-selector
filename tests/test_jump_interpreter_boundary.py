@@ -206,6 +206,10 @@ class InterpreterBoundaryTests(unittest.TestCase):
                 plan=deepcopy(original);plan['generator_code_paths']=['worker.php']
                 for stage in plan['stages']:stage['run']['argv']=[executable,*options,'worker.php']
                 return plan
+            def make_implicit_stdin(options, executable):
+                plan=deepcopy(original);plan['generator_code_paths']=['worker.php']
+                for stage in plan['stages']:stage['run']['argv']=[executable,*options]
+                return plan
             options=[['-d','auto_prepend_file=/tmp/hook.php'],['-dauto_prepend_file=/tmp/hook.php'],
                      ['--define=auto_prepend_file=/tmp/hook.php'],['-c','/tmp/php.ini'],['-c/tmp/php.ini'],
                      ['--php-ini=/tmp/php.ini'],['-nc/tmp/php.ini']]
@@ -218,6 +222,20 @@ class InterpreterBoundaryTests(unittest.TestCase):
                     jump._generator_bindings(store,contract,make([], executable))
                 for option in (['-n'],['--no-php-ini'],['-n','-f']):
                     self.assertTrue(jump._generator_bindings(store,contract,make(option, executable)))
+                for implicit_options in ([], ['-q']):
+                    with self.subTest(implicit_stdin=implicit_options):
+                        self.assertIsNone(jump._interpreter_script_operand([executable,*implicit_options]))
+                        with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                            jump._interpreter_script_operand([executable,*implicit_options], frozen_startup=True)
+                        with self.assertRaisesRegex(ValueError, 'PHP startup configuration'):
+                            jump._generator_bindings(store, contract,
+                                                     make_implicit_stdin(implicit_options, executable))
+                for implicit_options in (['-n'], ['--no-php-ini'], ['-q', '-n']):
+                    with self.subTest(implicit_stdin_no_ini=implicit_options):
+                        self.assertIsNone(jump._interpreter_script_operand(
+                            [executable,*implicit_options], frozen_startup=True))
+                        self.assertTrue(jump._generator_bindings(
+                            store, contract, make_implicit_stdin(implicit_options, executable)))
                 for argv in ([executable, '-r', 'echo "frozen";'],
                              [executable, '-n', '-r', 'echo "frozen";']):
                     with self.assertRaisesRegex(ValueError, 'PHP startup configuration/unsupported options'):

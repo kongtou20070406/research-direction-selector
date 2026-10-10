@@ -451,6 +451,7 @@ class ProjectStore:
         if readonly:
             if not self.path.is_file():
                 raise FileNotFoundError("Project contract has not been initialized")
+            require(self.path.resolve().is_relative_to(self.root), "Project database escapes root")
             db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=10)
             db.execute("PRAGMA query_only=ON")
         else:
