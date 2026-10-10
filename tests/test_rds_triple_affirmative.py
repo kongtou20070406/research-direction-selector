@@ -357,7 +357,9 @@ class TripleAffirmativeCLITests(unittest.TestCase):
         self.assertEqual(brief['goal_input_status'], 'TRUE')
         self.assertEqual(brief['next_move'], 'RESOLVE_PREMISE')
         self.assertEqual(brief['flags'][0], 'TRIPLE_AFFIRMATIVE_OPEN')
-        self.assertLess(len(json.dumps(brief)), 1024)
+        # The digest grows only by the bounded planning projection; the affirmations
+        # are open obligations, so they stay visible instead of an UNSCOPED scope.
+        self.assertLess(len(json.dumps(brief)), 1280)
 
 
 if __name__ == '__main__':

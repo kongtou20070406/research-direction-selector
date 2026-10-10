@@ -710,6 +710,20 @@ def brief(root, value, version, formal=False):
                 _brief_move(summary, selection['next_move'])
             if 'goal' in selection:
                 summary['goal_input_status'] = selection['goal']['status']
+            if 'planning' in selection:
+                planning = selection['planning']
+                checks = [{'candidate': row['candidate'][:64],
+                           'target': row['target'][:128],
+                           **({'target_truncated': True} if len(row['target']) > 128 else {})}
+                          for row in planning.get('local_checks', [])[:8]]
+                open_predicates = [name[:128] for name in planning.get('open_predicates', [])[:8]]
+                summary['planning'] = {'scope': planning.get('scope'),
+                                       'local_checks': checks,
+                                       'local_checks_omitted': max(0, len(planning.get('local_checks', [])) - 8),
+                                       'open_predicates': open_predicates,
+                                       'open_predicates_omitted': max(0, len(planning.get('open_predicates', [])) - 8),
+                                       'ready_obligations': planning.get('ready_obligations', []),
+                                       'omitted_ready_obligations': planning.get('omitted_ready_obligations', 0)}
         advisory_moves = {'GOAL_CONTRIBUTION_UNDECLARED': 'REVIEW_GOAL_LINK',
                           'GOAL_CONTRIBUTION_INVALID': 'REVIEW_GOAL_LINK'}
         relevant = [kind for kind in flags if kind in advisory_moves and advisory_moves[kind] == summary.get('next_move')]

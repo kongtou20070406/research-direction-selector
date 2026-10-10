@@ -141,7 +141,7 @@ def build(store, report):
             'decision': context['decision'], 'contract_sha256': digest(state['contract']),
             'scope_sha256': scope, 'snapshot_sha256': saved['sha256'], 'fingerprint': report['fingerprint']}),
             selection=_compact(store, {k: report.get(k) for k in
-                            ('status', 'selected_run', 'next_move', 'selection_basis')}),
+                            ('status', 'selected_run', 'next_move', 'selection_basis', 'planning')}),
             budget=_compact(store, budget), goals=_section(store, goals),
             unresolved_hypotheses=_section(store, hypotheses), unresolved_dependencies=_section(store, unresolved),
             scoped_feedback=_section(store, feedback), route_review=_section(store, history),

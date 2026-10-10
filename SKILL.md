@@ -103,6 +103,12 @@ ON applicable research request:
         SUPPLY serious alternatives/explanations + sources + distinguishing observation
         IF project has a saved dependency map: ADD --saved-dependencies TO advise
         READ the returned search.selection_review: basis, flags, relevant next_move
+        BEFORE a consequential choice, READ selection_review.planning: open obligations,
+              unselected admitted alternatives stay visible, and a declared local
+              path never closes a global predicate; COLLECTION_FAILED, a missing
+              declared field and a child timeout never repeat completed work or
+              become a refutation; NO_READY_DIRECTION names open obligations
+              before REFORMULATE
         IF brief output omits decision-critical detail: READ its saved record
         CHECK single direction, missing/overlapping predictions, unknown premises,
               truncated search, and submitted goal/dependency links

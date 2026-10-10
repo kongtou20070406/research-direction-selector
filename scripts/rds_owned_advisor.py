@@ -578,6 +578,10 @@ def review(store, persist=True):
             result['tool_utilization'] = consumption(store, state, context['facts'], tool_reports, selection, searches)
         result['warnings'] = deepcopy(selection.get('flags', []))
         result['next_move'] = deepcopy(selection.get('next_move'))
+        result['planning'] = deepcopy(selection.get('planning', {'scope': 'UNSCOPED',
+            'local_checks': [], 'open_predicates': [], 'ready_obligations': [],
+            'omitted_ready_obligations': 0, 'assurance': 'INPUT_REPORTED_NOT_SCIENTIFIC_VERIFICATION',
+            'authorization': 'UNCHANGED'}))
         ready = {c['action']['id']: c for search in searches for c in search['candidates'] if c['status'] == 'READY'}
         active = [r for r in policy['routes'] if run_index.get(r['manifest']['id'], {}).get('status') in {'RESERVED', 'RUNNING'}
                   and r['candidate'] in ready]
