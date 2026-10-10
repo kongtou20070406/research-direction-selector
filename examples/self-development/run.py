@@ -114,6 +114,9 @@ def main():
         parser.error("Use a new empty workspace; existing research state is never overwritten")
     root.mkdir(parents=True, exist_ok=True)
     sources = freeze_public_source(REPO, root)
+    missing = [name for name in patterns if not (root / 'tests' / name).is_file()]
+    if missing:
+        parser.error('Selected test module is absent from frozen Git source; stage it before running: ' + ', '.join(missing))
     shutil.copyfile(root / "examples/self-development/test_driver.py", root / "test_driver.py")
     config = {"test_patterns": patterns, "goal": "Validate actual RDS development behavior", "scientific_claim": None}
     write(root / "development-config.json", config)
