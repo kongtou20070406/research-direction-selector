@@ -139,6 +139,10 @@ ON applicable research request:
         KEEP computational coverage distinct FROM evidence truth or coverage of arbitrary disk files
     IF project has advisor_policy:
         RUN advise --working-set --brief FROM the current ledger and owned dependency graph
+        READ shadow_plan.summary and comparison BEFORE a consequential local choice
+        USE project plan --shadow [--goal <frozen-goal-fact>] FOR current final milestones, alternatives and jump requests
+        READ docs/global-shadow-planning.md WHEN proposing a missing global route or off-route discriminator
+        KEEP shadow priority = heuristic proposal; original selection, steering and admission retain authority
         READ working_set goals, final selection, unresolved hypotheses and scoped feedback
         IF jump_packet or structure jump/drive agent_context is present:
             READ its new premises, representation changes, rival predictions and original evidence
@@ -235,6 +239,7 @@ All commands below use `CLI` above. Links load detail on demand.
 | First plain-language request | Follow [quick start](docs/quickstart.md): copyable prompts, first project, `[RDS-REJECT]` recovery | [Project runner](examples/project-runner/README.md) |
 | First inspectable plan | `project plan [--intent <intent.json>] [--save-as <checkpoint-id>]` | [Planning and steering](docs/planning-and-steering.md) |
 | Every experiment or continuation | `project discover`; reuse returned `project_root` and register runs there | [Project lifecycle](docs/project-lifecycle.md) |
+| Rolling global planning and jump requests | `project plan --shadow [--goal <frozen-goal-fact>]`; compare with current owned `shadow_plan` | [Global shadow planning](docs/global-shadow-planning.md) |
 | Current user's new direction | `project steering`, then `project steer --request <request.json> --user-directed --source <current-message-locator>` | [Planning and steering](docs/planning-and-steering.md) |
 | Start locked campaign | `project init --contract <contract.json>` defaults to FULL with explicit `advisor_policy`; deliberate limited contracts use `--mode quick` | [Contract template](docs/project-contract.md), [owned Advisor](docs/program-owned-advisor.md) |
 | Enable owned Advisor in a legacy project | `project enable-advisor --policy <policy.json>`, then `--apply --expected-snapshot <sha>` after reviewing the preview | [Project lifecycle](docs/project-lifecycle.md), [owned Advisor](docs/program-owned-advisor.md) |

@@ -1292,6 +1292,11 @@ def brief(root, value, version, formal=False):
             summary['steering']['omitted_' + key] = max(0, len(state.get(key, [])) - 3)
     if 'working_set' in owned:
         summary['working_set'] = owned['working_set']
+    if 'shadow_plan' in owned:
+        plan = owned['shadow_plan']
+        summary['shadow_plan'] = {'status': plan['status'], 'summary': plan.get('summary'),
+                                  'comparison': plan.get('comparison'), 'selection_applied': False,
+                                  'expand': 'project plan --shadow'}
     if 'advisor' in value and 'receipt' in value:
         summary.update(status=value['receipt'].get('run_status', 'UNKNOWN'),
                        run_id=value['receipt'].get('run_id'), receipt_sha256=value['receipt'].get('sha256'),
