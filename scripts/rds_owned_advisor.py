@@ -706,6 +706,8 @@ def review(store, persist=True):
             except (ValueError, KeyError, TypeError, OSError) as exc:
                 result.update(status='COLLECTION_FAILED', selected_run=None, selected_manifest=None)
                 result['warnings'].append({'kind': 'DOMAIN_CONFIRMATION_INTEGRITY', 'error': str(exc)})
+    from rds_global_planning import build as shadow_plan
+    result['shadow_plan'] = shadow_plan(state, result, admitted_runs=[r['manifest']['id'] for r in active + eligible] if policy else [])
     if persist:
         ref = cas_json(store.root, result)
         if result.get('tool_utilization'):

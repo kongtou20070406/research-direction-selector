@@ -1128,6 +1128,12 @@ def cmd_project(args):
     from rds_project import ProjectStore
     store = ProjectStore(args.root)
     if args.action == 'plan':
+        if args.shadow:
+            require(not (args.intent or args.output or args.save_as),
+                    '--shadow is read-only; intent, output and save-as belong to the initial plan draft')
+            from rds_global_planning import inspect_plan
+            return inspect_plan(store, goal=args.goal)
+        require(args.goal is None, '--goal requires --shadow')
         from rds_steering import plan
         return plan(store, load_spec(args.intent) if args.intent else None,
                     output=args.output, save_as=args.save_as)
@@ -1534,6 +1540,8 @@ def parser():
     pr_plan.add_argument('--intent', help='Optional declared goal/scope/budget/evaluation JSON')
     pr_plan.add_argument('--output', help='Write a new project-relative proposal artifact')
     pr_plan.add_argument('--save-as', help='Retain the draft in an initialized project checkpoint and CAS')
+    pr_plan.add_argument('--shadow', action='store_true', help='Read a rolling global planning proposal from the current owned evidence; no writes or dispatch')
+    pr_plan.add_argument('--goal', help='With --shadow, focus the bounded dependency view on one frozen goal fact')
     pr_actions.add_parser('steering', help='Read the current user instruction, active work disposition and live resources')
     pr_steer = pr_actions.add_parser('steer', help='Record a host-attested current-user instruction; preserve original execution authority')
     pr_steer.add_argument('--request', required=True)

@@ -323,11 +323,17 @@ class TwoStepTests(unittest.TestCase):
             RDSAdvisor(root).execute_theory_probe(manifest(root, "normal"), obligation(), theory_allowance=allowance)
         state = store.snapshot()
         self.assertEqual(state["runs"], [])
-        self.assertEqual(state["budget"]["wall_seconds"]["charged_estimate"], 2)
         self.assertTrue(all(row["reserved"] == 0 for row in state["budget"].values()))
         with store._db(True) as db:
             event = json.loads(db.execute("SELECT body FROM events ORDER BY id DESC LIMIT 1").fetchone()["body"])
         durable = store.theory_record(event["attempt_id"])
+        # The declared allowance is not refunded; real controller overhead can
+        # exceed it. Verify the exact durable charge rather than a startup SLA.
+        wall_charge = state["budget"]["wall_seconds"]["charged_estimate"]
+        self.assertGreaterEqual(wall_charge, allowance['wall_seconds'])
+        self.assertEqual(wall_charge, max(allowance['wall_seconds'], durable['observed_wall_seconds']))
+        self.assertEqual(durable['wall_overrun_seconds'],
+                         max(durable['observed_wall_seconds'] - allowance['wall_seconds'], 0.0))
         self.assertEqual(durable["result"]["status"], "PASS")
         self.assertEqual(durable["result_sha256"], digest(durable["result"]))
         raw = base64.b64decode(durable["worker_output"]["stdout"]["base64"])
