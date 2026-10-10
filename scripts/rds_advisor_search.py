@@ -577,6 +577,31 @@ def _text(value, limit=512):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= limit
 
 
+def _planning_partition(candidates, goal, dependency_review):
+    """Partition the current selection for a planner: which open obligation a ready
+    check targets versus which declared goal predicates stay open. Derived only from
+    the supplied review; a declared local path never closes an open predicate, and
+    no scope, token or truth here is scientific acceptance. Authorization unchanged."""
+    local_checks = [{"candidate": c["id"], "target": c["goal_contribution"]["path"][0]}
+                    for c in candidates
+                    if c.get("goal_contribution", {}).get("status") == "DECLARED_PATH"
+                    and c["goal_contribution"].get("path")
+                    and isinstance(c["goal_contribution"]["path"][0], str)]
+    open_predicates = [condition["fact"] for condition in (goal or {}).get("conditions", [])
+                       if condition.get("truth") != TRUE and _text(condition.get("fact"))]
+    tokens = [row["token"] for row in (dependency_review or {}).get("ready_obligations", [])
+              if isinstance(row, dict) and _text(row.get("token"), 64)]
+    if local_checks and open_predicates:
+        scope = "LOCAL"
+    elif open_predicates:
+        scope = "GLOBAL"
+    else:
+        scope = "UNSCOPED"
+    return {"scope": scope, "local_checks": local_checks, "open_predicates": open_predicates,
+            "ready_obligations": tokens[:8], "omitted_ready_obligations": max(0, len(tokens) - 8),
+            "assurance": "INPUT_REPORTED_NOT_SCIENTIFIC_VERIFICATION", "authorization": "UNCHANGED"}
+
+
 def _obstruction_records(context):
     """Validate declared obstructions with field-level repair messages; nothing is inferred."""
     records = context["obstructions"]
@@ -1068,6 +1093,8 @@ def review_selection(search, context, *, _dependency=None, audit_receipts=False,
         flags.insert(0, triple_flag)
     if next_move is not None:
         review["next_move"] = next_move
+    review["planning"] = _planning_partition(candidates, review.get("goal"),
+                                             review.get("dependency_review"))
     return review
 
 

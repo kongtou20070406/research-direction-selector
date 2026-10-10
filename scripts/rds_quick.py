@@ -710,6 +710,10 @@ def brief(root, value, version, formal=False):
                 _brief_move(summary, selection['next_move'])
             if 'goal' in selection:
                 summary['goal_input_status'] = selection['goal']['status']
+            if 'planning' in selection:
+                summary['planning'] = {k: selection['planning'][k] for k in
+                                       ('scope', 'local_checks', 'open_predicates',
+                                        'ready_obligations', 'omitted_ready_obligations')}
         advisory_moves = {'GOAL_CONTRIBUTION_UNDECLARED': 'REVIEW_GOAL_LINK',
                           'GOAL_CONTRIBUTION_INVALID': 'REVIEW_GOAL_LINK'}
         relevant = [kind for kind in flags if kind in advisory_moves and advisory_moves[kind] == summary.get('next_move')]

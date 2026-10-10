@@ -346,6 +346,71 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertEqual(review['next_move']['authorization'], 'UNCHANGED')
         self.assertEqual((graph, context), original)
 
+    def test_planning_partition_scopes_local_check_against_open_global_predicate(self):
+        graph, context = fixture()
+        action = graph['nodes'][0]['executable']['action']
+        action.update(kind='OBLIGATION_CHECK', target='L1', claim='x*x >= 0 for rational x',
+                      outcomes=[{'observation': label, 'next_decision': label} for label in ('verified', 'counterexample', 'unresolved')])
+        action.pop('competing_explanations')
+        context['decision']['goal_conditions'] = [{'fact': 'goal', 'value': True},
+                                                  {'fact': 'aux', 'value': True}]
+        context['facts'] = {'goal': {'value': False, 'source': 'reported-goal.json'},
+                            'aux': {'value': True, 'source': 'reported-aux.json'}}
+        action['goal_contribution'] = {'target': 'goal', 'path': ['L1'], 'source': 'proof-plan.json'}
+        original = deepcopy((graph, context))
+        review = search_directions(graph, context)['selection_review']
+        planning = review['planning']
+        self.assertEqual(planning['scope'], 'LOCAL')
+        self.assertEqual(planning['local_checks'], [{'candidate': 'route:probe', 'target': 'L1'}])
+        self.assertEqual(planning['open_predicates'], ['goal'])
+        self.assertEqual(planning['ready_obligations'], [])
+        self.assertEqual(planning['omitted_ready_obligations'], 0)
+        self.assertEqual(planning['authorization'], 'UNCHANGED')
+        # A declared local path never closes the global AND goal.
+        self.assertEqual(review['goal']['status'], 'FALSE')
+        self.assertNotIn('planning', graph['nodes'][0]['executable']['action'])
+        self.assertEqual((graph, context), original)
+        # GLOBAL: open predicates without a declared contribution.
+        action.pop('goal_contribution')
+        review = search_directions(graph, context)['selection_review']
+        self.assertEqual(review['planning']['scope'], 'GLOBAL')
+        self.assertEqual(review['planning']['local_checks'], [])
+        self.assertEqual(review['planning']['open_predicates'], ['goal'])
+        # UNSCOPED: no open predicates and no declared contribution.
+        context['facts']['goal'] = {'value': True, 'source': 'reported-goal.json'}
+        context['facts']['aux'] = {'value': True, 'source': 'reported-aux.json'}
+        review = search_directions(graph, context)['selection_review']
+        self.assertEqual(review['planning']['scope'], 'UNSCOPED')
+        self.assertEqual(review['planning']['local_checks'], [])
+        self.assertEqual(review['planning']['open_predicates'], [])
+
+    def test_planning_partition_lists_capped_ready_obligation_tokens(self):
+        graph, context = fixture()
+        dependency = json.loads((ROOT / 'examples/goal-linked-hypergraph.json').read_text())
+        context['dependency_map'] = dependency
+        context['objective_binding'] = {'sha256': 'synthetic-unit-fixture-not-authorization'}
+        action = graph['nodes'][0]['executable']['action']
+        action.update(kind='OBLIGATION_CHECK', target='unrestricted_lower', claim='a bound',
+                      outcomes=[{'observation': label, 'next_decision': label} for label in ('verified', 'counterexample', 'unresolved')])
+        action.pop('competing_explanations')
+        action['goal_contribution'] = {'target': 'completion_standard',
+                                       'path': ['unrestricted_lower', 'completion_standard'],
+                                       'source': 'synthetic contract'}
+        context['decision']['goal_conditions'] = [{'fact': 'completion_standard', 'value': True}]
+        original = deepcopy((graph, context))
+        review = search_directions(graph, context)['selection_review']
+        planning = review['planning']
+        self.assertEqual(planning['scope'], 'LOCAL')
+        self.assertEqual(planning['local_checks'], [{'candidate': 'route:probe', 'target': 'unrestricted_lower'}])
+        self.assertEqual(planning['open_predicates'], ['completion_standard'])
+        self.assertEqual(planning['ready_obligations'],
+                         [row['token'] for row in review['dependency_review']['ready_obligations'][:8]])
+        self.assertGreaterEqual(len(planning['ready_obligations']), 4)
+        self.assertEqual(planning['omitted_ready_obligations'],
+                         max(0, len(review['dependency_review']['ready_obligations']) - 8))
+        self.assertEqual(review['next_move']['authorization'], 'UNCHANGED')
+        self.assertEqual((graph, context), original)
+
     def test_truncated_search_cannot_claim_global_best(self):
         graph, context = self.paired({'bias': ['positive'], 'state-support': ['negative']})
         review = search_directions(graph, context, max_candidates=1)['selection_review']

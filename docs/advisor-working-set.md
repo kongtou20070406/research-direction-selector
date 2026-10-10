@@ -21,7 +21,8 @@ run. A receipt's successful process status can coexist with a failed goal.
 | --- | --- |
 | `scope` | Frozen decision/goal revision, contract, structure scope, dependency snapshot and owned report fingerprint. Scope identity and collection freshness are separate. |
 | `goals` | Declared predicates, TRUE/FALSE/UNKNOWN comparison and the program-collected fact with its original hash/location. Includes effective confirmation predicates when configured. |
-| `selection` | Final owned `selected_run`, `next_move`, status and selection basis. No new selector and no extra permission. |
+| `selection` | Final owned `selected_run`, `next_move`, status, selection basis and the derived `planning` partition. No new selector and no extra permission. |
+| `selection.planning` | Which open obligation a ready check targets versus which declared goal predicates stay open: `scope` (`LOCAL` when both a declared contribution path and open predicates exist, `GLOBAL` when only predicates, `UNSCOPED` otherwise), `local_checks` (declared `goal_contribution.path[0]` per ready candidate), `open_predicates` (`truth != TRUE`), and `ready_obligations` tokens (at most 8; the rest counted in `omitted_ready_obligations`). A declared local path never closes a global predicate; no entry is scientific acceptance. |
 | `budget` | Current caps, measured spending, conservative charges, reservations and remaining resources, with units. Reading the projection does not charge another structure operation. |
 | `unresolved_hypotheses` | Same-scope pending or UNKNOWN proposals, executable discriminator if available, exact hypothesis identity and existing route constraint. These are declarations, not accepted explanations. |
 | `unresolved_dependencies` | Existing unsupported dependency nodes and sources; these are not automatically classified as hypotheses. |
