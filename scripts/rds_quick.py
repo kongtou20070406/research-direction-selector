@@ -1056,7 +1056,14 @@ def execute(args, review=None, *, _native_preparation_root=None):
             require(row is not None, 'Original QUICK allowance is missing')
             _is_unmaterialized_allowance(parent_db, workspace, request, json.loads(row['body']))
             # Preserve every partial byte instead of deleting/overwriting it.
-            retained_path = workspace.with_name('.partial-' + workspace.name + '-' + uuid.uuid4().hex)
+            # Forensic copies are not materialized jobs. Keep them outside
+            # .rds/exec, which campaign and Advisor inventory as child projects.
+            retained_directory = root / '.rds' / 'quick-partials'
+            require(retained_directory.resolve().is_relative_to(root)
+                    and not retained_directory.resolve().is_relative_to((root / '.rds/exec').resolve()),
+                    'Partial QUICK retention escapes root')
+            retained_directory.mkdir(parents=True, exist_ok=True)
+            retained_path = retained_directory / ('.partial-' + workspace.name + '-' + uuid.uuid4().hex)
             require(workspace.resolve().is_relative_to(root) and retained_path.resolve().is_relative_to(root),
                     'Partial QUICK retention escapes root')
             workspace.rename(retained_path)

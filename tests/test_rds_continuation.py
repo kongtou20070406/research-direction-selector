@@ -657,8 +657,11 @@ class ModelContinuationTests(unittest.TestCase):
             streams = {}
             for artifact in receipt['artifacts']:
                 if artifact['kind'] in {'stdout.bin', 'stderr.bin', 'project_output'}:
-                    with (self.f.root / artifact['path']).open('rb') as stream:
-                        streams[artifact['path']] = stream.read(4096).decode('utf-8', errors='replace')
+                    try:
+                        with (self.f.root / artifact['path']).open('rb') as stream:
+                            streams[artifact['path']] = stream.read(4096).decode('utf-8', errors='replace')
+                    except OSError as exc:
+                        streams[artifact['path']] = {'read_error': str(exc)}
             diagnostic = {'receipt': receipt, 'streams_first_4096_bytes': streams}
         self.assertEqual(calls, ['repair1'], diagnostic)
         self.assertEqual(len(self.f.events(autonomy.REQUESTED)), 1)

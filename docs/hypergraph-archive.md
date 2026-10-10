@@ -12,6 +12,13 @@ initialize a research project, or run scientific dependency analysis. The local
 renderer and Pixi assets must match the existing pinned versions. The exported
 HTML works offline; opening the page does not use a CDN.
 
+Archive inputs must be regular files. ZIP imports accept at most 1 GiB for the
+whole container, 16 MiB for its central directory and 10,000 directory entries;
+the original directory is checked before the ZIP parser loads its inventory.
+Multipart and ZIP64 inventories are refused. The selected graph JSON remains
+limited to 512 MiB, and `MANIFEST.json` to 8 MiB, with the selected original
+bytes and SHA-256 checked against the manifest.
+
 Ordinary zoom uses world-aligned spatial cells with a 12–28 screen-pixel
 hysteresis band, revealing individual records as cells split. It does not replace
 all records with a different semantic hierarchy at a global zoom threshold.

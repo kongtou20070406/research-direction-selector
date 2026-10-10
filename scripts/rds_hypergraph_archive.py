@@ -14,12 +14,16 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 import zipfile
 import zlib
 
 MAX_BYTES = 512 * 1024 * 1024
 MAX_NODES = 250_000
 MAX_EDGES = 2_000_000
+MAX_ZIP_BYTES = 1024 * 1024 * 1024
+MAX_ZIP_DIRECTORY_BYTES = 16 * 1024 * 1024
+MAX_ZIP_ENTRIES = 10_000
 LEAF_SIZE = 64
 ARCHIVE_SCHEMAS = {"rds-readonly-archive-v1", "refrm-unified-evidence-graph-v1"}
 ZIP_ENTRIES = ("ALL_NODES_AND_EDGES.json", "ReFRM_RDS/unified_graph/graph.json")
@@ -67,6 +71,50 @@ def _read_zip_entry(archive, name, limit=MAX_BYTES):
     return raw
 
 
+def _check_zip_inventory(stream):
+    """Bound the original descriptor's directory before ZipFile allocates it."""
+    size = stream.seek(0, os.SEEK_END)
+    if size > MAX_ZIP_BYTES:
+        raise ValueError('Archive ZIP container exceeds byte limit')
+    stream.seek(max(0, size - (65535 + 22)))
+    tail = stream.read(65535 + 22)
+    offset = tail.rfind(b'PK\x05\x06')
+    if offset < 0 or len(tail) - offset < 22:
+        raise ValueError('Archive ZIP directory is invalid')
+    _, disk, directory_disk, disk_count, count, directory_bytes, directory_offset, comment_bytes = \
+        struct.unpack('<4s4H2LH', tail[offset:offset + 22])
+    if disk or directory_disk or disk_count != count or len(tail) - offset != 22 + comment_bytes:
+        raise ValueError('Archive ZIP directory is invalid or multipart')
+    if count == 65535 or directory_bytes == 0xffffffff or directory_offset == 0xffffffff:
+        raise ValueError('Archive ZIP64 inventory is unsupported')
+    if count > MAX_ZIP_ENTRIES:
+        raise ValueError('Archive ZIP entry count exceeds limit')
+    if directory_bytes > MAX_ZIP_DIRECTORY_BYTES:
+        raise ValueError('Archive ZIP directory exceeds byte limit')
+    end = size - len(tail) + offset
+    start = end - directory_bytes
+    if start < 0 or directory_offset > start:
+        raise ValueError('Archive ZIP directory is invalid')
+    # Count real directory records too: an untrusted EOCD count may understate
+    # the inventory that Python's ZipFile would actually load.
+    stream.seek(start)
+    actual_count = 0
+    while stream.tell() < end:
+        header = stream.read(46)
+        if len(header) != 46 or header[:4] != b'PK\x01\x02':
+            raise ValueError('Archive ZIP directory is invalid')
+        actual_count += 1
+        if actual_count > MAX_ZIP_ENTRIES:
+            raise ValueError('Archive ZIP entry count exceeds limit')
+        lengths = struct.unpack('<3H', header[28:34])
+        position = stream.seek(sum(lengths), os.SEEK_CUR)
+        if position > end:
+            raise ValueError('Archive ZIP directory is invalid')
+    if stream.tell() != end or actual_count != count:
+        raise ValueError('Archive ZIP directory count differs')
+    stream.seek(0)
+
+
 def read_archive(path, *, entry=None):
     try:
         return _read_archive(path, entry=entry)
@@ -86,8 +134,10 @@ def _read_archive(path, *, entry=None):
         if not stat.S_ISREG(info.st_mode):
             raise ValueError('Archive input must be a regular file')
         if zipfile.is_zipfile(stream):
-            stream.seek(0)
+            _check_zip_inventory(stream)
             with zipfile.ZipFile(stream) as archive:
+                if len(archive.infolist()) > MAX_ZIP_ENTRIES:
+                    raise ValueError('Archive ZIP entry count exceeds limit')
                 names = set(archive.namelist())
                 entry = entry or next((name for name in ZIP_ENTRIES if name in names), None)
                 if not entry or entry.startswith(("/", "\\")) or "\\" in entry or any(

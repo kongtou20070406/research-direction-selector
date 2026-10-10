@@ -1,8 +1,10 @@
 """Public and native recovery boundaries for the five PR274 review findings."""
 from copy import deepcopy
+from contextlib import ExitStack
 import json
 import os
 import stat
+import struct
 import subprocess
 from pathlib import Path
 import sys
@@ -17,9 +19,11 @@ import rds_jump as jump
 import rds_hypergraph_archive as archive
 import rds_project_lifecycle as lifecycle
 import rds_quick as quick
+import rds_campaign as campaign
 from rds_project import ProjectStore
 import test_rds_quick_checkpoint_recovery as recovery
 import test_rds_project_lifecycle as lifecycle_fixture
+import test_rds_hypergraph_archive as archive_fixture
 
 
 class StartupAndArchiveTests(unittest.TestCase):
@@ -98,6 +102,36 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class ArchiveInputTests(unittest.TestCase):
+    def test_zip_inventory_limits_precede_parser_allocation(self):
+        f = archive_fixture.ArchiveTests('runTest')
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        source = f.write_zip(archive_fixture.encoded(archive_fixture.fixture()))
+        for variable, limit, error in (
+                ('MAX_ZIP_BYTES', source.stat().st_size - 1, 'container exceeds'),
+                ('MAX_ZIP_DIRECTORY_BYTES', 1, 'directory exceeds'),
+                ('MAX_ZIP_ENTRIES', 2, 'entry count exceeds')):
+            with self.subTest(variable=variable), patch.object(archive, variable, limit), \
+                    patch.object(archive.zipfile, 'ZipFile', side_effect=AssertionError('unbounded parser allocation')):
+                with self.assertRaisesRegex(ValueError, error):
+                    archive.read_archive(source)
+        with patch.object(archive, 'MAX_ZIP_ENTRIES', 3):
+            self.assertEqual(archive.read_archive(source)['graph'], archive_fixture.fixture())
+
+    def test_zip_understated_directory_count_cannot_bypass_real_inventory(self):
+        f = archive_fixture.ArchiveTests('runTest')
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        source = f.write_zip(archive_fixture.encoded(archive_fixture.fixture()))
+        raw = bytearray(source.read_bytes())
+        end = raw.rfind(b'PK\x05\x06')
+        struct.pack_into('<HH', raw, end + 8, 2, 2)  # Three actual entries remain.
+        source.write_bytes(raw)
+        with patch.object(archive, 'MAX_ZIP_ENTRIES', 2), \
+                patch.object(archive.zipfile, 'ZipFile', side_effect=AssertionError('unbounded parser allocation')):
+            with self.assertRaisesRegex(ValueError, 'entry count exceeds'):
+                archive.read_archive(source)
+
     def test_descriptor_type_checked_before_zip_probe(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / 'graph.json'
@@ -200,7 +234,7 @@ class PartialQuickTests(unittest.TestCase):
                 result = quick.execute(args, review=reviewed)
             self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
             self.assertEqual(parent.snapshot()['budget'], budget)
-            retained = list(workspace.parent.glob('.partial-' + args.name + '-*'))
+            retained = list((Path(args.root).resolve() / '.rds/quick-partials').glob('.partial-' + args.name + '-*'))
             self.assertEqual(len(retained), 1)
             for relative, raw in observed.items():
                 self.assertEqual((retained[0] / relative).read_bytes(), raw)
@@ -230,6 +264,18 @@ class PartialQuickTests(unittest.TestCase):
                         json.loads((workspace / 'rds-exec-request.json').read_text(encoding='utf-8')), prior)
             self.assertEqual(parent.snapshot()['budget'], budget)
             self.assertEqual(child.snapshot(), before)
+            if plain:
+                # Both real downstream inventories must accept the recovered
+                # terminal job while every forensic partial byte stays intact.
+                with parent._db(True) as db:
+                    targets = list(campaign._retained_targets(parent.root, db,
+                        campaign._Inventory(), workspace=parent.root))
+                self.assertEqual(set(targets), {workspace})
+                with ExitStack() as locks, parent._db(True) as db:
+                    self.assertEqual(len(lifecycle._activation_children(parent, db, locks)), 64)
+                self.assertEqual(child.snapshot(), before)
+                for relative, raw in observed.items():
+                    self.assertEqual((retained[0] / relative).read_bytes(), raw)
 
     def test_after_mkdir(self):
         self.recover_boundary('mkdir')
@@ -248,6 +294,9 @@ class PartialQuickTests(unittest.TestCase):
 
     def test_plain_policy_after_register(self):
         self.recover_boundary('register', plain=True)
+
+    def test_plain_policy_after_mkdir(self):
+        self.recover_boundary('mkdir', plain=True)
 
 
 if __name__ == '__main__':
