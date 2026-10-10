@@ -627,14 +627,25 @@ class ProjectStore:
         # #282: a bound workspace admits only its canonical ledger. This check
         # precedes every write, so a refusal leaves attempts, receipts and
         # budget unchanged. Unbound legacy workflows are unaffected.
-        # A fresh tool-exec child under a bound owner is admitted explicitly by
-        # the owner check in quick exec (`fresh_workspace=True`): it is a new
-        # job workspace, not an attempt to replace the owner's canonical
-        # ledger, and the owner's binding is copied onto it afterwards.
+        # A fresh tool-exec child under a bound owner is admitted by quick exec
+        # (`fresh_workspace=<owner store>`): the caller must already have
+        # passed admission on the owner's ledger, and the child binds to its
+        # own ledger afterwards — it is a new job workspace, not an attempt to
+        # replace the owner's canonical ledger.
         from rds_workspace import check_admission
-        require(isinstance(fresh_workspace, bool), "fresh_workspace must be Boolean")
-        if not fresh_workspace:
+        require(fresh_workspace is False or isinstance(fresh_workspace, ProjectStore),
+                "fresh_workspace must be the admitted owner ProjectStore")
+        if fresh_workspace is False:
             check_admission(self.root, supersedes=supersedes, separate_project=separate_project)
+        else:
+            # The child must sit inside the owner's bound tree and must not
+            # already carry a pointer; otherwise the bypass would open a
+            # second identity outside the owner's coverage.
+            from rds_workspace import read_pointer, pointer_path
+            require(self.root.resolve().is_relative_to(fresh_workspace.root.resolve()),
+                    "fresh_workspace must be admitted by the enclosing bound owner")
+            require(read_pointer(self.root) is None and not pointer_path(self.root).is_file(),
+                    "Workspace already carries a binding; fresh_workspace applies only to new workspaces")
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
@@ -811,6 +822,11 @@ class ProjectStore:
     @contextmanager
     def theory_allowance(self, spec, request, allowance):
         """Precharge bounded controller work; unused allowances are not refunded."""
+        # #282: this transaction charges budget and appends an event, so a
+        # replaced bound ledger must be refused here, before the allowance
+        # write — not only at the later register() call.
+        from rds_workspace import check_admission
+        check_admission(self.root)
         started = time.monotonic()
         require(isinstance(spec, dict), "Run manifest must be an object")
         run_id = spec.get("id", "")

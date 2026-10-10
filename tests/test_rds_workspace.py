@@ -111,9 +111,23 @@ class WorkspaceBindingTests(unittest.TestCase):
         budget = self.store.snapshot()["budget"]["wall_seconds"]
         self.assertGreater(budget["spent_measured"] + budget["charged_estimate"], 0)
 
+    def _identity(self, root):
+        """Ledger rows plus the pointer's identity fields: accounting identity.
+
+        The pointer's `event_id` anchor is monotone admission bookkeeping — it
+        moves forward on supported reads — so it is excluded here. A refusal
+        must change the identity and the accounting, never the anchor's
+        meaning.
+        """
+        rows, pointer_text = self._dump(root)
+        pointer = json.loads(pointer_text) if pointer_text else None
+        identity = {k: v for k, v in pointer.items() if k != "event_id"} if pointer else None
+        return rows, identity
+
     def test_reinit_with_different_contract_bytes_is_refused_and_accounting_unchanged(self):
         self.paid_failed_run(self.store)
         self.bind_root(store=self.store)
+        check_admission(self.root)  # settle the pointer's progress anchor first
         before = self._dump(self.root)
         changed = json.loads(canonical(self.contract))
         changed["budget"]["wall_seconds"] = 999

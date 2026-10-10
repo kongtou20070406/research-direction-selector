@@ -25,6 +25,24 @@ def pointer_path(root):
     return Path(root) / POINTER_NAME
 
 
+def _write_pointer(root, pointer):
+    """Replace the pointer atomically: a torn write is never observable.
+
+    Recovery must survive the very crash this function guards against, so the
+    pointer is written to a temporary sibling, flushed, and moved into place.
+    On Windows os.replace fails while the destination is open elsewhere and
+    the old pointer stays intact — damage is refused, never half-adopted.
+    """
+    import uuid
+    target = pointer_path(root)
+    tmp = target.with_name(f"{POINTER_NAME}.{uuid.uuid4().hex}.tmp")
+    with open(tmp, "wb") as handle:
+        handle.write(canonical(pointer).encode("utf-8"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+
+
 _OVERWRITE = ("Workspace identity pointer is frozen; delete the workspace, not the ledger, "
               "to start a different project")
 
@@ -116,7 +134,7 @@ def bind(root):
             event_digest = recorded_body["event_digest"]
     pointer = {"schema": SCHEMA, "assurance": ASSURANCE, "ledger_sha256": ledger_sha,
                "contract_sha256": identity["contract_sha256"], "event_digest": event_digest}
-    pointer_path(root).write_text(canonical(pointer), encoding="utf-8")
+    _write_pointer(root, pointer)
     return {"status": "ALREADY_BOUND" if recovered else "BOUND", "pointer": pointer,
             "ledger_root": str(store.root)}
 
@@ -153,6 +171,34 @@ def check_admission(root, supersedes=None, separate_project=False):
             "This workspace is bound to a canonical ledger whose recorded identity does not match "
             "the workspace pointer; the ledger was replaced or its identity event is damaged. "
             "Accounting resets are refused; restore the bound ledger")
+    # A copied workspace carries both the pointer and the ledger event with it,
+    # so digest equality alone admits a clone. The event also records the bound
+    # root; the original ledger serves only its own directory tree.
+    require(str(store.root) == event.get("root"),
+            "This workspace is a copy of a bound workspace; the recorded identity names "
+            f"{event.get('root')}. A bound ledger serves exactly one workspace")
+    # Restoring a ledger snapshot taken after the bind rolls budget and events
+    # back invisibly: the identity event still matches. The pointer therefore
+    # anchors progress — the highest event id seen by a supported API. Events
+    # are append-only, so a rolled-back ledger's event log ends before that
+    # anchor and admission is refused until the ledger catches up. The pointer
+    # only ever moves forward; a refusal here never rewrites accounting.
+    with store._db(True) as db:
+        max_id = db.execute("SELECT COALESCE(MAX(id),0) FROM events").fetchone()[0]
+        bound_id = db.execute(
+            "SELECT id FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
+            (EVENT_KIND,)).fetchone()[0]
+    anchor = pointer.get("event_id")
+    if anchor is not None:
+        require(max_id >= anchor,
+                "This workspace's ledger holds fewer events than the workspace pointer recorded; "
+                "a ledger snapshot was restored after binding. Accounting resets are refused; "
+                "restore the ledger state that includes the recorded progress")
+        if max_id > anchor:
+            pointer = {**pointer, "event_id": max_id}
+            _write_pointer(root, pointer)
+    else:
+        _write_pointer(root, {**pointer, "event_id": max(bound_id, max_id)})
     return store
 
 
