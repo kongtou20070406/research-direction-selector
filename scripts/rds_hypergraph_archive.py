@@ -264,6 +264,8 @@ def build_archive_display(graph):
     node_ids, edge_ids = set(), set()
     nodes, node_index = [], {}
     declared_groups = graph.get("groups", [])
+    if isinstance(declared_groups, list) and len(declared_groups) > MAX_NODES:
+        raise ValueError("Archive exceeds declared group limit")
     groups = {}
     if isinstance(declared_groups, list):
         for row in declared_groups:

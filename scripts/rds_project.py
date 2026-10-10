@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import shlex
@@ -1343,13 +1344,16 @@ class ProjectStore:
                         # it is not taken from the experiment's request fields.
                         worker_options['env'] = {**os.environ,
                             'RDS_RUNTIME_SCRIPTS': str(Path(__file__).resolve().parent)}
-                    if Path(argv[0]).name.casefold().removesuffix('.exe') in {'node', 'nodejs'}:
+                    executable_name = Path(argv[0]).name.casefold().removesuffix('.exe')
+                    startup_variable = ('node_options' if executable_name in {'node', 'nodejs'} else
+                                        'rubyopt' if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else None)
+                    if startup_variable is not None:
                         # Recheck at launch, including host changes after admission.
-                        # Frozen explicit argv preloads remain allowed; ambient
-                        # NODE_OPTIONS must not introduce unbound startup code.
+                        # Preserve frozen argv and the parent environment; inherited
+                        # interpreter options must not introduce unbound startup code.
                         environment = dict(worker_options.get('env', os.environ))
                         for key in list(environment):
-                            if key.casefold() == 'node_options':
+                            if key.casefold() == startup_variable:
                                 del environment[key]
                         worker_options['env'] = environment
                     process = subprocess.Popen(argv, cwd=self.root, shell=False, stdin=subprocess.DEVNULL,
