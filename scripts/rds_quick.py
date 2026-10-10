@@ -587,7 +587,7 @@ def execute(args, review=None):
         contract['objective_sha256'] = request['objective_sha256']
     if execution_policy is not None:
         contract['execution_policy'] = deepcopy(execution_policy)
-    store.initialize(contract)
+    store.initialize(contract, fresh_workspace=owner is not None)
     if owner is not None:
         # #282: a child exec workspace of a bound owner carries the owner's
         # binding, so a child ledger cannot become a second accounting identity.

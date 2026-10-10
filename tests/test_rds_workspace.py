@@ -20,8 +20,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 import test_rds_project  # noqa: E402  (module import keeps its TestCase out of this module's discovery)
 from rds_project import ProjectStore, canonical, digest, file_sha  # noqa: E402
-from rds_workspace import (POINTER_NAME, bind, check_admission, coverage,  # noqa: E402
-                           pointer_path, read_pointer)
+from rds_workspace import (ASSURANCE, EVENT_KIND, POINTER_NAME, bind, check_admission,  # noqa: E402
+                           coverage, pointer_path, read_pointer)
 
 
 class WorkspaceBindingTests(unittest.TestCase):
@@ -203,6 +203,59 @@ class WorkspaceBindingTests(unittest.TestCase):
             db.close()
         pointer = Path(root) / POINTER_NAME
         return rows, pointer.read_text(encoding="utf-8") if pointer.is_file() else None
+
+    def test_replaced_ledger_cannot_reserve_or_run_via_register_and_execute(self):
+        # P1 review finding: admission must guard every mutating entry, not
+        # only initialize, or a replaced ledger can reserve and run work.
+        self.paid_failed_run(self.store)
+        self.bind_root(store=self.store)
+        fresh = Path(self.tmp.name) / "reserve-reset"
+        fresh.mkdir()
+        for binding in self.contract["bindings"]:
+            shutil.copyfile(self.root / binding["path"], fresh / binding["path"])
+        ProjectStore(fresh).initialize(self.contract)
+        self.store.path.unlink()
+        shutil.copyfile(fresh / ".rds" / "project.sqlite3", self.store.path)
+        with self.assertRaisesRegex(ValueError, "identity does not match|replaced"):
+            self.store.register(self.spec("r9", "ok"))
+        with self.assertRaisesRegex(ValueError, "identity does not match|replaced"):
+            self.store.execute("r1")
+        # Budget still shows only the original paid failure; the reset ledger
+        # admitted nothing.
+        budget = self.store.snapshot()["budget"]["wall_seconds"]
+        self.assertLess(budget["spent_measured"] + budget["charged_estimate"], 5)
+
+    def test_bind_rebuilds_pointer_after_event_committed_before_pointer_write(self):
+        # P1 review finding: crash between the event transaction and the
+        # pointer write must be recoverable, not a permanent refusal. The
+        # rebuilt binding is reported as ALREADY_BOUND: the identity already
+        # existed in the ledger; only the pointer file is restored.
+        self.bind_root(store=self.store)
+        pointer_path(self.root).unlink()
+        result = bind(self.root)
+        self.assertEqual(result["status"], "ALREADY_BOUND")
+        rebuilt = read_pointer(self.root)
+        with self.store._db(True) as db:
+            events = list(db.execute(
+                "SELECT body FROM events WHERE json_extract(body,'$.kind')='WORKSPACE_BOUND'"))
+        self.assertEqual(len(events), 1)  # no second identity event
+        # The rebuilt pointer is admitted against the recorded identity.
+        self.assertEqual(check_admission(self.root).root, self.root)
+        self.assertEqual(rebuilt["schema"], 1)
+
+    def test_bind_still_refuses_a_genuinely_different_recorded_identity(self):
+        self.bind_root(store=self.store)
+        pointer_path(self.root).unlink()
+        with self.store._db() as db:
+            # Simulate a damaged ledger beyond its append-only SQL guards.
+            db.execute('DROP TRIGGER events_no_update')
+            db.execute("UPDATE events SET body=? WHERE json_extract(body,'$.kind')=?",
+                       (canonical({"kind": EVENT_KIND, "assurance": ASSURANCE, "schema": 1,
+                                   "event_digest": "2" * 64, "ledger_sha256": "3" * 64,
+                                   "contract_sha256": "4" * 64, "root": str(self.root / "elsewhere")}),
+                        EVENT_KIND))
+        with self.assertRaisesRegex(ValueError, "different workspace identity"):
+            bind(self.root)
 
 
 if __name__ == "__main__":

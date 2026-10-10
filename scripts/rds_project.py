@@ -623,16 +623,18 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
-    def initialize(self, contract, supersedes=None, separate_project=False):
+    def initialize(self, contract, supersedes=None, separate_project=False, fresh_workspace=False):
         # #282: a bound workspace admits only its canonical ledger. This check
         # precedes every write, so a refusal leaves attempts, receipts and
         # budget unchanged. Unbound legacy workflows are unaffected.
+        # A fresh tool-exec child under a bound owner is admitted explicitly by
+        # the owner check in quick exec (`fresh_workspace=True`): it is a new
+        # job workspace, not an attempt to replace the owner's canonical
+        # ledger, and the owner's binding is copied onto it afterwards.
         from rds_workspace import check_admission
-        # #282: a bound workspace admits only its canonical ledger, including a
-        # ledger deleted for replacement. This check precedes every write, so a
-        # refusal leaves attempts, receipts and budget unchanged. Unbound legacy
-        # workflows are unaffected (no pointer to check).
-        check_admission(self.root, supersedes=supersedes, separate_project=separate_project)
+        require(isinstance(fresh_workspace, bool), "fresh_workspace must be Boolean")
+        if not fresh_workspace:
+            check_admission(self.root, supersedes=supersedes, separate_project=separate_project)
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",
@@ -871,6 +873,10 @@ class ProjectStore:
             return json.loads(row["body"])
 
     def register(self, spec, *, executor_sha256=None):
+        # #282: a bound workspace's canonical ledger admits every mutating
+        # entry, not only initialize, so a replaced ledger cannot reserve work.
+        from rds_workspace import check_admission
+        check_admission(self.root)
         require(isinstance(spec, dict) and type(spec.get("schema")) is int
                 and spec["schema"] == 1, "Run manifest schema must be 1")
         require(set(spec) <= {"schema", "id", "arm", "control_id", "protocol", "argv", "outpaths", "resource_estimates",
@@ -1103,6 +1109,10 @@ class ProjectStore:
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
     def execute(self, run_id, background=False, *, admission_guard=None):
+        # #282: refuse dispatch against a replaced bound ledger before any
+        # reservation, attempt or receipt write.
+        from rds_workspace import check_admission
+        check_admission(self.root)
         # An internal caller may restrict admission after all ordinary checks.
         # This callback grants no authority and is never supplied by the CLI.
         require(admission_guard is None or callable(admission_guard), "Invalid admission guard")

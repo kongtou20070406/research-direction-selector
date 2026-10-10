@@ -89,6 +89,7 @@ def bind(root):
                     "root": str(store.root)}
     require(pointer is None, _OVERWRITE)
     event_digest = digest(identity)
+    recovered = False
     with store._db() as db:
         # BEGIN IMMEDIATE serializes concurrent binders; the re-read under the
         # write lock means exactly one WORKSPACE_BOUND event can ever exist.
@@ -96,15 +97,28 @@ def bind(root):
         recorded = db.execute(
             "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY rowid DESC LIMIT 1",
             (EVENT_KIND,)).fetchone()
-        require(recorded is None,
-                "The ledger already records a different workspace identity; "
-                "each bound ledger serves one workspace")
-        db.execute("INSERT INTO events(body) VALUES (?)", (canonical(
-            {"kind": EVENT_KIND, "assurance": ASSURANCE, "event_digest": event_digest, **identity}),))
+        if recorded is None:
+            db.execute("INSERT INTO events(body) VALUES (?)", (canonical(
+                {"kind": EVENT_KIND, "assurance": ASSURANCE, "event_digest": event_digest, **identity}),))
+        else:
+            # Two identical sources: a crash between the committed event and
+            # the pointer write, or a concurrent binder that won the race. Both
+            # recover the pointer from the recorded identity — this root is the
+            # recorded root — while a different contract or root stays refused.
+            # The recorded ledger digest rides along as auxiliary evidence;
+            # byte comparison is not identity.
+            recovered = True
+            recorded_body = json.loads(recorded["body"])
+            require(recorded_body.get("root") == identity["root"]
+                    and recorded_body.get("contract_sha256") == identity["contract_sha256"],
+                    "The ledger already records a different workspace identity; "
+                    "each bound ledger serves one workspace")
+            event_digest = recorded_body["event_digest"]
     pointer = {"schema": SCHEMA, "assurance": ASSURANCE, "ledger_sha256": ledger_sha,
                "contract_sha256": identity["contract_sha256"], "event_digest": event_digest}
     pointer_path(root).write_text(canonical(pointer), encoding="utf-8")
-    return {"status": "BOUND", "pointer": pointer, "ledger_root": str(store.root)}
+    return {"status": "ALREADY_BOUND" if recovered else "BOUND", "pointer": pointer,
+            "ledger_root": str(store.root)}
 
 
 def check_admission(root, supersedes=None, separate_project=False):
