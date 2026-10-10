@@ -81,8 +81,11 @@ class StartupControlsTests(unittest.TestCase):
                 executable = str(Path(sys.executable).with_name(name))
                 worker = root / 'worker.opaque'
                 worker.write_text('literal frozen code', encoding='utf-8')
-                for options in options_list + [['--']]:
-                    if options == ['--']:
+                for original_options in options_list + [['--']]:
+                    isolation = (['-E'] if name.startswith('lua') else
+                                 ['--startup-file=no'] if name.startswith('julia') else [])
+                    options = isolation + original_options
+                    if original_options == ['--']:
                         worker = root / '-lworker.opaque'
                         worker.write_text('literal dash main', encoding='utf-8')
                     else:
@@ -101,7 +104,7 @@ class StartupControlsTests(unittest.TestCase):
                             else:
                                 other = next(b['path'] for b in contract['bindings'] if b['role'] == 'code' and b['path'] != worker.name)
                                 plan['generator_code_paths'] = [other, worker.name] if role == 'code' else [other]
-                            main = worker.name if options == ['--'] else str(worker)
+                            main = worker.name if original_options == ['--'] else str(worker)
                             argv = [name, *options, main, '-rHook', '-MHook', '-lHook', '--load=outside.js']
                             self.assertEqual(jump._interpreter_script_operand([executable, *argv[1:]]),
                                              (len(options) + 1, main))

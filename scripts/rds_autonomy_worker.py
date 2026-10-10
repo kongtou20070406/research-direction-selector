@@ -157,8 +157,14 @@ def execute(root, rid):
     started = time.monotonic()
     with paths[1].open('xb') as trace, paths[2].open('xb') as stderr:
         try:
+            options = {}
+            if Path(argv[0]).name.casefold().removesuffix('.exe') in {'node', 'nodejs'}:
+                # The frozen adapter has its own provider launch boundary.
+                # Preserve the parent environment, but never inherit Node preloads.
+                options['env'] = {key: value for key, value in os.environ.items()
+                                  if key.casefold() != 'node_options'}
             process = subprocess.Popen(argv, cwd=root, stdin=subprocess.PIPE,
-                                       stdout=trace, stderr=stderr, shell=False)
+                                       stdout=trace, stderr=stderr, shell=False, **options)
             process.stdin.write(prompt.encode('utf-8'))
             process.stdin.close()
             while process.poll() is None:

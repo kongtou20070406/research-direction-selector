@@ -387,14 +387,19 @@ def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *
 
 
 def _json_cas(root, ref):
-    from rds_math import read_bytes
     require(isinstance(ref, dict) and isinstance(ref.get('path'), str)
             and isinstance(ref.get('sha256'), str) and re.fullmatch('[0-9a-f]{64}', ref['sha256'])
-            and type(ref.get('bytes')) is int, 'Native settlement report binding is invalid')
+            and type(ref.get('bytes')) is int and ref['bytes'] > 0,
+            'Native settlement report binding is invalid')
     path = (root / ref['path']).resolve()
     require(path.parent == (root / '.rds/cas').resolve() and path.name == ref['sha256'] + '.json',
             'Native settlement report is outside its original CAS')
-    raw = read_bytes(path)
+    size = ref['bytes']
+    # Native reports include collected dependency/review metadata. Their CAS
+    # reference, not the research asset cap, supplies the bounded read size.
+    require(path.stat().st_size == size, 'Native settlement report CAS integrity failure')
+    with path.open('rb') as stream:
+        raw = stream.read(size + 1)
     from hashlib import sha256
     require(sha256(raw).hexdigest() == ref['sha256'] and len(raw) == ref['bytes'],
             'Native settlement report CAS integrity failure')

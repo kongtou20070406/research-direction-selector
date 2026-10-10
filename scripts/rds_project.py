@@ -1343,6 +1343,15 @@ class ProjectStore:
                         # it is not taken from the experiment's request fields.
                         worker_options['env'] = {**os.environ,
                             'RDS_RUNTIME_SCRIPTS': str(Path(__file__).resolve().parent)}
+                    if Path(argv[0]).name.casefold().removesuffix('.exe') in {'node', 'nodejs'}:
+                        # Recheck at launch, including host changes after admission.
+                        # Frozen explicit argv preloads remain allowed; ambient
+                        # NODE_OPTIONS must not introduce unbound startup code.
+                        environment = dict(worker_options.get('env', os.environ))
+                        for key in list(environment):
+                            if key.casefold() == 'node_options':
+                                del environment[key]
+                        worker_options['env'] = environment
                     process = subprocess.Popen(argv, cwd=self.root, shell=False, stdin=subprocess.DEVNULL,
                                                stdout=out, stderr=err, creationflags=flags,
                                                start_new_session=os.name != "nt", **worker_options)

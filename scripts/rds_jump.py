@@ -499,13 +499,18 @@ def _interpreter_script_operand(argv):
     if name not in shells | {'node', 'nodejs', 'ruby', 'perl', 'php', 'julia', 'lua', 'rscript'}:
         return None
     index = 1
+    isolated = False
     while index < len(argv):
         option = argv[index]
         if option == '--':
+            require(name not in {'lua', 'julia'} or isolated,
+                    name + ' startup isolation is required before frozen main script')
             return file_at(index + 1)
         if option == '-':
             return None
         if not option.startswith(('-', '+')):
+            require(name not in {'lua', 'julia'} or isolated,
+                    name + ' startup isolation is required before frozen main script')
             return file_at(index)
         if name in shells:
             require(option.split('=', 1)[0] not in {'--rcfile', '--init-file'},
@@ -519,6 +524,17 @@ def _interpreter_script_operand(argv):
                 index += 1
         else:
             if name == 'julia':
+                # Only effective pre-main selectors count; consumed values and
+                # script arguments cannot disable Julia's default startup.jl.
+                if option == '--startup-file' or option.startswith('--startup-file='):
+                    value = option.split('=', 1)[1] if '=' in option else (
+                        argv[index + 1] if index + 1 < len(argv) else None)
+                    require(value == 'no', 'Julia startup file must be disabled for frozen Jump code')
+                    isolated = True
+                    index += 1 if '=' in option else 2
+                    continue
+                require(not option.startswith('--startup-file'),
+                        'Unsupported Julia startup option before frozen main script')
                 # Match effective names/short selectors, never their consumed values.
                 require(option.split('=', 1)[0] not in {'--load', '--sysimage', '--module'}
                         and not (not option.startswith('--') and option[:2] in {'-L', '-J', '-m'}),
@@ -526,6 +542,9 @@ def _interpreter_script_operand(argv):
             if name == 'lua':
                 require(not option.startswith('-l'),
                         'Lua module startup is unsupported for frozen Jump code')
+                require(option in {'-E', '-W', '-v', '-i', '-e'} or option.startswith('-e'),
+                        'Unsupported Lua startup option before frozen main script')
+                isolated = isolated or option == '-E'
             if name == 'php':
                 require(option in {'-n', '--no-php-ini', '-q', '-f', '--file', '-F', '--process-file'}
                         or option.startswith(('--file=', '--process-file='))
