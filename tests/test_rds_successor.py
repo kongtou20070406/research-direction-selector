@@ -20,6 +20,7 @@ from rds_checkpoints import save_checkpoint  # noqa: E402
 from rds_project import ProjectStore, canonical, digest  # noqa: E402
 from test_rds_advisor_search import fact, node  # noqa: E402
 import test_rds_project  # noqa: E402  (module import keeps its TestCase out of this module's discovery)
+import test_rds_method_revision  # noqa: E402
 
 CONTEXT = {"decision": {"id": "choose", "goal_revision": "g1", "scope": {"dataset": "dev"}},
            "facts": {"root-done": fact(False), "x": fact(False)}}
@@ -580,6 +581,106 @@ class SuccessorTests(unittest.TestCase):
         chain = init(last, contract, middle)
         self.assertEqual([(hop["status"], Path(hop["root"])) for hop in chain],
                          [("VERIFIED", middle.resolve()), ("VERIFIED", self.first.resolve())])
+
+
+class RevisedPredecessorTests(unittest.TestCase):
+    """Revised checkpoints stay bound to their own contracts across a successor link."""
+
+    def setUp(self):
+        helper = test_rds_method_revision.MethodRevisionTests()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        self.helper, self.first, self.store = helper, helper.root, helper.store
+        self.tmp = tempfile.TemporaryDirectory(prefix="rds revised successor ")
+        self.addCleanup(self.tmp.cleanup)
+
+    def revise_and_link(self, record_revised_checkpoint=True):
+        save_checkpoint(self.first, "genesis-context", self.store.snapshot(), kind="project")
+        from rds_method_revision import apply
+        apply(self.store, self.helper.proposal())
+        if record_revised_checkpoint:
+            save_checkpoint(self.first, "revised-context", self.store.snapshot(), kind="project")
+        root = Path(self.tmp.name) / "successor"
+        shutil.copytree(self.first, root, ignore=shutil.ignore_patterns(".rds", "outputs"))
+        ProjectStore(root).initialize(self.store.snapshot()["contract"], supersedes=str(self.first))
+        return root
+
+    def search(self, root):
+        state = ProjectStore(root).snapshot()
+        graph = state["contract"]["advisor_policy"]["graph"]
+        rows = RDSAdvisor(root).recommend_next_directions(state, graph)
+        return next(row for row in rows if row["type"] == "EXECUTABLE_DIRECTION_SEARCH")["search"]
+
+    def test_verified_revisions_keep_checkpoints_bound_to_each_contract(self):
+        root = self.revise_and_link()
+        before = ledger_dump(self.first)
+        chain = ProjectStore(root).predecessor_chain()
+        self.assertEqual(chain[0]["status"], "VERIFIED")
+        output = self.search(root)
+        self.assertEqual(output["loop_review"]["status"], "RECORDED_HISTORY_REVIEWED")
+        self.assertFalse(any(f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED"
+                             for f in output["loop_review"]["flags"]))
+        self.assertTrue(any("History includes pinned records from 1 predecessor root(s)" in line
+                            for line in output["loop_review"]["limitations"]))
+        self.assertEqual([item["id"] for item in chain[0]["checkpoint_shas"]],
+                         ["genesis-context", "revised-context"])
+        self.assertEqual(ledger_dump(self.first), before)
+
+    def test_genesis_checkpoint_survives_a_verified_method_revision(self):
+        root = self.revise_and_link(record_revised_checkpoint=False)
+        before = ledger_dump(self.first)
+        output = self.search(root)
+        self.assertEqual(output["loop_review"]["status"], "RECORDED_HISTORY_REVIEWED")
+        [hop] = ProjectStore(root).snapshot()["predecessor_chain"]
+        self.assertEqual(hop["checkpoint_ids"], ["genesis-context"])
+        self.assertEqual(ledger_dump(self.first), before)
+
+    def test_new_method_revision_after_pin_is_not_admitted(self):
+        root = self.revise_and_link()
+        chain_check = ProjectStore.predecessor_chain
+        from rds_method_revision import apply
+        from rds_project import file_sha
+        changed = False
+        state = ProjectStore(root).snapshot()
+
+        def changed_after_check(store, *args, **kwargs):
+            nonlocal changed
+            chain = chain_check(store, *args, **kwargs)
+            if changed:
+                return chain
+            changed = True
+            source = self.first / "second-replacement.py"
+            source.write_text(test_rds_method_revision.NEW + "\nassert p.is_file()\n", encoding="utf-8")
+            live = self.store.snapshot()
+            proposal = {"id": "second-repair", "parent_sha256": live["contract_sha256"],
+                        "reason": "Exercise a predecessor contract change after the successor pin",
+                        "policy": copy.deepcopy(live["contract"]["advisor_policy"]),
+                        "code_replacements": [{"path": "code.py", "source": source.name,
+                                               "sha256": file_sha(source)}]}
+            apply(self.store, proposal)
+            return chain
+
+        state = ProjectStore(root).snapshot()
+        graph = state["contract"]["advisor_policy"]["graph"]
+        with mock.patch.object(ProjectStore, "predecessor_chain", changed_after_check):
+            rows = RDSAdvisor(root).recommend_next_directions(state, graph)
+        output = next(row for row in rows if row["type"] == "EXECUTABLE_DIRECTION_SEARCH")["search"]
+        flag = next(f for f in output["loop_review"]["flags"] if f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED")
+        self.assertIn("Predecessor contract integrity failure", flag["reason"])
+        self.assertTrue(output["candidates"])
+
+    def test_tampered_revision_checkpoint_remains_excluded(self):
+        root = self.revise_and_link()
+        db = sqlite3.connect(self.first / ".rds" / "project.sqlite3")
+        try:
+            db.execute("DROP TRIGGER checkpoint_no_update")
+            db.execute("UPDATE checkpoints SET body='{}' WHERE id='revised-context'")
+            db.commit()
+        finally:
+            db.close()
+        output = self.search(root)
+        self.assertTrue(any(f["kind"] == "PREDECESSOR_CHAIN_UNVERIFIED" for f in output["loop_review"]["flags"]))
+        self.assertTrue(output["candidates"])
 
 
 if __name__ == "__main__":

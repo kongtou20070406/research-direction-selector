@@ -820,10 +820,12 @@ class RDSAdvisor:
                         other = connect(root / ".rds" / "project.sqlite3")
                         try:
                             predecessor_lineage = contract_history(other)
-                            predecessor_sha = predecessor_lineage[-1]['sha256']
-                            _require(predecessor_sha == hop["contract_sha256"],
+                            effective = predecessor_lineage[-1]
+                            predecessor_sha = effective["sha256"]
+                            _require(predecessor_sha == hop["contract_sha256"]
+                                     and _sha(effective["contract"]) == predecessor_sha,
                                      "Predecessor contract integrity failure: " + hop["root"])
-                            predecessor_contracts = {entry['sha256']: entry['contract']
+                            predecessor_contracts = {entry["sha256"]: entry["contract"]
                                                      for entry in predecessor_lineage}
                             pinned = {item["id"]: item["sha256"] for item in hop["checkpoint_shas"]}
                             if pinned:
