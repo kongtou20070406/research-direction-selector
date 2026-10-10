@@ -1349,7 +1349,7 @@ class ProjectStore:
                     is_bash = re.fullmatch(r'bash(?:[-_]?\d+(?:\.\d+)*)?', executable_name) is not None
                     startup_variables = (
                         {'node_options'} if executable_name in {'node', 'nodejs'} else
-                        {'rubyopt'} if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else
+                        {'rubyopt', 'rubylib', 'rubygems_gemdeps'} if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else
                         {'perl5opt'} if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', executable_name) else
                         {'phprc', 'php_ini_scan_dir'} if re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', executable_name) else
                         {'bash_env'} if is_bash else set())

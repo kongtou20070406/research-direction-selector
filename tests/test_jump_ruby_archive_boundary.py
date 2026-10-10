@@ -48,11 +48,13 @@ class RubyArchiveBoundaryTests(unittest.TestCase):
             for autonomy in (False,True):
                 argv=[name,'--enable=rubyopt','--','worker.rb','--disable=rubyopt']
                 with patch.dict(os.environ,{'RUBYOPT':'-r./unbound.rb','RuByOpT':'-r./other.rb',
+                    'RUBYLIB':'./mutable-libs','RuByLiB':'./other-libs',
+                    'RUBYGEMS_GEMDEPS':'./unbound-Gemfile','RuByGeMs_GeMdEpS':'-',
                     'RDS_RUNTIME_SCRIPTS':'parent-runtime','OTHER_STARTUP_CONTROL':'retained'},clear=True):
                     before=dict(os.environ)
                     options=self.launch(argv,autonomy=autonomy)
                     env=options['env']
-                    self.assertFalse(any(k.casefold()=='rubyopt' for k in env))
+                    self.assertFalse({'rubyopt','rubylib','rubygems_gemdeps'} & {k.casefold() for k in env})
                     self.assertEqual(env['OTHER_STARTUP_CONTROL'],'retained')
                     runtime=str(Path(__file__).resolve().parents[1]/'scripts') if autonomy else 'parent-runtime'
                     self.assertEqual(env['RDS_RUNTIME_SCRIPTS'],runtime)
@@ -62,11 +64,14 @@ class RubyArchiveBoundaryTests(unittest.TestCase):
     def test_launch_keeps_node_isolation_and_unrelated_interpreter_environment(self):
         for name in ('node','NODEJS.EXE','ruby-wrapper','ruby3.x','python'):
             with patch.dict(os.environ,{'NODE_OPTIONS':'--require unbound.js','RUBYOPT':'-rhook',
+                                        'RUBYLIB':'./kept','RUBYGEMS_GEMDEPS':'./kept-Gemfile',
                                         'RDS_RUNTIME_SCRIPTS':'runtime'},clear=True):
                 before=dict(os.environ);options=self.launch([name,'-r','frozen-file','--','main'])
                 if name.lower().removesuffix('.exe') in ('node','nodejs'):
                     self.assertNotIn('NODE_OPTIONS',options['env'])
                     self.assertEqual(options['env']['RUBYOPT'],'-rhook')
+                    self.assertEqual(options['env']['RUBYLIB'],'./kept')
+                    self.assertEqual(options['env']['RUBYGEMS_GEMDEPS'],'./kept-Gemfile')
                     self.assertEqual(options['env']['RDS_RUNTIME_SCRIPTS'],'runtime')
                 else:
                     self.assertNotIn('env',options)
