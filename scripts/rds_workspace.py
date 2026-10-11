@@ -90,13 +90,17 @@ def _store(root):
 
 
 def _read_pointer_at(root):
+    import stat
+    from rds_bounded_io import read_regular_bytes
     path = pointer_path(root)
-    if not path.is_file():
-        return None
     try:
-        with path.open('rb') as handle:
-            raw = handle.read(MAX_POINTER_BYTES + 1)
-        require(len(raw) <= MAX_POINTER_BYTES, 'Workspace pointer exceeds its size limit')
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    require(stat.S_ISREG(metadata.st_mode), 'Workspace identity pointer is not a regular file')
+    try:
+        raw = read_regular_bytes(path, MAX_POINTER_BYTES, label='Workspace pointer',
+                                 limit_message='Workspace pointer exceeds its size limit')
         pointer = json.loads(raw.decode('utf-8'))
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise ValueError(f"Workspace identity pointer is unreadable: {path}: {exc}") from exc
@@ -549,12 +553,13 @@ def _anchor_transaction(root, db):
     if not db.in_transaction:
         return
     binding_digest = db.workspace_binding_digest
+    own_pointer = _read_pointer_at(root)
     # Only bind's writer-locked publication may validate a pending identity.
     # Other writers must compare the pointer with committed progress, so their
     # new events cannot hide an earlier uncertain commit or restored snapshot.
-    if binding_digest is None and (not db.workspace_materializing or pointer_path(root).is_file()):
+    if binding_digest is None and (not db.workspace_materializing or own_pointer is not None):
         check_admission(root)
-    if not pointer_path(root).is_file():
+    if own_pointer is None:
         return
     # Validate the effective pointer against this transaction's view: the
     # initial binding event is not yet visible to a separate read connection.
