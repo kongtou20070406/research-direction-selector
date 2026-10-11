@@ -109,6 +109,9 @@ def bind(root):
         require(event is not None and event.get("event_digest") == pointer.get("event_digest"),
                 "This workspace is already bound to a different project ledger; "
                 "delete the workspace, not the ledger, to start a different project")
+        require(str(store.root) == event.get("root"),
+                "This workspace is a copy of a bound workspace; the recorded identity names "
+                f"{event.get('root')}. A bound ledger serves exactly one workspace")
         return {"status": "ALREADY_BOUND", "pointer": pointer, "ledger_root": str(store.root)}
     ledger_sha = file_sha(store.path)
     with store._db() as db:

@@ -87,6 +87,16 @@ class WorkspaceBindingTests(unittest.TestCase):
                 "SELECT body FROM events WHERE json_extract(body,'$.kind')='WORKSPACE_BOUND'"))
         self.assertEqual(len(events), 1)
 
+    def test_idempotent_bind_refuses_a_copied_root_without_mutation(self):
+        bind(self.root)
+        copied = Path(self.tmp.name) / 'copied-bound-root'
+        shutil.copytree(self.root, copied)
+        before = self._dump(copied)
+        with self.assertRaisesRegex(ValueError, 'copy of a bound workspace'):
+            bind(copied)
+        self.assertEqual(coverage(copied)['status'], 'MISMATCH')
+        self.assertEqual(self._dump(copied), before)
+
     def _try_bind(self):
         try:
             return bind(self.root)
