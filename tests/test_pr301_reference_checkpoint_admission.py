@@ -37,7 +37,7 @@ class ReferenceCheckpointAdmissionTests(unittest.TestCase):
             cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=20,
             env={**os.environ, 'RDS_USAGE_LOG': '0'})
 
-    def reference(self, root):
+    def reference(self, root, *, quiescent=False):
         root.mkdir(parents=True, exist_ok=True)
         for source in (ROOT / 'examples/reference-run').iterdir():
             if source.is_file():
@@ -51,6 +51,10 @@ class ReferenceCheckpointAdmissionTests(unittest.TestCase):
         with state.snapshot() as (_, snapshot):
             self.assertEqual(snapshot['budget']['reserved']['runs'], 1)
             self.assertEqual(snapshot['plans']['P1']['run_status'], 'RESERVED')
+        if quiescent:
+            cli.cmd_cancel(argparse.Namespace(id='P1'), state)
+            with state.snapshot() as (_, snapshot):
+                self.assertEqual(snapshot['budget']['reserved']['runs'], 0)
         return state, snapshot
 
     def retained(self, *states):
@@ -85,7 +89,7 @@ class ReferenceCheckpointAdmissionTests(unittest.TestCase):
             self.assertEqual(self.retained(state), before)
 
     def local_bound(self, *, command=False):
-        state, snapshot = self.reference(self.root)
+        state, snapshot = self.reference(self.root, quiescent=True)
         bind(self.root)
         self.refuse(state, snapshot, 'reference accounting is refused', command=command)
 
@@ -102,6 +106,11 @@ class ReferenceCheckpointAdmissionTests(unittest.TestCase):
             for binding in self.contract['bindings']:
                 shutil.copyfile(self.root / binding['path'], child / binding['path'])
             ProjectStore(child).initialize(deepcopy(self.contract))
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            bind(self.root)
+        cli.cmd_cancel(argparse.Namespace(id='P1'), state)
+        with state.snapshot() as (_, snapshot):
+            self.assertEqual(snapshot['budget']['reserved']['runs'], 0)
         bind(self.root)
         message = 'identity does not match' if nested_project else 'bound to a project ledger that is now missing'
         self.refuse(state, snapshot, message, command=command)
@@ -119,7 +128,7 @@ class ReferenceCheckpointAdmissionTests(unittest.TestCase):
         self.ancestor_bound(command=True, nested_project=True)
 
     def test_bound_reference_is_refused_before_opening_writer(self):
-        state, snapshot = self.reference(self.root)
+        state, snapshot = self.reference(self.root, quiescent=True)
         bind(self.root)
         original = sqlite3.connect
         writers = []
@@ -136,7 +145,7 @@ class ReferenceCheckpointAdmissionTests(unittest.TestCase):
             self.assertEqual(writers, [])
 
     def test_workspace_identity_damage_is_checked_before_reference_refusal(self):
-        state, snapshot = self.reference(self.root)
+        state, snapshot = self.reference(self.root, quiescent=True)
         bind(self.root)
         pointer = json.loads(pointer_path(self.root).read_text(encoding='utf-8'))
         pointer['event_digest'] = '0' * 64
@@ -163,7 +172,7 @@ class ReferenceCheckpointAdmissionTests(unittest.TestCase):
         self.assertFalse(pointer_path(self.root).exists())
 
     def test_bound_reference_checkpoint_readers_remain_readonly(self):
-        state, snapshot = self.reference(self.root)
+        state, snapshot = self.reference(self.root, quiescent=True)
         save_checkpoint(self.root, 'retained', snapshot, kind='reference')
         bind(self.root)
         before = self.retained(state)

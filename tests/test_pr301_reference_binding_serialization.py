@@ -28,7 +28,7 @@ class ReferenceBindingSerializationTests(unittest.TestCase):
         self.addCleanup(helper.tearDown)
         self.root, self.store, self.contract = helper.root, helper.store, helper.contract
         reference = fixture.ReferenceCheckpointAdmissionTests()
-        self.state, self.snapshot = reference.reference(self.root)
+        self.state, self.snapshot = reference.reference(self.root, quiescent=True)
 
     def test_reference_transaction_holds_binding_out_until_commit(self):
         attempted = threading.Event()

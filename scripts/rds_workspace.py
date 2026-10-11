@@ -128,7 +128,7 @@ def _matching_identity(pointer, event):
 
 
 def _charged_quick_scope(child, owner, owner_pointer):
-    """Only a frozen, parent-funded QUICK ledger may shadow its enclosing scope."""
+    """Validate funding; discovery also requires the child's own pointer."""
     if not child.is_relative_to(owner / '.rds' / 'exec'):
         return False
     request_path = child / 'rds-exec-request.json'
@@ -171,8 +171,8 @@ def _charged_quick_scope(child, owner, owner_pointer):
 def read_pointer(root):
     """Find the effective binding; initialized nested ledgers cannot hide ancestors.
 
-    Paid QUICK scopes retain their own pointer (or bind their new ledger while
-    materialization is pending). Every enclosing binding is examined, including
+    Paid QUICK scopes retain their own published pointer. Incomplete children
+    inherit their owner until binding. Every enclosing binding is examined, including
     chains of QUICK children; ordinary nested ledgers inherit the outer identity.
     Malformed or unreadable pointers are damage, not absence.
     """
@@ -181,7 +181,8 @@ def read_pointer(root):
     for candidate in (start, *start.parents):
         pointer = _read_pointer_at(candidate)
         if pointer is not None:
-            if scope is None or not _charged_quick_scope(scope, candidate, pointer):
+            if (scope is None or _read_pointer_at(scope) is None
+                    or not _charged_quick_scope(scope, candidate, pointer)):
                 selected = pointer
             scope = candidate
         elif scope is None and _initialized(candidate):
@@ -209,8 +210,10 @@ def _refuse_active_descendants(root):
                     continue
                 if stat.S_ISDIR(metadata.st_mode):
                     pending.append(path)
-                elif (entry.name == 'project.sqlite3' and directory.name == '.rds'
-                      and directory.parent != root and stat.S_ISREG(metadata.st_mode)):
+                elif (os.path.normcase(entry.name) in {'project.sqlite3', 'state.sqlite3'}
+                      and os.path.normcase(directory.name) == '.rds'
+                      and (directory.parent != root or os.path.normcase(entry.name) == 'state.sqlite3')
+                      and stat.S_ISREG(metadata.st_mode)):
                     # Raw read-only discovery avoids identity checks and any
                     # child mutation lock while examining already-owned pointers.
                     db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=1)
@@ -218,13 +221,28 @@ def _refuse_active_descendants(root):
                         db.execute('PRAGMA query_only=ON')
                         tables = {row[0] for row in db.execute(
                             "SELECT name FROM sqlite_master WHERE type='table'")}
-                        if 'contract' not in tables or 'runs' not in tables:
-                            continue
-                        if db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() is None:
-                            continue
-                        active = db.execute(
-                            "SELECT id,status FROM runs WHERE status IN ('RESERVED','RUNNING') LIMIT 1").fetchone()
-                        require(active is None,
+                        if os.path.normcase(entry.name) == 'state.sqlite3':
+                            if 'state' not in tables:
+                                continue
+                            from rds_cli import RDSState
+                            state = RDSState.read_state(db)
+                            active = any(plan['run_status'] in {'RESERVED', 'RUNNING'}
+                                         for plan in state.get('plans', {}).values())
+                        else:
+                            if 'contract' not in tables or 'runs' not in tables:
+                                continue
+                            if db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() is None:
+                                continue
+                            active = db.execute(
+                                "SELECT id,status FROM runs WHERE status IN ('RESERVED','RUNNING') LIMIT 1").fetchone()
+                            if not active:
+                                active = db.execute(
+                                    "SELECT 1 FROM events a WHERE json_extract(a.body,'$.kind')='THEORY_ALLOWANCE' "
+                                    "AND NOT EXISTS (SELECT 1 FROM events o "
+                                    "WHERE json_extract(o.body,'$.kind')='THEORY_OUTCOME' "
+                                    "AND json_extract(o.body,'$.attempt_id')="
+                                    "json_extract(a.body,'$.attempt_id')) LIMIT 1").fetchone()
+                        require(not active,
                                 f'Cannot bind workspace with an active descendant: {directory.parent}; '
                                 'settle or recover its original reservation first')
                     finally:
@@ -244,6 +262,24 @@ def bind(root):
     store = _store(root)
     require(store.path.is_file(), f"No project ledger to bind at {store.root}")
     pointer = read_pointer(root)
+    bootstrap_owner = None
+    if pointer is not None and _read_pointer_at(store.root) is None:
+        for owner in store.root.parents:
+            owner_pointer = _read_pointer_at(owner)
+            if owner_pointer is None:
+                continue
+            if owner_pointer == pointer and _charged_quick_scope(store.root, owner, owner_pointer):
+                check_admission(owner)
+                from rds_quick import _is_unmaterialized_allowance
+                with _store(owner)._db(True) as parent_db:
+                    allowance = parent_db.execute(
+                        "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                        "AND json_extract(body,'$.job_root')=?", (str(store.root),)).fetchone()
+                    _is_unmaterialized_allowance(parent_db, store.root,
+                                                load_json(store.root / 'rds-exec-request.json'),
+                                                json.loads(allowance['body']))
+                bootstrap_owner, pointer = owner, None
+            break
     if pointer is not None:
         # Idempotence requires the same root, identity and committed progress;
         # never repair an older snapshot by lowering the existing pointer.
@@ -254,14 +290,37 @@ def bind(root):
         return {"status": "ALREADY_BOUND", "pointer": pointer, "ledger_root": str(store.root)}
     _refuse_active_descendants(store.root)
     ledger_sha = file_sha(store.path)
-    with store._db() as db:
+    with store._db(True) as db:
         contract = store._contract(db)
         identity = {"schema": SCHEMA, "ledger_sha256": ledger_sha, "contract_sha256": digest(contract),
                     "root": str(store.root)}
     require(pointer is None, _OVERWRITE)
     event_digest = digest(identity)
     recovered = False
-    with store._db() as db:
+    from contextlib import closing, contextmanager
+
+    @contextmanager
+    def binding_writer():
+        if bootstrap_owner is None:
+            with store._db() as db:
+                yield db
+            return
+        # Only this locked bind owns this connection. Ordinary/reentrant
+        # writers still inherit the owner and fail their admission checks.
+        from rds_campaign import enforce
+        enforce(store.root)
+        require(store.path.resolve().is_relative_to(store.root), 'Project database escapes root')
+        with closing(sqlite3.connect(store.path.as_uri() + '?mode=rw', uri=True,
+                                     factory=_AnchoredConnection, timeout=10)) as db:
+            db.row_factory = sqlite3.Row
+            db.workspace_root = store.root
+            db.committed_changes = 0
+            db.workspace_materializing = False
+            db.workspace_binding_digest = None
+            with db:
+                yield db
+
+    with binding_writer() as db:
         # BEGIN IMMEDIATE serializes concurrent binders; the re-read under the
         # write lock means exactly one WORKSPACE_BOUND event can ever exist.
         db.execute("BEGIN IMMEDIATE")
@@ -290,6 +349,9 @@ def bind(root):
         # Re-read and publish under the same writer lock; a delayed binder must
         # not replace progress committed after its initial discovery.
         current = read_pointer(root)
+        if bootstrap_owner is not None and _read_pointer_at(store.root) is None:
+            require(current == _read_pointer_at(bootstrap_owner), 'QUICK binding owner changed')
+            current = None
         if current is not None:
             require(current.get('event_digest') == event_digest,
                     'Workspace ledger identity does not match; accounting resets are refused')

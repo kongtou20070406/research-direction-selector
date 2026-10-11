@@ -1,6 +1,7 @@
 """Ancestor binding must not revoke an outstanding descendant reservation."""
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+import argparse
 import json
 import os
 from pathlib import Path
@@ -121,6 +122,82 @@ class DescendantBindingTests(unittest.TestCase):
             child.register(self.helper.spec(mode=mode))
             child.execute('r1')
         self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_reference_reservation_can_cancel_after_ancestor_refusal(self):
+        import rds_cli as cli
+        import test_pr301_reference_checkpoint_admission as reference_fixture
+
+        helper = reference_fixture.ReferenceCheckpointAdmissionTests()
+        child, _ = helper.reference(self.root / 'reference-child')
+        before = self.dump(self.store), child.db_path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), child.db_path.read_bytes()), before)
+        self.assertEqual(cli.cmd_cancel(argparse.Namespace(id='P1'), child)['run_status'], 'CANCELLED')
+        with child.snapshot() as (_, state):
+            self.assertEqual(state['budget']['reserved']['runs'], 0)
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_theory_allowance_can_settle_after_ancestor_refusal(self):
+        child = self.child()
+        allowance = {key: min(1, cap) for key, cap in self.helper.contract['budget'].items()}
+        with child.theory_allowance(self.helper.spec(), {'fixture': 'active theory'}, allowance) as record:
+            before = self.dump(self.store), self.dump(child)
+            with self.assertRaisesRegex(ValueError, 'active descendant'):
+                workspace.bind(self.root)
+            self.assertEqual((self.dump(self.store), self.dump(child)), before)
+            record['status'] = 'PASS'
+        outcome = child.theory_record(record['attempt_id'])
+        self.assertEqual(outcome['kind'], 'THEORY_OUTCOME')
+        self.assertEqual(outcome['status'], 'PASS')
+        self.assertEqual(child.snapshot()['budget']['wall_seconds']['charged_estimate'],
+                         allowance['wall_seconds'] + outcome['wall_overrun_seconds'])
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_running_reference_can_finish_after_binding_refusal(self):
+        import rds_cli as cli
+        import test_pr301_reference_checkpoint_admission as reference_fixture
+
+        helper = reference_fixture.ReferenceCheckpointAdmissionTests()
+        state, _ = helper.reference(self.root)
+        run_process = subprocess.run
+        observed = []
+
+        def run(argv, *args, **kwargs):
+            if Path(argv[-1]).name == 'rds_probe.py':
+                with state.snapshot() as (_, snapshot):
+                    self.assertEqual(snapshot['plans']['P1']['run_status'], 'RUNNING')
+                    before_spent = snapshot['budget']['spent']
+                before = self.dump(self.store), state.db_path.read_bytes()
+                with self.assertRaisesRegex(ValueError, 'active descendant'):
+                    workspace.bind(self.root)
+                self.assertEqual((self.dump(self.store), state.db_path.read_bytes()), before)
+                observed.append(before_spent)
+            return run_process(argv, *args, **kwargs)
+
+        with patch.object(cli.subprocess, 'run', side_effect=run):
+            receipt = cli.cmd_run(argparse.Namespace(id='P1'), state)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED')
+        with state.snapshot() as (db, snapshot):
+            self.assertEqual(snapshot['budget']['spent'], observed[0])
+            self.assertEqual(snapshot['plans']['P1']['run_status'], 'SUCCEEDED')
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0], 1)
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows case-insensitive paths')
+    def test_windows_metadata_casing_cannot_hide_reservation(self):
+        root = self.root / 'case-child'
+        (root / '.RDS').mkdir(parents=True)
+        for binding in self.helper.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], root / binding['path'])
+        child = ProjectStore(root)
+        child.initialize(deepcopy(self.helper.contract))
+        child.register(self.helper.spec())
+        before = self.dump(self.store), self.dump(child)
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), self.dump(child)), before)
 
     def test_symlink_outside_root_is_not_scanned(self):
         external = fixture.ProjectTests()
