@@ -69,6 +69,11 @@ def observe():
         "authority_present": False,
         "operator_attested": "NOT_APPLICABLE",
         "skill_load": "UNKNOWN",
+        # Plan section 6.4 requires this to be stated, not smoothed over: this
+        # checkout has no host-side per-session gate, so a host that loads Skill
+        # text globally keeps loading it. Being unable to prevent that is the
+        # honest reading, and it is not a pass for "default off".
+        "skill_auto_application": "UNKNOWN_NOT_PREVENTED",
         "coverage": "NOT_APPLICABLE",
         "usage_policy": "OFF",
         "usage_health": "NOT_PROBED",
@@ -76,7 +81,9 @@ def observe():
         "last_authority_sequence": 0,
         "limitations": [
             "No Session Authority is installed, so enable cannot be confirmed and admission stays OFF.",
-            "Host registration, Skill loading and usage health are UNKNOWN because no trusted host manifest was read.",
+            "Host registration and Skill loading are UNKNOWN because no trusted host manifest was read.",
+            "Skill auto-application is UNKNOWN_NOT_PREVENTED: this build has no host-side per-session gate, so an automatically applied Skill body is not stopped here. Shortening the Skill description is not evidence that it is (plan section 6.4).",
+            "Usage health is NOT_PROBED because no usage database was opened; this is a deliberate absence of probing, not a claim that usage is writable.",
             "This observation created no directory, database, log or usage record.",
         ],
     }
@@ -150,6 +157,7 @@ def render(report):
     lines = [head,
              "new admission: " + str(report.get("new_admission")),
              "authority: " + str(report.get("authority_status")),
+             "skill auto-apply: " + str(report.get("skill_auto_application")),
              "usage policy: " + str(report.get("usage_policy"))]
     if report.get("reason"):
         lines.append("reason: " + str(report["reason"]))

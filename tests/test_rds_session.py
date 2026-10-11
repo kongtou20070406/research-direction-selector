@@ -62,6 +62,18 @@ class SessionInspectionTests(unittest.TestCase):
         self.assertIn("NOT enabled", lines[0])
         self.assertIn("wrote nothing", lines[-1])
 
+    def test_observation_admits_skill_auto_application_is_not_prevented(self):
+        # Plan section 6.4: a host that can only load Skill text globally cannot
+        # be shown to honour the session gate, so the observation must say that
+        # rather than letting an absent field read as "off". Making the Skill
+        # description shorter is explicitly not acceptance.
+        report = json.loads(self.run_session("--json", "observe").stdout)
+        self.assertEqual(report["skill_auto_application"], "UNKNOWN_NOT_PREVENTED")
+        self.assertTrue(any("not prevented" in item.lower() or "NOT_PREVENTED" in item
+                            for item in report["limitations"]))
+        text = self.run_session("observe").stdout
+        self.assertIn("UNKNOWN_NOT_PREVENTED", text)
+
     def test_list_and_observe_do_not_disagree(self):
         listed = json.loads(self.run_session("list", "--json").stdout)
         observed = json.loads(self.run_session("observe", "--json").stdout)
