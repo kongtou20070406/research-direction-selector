@@ -349,12 +349,12 @@ class UsageTests(unittest.TestCase):
                        self.folder, self.path)
 
     def test_cli_fixture_preserves_both_real_logging_waits(self):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0)
         began = time.monotonic()
         with dual_sqlite_wait(self.folder, self.path) as probe:
             with patch.dict(os.environ, probe["environment"]):
-                result = self.cli("--version")
+                result = self.cli("formal", "rules")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, warmup.stdout)
         self.assertEqual(len(probe["intervals"]), 2)
@@ -362,7 +362,7 @@ class UsageTests(unittest.TestCase):
         self.assertGreater(time.monotonic() - began, 15)
         report = usage.summarize(days=1)
         self.assertEqual(report["total_calls"], 2)
-        self.assertEqual(report["modes"], {"version": 2})
+        self.assertEqual(report["modes"], {"command": 2})
         self.assertEqual(report["daily"][0]["successful"], 2)
         self.assertEqual(report["daily"][0]["unfinished"], 0)
         self.assertTrue(all(row["exit_code"] == 0 for row in ledger_snapshot(self.path)["calls"]))
@@ -472,10 +472,10 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(sum(r["unfinished"] for r in report["daily"]), 0)
 
     def test_concurrent_cli_processes_retain_all_calls(self):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0, count_diagnostics(self.path, [warmup]))
         with ThreadPoolExecutor(max_workers=8) as workers:
-            results = list(workers.map(lambda _: self.cli("--version"), range(12)))
+            results = list(workers.map(lambda _: self.cli("formal", "rules"), range(12)))
         children = [warmup, *results]
         self.assertTrue(all(result.returncode == 0 for result in results), count_diagnostics(self.path, children))
         try:
@@ -485,7 +485,7 @@ class UsageTests(unittest.TestCase):
             raise
         evidence = count_diagnostics(self.path, children, result)
         self.assertEqual(result["total_calls"], 13, evidence)
-        self.assertEqual(result["modes"], {"version": 13}, evidence)
+        self.assertEqual(result["modes"], {"command": 13}, evidence)
         self.assertEqual(result["daily"][0]["successful"], 13, evidence)
         self.assertEqual(result["daily"][0]["unfinished"], 0, evidence)
         self.assertTrue(all(row["exit_code"] == 0 for row in ledger_snapshot(self.path)["calls"]), evidence)
@@ -493,7 +493,7 @@ class UsageTests(unittest.TestCase):
     def test_first_concurrent_invocations_retain_all_calls(self):
         self.assertFalse(self.path.exists())
         with ThreadPoolExecutor(max_workers=8) as workers:
-            results = list(workers.map(lambda _: self.cli("--version"), range(12)))
+            results = list(workers.map(lambda _: self.cli("formal", "rules"), range(12)))
         self.assertTrue(all(r.returncode == 0 for r in results), count_diagnostics(self.path, results))
         try:
             report = usage.summarize(days=1)
@@ -525,7 +525,7 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(report["daily"][0]["successful"], 1)
 
     def test_partial_existing_schema_preserves_rows_and_journal_mode(self):
-        self.assertEqual(self.cli("--version").returncode, 0)
+        self.assertEqual(self.cli("formal", "rules").returncode, 0)
         with closing(sqlite3.connect(self.path)) as db:
             journal = db.execute("PRAGMA journal_mode").fetchone()[0]
             db.execute("DROP INDEX calls_day")
@@ -549,7 +549,7 @@ class UsageTests(unittest.TestCase):
             completed, gate = {}, threading.Lock()
 
             def invoke(index):
-                child = self.cli("--version")
+                child = self.cli("formal", "rules")
                 with gate:
                     completed[index] = child
                 return child
@@ -578,14 +578,14 @@ class UsageTests(unittest.TestCase):
     def test_slow_schema_trace_preserves_real_busy_and_cli_result(self):
         # An external real writer is deliberately untraced: retain the exact
         # failing statement/PID, but never guess its holder from absent data.
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0)
         before = ledger_snapshot(self.path)
         with slow_schema_commits(self.folder, self.path) as probe:
             with closing(sqlite3.connect(self.path, isolation_level=None)) as writer:
                 writer.execute("BEGIN IMMEDIATE")
                 with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
-                    child = self.cli("--version")
+                    child = self.cli("formal", "rules")
             phases = phase_diagnostics(probe["work"], self.path,
                                        expected_pids=[child.fixture_timing["pid"]])
         evidence = count_diagnostics(self.path, [child]) + " phases=" + json.dumps(phases)
@@ -608,7 +608,7 @@ class UsageTests(unittest.TestCase):
         with cold_commit_handoff(self.folder, self.path) as probe:
             with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    pending = pool.submit(self.cli, "--version")
+                    pending = pool.submit(self.cli, "formal", "rules")
                     try:
                         wait_marker(probe["work"] / "handoff-ready")
                         with closing(sqlite3.connect(self.path, isolation_level=None)) as writer:
@@ -637,13 +637,13 @@ class UsageTests(unittest.TestCase):
         self.assertTrue(all(event["deadline"] is not None for event in commits), evidence)
 
     def caller_commit_control(self, *, expire):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0, warmup.stderr)
         before = ledger_snapshot(self.path)
         with caller_commit_reader(self.folder, self.path, expire=expire) as probe:
             with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    pending = pool.submit(self.cli, "--version")
+                    pending = pool.submit(self.cli, "formal", "rules")
                     try:
                         wait_marker(probe["work"] / "caller-ready")
                         with closing(sqlite3.connect(self.path, isolation_level=None)) as reader:
@@ -800,12 +800,12 @@ class UsageTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=1) as warmup_pool:
                 warmup_future = warmup_pool.submit(
                     subprocess.run,
-                    [sys.executable, "-B", str(ROOT / "scripts/rds_cli.py"), "--version"],
+                    [sys.executable, "-B", str(ROOT / "scripts/rds_cli.py"), "formal", "rules"],
                     cwd=self.folder, env=environment, capture_output=True, text=True, timeout=60)
                 try:
                     wait_marker(probe["work"] / "ready")
                     with ThreadPoolExecutor(max_workers=8) as workers:
-                        results = list(workers.map(lambda _: self.cli("--version"), range(12)))
+                        results = list(workers.map(lambda _: self.cli("formal", "rules"), range(12)))
                     paused = json.loads((probe["work"] / "ready").read_text())
                 finally:
                     (probe["work"] / "release").touch()
@@ -821,14 +821,14 @@ class UsageTests(unittest.TestCase):
         self.assertFalse(paused["in_transaction"])
 
     def test_persistent_start_lock_reports_loss_but_preserves_real_cli_result(self):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0, warmup.stderr)
         before = ledger_snapshot(self.path)
         with closing(sqlite3.connect(self.path)) as blocker:
             blocker.execute("BEGIN IMMEDIATE")
             with ThreadPoolExecutor(max_workers=1) as pool:
                 # Keep the real writer until the child reaches the existing bounded storage failure.
-                result = pool.submit(self.cli, "--version").result(timeout=45)
+                result = pool.submit(self.cli, "formal", "rules").result(timeout=45)
             blocker.rollback()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, warmup.stdout)
@@ -847,7 +847,7 @@ class UsageTests(unittest.TestCase):
         self.assertIn("[RDS-USAGE-DEGRADED] start", str(incomplete.exception))
         self.assertIn('"returncode": 0', str(incomplete.exception))
         self.assertIn('"day":', str(incomplete.exception))
-        restored = self.cli("--version")
+        restored = self.cli("formal", "rules")
         self.assertEqual(restored.returncode, 0, restored.stderr)
         self.assertEqual(restored.stderr, "")
         report = usage.summarize(days=2)

@@ -2067,6 +2067,36 @@ def _main():
     return 0
 
 
+# Section 6.3: a closed set of invocations that answer "what is here?" rather
+# than doing work. They must not create a usage record, a directory or a
+# database, so "is RDS on?" stays answerable without changing state. Anything
+# outside this set keeps the ordinary logged path.
+STATUS_READ_FLAGS = frozenset({"--brief", "--digest"})
+
+
+def observation_argv(argv):
+    """Return True only for side-effect-free inspection invocations.
+
+    Classification runs after the same pure normalization the parser uses, so
+    aliases, macros and unique prefixes cannot reach a logged branch by
+    spelling. Malformed input is not observation: it keeps the existing
+    logged path and its existing error reporting.
+    """
+    try:
+        normalized = parser().normalize_args(argv, quiet=True)
+    except (ValueError, SystemExit):
+        return False
+    tokens = list(normalized)
+    if tokens[:1] == ["--root"]:
+        # Normalization moves every root spelling to this one leading pair.
+        tokens = tokens[2:]
+    if tokens in (["--version"], ["--help"], ["-h"]):
+        return True
+    if tokens == ["project", "discover"]:
+        return True
+    return tokens[:1] == ["status"] and set(tokens[1:]) <= STATUS_READ_FLAGS
+
+
 def main():
     from rds_usage import run_logged
     def usage_root():
@@ -2084,6 +2114,11 @@ def main():
             except argparse.ArgumentError as exc:
                 raise ValueError(str(exc)) from exc
         return Path(root).resolve()
+    if observation_argv(sys.argv[1:]):
+        # Section 6.3: inspecting RDS must not create a usage record, a
+        # directory or a database. Classification happens before run_logged, so
+        # a question about state cannot itself change state.
+        return _main()
     return run_logged(_main, sys.argv[1:], VERSION, root=usage_root)
 
 
