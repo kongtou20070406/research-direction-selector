@@ -25,6 +25,7 @@ ASSURANCE = "SUPPORTED_API_IDENTITY_CHECK_NOT_OS_SANDBOX"
 WINDOWS = os.name == 'nt'
 MAX_POINTER_BYTES = 64 * 1024
 MAX_QUICK_REQUEST_BYTES = 2 * 1024 * 1024
+MAX_BIND_WHEEL_STATE_BYTES = 2 * 1024 * 1024
 MAX_BIND_PREFLIGHT_SECONDS = 5.0
 MAX_BIND_LEDGER_BYTES = 64 * 1024 * 1024
 BIND_HASH_CHUNK_BYTES = 1024 * 1024
@@ -278,11 +279,15 @@ def _refuse_active_descendants(root):
                 _check_bind_deadline(deadline)
                 # Metadata links can hide supported ledgers. Refuse binding
                 # rather than silently omitting them or following link cycles.
+                wheel_directory = (os.path.normcase(directory.name) == 'wheel'
+                                   and os.path.normcase(directory.parent.name) == '.rds')
+                wheel_state = wheel_directory and os.path.normcase(entry.name) == 'state.json'
                 if (stat.S_ISLNK(metadata.st_mode)
                         or getattr(metadata, 'st_file_attributes', 0) & 0x400):
                     require(not (os.path.normcase(entry.name) == '.rds'
                                  or (os.path.normcase(directory.name) == '.rds'
-                                     and os.path.normcase(entry.name) in {'project.sqlite3', 'state.sqlite3'})),
+                                     and os.path.normcase(entry.name) in {'project.sqlite3', 'state.sqlite3', 'wheel'})
+                                 or wheel_state),
                             'Cannot bind workspace with linked workspace metadata; '
                             'settle existing work and use real metadata paths before binding')
                     continue
@@ -290,7 +295,26 @@ def _refuse_active_descendants(root):
                 if not path.resolve().is_relative_to(root):
                     continue
                 _check_bind_deadline(deadline)
-                if stat.S_ISDIR(metadata.st_mode):
+                if wheel_state and directory.parent.parent != root:
+                    from rds_bounded_io import read_regular_bytes
+                    from rds_cli import strict_json
+                    require(stat.S_ISREG(metadata.st_mode),
+                            'Descendant wheel state must be a regular file')
+                    require(path.stat().st_nlink == 1,
+                            'Cannot bind workspace containing wheel state with multiple hard links')
+                    raw = read_regular_bytes(path, MAX_BIND_WHEEL_STATE_BYTES,
+                                             label='Descendant wheel state')
+                    _check_bind_deadline(deadline)
+                    state = strict_json(raw.decode('utf-8'))
+                    require(isinstance(state, dict) and 'pending' in state,
+                            'Descendant wheel state must contain its pending journal')
+                    # A committed file journal or unregistered dispatch still
+                    # needs child admission to recover, even without a live run.
+                    require('effects' not in state and state['pending'] is None,
+                            f'Cannot bind workspace with a pending descendant wheel: {directory.parent.parent}; '
+                            'finish its original wheel recovery first')
+                    _check_bind_deadline(deadline)
+                elif stat.S_ISDIR(metadata.st_mode):
                     pending.append((path, depth + 1))
                 elif (os.path.normcase(entry.name) in {'project.sqlite3', 'state.sqlite3'}
                       and os.path.normcase(directory.name) == '.rds'
