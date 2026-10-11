@@ -463,7 +463,8 @@ class ProjectStore:
             require(self.path.resolve().is_relative_to(self.root), "Project database escapes root")
             existing = bound is not None or settlement is not None
             target = self.path.as_uri() + '?mode=rw' if existing else self.path
-            db = sqlite3.connect(target, uri=existing, timeout=10)
+            from rds_workspace import connect
+            db = connect(self.root, target, uri=existing, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
         try:

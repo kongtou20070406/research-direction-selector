@@ -114,7 +114,9 @@ def execute(root, rid):
     from rds_mutation import mutation
     with mutation():
         enforce(root)
-        with sqlite3.connect(root / '.rds/project.sqlite3') as db:
+        from rds_workspace import check_admission, connect
+        check_admission(root)
+        with connect(root, root / '.rds/project.sqlite3') as db:
             db.row_factory = sqlite3.Row
             row = db.execute('SELECT status,body FROM runs WHERE id=?', (rid,)).fetchone()
             if row is None or row['status'] != 'RUNNING':

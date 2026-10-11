@@ -88,7 +88,11 @@ def _database(project, *, write=False):
     project = Path(project).resolve()
     path = project / '.rds' / 'project.sqlite3'
     require(path.is_file() and path.resolve().is_relative_to(project), 'Original campaign project ledger is missing')
-    db = sqlite3.connect(path.as_uri() + ('?mode=rw' if write else '?mode=ro'), uri=True, timeout=10)
+    if write:
+        from rds_workspace import connect
+        db = connect(project, path.as_uri() + '?mode=rw', uri=True, timeout=10)
+    else:
+        db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=10)
     db.row_factory = sqlite3.Row
     try:
         if not write:

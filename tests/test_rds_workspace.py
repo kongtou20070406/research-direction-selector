@@ -13,6 +13,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +87,61 @@ class WorkspaceBindingTests(unittest.TestCase):
             events = list(db.execute(
                 "SELECT body FROM events WHERE json_extract(body,'$.kind')='WORKSPACE_BOUND'"))
         self.assertEqual(len(events), 1)
+
+    def test_committed_spend_is_anchored_without_a_later_read(self):
+        bind(self.root)
+        backup = Path(self.tmp.name) / 'post-bind.sqlite3'
+        shutil.copyfile(self.store.path, backup)
+        spec = self.spec('r1', 'nonzero')
+        self.store.register(spec)
+        self.assertEqual(self.store.execute(spec['id'])['run_status'], 'FAILED')
+        # No status/admission read may advance the pointer before restoring.
+        shutil.copyfile(backup, self.store.path)
+        before = self._dump(self.root)
+        with self.assertRaisesRegex(ValueError, 'snapshot was restored'):
+            self.store.register(self.spec('r2', 'ok'))
+        self.assertEqual(self._dump(self.root), before)
+
+    def test_controller_refuses_replacement_before_budget_mutation(self):
+        from rds_autonomy import _claim
+        bind(self.root)
+        fresh = Path(self.tmp.name) / 'controller-reset'
+        fresh.mkdir()
+        for binding in self.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], fresh / binding['path'])
+        ProjectStore(fresh).initialize(self.contract)
+        shutil.copyfile(fresh / '.rds/project.sqlite3', self.store.path)
+        before = self._dump(self.root)
+        with patch.object(self.store, '_contract', return_value={'advisor_policy': {}}):
+            with self.assertRaisesRegex(ValueError, 'identity does not match|replaced'):
+                _claim(self.store, controller_wall_seconds=1)
+        self.assertEqual(self._dump(self.root), before)
+
+    def test_pointer_publication_failure_rolls_back_budget_and_events(self):
+        bind(self.root)
+        before = self._dump(self.root)
+        with patch('rds_workspace._write_pointer', side_effect=OSError('pointer unavailable')):
+            with self.assertRaisesRegex(OSError, 'pointer unavailable'):
+                self.store.register(self.spec('r1', 'ok'))
+        self.assertEqual(self._dump(self.root), before)
+
+    def test_explicit_commit_anchors_reservation_and_reads_do_not_write(self):
+        bind(self.root)
+        initial = self._dump(self.root)
+        check_admission(self.root)
+        coverage(self.root)
+        self.assertEqual(self._dump(self.root), initial)
+        backup = Path(self.tmp.name) / 'before-reservation.sqlite3'
+        shutil.copyfile(self.store.path, backup)
+        with self.store._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute("UPDATE budget SET reserved=reserved+1 WHERE resource='wall_seconds'")
+            db.commit()
+        shutil.copyfile(backup, self.store.path)
+        before = self._dump(self.root)
+        with self.assertRaisesRegex(ValueError, 'snapshot was restored'):
+            check_admission(self.root)
+        self.assertEqual(self._dump(self.root), before)
 
     def test_idempotent_bind_refuses_a_copied_root_without_mutation(self):
         bind(self.root)
@@ -196,6 +252,30 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(read_pointer(child)['event_digest'], read_pointer(self.root)['event_digest'])
         with self.assertRaisesRegex(ValueError, 'identity does not match'):
             child_store.initialize(self.contract)
+
+    def test_deep_empty_anchor_inherits_binding_and_refuses_successor(self):
+        bind(self.root)
+        before = self._dump(self.root)
+        intermediate = self.root / 'B'
+        anchor = intermediate / '.rds'
+        anchor.mkdir(parents=True)
+        successor = intermediate / 'C'
+        successor.mkdir()
+        for binding in self.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], successor / binding['path'])
+        successor_store = ProjectStore(successor)
+        self.assertEqual(list(anchor.iterdir()), [])
+        self.assertEqual(read_pointer(successor), read_pointer(self.root))
+        self.assertEqual(coverage(successor)['status'], 'MISMATCH')
+        for options, reason in (({'separate_project': True}, '--separate-project'),
+                                ({'supersedes': str(self.root)}, '--supersedes')):
+            with self.subTest(options=options):
+                with self.assertRaisesRegex(ValueError, reason):
+                    successor_store.initialize(self.contract, **options)
+                self.assertFalse(successor_store.state_dir.exists())
+                self.assertFalse(pointer_path(successor).exists())
+                self.assertEqual(list(anchor.iterdir()), [])
+                self.assertEqual(self._dump(self.root), before)
 
     def test_stale_pointer_identity_is_reported_as_mismatch(self):
         self.bind_root(store=self.store)

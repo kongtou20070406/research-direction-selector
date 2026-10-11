@@ -11,9 +11,11 @@ adversarial enforcement (#120); this module enforces supported RDS APIs only.
 """
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 from rds_project import ProjectStore, canonical, digest, file_sha, require
+from rds_mutation import mutation
 
 SCHEMA = 1
 POINTER_NAME = ".rds-workspace.json"
@@ -82,12 +84,20 @@ def read_pointer(root):
                             and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone():
                         return None
         if (candidate / ".rds").is_dir() and candidate != start:
-            # A nested project root with its own state dir stops upward search:
-            # its own workspace, not the parent's binding.
-            return None
+            # A nested *admitted* project root stops upward search: it owns its
+            # own workspace, not the parent's binding. An empty lock anchor
+            # (a bare `.rds` with no contract) is not a project scope and must
+            # not hide an enclosing binding from a deeper successor root (#282).
+            store = _store(candidate)
+            if store.path.is_file():
+                with store._db(True) as db:
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                            and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone():
+                        return None
     return None
 
 
+@mutation()
 def bind(root):
     """Bind this workspace, once, to the canonical ledger it already contains.
 
@@ -145,8 +155,10 @@ def bind(root):
                     "The ledger already records a different workspace identity; "
                     "each bound ledger serves one workspace")
             event_digest = recorded_body["event_digest"]
+        max_id = db.execute("SELECT MAX(id) FROM events").fetchone()[0]
     pointer = {"schema": SCHEMA, "assurance": ASSURANCE, "ledger_sha256": ledger_sha,
-               "contract_sha256": identity["contract_sha256"], "event_digest": event_digest}
+               "contract_sha256": identity["contract_sha256"], "event_digest": event_digest,
+               "event_id": max_id}
     _write_pointer(root, pointer)
     return {"status": "ALREADY_BOUND" if recovered else "BOUND", "pointer": pointer,
             "ledger_root": str(store.root)}
@@ -192,27 +204,89 @@ def check_admission(root, supersedes=None, separate_project=False):
             f"{event.get('root')}. A bound ledger serves exactly one workspace")
     # Restoring a ledger snapshot taken after the bind rolls budget and events
     # back invisibly: the identity event still matches. The pointer therefore
-    # anchors progress — the highest event id seen by a supported API. Events
+    # anchors committed progress, not the last observation by a supported API. Events
     # are append-only, so a rolled-back ledger's event log ends before that
     # anchor and admission is refused until the ledger catches up. The pointer
     # only ever moves forward; a refusal here never rewrites accounting.
     with store._db(True) as db:
         max_id = db.execute("SELECT COALESCE(MAX(id),0) FROM events").fetchone()[0]
-        bound_id = db.execute(
-            "SELECT id FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
-            (EVENT_KIND,)).fetchone()[0]
     anchor = pointer.get("event_id")
     if anchor is not None:
+        require(type(anchor) is int and anchor > 0, "Invalid workspace progress anchor")
         require(max_id >= anchor,
                 "This workspace's ledger holds fewer events than the workspace pointer recorded; "
                 "a ledger snapshot was restored after binding. Accounting resets are refused; "
                 "restore the ledger state that includes the recorded progress")
-        if max_id > anchor:
-            pointer = {**pointer, "event_id": max_id}
-            _write_pointer(root, pointer)
-    else:
-        _write_pointer(root, {**pointer, "event_id": max(bound_id, max_id)})
     return store
+
+
+def _anchor_transaction(root, db):
+    """Publish progress under the writer lock, before its SQLite commit.
+
+    A failed pointer write rolls back the transaction. A failed commit after
+    publication leaves the pointer ahead and refuses further admission; it
+    never silently refunds uncertain accounting. Only this ledger's own
+    pointer is advanced, not an enclosing QUICK owner's pointer.
+    """
+    if not db.in_transaction or not pointer_path(root).is_file():
+        return
+    pointer = read_pointer(root)
+    row = db.execute(
+        "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
+        (EVENT_KIND,)).fetchone()
+    event = json.loads(row['body']) if row is not None else None
+    require(event is not None and event.get('event_digest') == pointer.get('event_digest'),
+            'Workspace ledger identity does not match; accounting resets are refused')
+    require(event.get('root') == str(Path(root).resolve()), 'Workspace ledger belongs to another root')
+    max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
+    anchor = pointer.get('event_id')
+    require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,
+            'A ledger snapshot was restored after binding; accounting resets are refused')
+    # Some reservations change budget/run rows without appending an event.
+    # Give those committed writes an append-only progress identity as well.
+    if db.total_changes > db.committed_changes and anchor == max_id:
+        db.execute('INSERT INTO events(body) VALUES (?)',
+                   (canonical({'kind': 'WORKSPACE_PROGRESS',
+                               'workspace_event_digest': pointer['event_digest']}),))
+        max_id = db.execute('SELECT MAX(id) FROM events').fetchone()[0]
+    if anchor is None or max_id > anchor:
+        _write_pointer(root, {**pointer, 'event_id': max_id})
+
+
+class _AnchoredConnection(sqlite3.Connection):
+    def _before_commit(self):
+        try:
+            _anchor_transaction(self.workspace_root, self)
+        except BaseException:
+            self.rollback()
+            raise
+
+    def commit(self):
+        self._before_commit()
+        result = super().commit()
+        self.committed_changes = self.total_changes
+        return result
+
+    def rollback(self):
+        result = super().rollback()
+        self.committed_changes = self.total_changes
+        return result
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        # SQLite's context manager does not call the Python commit override.
+        if exc_type is None:
+            self._before_commit()
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.committed_changes = self.total_changes
+        return result
+
+
+def connect(root, database, **kwargs):
+    """Writable project-ledger connection with durable workspace anchoring."""
+    db = sqlite3.connect(database, factory=_AnchoredConnection, **kwargs)
+    db.workspace_root = Path(root).resolve()
+    db.committed_changes = db.total_changes
+    return db
 
 
 def _recorded_event(store):

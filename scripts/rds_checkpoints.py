@@ -170,8 +170,13 @@ def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
                 (not isinstance(_expected_dependency_snapshot_sha256, str) or not re.fullmatch(
                     '[0-9a-f]{64}', _expected_dependency_snapshot_sha256))):
             raise ValueError('Expected checkpoint dependency must be a project SHA256 identity or None')
-    db = sqlite3.connect(_database(root, kind).as_uri() + '?mode=rw', uri=True,
-                         timeout=15, isolation_level=None)
+    if kind == 'project':
+        from rds_workspace import connect
+        db = connect(root, _database(root, kind).as_uri() + '?mode=rw', uri=True,
+                     timeout=15, isolation_level=None)
+    else:
+        db = sqlite3.connect(_database(root, kind).as_uri() + '?mode=rw', uri=True,
+                             timeout=15, isolation_level=None)
     db.row_factory = sqlite3.Row
     try:
         db.execute("PRAGMA synchronous=FULL")
