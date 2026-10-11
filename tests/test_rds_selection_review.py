@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from rds_advisor import RDSAdvisor, _json
 from rds_advisor_search import review_selection, search_directions
-from rds_quick import brief, choice
+from rds_quick import brief, choice, compact_brief_planning
 
 
 def fixture():
@@ -432,6 +432,42 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertEqual(len(projected['open_predicates'][0]), 128)
         self.assertTrue(all(len(check['target']) <= 128 for check in projected['local_checks']))
         self.assertEqual(projected['open_predicates_omitted'], 0)
+
+    def test_cli_projection_preserves_scope_decision_and_exact_record_across_path_lengths(self):
+        graph, context = fixture()
+        for scope in ('LOCAL', 'GLOBAL', 'UNSCOPED'):
+            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as root:
+                search = search_directions(graph, context)
+                planning = {'scope': scope, 'local_checks': [],
+                            'open_predicates': [], 'ready_obligations': [],
+                            'omitted_ready_obligations': 0}
+                if scope != 'UNSCOPED':
+                    planning['open_predicates'] = ['\u76ee\u6807' * 200] * 8
+                    planning['ready_obligations'] = ['node:' + 'x' * 512] * 8
+                if scope == 'LOCAL':
+                    planning['local_checks'] = [{'candidate': 'route:probe', 'target': 'goal'}] * 8
+                search['selection_review']['planning'] = planning
+                advice = {'recommendations': [{'search': search}]}
+                original = deepcopy(advice)
+                base = brief(root, advice, 'test')
+                for extra in ('', 'windows-path-' * 2, 'windows-path-' * 4):
+                    summary = deepcopy(base)
+                    # Account for absolute locator growth without changing the CAS identity.
+                    summary['record'] = str(Path(root) / extra / Path(base['record']).name)
+                    summary['workflow'] = {'mode': 'UNINITIALIZED', 'advisor': 'NOT_PROGRAM_OWNED',
+                                           'continuity': 'UNBOUND'}
+                    deciding = {k: v for k, v in summary.items() if k != 'planning'}
+                    compact_brief_planning(summary)
+                    self.assertLess(len(json.dumps(summary, ensure_ascii=False,
+                        separators=(',', ':')).encode('utf-8')) + 1, 1024)
+                    self.assertEqual(summary['planning']['scope'], scope)
+                    self.assertEqual({k: v for k, v in summary.items() if k != 'planning'}, deciding)
+                    if scope != 'UNSCOPED':
+                        self.assertTrue(summary['planning'].get('details_omitted') or
+                                        summary['planning'].get('open_predicates_omitted', 0) or
+                                        summary['planning'].get('omitted_ready_obligations', 0))
+                self.assertEqual(advice, original)
+                self.assertEqual(json.loads(Path(base['record']).read_text(encoding='utf-8')), original)
 
     def test_planning_partition_lists_capped_ready_obligation_tokens(self):
         graph, context = fixture()

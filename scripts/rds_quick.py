@@ -1199,6 +1199,29 @@ def _brief_move(summary, move):
         summary.pop('next_move_detail', None)
 
 
+def compact_brief_planning(summary):
+    """Fit display-only planning around exact locators and deciding observations."""
+    planning = summary.get('planning')
+    if not isinstance(planning, dict):
+        return
+    # Match CLI serialization, including its newline and platform-dependent path.
+    def fits():
+        return len(json.dumps(summary, ensure_ascii=False, separators=(',', ':'),
+                              allow_nan=False).encode('utf-8')) + 1 < 1024
+
+    for key, omitted in (('ready_obligations', 'omitted_ready_obligations'),
+                         ('local_checks', 'local_checks_omitted'),
+                         ('open_predicates', 'open_predicates_omitted')):
+        rows = planning.get(key, [])
+        while rows and not fits():
+            rows.pop()
+            planning[omitted] = planning.get(omitted, 0) + 1
+        if not rows:
+            planning.pop(key, None)
+    if not fits():
+        summary['planning'] = {'scope': planning.get('scope'), 'details_omitted': True}
+
+
 def brief(root, value, version, formal=False):
     """Persist full output and expose a bounded, truthful operational digest."""
     ref = cas_json(root, value)
@@ -1276,8 +1299,18 @@ def brief(root, value, version, formal=False):
                                        'local_checks_omitted': max(0, len(planning.get('local_checks', [])) - 8),
                                        'open_predicates': open_predicates,
                                        'open_predicates_omitted': max(0, len(planning.get('open_predicates', [])) - 8),
-                                       'ready_obligations': planning.get('ready_obligations', []),
+                                       'ready_obligations': list(planning.get('ready_obligations', [])),
                                        'omitted_ready_obligations': planning.get('omitted_ready_obligations', 0)}
+                projected = summary['planning']
+                for key, omitted in (('local_checks', 'local_checks_omitted'),
+                                     ('open_predicates', 'open_predicates_omitted'),
+                                     ('ready_obligations', 'omitted_ready_obligations')):
+                    if not projected[key]:
+                        projected.pop(key)
+                    if not projected[omitted] and key != 'open_predicates':
+                        projected.pop(omitted)
+                if not open_predicates and not projected['open_predicates_omitted']:
+                    projected.pop('open_predicates_omitted')
         advisory_moves = {'GOAL_CONTRIBUTION_UNDECLARED': 'REVIEW_GOAL_LINK',
                           'GOAL_CONTRIBUTION_INVALID': 'REVIEW_GOAL_LINK'}
         relevant = [kind for kind in flags if kind in advisory_moves and advisory_moves[kind] == summary.get('next_move')]

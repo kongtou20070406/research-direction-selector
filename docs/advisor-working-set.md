@@ -31,6 +31,17 @@ run. A receipt's successful process status can coexist with a failed goal.
 | `route_review` | Existing conditional route-review flags and checkpoint/witness identities, including REOPEN_REVIEW when the existing gate permits it. |
 | `operational_results` | Receipt identities, execution failure/timeout/exit status separately from scientific refutation. |
 
+For direction-search `advise --brief`, the planning digest omits empty lists and
+unused counters. After adding workflow metadata, the CLI reduces planning lists
+against the actual serialized UTF-8 size, including the absolute record path and
+newline. Omission counts include entries removed from this display. If those
+counts still crowd out the decision, only `scope` and `details_omitted: true`
+remain. The move explanation, analysis coverage and exact saved `record` locator
+stay intact; the full planning partition is unchanged in that record. This
+display budget does not cap the complete working-set or owned-report output.
+If the required decision fields and absolute locator alone exceed the budget,
+they remain visible; planning compaction cannot bound arbitrarily long paths.
+
 Each list contains at most four entries and reports exact `total` and `omitted`
 counts. An omitted section has a hash-bound full `original` in the existing CAS.
 An item over 2048 UTF-8 bytes retains compact exact identities and an
