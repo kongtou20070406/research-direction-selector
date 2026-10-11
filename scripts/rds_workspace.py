@@ -258,6 +258,7 @@ def bind(root):
             "ledger_root": str(store.root)}
 
 
+@mutation()
 def check_admission(root, supersedes=None, separate_project=False):
     """Refuse a bound workspace before any admission that could reset accounting.
 
@@ -428,6 +429,7 @@ def _recorded_event(store):
     return json.loads(row["body"]) if row is not None else None
 
 
+@mutation()
 def coverage(root):
     """Read-only binding coverage for discovery/status; claims no enforcement beyond supported APIs."""
     store = _store(root)
