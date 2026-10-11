@@ -264,35 +264,34 @@ class CampaignNativeTests(unittest.TestCase):
         self.assertEqual(child.snapshot(), state)
 
     def test_owned_running_binding_waits_for_delayed_pid_publication(self):
-        job_ready, publish_pid, gap_seen = Event(), Event(), Event()
-        real_job, real_snapshot = rds_project._Job, ProjectStore.snapshot
+        gap_seen = Event()
+        real_job = rds_project._Job
 
         def delayed_job(process):
             job = real_job(process)
-            self.assertIsNone(process.poll(), 'Owned child exited before PID barrier')
-            job_ready.set()
-            # Hold the real launch transaction until a reader sees the gap.
-            # Stay within the original child's four-second release deadline.
-            if not publish_pid.wait(timeout=4):
-                job.stop()
-                job.close()
-                raise AssertionError('Reader did not observe the pre-publication PID gap')
-            self.assertIsNone(process.poll(), 'Owned child exited during PID barrier')
-            return job
-
-        def observe_gap(store):
-            state = real_snapshot(store)
-            if (store.root == self.child and job_ready.is_set() and not publish_pid.is_set()
-                    and (self.child / 'owned-process-started').exists()):
-                running = state['runs'][0]
+            try:
+                deadline = time.monotonic() + 4
+                while not (self.child / 'owned-process-started').exists():
+                    self.assertIsNone(process.poll(), 'Owned child exited before PID barrier')
+                    self.assertLess(time.monotonic(), deadline,
+                                    'Owned child did not reach the pre-publication PID gap')
+                    time.sleep(0.01)
+                # Read the committed row without snapshot's mutation gate: this
+                # launch already owns that gate until it publishes the PID.
+                child = ProjectStore(self.child)
+                with child._db(True) as db:
+                    running = child._run(db, 'baseline')
                 self.assertEqual(running['status'], 'RUNNING')
                 self.assertIsNone(running['pid'])
+                self.assertIsNone(process.poll(), 'Owned child exited during PID barrier')
                 gap_seen.set()
-                publish_pid.set()
-            return state
+                return job
+            except BaseException:
+                job.stop()
+                job.close()
+                raise
 
-        with patch('rds_project._Job', side_effect=delayed_job), \
-                patch.object(ProjectStore, 'snapshot', autospec=True, side_effect=observe_gap):
+        with patch('rds_project._Job', side_effect=delayed_job):
             self.test_legacy_binding_owned_running_sibling_settles_original_receipt_and_checkpoint()
         self.assertTrue(gap_seen.is_set(), 'Did not exercise handshake before PID publication')
 
