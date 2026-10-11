@@ -175,6 +175,12 @@ def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
         db = connect(root, _database(root, kind).as_uri() + '?mode=rw', uri=True,
                      timeout=15, isolation_level=None)
     else:
+        # Match RDSState reference admission before opening the raw writer.
+        from rds_project import require
+        from rds_workspace import check_admission, read_pointer
+        check_admission(root)
+        require(read_pointer(root) is None,
+                'A bound workspace uses its canonical project ledger; reference accounting is refused')
         db = sqlite3.connect(_database(root, kind).as_uri() + '?mode=rw', uri=True,
                              timeout=15, isolation_level=None)
     db.row_factory = sqlite3.Row
