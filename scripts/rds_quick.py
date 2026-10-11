@@ -37,6 +37,8 @@ def cas_json(root, value, *, max_bytes=None):
 def cas_bytes(root, raw, suffix='bin'):
     from rds_campaign import enforce
     enforce(root)
+    from rds_workspace import check_admission
+    check_admission(root)
     require(isinstance(raw, bytes) and re.fullmatch(r'[a-z0-9]{1,12}', suffix), 'Invalid CAS bytes or suffix')
     sha = hashlib.sha256(raw).hexdigest()
     directory = Path(root).resolve() / '.rds' / 'cas'

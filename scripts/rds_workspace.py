@@ -13,6 +13,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from time import monotonic
 
 from rds_project import ProjectStore, canonical, digest, file_sha, load_json, require
 from rds_mutation import mutation
@@ -23,6 +24,9 @@ EVENT_KIND = "WORKSPACE_BOUND"
 ASSURANCE = "SUPPORTED_API_IDENTITY_CHECK_NOT_OS_SANDBOX"
 WINDOWS = os.name == 'nt'
 MAX_POINTER_BYTES = 64 * 1024
+MAX_BIND_PREFLIGHT_SECONDS = 5.0
+MAX_BIND_LEDGER_BYTES = 64 * 1024 * 1024
+BIND_HASH_CHUNK_BYTES = 1024 * 1024
 
 
 def pointer_path(root):
@@ -192,17 +196,61 @@ def read_pointer(root):
     return selected
 
 
+def _check_bind_deadline(deadline):
+    require(monotonic() < deadline,
+            'Workspace binding preflight time budget exceeded; inventory/hash is incomplete')
+
+
+def _bounded_bind_ledger_sha(path, deadline):
+    """Preserve file_sha's SHA-256 bytes with finite size and shared time bounds.
+
+    Checks are cooperative: a blocking OS stat/open/read cannot be preempted.
+    """
+    import hashlib
+    import stat
+
+    _check_bind_deadline(deadline)
+    metadata = path.stat()
+    require(stat.S_ISREG(metadata.st_mode), 'Workspace ledger must be a regular file')
+    require(metadata.st_size <= MAX_BIND_LEDGER_BYTES, 'Workspace ledger size bound exceeded')
+    _check_bind_deadline(deadline)
+    hashed, size = hashlib.sha256(), 0
+    with path.open('rb') as stream:
+        require(os.fstat(stream.fileno()).st_size <= MAX_BIND_LEDGER_BYTES,
+                'Workspace ledger size bound exceeded')
+        while True:
+            _check_bind_deadline(deadline)
+            chunk = stream.read(min(BIND_HASH_CHUNK_BYTES, MAX_BIND_LEDGER_BYTES - size + 1))
+            _check_bind_deadline(deadline)
+            if not chunk:
+                break
+            size += len(chunk)
+            require(size <= MAX_BIND_LEDGER_BYTES, 'Workspace ledger size bound exceeded')
+            hashed.update(chunk)
+    _check_bind_deadline(deadline)
+    return hashed.hexdigest()
+
+
 def _refuse_active_descendants(root):
     """Inspect reservations under the mutation gate, before taking a writer lock."""
     import stat
+    from rds_campaign import _Inventory
 
+    deadline = monotonic() + MAX_BIND_PREFLIGHT_SECONDS
+    _check_bind_deadline(deadline)
     root = Path(root).resolve()
-    pending = [root]
+    inventory = _Inventory()
+    pending = [(root, 0)]
     while pending:
-        directory = pending.pop()
+        _check_bind_deadline(deadline)
+        directory, depth = pending.pop()
+        inventory.directory(depth)
         with os.scandir(directory) as entries:
             for entry in entries:
+                _check_bind_deadline(deadline)
+                inventory.entry()
                 metadata = entry.stat(follow_symlinks=False)
+                _check_bind_deadline(deadline)
                 # Windows junctions are reparse points too; never traverse them.
                 if (stat.S_ISLNK(metadata.st_mode)
                         or getattr(metadata, 'st_file_attributes', 0) & 0x400):
@@ -210,16 +258,19 @@ def _refuse_active_descendants(root):
                 path = Path(entry.path)
                 if not path.resolve().is_relative_to(root):
                     continue
+                _check_bind_deadline(deadline)
                 if stat.S_ISDIR(metadata.st_mode):
-                    pending.append(path)
+                    pending.append((path, depth + 1))
                 elif (os.path.normcase(entry.name) in {'project.sqlite3', 'state.sqlite3'}
                       and os.path.normcase(directory.name) == '.rds'
                       and (directory.parent != root or os.path.normcase(entry.name) == 'state.sqlite3')
                       and stat.S_ISREG(metadata.st_mode)):
                     # Raw read-only discovery avoids identity checks and any
                     # child mutation lock while examining already-owned pointers.
-                    db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=1)
+                    db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True,
+                                         timeout=min(1.0, max(0.0, deadline - monotonic())))
                     try:
+                        db.set_progress_handler(lambda: int(monotonic() >= deadline), 1000)
                         db.execute('PRAGMA query_only=ON')
                         tables = {row[0] for row in db.execute(
                             "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -246,11 +297,17 @@ def _refuse_active_descendants(root):
                                     "WHERE json_extract(o.body,'$.kind')='THEORY_OUTCOME' "
                                     "AND json_extract(o.body,'$.attempt_id')="
                                     "json_extract(a.body,'$.attempt_id')) LIMIT 1").fetchone()
+                        _check_bind_deadline(deadline)
                         require(not active,
                                 f'Cannot bind workspace with an active descendant: {directory.parent}; '
                                 'settle or recover its original reservation first')
+                    except sqlite3.OperationalError:
+                        _check_bind_deadline(deadline)
+                        raise
                     finally:
                         db.close()
+    _check_bind_deadline(deadline)
+    return deadline
 
 
 @mutation()
@@ -292,8 +349,8 @@ def bind(root):
         except ValueError as exc:
             raise ValueError(f'This workspace is already bound; {exc}') from exc
         return {"status": "ALREADY_BOUND", "pointer": pointer, "ledger_root": str(store.root)}
-    _refuse_active_descendants(store.root)
-    ledger_sha = file_sha(store.path)
+    deadline = _refuse_active_descendants(store.root)
+    ledger_sha = _bounded_bind_ledger_sha(store.path, deadline)
     with store._db(True) as db:
         contract = store._contract(db)
         identity = {"schema": SCHEMA, "ledger_sha256": ledger_sha, "contract_sha256": digest(contract),
