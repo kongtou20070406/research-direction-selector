@@ -590,7 +590,8 @@ def _planning_partition(candidates, goal, dependency_review):
     check targets versus which declared goal predicates stay open. Derived only from
     the supplied review; a declared local path never closes an open predicate, and
     no scope, token or truth here is scientific acceptance. Authorization unchanged."""
-    local_checks = [{"candidate": c["id"], "target": c["goal_contribution"]["path"][0]}
+    local_checks = [{"candidate": c["id"], "target": c["goal_contribution"]["path"][0],
+                     "goal_target": c["goal_contribution"]["target"]}
                     for c in candidates
                     if c.get("goal_contribution", {}).get("status") == "DECLARED_PATH"
                     and c["goal_contribution"].get("path")
@@ -604,10 +605,15 @@ def _planning_partition(candidates, goal, dependency_review):
     # compare TRUE; an undeclared affirmative is an open obligation, not vacuous.
     for name in ("FOUND", "PORTABLE", "APPLICABLE"):
         if name in triple.get("open", []):
-            open_predicates.append("affirmation:" + name.lower())
+            rows = triple.get(name.lower(), {}).get("conditions", [])
+            if rows:
+                open_predicates.extend(row["fact"] for row in rows if row.get("affirms") != TRUE)
+            else:
+                open_predicates.append("affirmation:" + name.lower())
+    open_predicates = list(dict.fromkeys(open_predicates))
     tokens = [row["token"] for row in (dependency_review or {}).get("ready_obligations", [])
               if isinstance(row, dict) and isinstance(row.get("token"), str) and row["token"].strip()]
-    if local_checks and open_predicates:
+    if any(check["goal_target"] in open_predicates for check in local_checks):
         scope = "LOCAL"
     elif open_predicates:
         scope = "GLOBAL"

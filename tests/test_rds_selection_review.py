@@ -361,7 +361,7 @@ class SelectionReviewTests(unittest.TestCase):
         review = search_directions(graph, context)['selection_review']
         planning = review['planning']
         self.assertEqual(planning['scope'], 'LOCAL')
-        self.assertEqual(planning['local_checks'], [{'candidate': 'route:probe', 'target': 'L1'}])
+        self.assertEqual(planning['local_checks'], [{'candidate': 'route:probe', 'target': 'L1', 'goal_target': 'goal'}])
         self.assertEqual(planning['open_predicates'], ['goal'])
         self.assertEqual(planning['ready_obligations'], [])
         self.assertEqual(planning['omitted_ready_obligations'], 0)
@@ -400,7 +400,7 @@ class SelectionReviewTests(unittest.TestCase):
         # An undeclared affirmative is an open obligation, not vacuous.
         self.assertEqual(review['planning']['scope'], 'GLOBAL')
         self.assertEqual(review['planning']['open_predicates'],
-                         ['affirmation:portable', 'affirmation:applicable'])
+                         ['replay_error', 'affirmation:applicable'])
         context['facts']['replay_error'] = observed(0.05, '/replay_error')
         review = search_directions(graph, context)['selection_review']
         self.assertEqual(review['planning']['open_predicates'], ['affirmation:applicable'])
@@ -534,7 +534,8 @@ class SelectionReviewTests(unittest.TestCase):
         review = search_directions(graph, context)['selection_review']
         planning = review['planning']
         self.assertEqual(planning['scope'], 'LOCAL')
-        self.assertEqual(planning['local_checks'], [{'candidate': 'route:probe', 'target': 'unrestricted_lower'}])
+        self.assertEqual(planning['local_checks'], [{'candidate': 'route:probe', 'target': 'unrestricted_lower',
+                                                   'goal_target': 'completion_standard'}])
         self.assertEqual(planning['open_predicates'], ['completion_standard'])
         self.assertEqual(planning['ready_obligations'],
                          [row['token'] for row in review['dependency_review']['ready_obligations'][:8]])

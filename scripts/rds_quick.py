@@ -1300,10 +1300,17 @@ def brief(root, value, version, formal=False):
             if 'goal' in selection:
                 summary['goal_input_status'] = selection['goal']['status']
             if 'planning' in selection:
-                planning = selection['planning']
+                owner = value.get('advisor') or value
+                planning = (owner.get('planning', selection['planning'])
+                            if owner.get('assurance') == 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
+                            else selection['planning'])
                 checks = [{'candidate': row['candidate'][:64],
+                           **({'candidate_truncated': True} if len(row['candidate']) > 64 else {}),
                            'target': row['target'][:128],
-                           **({'target_truncated': True} if len(row['target']) > 128 else {})}
+                           **({'target_truncated': True} if len(row['target']) > 128 else {}),
+                           **({'goal_target': row['goal_target'][:128],
+                               **({'goal_target_truncated': True} if len(row['goal_target']) > 128 else {})}
+                              if 'goal_target' in row else {})}
                           for row in planning.get('local_checks', [])[:8]]
                 open_predicates = [name[:128] for name in planning.get('open_predicates', [])[:8]]
                 summary['planning'] = {'scope': planning.get('scope'),

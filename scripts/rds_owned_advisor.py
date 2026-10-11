@@ -621,10 +621,6 @@ def review(store, persist=True):
             result['tool_utilization'] = consumption(store, state, context['facts'], tool_reports, selection, searches)
         result['warnings'] = deepcopy(selection.get('flags', []))
         result['next_move'] = deepcopy(selection.get('next_move'))
-        result['planning'] = deepcopy(selection.get('planning', {'scope': 'UNSCOPED',
-            'local_checks': [], 'open_predicates': [], 'ready_obligations': [],
-            'omitted_ready_obligations': 0, 'assurance': 'INPUT_REPORTED_NOT_SCIENTIFIC_VERIFICATION',
-            'authorization': 'UNCHANGED'}))
         ready = {c['action']['id']: c for search in searches for c in search['candidates'] if c['status'] == 'READY'}
         active = [r for r in policy['routes'] if run_index.get(r['manifest']['id'], {}).get('status') in {'RESERVED', 'RUNNING'}
                   and r['candidate'] in ready]
@@ -757,6 +753,13 @@ def review(store, persist=True):
             except (ValueError, KeyError, TypeError, OSError) as exc:
                 result.update(status='COLLECTION_FAILED', selected_run=None, selected_manifest=None)
                 result['warnings'].append({'kind': 'DOMAIN_CONFIRMATION_INTEGRITY', 'error': str(exc)})
+        from rds_advisor_search import _planning_partition
+        admitted_ids = {ready[r['candidate']]['id'] for r in active + eligible}
+        if result['status'] != 'REVIEWED' or selection.get('goal', {}).get('status') == 'TRUE':
+            admitted_ids.clear()
+        result['planning'] = _planning_partition(
+            [c for c in selection.get('candidates', []) if c['id'] in admitted_ids],
+            selection.get('goal'), selection.get('dependency_review'))
     from rds_global_planning import build as shadow_plan
     result['shadow_plan'] = shadow_plan(state, result, admitted_runs=[r['manifest']['id'] for r in active + eligible] if policy else [])
     if persist:
