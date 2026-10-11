@@ -4,6 +4,7 @@ All goals, sources and values are synthetic. A declared obstruction is reported 
 it selects a bounded response, never a diagnosis, installation or new authorization.
 """
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -16,6 +17,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from rds_advisor import RDSAdvisor
 from rds_advisor_search import (GOAL_EVIDENCE_REASON, MOVE_PRESERVE_CLAUSES, OBSTRUCTION_MOVE_TEXT, SPECIFY_CAPABILITY_TEXT,
                                 review_obstructions, search_directions)
+from rds_quick import serialize_brief
 
 
 def route(goal, decision='next', kind='PAIRED_TEST', node='route'):
@@ -368,6 +370,64 @@ class CapabilityRequirementCLITests(unittest.TestCase):
             full = json.loads(Path(summary['record']).read_text(encoding='utf-8'))
             search = next(r['search'] for r in full['recommendations'] if r['type'] == 'EXECUTABLE_DIRECTION_SEARCH')
             self.assertEqual(search['selection_review'], first)
+
+    def test_real_brief_bytes_and_deciding_fields_across_path_lengths(self):
+        goal = DEEP_LEARNING[0]
+        ctx = context(*DEEP_LEARNING)
+        ctx['obstructions'] = [obstruction(goal, 'UNSUPPORTED_OPERATION', requirement=REQUIREMENT,
+                                           signals=['trajectory_degradation'])]
+        # Keep the bare project path at 45 characters, independent of the runner's username.
+        parent = Path(tempfile.gettempdir()).resolve()
+        while len(str(parent)) + 9 > 45:
+            parent = parent.parent
+        for base_length, suffix in ((45, ''), (46, ''), (45, 'p' * 80),
+                                    (45, 'p' * 90 + '/' + 'p' * 90)):
+            prefix = 'r' * (base_length - len(str(parent)) - 9)
+            with tempfile.TemporaryDirectory(dir=parent, prefix=prefix) as raw:
+                self.assertEqual(len(raw), base_length)
+                with self.subTest(base_length=base_length, suffix=suffix):
+                    project = Path(raw) / suffix
+                    project.mkdir(parents=True, exist_ok=True)
+                    (project / 'context.json').write_text(json.dumps(ctx), encoding='utf-8')
+                    (project / 'graph.json').write_text(json.dumps(route(goal)), encoding='utf-8')
+                    argv = [sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(project),
+                            'advise', '--context', str(project / 'context.json'),
+                            '--graph', str(project / 'graph.json')]
+                    full_proc = subprocess.run(argv, cwd=ROOT, capture_output=True, timeout=20)
+                    proc = subprocess.run([*argv, '--brief'], cwd=ROOT, capture_output=True, timeout=20)
+                    self.assertEqual(full_proc.returncode, 0, full_proc.stderr)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    full = json.loads(full_proc.stdout)
+                    full.pop('workflow')  # The CLI adds this banner after saving the exact advice.
+                    summary = json.loads(proc.stdout)
+                    self.assertEqual(proc.stdout, serialize_brief(summary, newline=True).encode('utf-8'))
+                    search = next(r['search'] for r in full['recommendations']
+                                  if r['type'] == 'EXECUTABLE_DIRECTION_SEARCH')
+                    review = search['selection_review']
+                    self.assertEqual(summary['next_move'], review['next_move']['kind'])
+                    self.assertEqual(summary['next_move_detail'], {
+                        k: review['next_move'][k] for k in ('reason', 'basis', 'source')})
+                    self.assertEqual(summary['selection_basis'], review['basis'])
+                    self.assertEqual(summary['analysis_coverage'], {
+                        'status': 'FULL', 'full': True, 'graph_count': 1, 'node_count': 1, 'edge_count': 0})
+                    flags = [f['kind'] for r in full['recommendations']
+                             for f in r.get('review', {}).get('flags', [])]
+                    flags += [f['kind'] for f in review['flags']]
+                    self.assertEqual(summary['flags'], list(dict.fromkeys(flags))[:3])
+                    self.assertEqual(summary['goal_input_status'], review['goal']['status'])
+                    record = Path(summary['record'])
+                    self.assertEqual(record.parent, project / '.rds' / 'cas')
+                    saved = record.read_bytes()
+                    self.assertEqual(json.loads(saved), full)
+                    self.assertEqual(summary['sha256'], hashlib.sha256(saved).hexdigest())
+                    self.assertEqual(record.name, summary['sha256'] + '.json')
+                    if len(str(project)) <= 126:
+                        self.assertLess(len(proc.stdout), 1024)
+                        if suffix:
+                            self.assertNotIn('planning', summary)
+                    else:
+                        # Required deciding fields and the exact locator may exceed the display budget.
+                        self.assertGreaterEqual(len(proc.stdout), 1024)
 
     def test_malformed_obstructions_are_rejected_with_the_field_name(self):
         goal = DEEP_LEARNING[0]

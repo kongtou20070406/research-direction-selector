@@ -2030,7 +2030,7 @@ def _main():
         if args.command == 'rsi' and args.action == 'discover':
             compact = False  # Discovery is already bounded and must expose the requested signatures.
         if compact:
-            from rds_quick import brief
+            from rds_quick import brief, compact_brief_planning, serialize_brief
             summary = brief(args.root, result, VERSION)
             if workflow is not None:
                 # Full commands remain in the saved report/discovery response;
@@ -2043,7 +2043,8 @@ def _main():
                                                       'variability', 'plan_id', 'execution_started', 'total_budget')})
                 summary['wall_seconds'] = {k: result[k]['wall_seconds'] for k in ('baseline', 'candidate')}
                 summary['reasons'] = result['reasons']
-            print(json.dumps(summary, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            compact_brief_planning(summary)
+            print(serialize_brief(summary))
         else:
             # Hashed receipts/events keep their exact body; the mode banner is
             # separate. Operational un-hashed responses can carry discovery data.

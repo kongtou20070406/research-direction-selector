@@ -21,7 +21,8 @@ run. A receipt's successful process status can coexist with a failed goal.
 | --- | --- |
 | `scope` | Frozen decision/goal revision, contract, structure scope, dependency snapshot and owned report fingerprint. Scope identity and collection freshness are separate. |
 | `goals` | Declared predicates, TRUE/FALSE/UNKNOWN comparison and the program-collected fact with its original hash/location. Includes effective confirmation predicates when configured. |
-| `selection` | Final owned `selected_run`, `next_move`, status and selection basis. No new selector and no extra permission. |
+| `selection` | Final owned `selected_run`, `next_move`, status, selection basis and the derived `planning` partition. No new selector and no extra permission. |
+| `selection.planning` | `scope` is `LOCAL` only when a ready check's declared `goal_target` matches an open predicate, `GLOBAL` when predicates remain without such a check, and `UNSCOPED` otherwise. `local_checks` retain the candidate, local `target` (`goal_contribution.path[0]`) and declared `goal_target`; owned checks are filtered after resource, control, feasibility, steering and integrity gates. `open_predicates` retain non-TRUE goal facts and non-affirming facts in declared Triple Affirmative groups; `affirmation:<name>` represents an undeclared group only. `ready_obligations` holds at most 8 tokens, with the rest counted in `omitted_ready_obligations`. A declaration never supplies evidence or closes a predicate. |
 | `shadow_plan` | Bounded global milestone/alternative/jump summary and comparison with the original selection. Expand with `project plan --shadow`; its heuristic never changes execution admission. |
 | `budget` | Current caps, measured spending, conservative charges, reservations and remaining resources, with units. Reading the projection does not charge another structure operation. |
 | `unresolved_hypotheses` | Same-scope pending or UNKNOWN proposals, executable discriminator if available, exact hypothesis identity and existing route constraint. These are declarations, not accepted explanations. |
@@ -29,6 +30,36 @@ run. A receipt's successful process status can coexist with a failed goal.
 | `scoped_feedback` | Original measurement replay, effective versus original observation, goal status, declared condition/prediction, exact trigger, blocked hypothesis key and original output/receipt locators. |
 | `route_review` | Existing conditional route-review flags and checkpoint/witness identities, including REOPEN_REVIEW when the existing gate permits it. |
 | `operational_results` | Receipt identities, execution failure/timeout/exit status separately from scientific refutation. |
+
+For direction-search `advise --brief`, the planning digest omits empty lists and
+unused counters. Its top-level `planning` display has this schema; the full
+owned report retains exact predicate identities. An oversized working-set
+selection retains `selection.planning.scope`, `details_omitted: true` and a
+hash-bound `original` locator for the complete partition:
+
+| Brief field | Consumer meaning |
+| --- | --- |
+| `planning.scope` | The unchanged `LOCAL`, `GLOBAL` or `UNSCOPED` partition. |
+| `planning.open_predicates` | Up to eight strings, each capped at 128 characters. Clipped strings are display labels, not exact identities; distinct IDs can share a label. Empty lists may be omitted. |
+| `planning.open_predicates_omitted` | Predicates outside the initial eight plus entries removed by CLI compaction. Character clipping does not increment this count. |
+| `planning.open_predicates_truncated` | Nonzero count of IDs clipped among the initial eight. Absent when none are clipped; retained even when later compaction removes their display strings. Read the exact IDs from `record`. |
+| `planning.local_checks` / `planning.local_checks_omitted` | Up to eight candidate/target/goal_target displays, with omitted-entry counts. Candidates are capped at 64 characters with `candidate_truncated: true` when clipped; local targets and declared goal targets at 128 with `target_truncated: true` or `goal_target_truncated: true` when clipped. Exact identities remain in `record`. |
+| `planning.ready_obligations` / `planning.omitted_ready_obligations` | Ready tokens and omitted-entry counts, including tokens removed by CLI compaction. |
+| `planning.details_omitted` | `true` when only scope and any nonzero truncation alert remain. Full details are in `record`. |
+
+After adding workflow metadata, the CLI reduces planning lists
+against the actual serialized UTF-8 size, including the absolute record path and
+newline. Omission counts include entries removed from this display. If those
+counts still crowd out the decision, only `scope`, `details_omitted: true` and
+any nonzero `open_predicates_truncated` remain. If that minimal block still
+exceeds the budget but the deciding fields fit alone, the CLI omits `planning`
+entirely; its scope, identities and counts remain in the full `record`.
+The move explanation, analysis
+coverage and exact saved `record` locator
+stay intact; the full planning partition is unchanged in that record. This
+display budget does not cap the complete working-set or owned-report output.
+If the required decision fields and absolute locator alone exceed the budget,
+they remain visible; planning compaction cannot bound arbitrarily long paths.
 
 Each list contains at most four entries and reports exact `total` and `omitted`
 counts. An omitted section has a hash-bound full `original` in the existing CAS.
