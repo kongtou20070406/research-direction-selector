@@ -182,8 +182,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         child.mkdir(parents=True)
         child_store = ProjectStore(child)
         child_store.state_dir.mkdir(parents=True)
-        with sqlite3.connect(child_store.path):
-            pass
+        sqlite3.connect(child_store.path).close()
         self.assertEqual(read_pointer(child)['event_digest'], read_pointer(self.root)['event_digest'])
         with self.assertRaisesRegex(ValueError, 'identity does not match'):
             child_store.initialize(self.contract)
