@@ -199,6 +199,8 @@ def initialize(store, recipe_path, *, separate_reason=None):
     enforce(store.root)
     from rds_project_lifecycle import check_root
     check_root(store.root, separate_reason=separate_reason)
+    from rds_workspace import check_admission
+    check_admission(store.root, separate_project=separate_reason is not None)
     source = Path(recipe_path).resolve()
     raw = _read(source)
     recipe = strict_json(raw.decode('utf-8-sig'))

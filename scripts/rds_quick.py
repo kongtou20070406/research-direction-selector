@@ -277,6 +277,8 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
     authority. The child still has its own frozen command and run admission.
     """
     store = ProjectStore(root)
+    from rds_workspace import check_admission
+    check_admission(root)
     with (store._db() if _parent_db is None else nullcontext(_parent_db)) as db:
         if _parent_db is None:
             db.execute('BEGIN IMMEDIATE')
@@ -339,6 +341,7 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                 require(Path(prior['job_root']).is_dir(),
                         'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
                 child = ProjectStore(prior['job_root'])
+                check_admission(child.root)
                 require(child.path.is_file(), 'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
                 from rds_project import load_json
                 stored = load_json(child.root / 'rds-exec-request.json')
@@ -756,6 +759,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 require(intent['request_sha256'] == digest(intent['request']) and
                         intent['request']['job_root'] == (root / '.rds/exec/tool-check').relative_to(parent.root).as_posix(),
                         'Native preparation intent or workspace changed')
+    from rds_workspace import check_admission, read_pointer
+    check_admission(root)
     check_source_root()
     require(root.is_dir(), 'Source root must exist')
     owner = Path(args.ledger).resolve() if review is not None else None
@@ -884,6 +889,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
         request['research_context'] = {'sha256': digest(review[1]), 'candidate': args.choose,
                                        'ledger': str(Path(args.ledger).resolve())}
         request['research_context']['dependency_snapshot_sha256'] = review[1].get('dependency_snapshot_sha256')
+    if owner is not None:
+        check_admission(owner)
     execution_policy, executor_sha256 = None, None
     if owner is not None:
         parent = ProjectStore(owner)
@@ -942,6 +949,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 for scope in (root, getattr(args, 'ledger', None), _native_preparation_root):
                     if scope is not None:
                         require(campaign_binding(scope) is None, 'Bound campaign refuses detached QUICK preparation')
+                for parent_root in parent_contracts:
+                    check_admission(parent_root)
                 for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
                     parent = ProjectStore(parent_root)
                     create_anchor = not parent.path.is_file()
@@ -1002,6 +1011,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 guard_ref = json.loads(event['body'])['report'] if event is not None else None
             _complete_prospective(workspace, request, result['receipt'], result.get('regression_review'), guard_ref)
             return result
+        check_admission(workspace)
         state = ProjectStore(workspace).snapshot(check_bindings=True)
         require(not state['binding_check']['errors'], 'Frozen job bindings changed')
         receipt = next((r for r in state['receipts'] if r['run_id'] == args.name), None)
@@ -1137,7 +1147,15 @@ def execute(args, review=None, *, _native_preparation_root=None):
             contract['objective_sha256'] = request['objective_sha256']
         if execution_policy is not None:
             contract['execution_policy'] = deepcopy(execution_policy)
-        store.initialize(contract)
+        bound_owner = (ProjectStore(owner) if owner is not None
+                       and workspace.is_relative_to(owner / '.rds' / 'exec')
+                       and read_pointer(owner) is not None else False)
+        store.initialize(contract, fresh_workspace=bound_owner,
+                         _fresh_workspace_admission=(locked_parents[owner], request) if bound_owner else None)
+        if owner is not None:
+            from rds_workspace import bind as bind_workspace
+            check_admission(owner)
+            bind_workspace(workspace)
         manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
                     'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
                     'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,

@@ -140,7 +140,8 @@ def engine_id():
                    "methods": digest((here / "rds_methods.py").read_bytes()),
                    "direction_search": digest((here / "rds_advisor_search.py").read_bytes()),
                    "direction_advisor": digest((here / "rds_advisor.py").read_bytes()),
-                   "usage": digest((here / "rds_usage.py").read_bytes()),
+                    "usage": digest((here / "rds_usage.py").read_bytes()),
+                    "workspace": digest((here / "rds_workspace.py").read_bytes()),
                    "guard": digest((here / "rds_guard.py").read_bytes()),
                    "probe": digest((here / "rds_probe.py").read_bytes()),
                    "formal_kernel": digest((here / "rds_formal_kernel.py").read_bytes()),
@@ -205,6 +206,10 @@ class RDSState:
         if not readonly:
             from rds_campaign import enforce
             enforce(self.root, kind='reference')
+            from rds_workspace import check_admission, read_pointer
+            check_admission(self.root)
+            require(read_pointer(self.root) is None,
+                    'A bound workspace uses its canonical project ledger; reference accounting is refused')
         if create:
             require(not (self.directory / "contract.json").exists(),
                     "Legacy v5 JSON state found; preserve it and initialize a new root")
@@ -1187,6 +1192,8 @@ def cmd_project(args):
                     'next_move': 'Instruction is retained; read project steering using the received revision.'}
         return result
     if args.action == "init":
+        from rds_workspace import check_admission
+        check_admission(store.root, supersedes=args.supersedes, separate_project=args.separate_project is not None)
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
             require(args.mode != 'quick', 'A recipe creates a FULL project with program-owned Advisor')
@@ -1652,6 +1659,13 @@ def parser():
     for child in hook_actions.choices.values():
         child.add_argument("--json", action="store_true")
 
+    workspace = commands.add_parser("workspace", help="Bind this workspace to one canonical project ledger (#282); identity, not authority")
+    workspace_actions = workspace.add_subparsers(dest="action", required=True)
+    workspace_actions.add_parser("bind", help="Bind once to the existing ledger; idempotent recovery on re-run")
+    workspace_actions.add_parser("coverage")
+    for child in workspace_actions.choices.values():
+        child.add_argument("--json", action="store_true")
+
     checkpoints = commands.add_parser("checkpoint", help="Record decisions and recover against live project state")
     cp_actions = checkpoints.add_subparsers(dest="action", required=True)
     for action in ("save", "restore"):
@@ -1969,6 +1983,12 @@ def _main():
                 result = coverage(args.root)
             else:
                 result = validate_request(args.root, load_spec(args.request))
+        elif args.command == "workspace":
+            from rds_workspace import bind as bind_workspace, coverage as workspace_coverage
+            if args.action == "bind":
+                result = bind_workspace(args.root)
+            else:
+                result = workspace_coverage(args.root)
         elif args.command == "checkpoint":
             result = cmd_checkpoint(args, rds)
         elif args.command == "artifacts":
@@ -2037,6 +2057,8 @@ def _main():
                                               or result.get('status') == 'CONFLICT'):
             return 2
         if args.command == 'host-hook' and result.get('status') == 'HOST_GUARD_MISSING':
+            return 2
+        if args.command == 'workspace' and args.action == 'coverage' and result.get('status') == 'MISMATCH':
             return 2
         if args.command == 'rsi' and args.action == 'validate':
             return {'LOCAL_CASES_PASSED': 0, 'FAILED': 1, 'UNKNOWN': 2}[result['status']]

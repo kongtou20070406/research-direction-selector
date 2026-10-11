@@ -94,6 +94,50 @@ class QuickTests(unittest.TestCase):
     def policy_options(self):
         return ['--context', str(self.context_path), '--graph', str(self.graph_path), '--ledger', str(self.ledger)]
 
+    def test_bound_external_budget_owner_preserves_child_identity_and_same_name_charge(self):
+        from rds_workspace import bind, read_pointer
+        self.initialize_policy_ledger()
+        bind(self.ledger)
+        self.script('print("external owner")\n')
+        result = json.loads(self.job('external-bound', True, *self.policy_options()).stdout)
+        child = self.root / '.rds/exec/external-bound'
+        self.assertNotEqual(read_pointer(child)['event_digest'], read_pointer(self.ledger)['event_digest'])
+        store = ProjectStore(self.ledger)
+        before = store.snapshot()['budget']
+        again = json.loads(self.job('external-bound', True, *self.policy_options()).stdout)
+        self.assertEqual(result['run_status'], 'SUCCEEDED')
+        self.assertFalse(json.loads(Path(again['record']).read_text(encoding='utf-8'))['execution_started'])
+        self.assertEqual(store.snapshot()['budget'], before)
+
+    def test_bound_source_budget_owner_admits_frozen_child_and_refuses_missing_child_ledger(self):
+        from rds_workspace import bind, read_pointer
+        self.initialize_policy_ledger()
+        bind(self.ledger)
+        (self.ledger / 'child.py').write_text('print("contained child")\n', encoding='utf-8')
+        options = ('exec', '--name', 'contained', '--timeout', '5', '--', sys.executable, '-B', 'child.py')
+        first = json.loads(self.call(*options, root=self.ledger).stdout)
+        child = self.ledger / '.rds/exec/contained'
+        self.assertEqual(first['run_status'], 'SUCCEEDED')
+        self.assertNotEqual(read_pointer(child)['event_digest'], read_pointer(self.ledger)['event_digest'])
+        before = ProjectStore(self.ledger).snapshot()['budget']
+        self.call(*options, root=self.ledger)
+        self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
+        ProjectStore(child).path.unlink()
+        refused = self.call(*options, root=self.ledger, ok=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('missing', refused.stderr)
+        self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
+
+    def test_bound_budget_owner_missing_ledger_refuses_before_materialization(self):
+        from rds_workspace import bind
+        self.initialize_policy_ledger()
+        bind(self.ledger)
+        ProjectStore(self.ledger).path.unlink()
+        refused = self.job('missing-bound-owner', False, *self.policy_options())
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertFalse((self.root / '.rds/exec/missing-bound-owner').exists())
+        self.assertFalse(ProjectStore(self.ledger).path.exists())
+
     def test_policy_failed_dispatch_cannot_reset_with_names_facts_ids_or_timeout(self):
         self.initialize_policy_ledger()
         marker = self.root / 'launch-marker'
@@ -324,6 +368,7 @@ raise SystemExit(rds_cli.main())
         self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
 
     def test_policy_guarded_success_reuses_original_review_and_missing_review_refuses(self):
+        from rds_workspace import _write_pointer, check_admission, read_pointer
         self.initialize_policy_ledger()
         marker = self.root / 'guard-launch-marker'
         comparison = {'question_id': 'fixture', 'goal_revision': 'fixed', 'scope': {'domain': 'fixture'},
@@ -348,10 +393,21 @@ raise SystemExit(rds_cli.main())
         self.assertEqual(reused['receipt']['sha256'], saved['receipt']['sha256'])
         self.assertFalse(marker.exists())
         self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
-        with child._db() as db:
-            # Model the post-command/pre-review crash window in this disposable ledger.
+        pointer = read_pointer(child.root)
+        # Restore a consistent post-command/pre-review snapshot in this disposable
+        # fixture; supported writes must still refuse a ledger-only rollback.
+        with closing(sqlite3.connect(child.path)) as db, db:
+            review_id = db.execute(
+                "SELECT id FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW'").fetchone()[0]
+            self.assertEqual(db.execute('SELECT MAX(id) FROM events').fetchone()[0], review_id)
+            self.assertEqual(pointer['event_id'], review_id)
+            trigger = db.execute("SELECT sql FROM sqlite_master WHERE name='events_no_delete'").fetchone()[0]
             db.execute('DROP TRIGGER events_no_delete')
             db.execute("DELETE FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW'")
+            db.execute(trigger)
+            restored_event_id = db.execute('SELECT MAX(id) FROM events').fetchone()[0]
+        _write_pointer(child.root, {**pointer, 'event_id': restored_event_id})
+        check_admission(child.root)
         rejected = self.job('guard-unfinished', False, *options)
         self.assertIn('Guard review is unfinished', rejected.stderr)
         self.assertFalse(marker.exists())
