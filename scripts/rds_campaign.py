@@ -4,7 +4,7 @@ Markers contain identity pointers only. They neither copy research state nor
 protect against direct SQL, backup rollback, or same-user removal of markers.
 SQLite access here is deliberately raw to avoid recursion through store guards.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from collections import deque
 import os
 from pathlib import Path
@@ -85,6 +85,15 @@ def _read(path):
 
 @contextmanager
 def _database(project, *, write=False):
+    from rds_mutation import mutation
+    # Match store writers: acquire mutation before SQLite, through close.
+    with (mutation() if write else nullcontext()):
+        with _open_database(project, write=write) as db:
+            yield db
+
+
+@contextmanager
+def _open_database(project, *, write=False):
     project = Path(project).resolve()
     path = project / '.rds' / 'project.sqlite3'
     require(path.is_file() and path.resolve().is_relative_to(project), 'Original campaign project ledger is missing')
