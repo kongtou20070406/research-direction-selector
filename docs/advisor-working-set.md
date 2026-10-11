@@ -49,7 +49,10 @@ After adding workflow metadata, the CLI reduces planning lists
 against the actual serialized UTF-8 size, including the absolute record path and
 newline. Omission counts include entries removed from this display. If those
 counts still crowd out the decision, only `scope`, `details_omitted: true` and
-any nonzero `open_predicates_truncated` remain. The move explanation, analysis
+any nonzero `open_predicates_truncated` remain. If that minimal block still
+exceeds the budget but the deciding fields fit alone, the CLI omits `planning`
+entirely; its scope, identities and counts remain in the full `record`.
+The move explanation, analysis
 coverage and exact saved `record` locator
 stay intact; the full planning partition is unchanged in that record. This
 display budget does not cap the complete working-set or owned-report output.

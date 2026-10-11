@@ -1199,6 +1199,12 @@ def _brief_move(summary, move):
         summary.pop('next_move_detail', None)
 
 
+def serialize_brief(summary, *, newline=False):
+    """Share CLI JSON formatting and account for print's platform newline."""
+    raw = json.dumps(summary, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+    return raw + os.linesep if newline else raw
+
+
 def compact_brief_planning(summary):
     """Fit display-only planning around exact locators and deciding observations."""
     planning = summary.get('planning')
@@ -1206,8 +1212,7 @@ def compact_brief_planning(summary):
         return
     # Match CLI serialization, including its newline and platform-dependent path.
     def fits():
-        return len(json.dumps(summary, ensure_ascii=False, separators=(',', ':'),
-                              allow_nan=False).encode('utf-8')) + 1 < 1024
+        return len(serialize_brief(summary, newline=True).encode('utf-8')) < 1024
 
     for key, omitted in (('ready_obligations', 'omitted_ready_obligations'),
                          ('local_checks', 'local_checks_omitted'),
@@ -1222,6 +1227,11 @@ def compact_brief_planning(summary):
         summary['planning'] = {'scope': planning.get('scope'), 'details_omitted': True}
         if planning.get('open_predicates_truncated'):
             summary['planning']['open_predicates_truncated'] = planning['open_predicates_truncated']
+    if not fits():
+        minimal = summary.pop('planning')
+        # Keep the scope/alert only when required fields alone exceed the budget.
+        if not fits():
+            summary['planning'] = minimal
 
 
 def brief(root, value, version, formal=False):
