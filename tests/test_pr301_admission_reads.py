@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -72,8 +73,12 @@ class AdmissionReadTests(unittest.TestCase):
         self.assertEqual(workspace.coverage(self.root)['status'], 'BOUND')
 
     def test_admission_waits_for_progress_commit(self):
+        # Admission returns a resolved root. On Windows, TEMP may be spelled in
+        # 8.3 short form while resolve() yields the long name, so both sides are
+        # normalized the same way test_rds_workspace compares the same value.
         self.observation_during_publication(
-            lambda: str(workspace.check_admission(self.root).root), str(self.root))
+            lambda: os.path.normcase(str(workspace.check_admission(self.root).root)),
+            os.path.normcase(str(Path(self.root).resolve())))
 
     def test_coverage_waits_for_progress_commit(self):
         self.observation_during_publication(lambda: workspace.coverage(self.root)['status'], 'BOUND')
