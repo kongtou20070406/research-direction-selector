@@ -336,6 +336,14 @@ def _refuse_active_descendants(root):
                                     "AND json_extract(m.body,'$.job_root')=json_extract(a.body,'$.job_root') "
                                     "AND json_extract(m.body,'$.request_sha256')=json_extract(a.body,'$.request_sha256')) "
                                     "LIMIT 1").fetchone()
+                            if not active:
+                                active = db.execute(
+                                    "SELECT 1 FROM events p WHERE json_extract(p.body,'$.kind')='METHOD_REVISION_PREPARED' "
+                                    "AND NOT EXISTS (SELECT 1 FROM events a "
+                                    "WHERE json_extract(a.body,'$.kind')='METHOD_REVISION_ADOPTED' "
+                                    "AND json_extract(a.body,'$.id')=json_extract(p.body,'$.id') "
+                                    "AND json_extract(a.body,'$.prepared_sha256')=json_extract(p.body,'$.sha256')) "
+                                    "LIMIT 1").fetchone()
                         _check_bind_deadline(deadline)
                         require(not active,
                                 f'Cannot bind workspace with an active descendant: {directory.parent}; '
