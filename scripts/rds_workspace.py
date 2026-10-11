@@ -241,6 +241,7 @@ def bind(root):
             pointer = {"schema": SCHEMA, "assurance": ASSURANCE, "ledger_sha256": ledger_sha,
                        "contract_sha256": identity["contract_sha256"], "event_digest": event_digest,
                        "event_id": max_id}
+        db.workspace_binding_digest = event_digest
         if pointer != current:
             _write_pointer(root, pointer)
         # The binding event already anchors these exact pending rows. Normal
@@ -316,11 +317,13 @@ def _anchor_transaction(root, db):
     """
     if not db.in_transaction:
         return
+    binding_digest = db.workspace_binding_digest
+    # Only bind's writer-locked publication may validate a pending identity.
+    # Other writers must compare the pointer with committed progress, so their
+    # new events cannot hide an earlier uncertain commit or restored snapshot.
+    if binding_digest is None and (not db.workspace_materializing or pointer_path(root).is_file()):
+        check_admission(root)
     if not pointer_path(root).is_file():
-        # Generic writers inherit ancestor admission. Only the separately
-        # validated initial QUICK connection may materialize without a pointer.
-        if not db.workspace_materializing:
-            check_admission(root)
         return
     # Validate the effective pointer against this transaction's view: the
     # initial binding event is not yet visible to a separate read connection.
@@ -331,6 +334,8 @@ def _anchor_transaction(root, db):
     event = json.loads(row['body']) if row is not None else None
     require(event is not None and event.get('event_digest') == pointer.get('event_digest'),
             'Workspace ledger identity does not match; accounting resets are refused')
+    require(binding_digest is None or binding_digest == event.get('event_digest'),
+            'Workspace binding transaction identity does not match')
     require(event.get('root') == str(Path(root).resolve()), 'Workspace ledger belongs to another root')
     max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
     anchor = pointer.get('event_id')
@@ -360,12 +365,14 @@ class _AnchoredConnection(sqlite3.Connection):
         result = super().commit()
         self.committed_changes = self.total_changes
         self.workspace_materializing = False
+        self.workspace_binding_digest = None
         return result
 
     def rollback(self):
         result = super().rollback()
         self.committed_changes = self.total_changes
         self.workspace_materializing = False
+        self.workspace_binding_digest = None
         return result
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -375,6 +382,7 @@ class _AnchoredConnection(sqlite3.Connection):
         result = super().__exit__(exc_type, exc_value, traceback)
         self.committed_changes = self.total_changes
         self.workspace_materializing = False
+        self.workspace_binding_digest = None
         return result
 
 
@@ -390,6 +398,7 @@ def connect(root, database, *, _materialization=None, **kwargs):
     db.workspace_root = Path(root).resolve()
     db.committed_changes = db.total_changes
     db.workspace_materializing = _materialization is not None
+    db.workspace_binding_digest = None
     return db
 
 

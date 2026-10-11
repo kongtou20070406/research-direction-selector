@@ -104,6 +104,26 @@ class BindingPublicationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             workspace.check_admission(self.root)
 
+    def test_preopened_writer_cannot_cover_uncertain_progress_with_new_event(self):
+        workspace.bind(self.root)
+        publish = workspace._write_pointer
+
+        def uncertain_advance(root, pointer):
+            publish(root, pointer)
+            raise OSError('uncertain progress publication')
+
+        with self.store._db() as preopened:
+            with patch.object(workspace, '_write_pointer', side_effect=uncertain_advance):
+                with self.assertRaisesRegex(OSError, 'uncertain progress publication'):
+                    with self.store._db() as spending:
+                        spending.execute("UPDATE budget SET charged=charged+1 WHERE resource='wall_seconds'")
+            self.assertEqual(workspace.coverage(self.root)['status'], 'MISMATCH')
+            preopened.execute('INSERT INTO events(body) VALUES (?)',
+                              (canonical({'kind': 'UNRELATED_PREOPENED_EVENT'}),))
+            with self.assertRaisesRegex(ValueError, 'snapshot was restored'):
+                preopened.commit()
+        self.assertEqual(workspace.coverage(self.root)['status'], 'MISMATCH')
+
 
 if __name__ == '__main__':
     unittest.main()
