@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ROOT / 'tests'))
 import rds_workspace as workspace
 from rds_host_hook import install
 from rds_rsi import evaluate_candidate
+from rds_meta import apply_rule, rollback_rule
 import test_rds_rsi as rsi_fixture
 import test_pr301_descendant_binding as fixture
 
@@ -69,6 +71,35 @@ class MetaWorkspaceAdmissionTests(unittest.TestCase):
                     install(child.root, strict=False)
         self.assertEqual(guard.read_bytes(), before)
         self.assertFalse((other.root / '.rds/host-guard.json').exists())
+
+    def separate_graph_adoption(self):
+        temporary = tempfile.TemporaryDirectory(prefix='rds-separate-graph-')
+        self.addCleanup(temporary.cleanup)
+        graph_path = Path(temporary.name) / 'graph.json'
+        graph, rule, cases = rsi_fixture.fixture()
+        graph_path.write_text(json.dumps(graph), encoding='utf-8')
+        result = apply_rule(rule, graph_path, evaluation=evaluate_candidate(rule, graph, cases),
+                            cases=cases, record_dir=self.child.root / '.rds/rsi')
+        self.assertTrue(result['adopted'])
+        workspace.bind(self.f.root)
+        return graph_path, result['record_path']
+
+    def test_rollback_api_retains_adoption_owner_for_separate_graph(self):
+        graph, record = self.separate_graph_adoption()
+        before = graph.read_bytes(), Path(record).read_bytes()
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            rollback_rule(record)
+        self.assertEqual((graph.read_bytes(), Path(record).read_bytes()), before)
+        self.assertFalse((graph.parent / '.rds').exists())
+
+    def test_rollback_cli_retains_explicit_root_for_separate_graph(self):
+        graph, record = self.separate_graph_adoption()
+        before = graph.read_bytes(), Path(record).read_bytes()
+        result = self.call('meta', 'rollback-rule', '--record', record)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('identity does not match', result.stderr + result.stdout)
+        self.assertEqual((graph.read_bytes(), Path(record).read_bytes()), before)
+        self.assertFalse((graph.parent / '.rds').exists())
 
 
 if __name__ == '__main__':

@@ -397,7 +397,7 @@ def rollback_rule(record_path, graph_path=None, dry_run=False, *, record_dir=Non
               "restored_raw_sha256": digest(original), "adoption_record": str(Path(record_path).resolve())}
     if not dry_run:
         directory = _records_dir(path, record_dir)
-        with _graph_lock(directory):
+        with _workspace_publication(record_path), _graph_lock(directory):
             current = path.read_bytes()
             require(digest(current) == record["after_raw_sha256"], "Graph changed before rollback")
             rollback = {"status": "PREPARED_ROLLBACK", "adoption_record": result["adoption_record"],

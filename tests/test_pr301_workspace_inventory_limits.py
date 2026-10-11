@@ -1,5 +1,6 @@
 """Incomplete binding preflight must refuse without publishing an identity."""
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -55,6 +56,16 @@ class WorkspaceInventoryLimitsTests(unittest.TestCase):
     def test_oversize_ledger_refuses_before_binding(self):
         with patch.object(workspace, 'MAX_BIND_LEDGER_BYTES', 1, create=True):
             self.refused_unchanged('ledger size bound')
+
+    def test_hard_linked_ledger_refuses_before_binding(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix='rds-ledger-alias-') as directory:
+            alias = Path(directory) / 'alias.sqlite3'
+            os.link(self.store.path, alias)
+            self.assertGreater(self.store.path.stat().st_nlink, 1)
+            self.refused_unchanged('multiple hard links')
+            alias.unlink()
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
 
     def test_small_inventory_preserves_original_file_sha(self):
         (self.root / 'small' / 'nested').mkdir(parents=True)
