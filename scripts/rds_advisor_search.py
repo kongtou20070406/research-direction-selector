@@ -613,6 +613,10 @@ def _planning_partition(candidates, goal, dependency_review):
                 open_predicates.extend(row["fact"] for row in rows if row.get("affirms") != TRUE)
             else:
                 open_predicates.append("affirmation:" + name.lower())
+    completion = (dependency_review or {}).get("goals", {}).get("completion_standard")
+    if (dependency_review or {}).get("completion_standard_bound") is True and completion is not None \
+            and completion.get("status") != "DECLARED_SUPPORTED":
+        open_predicates.append("completion_standard")
     open_predicates = list(dict.fromkeys(open_predicates))
     tokens = [row["token"] for row in (dependency_review or {}).get("ready_obligations", [])
               if isinstance(row, dict) and isinstance(row.get("token"), str) and row["token"].strip()]
@@ -1089,6 +1093,9 @@ def review_selection(search, context, *, _dependency=None, audit_receipts=False,
               "assurance": "INPUT_REPORTED_NOT_SCIENTIFIC_VERIFICATION", "authorization": "UNCHANGED"}
     if dependency is not None:
         review["dependency_review"] = dependency
+        # Retain the binding when Owned Advisor repartitions after admission gates.
+        if isinstance(context.get("objective_binding"), dict) and context["objective_binding"]:
+            dependency["completion_standard_bound"] = True
     if "objective_binding" in context:
         review["objective_binding"] = deepcopy(context["objective_binding"])
     decision = context.get("decision")

@@ -15,6 +15,7 @@ from rds_owned_advisor import review
 from rds_project import ProjectStore, canonical
 from rds_quick import brief, compact_brief_planning
 from test_rds_selection_review import fixture
+from test_rds_goal_dependencies import fixture as completion_fixture
 import test_rds_owned_advisor as owned_fixture
 
 
@@ -41,6 +42,107 @@ def affirmative_check_fixture(group, gap=None):
 
 
 class PlanningReviewTests(unittest.TestCase):
+    def test_bound_completion_without_goal_conditions_stays_visible_and_scoped(self):
+        for status in ('UNKNOWN', 'UNRESOLVED'):
+            with self.subTest(status=status):
+                graph, context = completion_fixture()
+                if status == 'UNRESOLVED':
+                    context['dependency_map']['hyperedges'] = [{'id': 'circular',
+                        'premises': ['unrestricted_lower', 'completion_standard'],
+                        'conclusion': 'completion_standard', 'status': 'SUPPORTED',
+                        'source': 'synthetic circular assumption'}]
+                original = deepcopy((graph, context))
+                search = search_directions(graph, context)
+                selection = search['selection_review']
+                self.assertEqual(search['candidates'][0]['status'], 'READY')
+                self.assertEqual(selection['candidates'][0]['goal_contribution']['status'],
+                                 'DECLARED_PATH' if status == 'UNKNOWN' else 'UNKNOWN')
+                self.assertNotIn('goal', selection)
+                self.assertEqual(selection['dependency_review']['goals']['completion_standard']['status'], status)
+                self.assertEqual(selection['planning']['scope'], 'LOCAL' if status == 'UNKNOWN' else 'GLOBAL')
+                self.assertEqual(selection['planning']['open_predicates'], ['completion_standard'])
+                if status == 'UNKNOWN':
+                    self.assertEqual(selection['planning']['local_checks'][0]['goal_target'], 'completion_standard')
+                else:
+                    self.assertEqual(selection['planning']['local_checks'], [])
+                self.assertEqual(selection['planning']['authorization'], 'UNCHANGED')
+                self.assertEqual(selection['authorization'], 'UNCHANGED')
+                self.assertEqual((graph, context), original)
+
+    def test_closed_completion_does_not_reopen_from_a_declared_local_check(self):
+        for source in ('dependency', 'condition'):
+            with self.subTest(source=source):
+                graph, context = completion_fixture()
+                if source == 'dependency':
+                    next(n for n in context['dependency_map']['nodes']
+                         if n['id'] == 'completion_standard')['status'] = 'SUPPORTED'
+                else:
+                    del context['dependency_map']
+                    context['decision']['goal_conditions'] = [{'fact': 'completion_standard', 'value': True}]
+                    context['facts']['completion_standard'] = observed(True, '/completion_standard')
+                original = deepcopy((graph, context))
+                selection = search_directions(graph, context)['selection_review']
+                self.assertEqual(selection['candidates'][0]['goal_contribution']['status'], 'DECLARED_PATH')
+                self.assertEqual(selection['planning']['scope'], 'UNSCOPED')
+                self.assertEqual(selection['planning']['open_predicates'], [])
+                if source == 'dependency':
+                    self.assertEqual(selection['dependency_review']['goals']['completion_standard']['status'],
+                                     'DECLARED_SUPPORTED')
+                else:
+                    self.assertEqual(selection['goal']['status'], 'TRUE')
+                self.assertEqual((graph, context), original)
+
+    def test_unbound_or_undeclared_completion_is_not_added_to_planning(self):
+        for binding in ('absent', 'empty', 'not_object', 'not_map_goal'):
+            with self.subTest(binding=binding):
+                graph, context = completion_fixture()
+                if binding == 'absent':
+                    del context['objective_binding']
+                elif binding == 'empty':
+                    context['objective_binding'] = {}
+                elif binding == 'not_object':
+                    context['objective_binding'] = 'reported-only'
+                else:
+                    context['dependency_map']['goals'] = ['unrestricted_lower']
+                original = deepcopy((graph, context))
+                selection = search_directions(graph, context)['selection_review']
+                self.assertEqual(selection['planning']['scope'], 'UNSCOPED')
+                self.assertEqual(selection['planning']['open_predicates'], [])
+                self.assertEqual(selection['planning']['local_checks'], [])
+                self.assertEqual((graph, context), original)
+
+    def test_open_completion_requires_ready_declared_path_for_local_scope(self):
+        for gate in ('not_ready', 'undeclared'):
+            with self.subTest(gate=gate):
+                graph, context = completion_fixture()
+                if gate == 'not_ready':
+                    graph['nodes'][0]['executable']['preconditions'] = [{'fact': 'missing', 'value': True}]
+                else:
+                    del graph['nodes'][0]['executable']['action']['goal_contribution']
+                original = deepcopy((graph, context))
+                selection = search_directions(graph, context)['selection_review']
+                self.assertEqual(selection['planning']['scope'], 'GLOBAL')
+                self.assertEqual(selection['planning']['open_predicates'], ['completion_standard'])
+                self.assertEqual(selection['planning']['local_checks'], [])
+                self.assertEqual(selection['dependency_review']['goals']['completion_standard']['status'], 'UNKNOWN')
+                self.assertEqual((graph, context), original)
+
+    def test_completion_deduplicates_existing_predicates_and_survives_admission_filter(self):
+        graph, context = completion_fixture()
+        original = deepcopy((graph, context))
+        selection = search_directions(graph, context)['selection_review']
+        self.assertEqual(selection['planning']['open_predicates'], ['completion_standard'])
+        # Owned Advisor reuses this partition after filtering out unadmitted candidates.
+        from rds_advisor_search import _planning_partition
+        planning = _planning_partition([], selection.get('goal'), selection['dependency_review'])
+        self.assertEqual(planning['scope'], 'GLOBAL')
+        self.assertEqual(planning['open_predicates'], ['completion_standard'])
+        self.assertEqual((graph, context), original)
+        context['decision']['goal_conditions'] = [{'fact': 'completion_standard', 'value': True}]
+        selection = search_directions(graph, context)['selection_review']
+        self.assertEqual(selection['planning']['open_predicates'], ['completion_standard'])
+        self.assertEqual(selection['goal']['status'], 'UNKNOWN')
+
     def test_ready_declared_affirmative_checks_scope_open_facts_locally(self):
         for group in ('portable', 'applicable'):
             for gap in (False, None, 'reported_true'):
