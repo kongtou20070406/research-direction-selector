@@ -14,7 +14,7 @@
 | 自己的科研工作流 | 开一个 issue，说明你的 Agent 在哪里弄丢了运行记录、预算、目标或被否掉的想法，并附上你的设置 | [新建 issue](https://github.com/kongtou20070406/research-direction-selector/issues/new/choose) |
 | 一个下午 | 一个让不用 RDS 的 Agent 得出错误结论的基准任务，附评分器 | [贡献基准任务](#贡献基准任务) |
 | 一个 bug | 复现步骤；能修的话，附上聚焦的修复 | [先说明问题](#先说明问题) |
-| 一个功能想法 | 先开 issue，设计达成一致后再提 PR | [路线计划](docs/roadmap.md)、[5.9 规划](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
+| 一个功能想法 | 先开 issue，设计达成一致后再提 PR | [路线计划](docs/roadmap.md)、[规划](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
 
 准备检出只需要 Git 和 Python 3.11+：
 

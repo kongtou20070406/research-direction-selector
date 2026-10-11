@@ -28,7 +28,7 @@ class ReleaseCompatibilityTests(unittest.TestCase):
 
     def test_public_status_reads_stable_previous_preview_and_current_without_rewriting(self):
         project = self.project()
-        for version in ("5.8.0", "5.9.0-rc.1", cli.VERSION):
+        for version in ("5.8.0", "5.9.0-rc.1", "5.9.0-rc.2", cli.VERSION):
             with self.subTest(version=version):
                 path = self.set_fields(project, version=version)
                 before = path.read_bytes()
@@ -38,7 +38,7 @@ class ReleaseCompatibilityTests(unittest.TestCase):
 
     def test_public_status_rejects_unlisted_versions_without_rewriting(self):
         project = self.project()
-        for version in ("5.9.0-rc.999", "5.9.0", "6.0.0"):
+        for version in ("5.9.0-rc.999", "5.9.0", "6.0.999"):
             with self.subTest(version=version):
                 path = self.set_fields(project, version=version)
                 before = path.read_bytes()
@@ -47,7 +47,7 @@ class ReleaseCompatibilityTests(unittest.TestCase):
 
     def test_read_compatibility_preserves_contract_digest_check(self):
         project = self.project()
-        for version in ("5.8.0", "5.9.0-rc.1", cli.VERSION):
+        for version in ("5.8.0", "5.9.0-rc.1", "5.9.0-rc.2", cli.VERSION):
             with self.subTest(version=version):
                 path = self.set_fields(project, version=version, contract_sha256="0" * 64)
                 before = path.read_bytes()
@@ -56,7 +56,7 @@ class ReleaseCompatibilityTests(unittest.TestCase):
 
     def test_changed_engine_remains_readable_but_blocks_new_admission(self):
         project = self.project()
-        for version in ("5.8.0", "5.9.0-rc.1", cli.VERSION):
+        for version in ("5.8.0", "5.9.0-rc.1", "5.9.0-rc.2", cli.VERSION):
             with self.subTest(version=version):
                 path = self.set_fields(project, version=version, engine_sha256="0" * 64)
                 before = path.read_bytes()

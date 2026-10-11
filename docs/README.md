@@ -16,7 +16,7 @@ Start with [vision and scope](rds-purpose.md): our purpose is better AI assistan
 
 Want to help build the loop? See [Join RDS](RECRUITING.md) for research, engineering, evaluation and documentation contributions.
 
-These guides describe the checkout's documented interfaces. Dated proposals, comparison revisions and benchmark reports retain their original scope; they are not a current release-wide acceptance report. Check the revision you use, its [preview notes](releases/5.9.0-rc.2-preview.md), and the relevant command help.
+These guides describe the checkout's documented interfaces. Dated proposals, comparison revisions and benchmark reports retain their original scope; they are not a current release-wide acceptance report. Check the revision you use, its [preview notes](releases/6.0.0-rc.1-preview.md), and the relevant command help.
 
 | Guide | English | 简体中文 |
 | --- | --- | --- |

@@ -26,12 +26,12 @@ from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
 from rds_mutation import mutation
 
-VERSION = "5.9.0-rc.2"
+VERSION = "6.0.0-rc.1"
 # Reading an explicitly supported ledger does not grant execution admission;
 # the contract digest and engine binding are checked at their existing boundaries.
 READABLE_STATE_VERSIONS = frozenset({
     VERSION, "5.1.0", "5.2.0", "5.3.0", "5.4.0", "5.5.0-rc.1", "5.5.0-rc.2",
-    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1",
+    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1", "5.9.0-rc.2",
 })
 RESOURCES = {"runtime_ms", "runs"}
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",

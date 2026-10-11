@@ -14,7 +14,7 @@ For areas to join and a small first contribution, see [Join RDS](docs/RECRUITING
 | A research workflow | An issue describing where your agent lost track of runs, budgets, goals or rejected ideas, with the setup you used | [New issue](https://github.com/kongtou20070406/research-direction-selector/issues/new/choose) |
 | An afternoon | A benchmark task where an unaided agent reaches a wrong conclusion, with a grader | [Contribute a benchmark task](#contribute-a-benchmark-task) |
 | A bug | A reproduction and, if you can, a focused fix | [Start with the problem](#start-with-the-problem) |
-| A feature idea | An issue first; a PR after the design is agreed | [Roadmap](docs/roadmap.md), [5.9 planning](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
+| A feature idea | An issue first; a PR after the design is agreed | [Roadmap](docs/roadmap.md), [planning](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
 
 To set up a checkout, you need only Git and Python 3.11+:
 

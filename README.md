@@ -118,7 +118,7 @@ RDS is an Advisor-centered research decision system with two cooperating sides a
 
 The loop is **research goal → hypotheses and candidate routes → Advisor review or selection → constrained execution → evidence → continue, reformulate or stop**. Authorized revisions return to the same recorded state and resource accounting; a new proposal does not reset spent budget or verify itself. Project records live in `.rds/`; `references/judgment-graph.yaml` supplies scoped methodology rules, not an automatically rewritten collection of proven causal laws.
 
-The latest stable release is [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0). The development checkout identifies itself as `5.9.0-rc.2`; publication is pending. See the [preview notes](docs/releases/5.9.0-rc.2-preview.md) for its scope and the [evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166) for research-capability claims.
+The latest stable release is [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0). The development checkout identifies itself as `6.0.0-rc.1`, opening a new major generation; publication is pending. See the [preview notes](docs/releases/6.0.0-rc.1-preview.md) for its scope and the [evaluation plan](https://github.com/kongtou20070406/research-direction-selector/issues/166) for research-capability claims.
 
 ---
 

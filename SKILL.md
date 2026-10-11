@@ -2,8 +2,8 @@
 name: research-direction-selector
 description: Collaborate with researchers through proactive discussion and choose or audit theoretical or empirical next steps using scoped evidence, budgets and authorized execution. Supports proof obligations, experiment comparisons, native research records and read-only hypergraph pages with readable explanations; domain-specific solvers and scientific evidence are still required.
 metadata:
-  version: v5.9.0-rc.2
-  engine: rds-cli-v5.9
+  version: v6.0.0-rc.1
+  engine: rds-cli-v6.0
 ---
 
 # Research Direction Selector
