@@ -134,7 +134,72 @@ class WorkspaceAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'identity does not match'):
             child.register(self.helper.spec('r1', 'nonzero'))
         self.assertEqual(child.path.read_bytes(), before)
+
         self.assertEqual(coverage(child.root)['status'], 'MISMATCH')
+
+    def test_generic_writer_refuses_inherited_binding_before_budget_mutation(self):
+        child = self.nested_project()
+        bind(self.root)
+        before = child.snapshot()
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            with child._db() as db:
+                db.execute("UPDATE budget SET charged=charged+1 WHERE resource='wall_seconds'")
+        self.assertEqual(child.snapshot(), before)
+
+    def test_existing_writer_rechecks_new_ancestor_binding_at_commit(self):
+        child = self.nested_project()
+        before = child.snapshot()
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            with child._db() as db:
+                bind(self.root)
+                db.execute("UPDATE budget SET charged=charged+1 WHERE resource='wall_seconds'")
+        after = child.snapshot()
+        after.pop('workspace_binding', None)
+        before.pop('workspace_binding', None)
+        self.assertEqual(after, before)
+
+    def test_structure_request_cannot_charge_a_preexisting_nested_ledger(self):
+        import rds_structure
+        from test_rds_structure import fixture
+        root = fixture.prepare(self.root / 'structure-child')
+        child = ProjectStore(root)
+        bind(self.root)
+        before = child.snapshot()
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            rds_structure.request(root)
+        self.assertEqual(child.snapshot(), before)
+        result = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'scripts' / 'rds_cli.py'),
+             '--root', str(root), 'structure', 'request'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30,
+            env={**os.environ, 'RDS_USAGE_LOG': '0'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('identity does not match', result.stdout + result.stderr)
+        self.assertEqual(child.snapshot(), before)
+
+    def test_recursive_pointer_coverage_returns_json_mismatch(self):
+        bind(self.root)
+        pointer_path(self.root).write_text('[' * 5000 + '0' + ']' * 5000, encoding='utf-8')
+        report = coverage(self.root)
+        self.assertEqual(report['status'], 'MISMATCH')
+        self.assertNotIn('ledger_sha256', report)
+        result = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'scripts' / 'rds_cli.py'),
+             '--root', str(self.root), 'workspace', 'coverage'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30,
+            env={**os.environ, 'RDS_USAGE_LOG': '0'})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'], 'MISMATCH')
+
+    def test_oversized_pointer_is_refused_before_json_parsing(self):
+        bind(self.root)
+        pointer_path(self.root).write_text('[' * 100000 + '0' + ']' * 100000, encoding='utf-8')
+        with patch('rds_workspace.json.loads', wraps=json.loads) as parse:
+            report = coverage(self.root)
+        self.assertEqual(report['status'], 'MISMATCH')
+        self.assertNotIn('ledger_sha256', report)
+        self.assertIn('size', report['mismatch'])
+        parse.assert_not_called()
 
     def test_preexisting_nested_pointer_cannot_shadow_new_ancestor_binding(self):
         child = self.nested_project()
@@ -189,7 +254,7 @@ class WorkspaceAdmissionTests(unittest.TestCase):
 
     def test_unreadable_pointer_coverage_retains_diagnostic(self):
         bind(self.root)
-        with patch.object(Path, 'read_text', side_effect=PermissionError('pointer denied')):
+        with patch.object(Path, 'open', side_effect=PermissionError('pointer denied')):
             report = coverage(self.root)
         self.assertEqual(report['status'], 'MISMATCH')
         self.assertIn('pointer denied', report['mismatch'])

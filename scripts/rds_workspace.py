@@ -22,6 +22,7 @@ POINTER_NAME = ".rds-workspace.json"
 EVENT_KIND = "WORKSPACE_BOUND"
 ASSURANCE = "SUPPORTED_API_IDENTITY_CHECK_NOT_OS_SANDBOX"
 WINDOWS = os.name == 'nt'
+MAX_POINTER_BYTES = 64 * 1024
 
 
 def pointer_path(root):
@@ -88,8 +89,11 @@ def _read_pointer_at(root):
     if not path.is_file():
         return None
     try:
-        pointer = json.loads(path.read_text(encoding="utf-8"))
-    except (ValueError, UnicodeError) as exc:
+        with path.open('rb') as handle:
+            raw = handle.read(MAX_POINTER_BYTES + 1)
+        require(len(raw) <= MAX_POINTER_BYTES, 'Workspace pointer exceeds its size limit')
+        pointer = json.loads(raw.decode('utf-8'))
+    except (ValueError, UnicodeError, RecursionError) as exc:
         raise ValueError(f"Workspace identity pointer is unreadable: {path}: {exc}") from exc
     require(isinstance(pointer, dict) and pointer.get("schema") == SCHEMA
             and isinstance(pointer.get("ledger_sha256"), str) and pointer.get("ledger_sha256"),
@@ -294,7 +298,13 @@ def _anchor_transaction(root, db):
     never silently refunds uncertain accounting. Only this ledger's own
     pointer is advanced, not an enclosing QUICK owner's pointer.
     """
-    if not db.in_transaction or not pointer_path(root).is_file():
+    if not db.in_transaction:
+        return
+    # Generic writers inherit ancestor admission, even when their own pointer
+    # is absent. The one initial QUICK connection was separately validated.
+    if not db.workspace_materializing or pointer_path(root).is_file():
+        check_admission(root)
+    if not pointer_path(root).is_file():
         return
     pointer = read_pointer(root)
     row = db.execute(
@@ -331,11 +341,13 @@ class _AnchoredConnection(sqlite3.Connection):
         self._before_commit()
         result = super().commit()
         self.committed_changes = self.total_changes
+        self.workspace_materializing = False
         return result
 
     def rollback(self):
         result = super().rollback()
         self.committed_changes = self.total_changes
+        self.workspace_materializing = False
         return result
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -344,14 +356,22 @@ class _AnchoredConnection(sqlite3.Connection):
             self._before_commit()
         result = super().__exit__(exc_type, exc_value, traceback)
         self.committed_changes = self.total_changes
+        self.workspace_materializing = False
         return result
 
 
-def connect(root, database, **kwargs):
+def connect(root, database, *, _materialization=None, **kwargs):
     """Writable project-ledger connection with durable workspace anchoring."""
+    if _materialization is None:
+        check_admission(root)
+    else:
+        require(isinstance(_materialization, tuple) and len(_materialization) == 3,
+                'Fresh QUICK materialization requires its charged admission')
+        _store(root)._check_fresh_workspace(*_materialization)
     db = sqlite3.connect(database, factory=_AnchoredConnection, **kwargs)
     db.workspace_root = Path(root).resolve()
     db.committed_changes = db.total_changes
+    db.workspace_materializing = _materialization is not None
     return db
 
 
