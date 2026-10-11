@@ -214,6 +214,8 @@ def check_admission(root, supersedes=None, separate_project=False):
 
 def _recorded_event(store):
     with store._db(True) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+            return None
         row = db.execute(
             "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY rowid DESC LIMIT 1",
             (EVENT_KIND,)).fetchone()
