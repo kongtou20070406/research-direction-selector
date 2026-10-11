@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 sys.path.insert(0, str(ROOT / 'tests'))
 import rds_workspace as workspace
-from rds_project import ProjectStore
+from rds_project import ProjectStore, canonical
 import test_rds_project as fixture
 
 
@@ -152,6 +152,32 @@ class DescendantBindingTests(unittest.TestCase):
         self.assertEqual(outcome['status'], 'PASS')
         self.assertEqual(child.snapshot()['budget']['wall_seconds']['charged_estimate'],
                          allowance['wall_seconds'] + outcome['wall_overrun_seconds'])
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_unrecovered_autonomy_result_blocks_binding_until_processed(self):
+        # A requested model run with a committed receipt but no processed event
+        # is unrecovered paid work: autonomy.drive() resumes exactly this state.
+        # Binding first would make inherited admission reject the writer that
+        # recovery needs, so the result and its proposal would be stranded.
+        child = self.child()
+        run_id = 'autonomy-unrecovered'
+        with child._db() as db:
+            db.execute('INSERT INTO events(body) VALUES (?)',
+                       (canonical({'kind': 'AUTONOMY_MODEL_REQUESTED', 'run_id': run_id,
+                                   'parent_sha256': '0' * 64}),))
+            db.execute('INSERT INTO receipts(run_id,sha256,body) VALUES (?,?,?)',
+                       (run_id, '1' * 64, canonical({'kind': 'receipt', 'run_id': run_id,
+                                                     'run_status': 'SUCCEEDED'})))
+        before = self.dump(self.store), self.dump(child)
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), self.dump(child)), before)
+        # The processed event settles the state and releases the refusal.
+        with child._db() as db:
+            db.execute('INSERT INTO events(body) VALUES (?)',
+                       (canonical({'kind': 'AUTONOMY_MODEL_PROCESSED', 'run_id': run_id,
+                                   'receipt_sha256': '1' * 64, 'outcome': 'PROPOSAL_REJECTED',
+                                   'reason': 'fixture'}),))
         self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
 
     def test_running_reference_can_finish_after_binding_refusal(self):

@@ -372,6 +372,26 @@ def _refuse_active_descendants(root):
                                     "AND json_extract(a.body,'$.id')=json_extract(p.body,'$.id') "
                                     "AND json_extract(a.body,'$.prepared_sha256')=json_extract(p.body,'$.sha256')) "
                                     "LIMIT 1").fetchone()
+                            if not active:
+                                # A requested model run whose terminal receipt is
+                                # already committed but whose processed event is
+                                # missing is still unrecovered paid work:
+                                # autonomy.drive() resumes exactly this state by
+                                # replaying process_result(). Binding would make
+                                # the inherited admission reject the writer that
+                                # recovery needs, stranding the paid result and
+                                # any proposal it carries. This mirrors the
+                                # unfinished-run test drive() applies to
+                                # state['autonomy_records'].
+                                active = db.execute(
+                                    "SELECT 1 FROM events r "
+                                    "WHERE json_extract(r.body,'$.kind')='AUTONOMY_MODEL_REQUESTED' "
+                                    "AND EXISTS (SELECT 1 FROM receipts rc "
+                                    "WHERE rc.run_id=json_extract(r.body,'$.run_id')) "
+                                    "AND NOT EXISTS (SELECT 1 FROM events p "
+                                    "WHERE json_extract(p.body,'$.kind')='AUTONOMY_MODEL_PROCESSED' "
+                                    "AND json_extract(p.body,'$.run_id')=json_extract(r.body,'$.run_id')) "
+                                    "LIMIT 1").fetchone()
                         _check_bind_deadline(deadline)
                         require(not active,
                                 f'Cannot bind workspace with an active descendant: {directory.parent}; '
