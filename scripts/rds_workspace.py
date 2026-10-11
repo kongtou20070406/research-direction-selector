@@ -15,7 +15,7 @@ import sqlite3
 from pathlib import Path
 from time import monotonic
 
-from rds_project import ProjectStore, canonical, digest, file_sha, load_json, require
+from rds_project import ProjectStore, canonical, digest, file_sha, require
 from rds_mutation import mutation
 
 SCHEMA = 1
@@ -24,6 +24,7 @@ EVENT_KIND = "WORKSPACE_BOUND"
 ASSURANCE = "SUPPORTED_API_IDENTITY_CHECK_NOT_OS_SANDBOX"
 WINDOWS = os.name == 'nt'
 MAX_POINTER_BYTES = 64 * 1024
+MAX_QUICK_REQUEST_BYTES = 2 * 1024 * 1024
 MAX_BIND_PREFLIGHT_SECONDS = 5.0
 MAX_BIND_LEDGER_BYTES = 64 * 1024 * 1024
 BIND_HASH_CHUNK_BYTES = 1024 * 1024
@@ -133,6 +134,23 @@ def _matching_identity(pointer, event):
                     for key in ('schema', 'ledger_sha256', 'contract_sha256')))
 
 
+def _quick_request(path):
+    from rds_bounded_io import read_regular_bytes
+    from rds_cli import strict_json
+    raw = read_regular_bytes(path, MAX_QUICK_REQUEST_BYTES, label='QUICK identity request')
+    request = strict_json(raw.decode('utf-8'))
+    require(isinstance(request, dict), 'QUICK identity request must be an object')
+    pending = [(request, 0)]
+    while pending:
+        value, depth = pending.pop()
+        require(depth <= 64, 'QUICK identity request exceeds its nesting bound')
+        if isinstance(value, dict):
+            pending.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            pending.extend((item, depth + 1) for item in value)
+    return request
+
+
 def _charged_quick_scope(child, owner, owner_pointer):
     """Validate funding; discovery also requires the child's own pointer."""
     if not child.is_relative_to(owner / '.rds' / 'exec'):
@@ -140,7 +158,7 @@ def _charged_quick_scope(child, owner, owner_pointer):
     request_path = child / 'rds-exec-request.json'
     if not request_path.is_file() or not _initialized(child):
         return False
-    request = load_json(request_path)
+    request = _quick_request(request_path)
     parent, child_store = _store(owner), _store(child)
     with parent._db(True) as db:
         db.execute('BEGIN')
@@ -349,7 +367,7 @@ def bind(root):
                         "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
                         "AND json_extract(body,'$.job_root')=?", (str(store.root),)).fetchone()
                     _is_unmaterialized_allowance(parent_db, store.root,
-                                                load_json(store.root / 'rds-exec-request.json'),
+                                                _quick_request(store.root / 'rds-exec-request.json'),
                                                 json.loads(allowance['body']))
                 bootstrap_owner, pointer = owner, None
             break
