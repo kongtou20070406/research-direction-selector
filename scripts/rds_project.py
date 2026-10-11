@@ -846,8 +846,9 @@ class ProjectStore:
             predecessor = {"schema": 1, "root_path": root_path, **pins,
                            "assurance": "RECORDED_INPUT_NOT_SCIENTIFIC_VERIFICATION"}
         self.state_dir.mkdir(exist_ok=True)
-        with self._db(_materialization=(contract, fresh_workspace, _fresh_workspace_admission)
-                      if fresh_workspace is not False else None) as db:
+        writer = (self._db() if fresh_workspace is False else
+                  self._db(_materialization=(contract, fresh_workspace, _fresh_workspace_admission)))
+        with writer as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS contract(id INTEGER PRIMARY KEY,sha256 TEXT NOT NULL,body TEXT NOT NULL);
