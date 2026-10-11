@@ -4,6 +4,8 @@
 
 Our purpose is to help AI better assist people in scientific research; RDS is our chosen implementation form. We ask how researchers and AI can clarify questions, choose useful next steps and interpret evidence while retaining the goal and decision history. Contributions should make that loop easier to use, inspect or evaluate. The [vision and acceptance criteria](docs/rds-purpose.md) explain the intended research benefit; deterministic program checks support it. You can help without touching the kernel.
 
+Making your first change? The [onboarding guide](docs/onboarding.md) walks through one documentation fix end to end, from cloning the checkout to reading the continuous-integration result. This guide is the reference for how changes are reviewed, not a first-run tutorial.
+
 ## Ways to contribute
 
 For areas to join and a small first contribution, see [Join RDS](docs/RECRUITING.md).
