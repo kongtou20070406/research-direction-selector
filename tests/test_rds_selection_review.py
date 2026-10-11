@@ -433,6 +433,54 @@ class SelectionReviewTests(unittest.TestCase):
         self.assertTrue(all(len(check['target']) <= 128 for check in projected['local_checks']))
         self.assertEqual(projected['open_predicates_omitted'], 0)
 
+    def test_brief_colliding_open_predicates_report_truncation_through_compaction(self):
+        graph, context = fixture()
+        names = ['p' * 128 + suffix for suffix in ('A', 'B')]
+        context['decision']['goal_conditions'] = [{'fact': name, 'value': True} for name in names]
+        inputs = deepcopy((graph, context))
+        search = search_directions(graph, context)
+        self.assertEqual(search['selection_review']['planning']['open_predicates'], names)
+        advice = {'recommendations': [{'search': search}]}
+        original = deepcopy(advice)
+        with tempfile.TemporaryDirectory() as root:
+            summary = brief(root, advice, 'test')
+            self.assertEqual(summary['planning']['open_predicates'], ['p' * 128] * 2)
+            self.assertEqual(summary['planning']['open_predicates_omitted'], 0)
+            self.assertEqual(summary['planning']['open_predicates_truncated'], 2)
+            for padding in ('', 'x' * 1024):
+                projected = deepcopy(summary)
+                projected['workflow'] = {'mode': 'UNINITIALIZED', 'advisor': 'NOT_PROGRAM_OWNED',
+                                         'continuity': 'UNBOUND', 'padding': padding}
+                deciding = {k: v for k, v in projected.items() if k != 'planning'}
+                compact_brief_planning(projected)
+                self.assertEqual(projected['planning']['open_predicates_truncated'], 2)
+                self.assertEqual({k: v for k, v in projected.items() if k != 'planning'}, deciding)
+                if padding:
+                    self.assertTrue(projected['planning']['details_omitted'])
+                    self.assertNotIn('open_predicates', projected['planning'])
+            self.assertEqual(json.loads(Path(summary['record']).read_text(encoding='utf-8')), original)
+        self.assertEqual(advice, original)
+        self.assertEqual((graph, context), inputs)
+
+    def test_brief_short_open_predicates_have_no_truncation_alert(self):
+        graph, context = fixture()
+        names = ['goal', 'aux', 'p' * 128]
+        context['decision']['goal_conditions'] = [{'fact': name, 'value': True} for name in names]
+        original_inputs = deepcopy((graph, context))
+        advice = {'recommendations': [{'search': search_directions(graph, context)}]}
+        original = deepcopy(advice)
+        with tempfile.TemporaryDirectory() as root:
+            summary = brief(root, advice, 'test')
+            self.assertEqual(summary['planning']['open_predicates'], names)
+            self.assertNotIn('open_predicates_truncated', summary['planning'])
+            summary['workflow'] = {'padding': 'x' * 1024}
+            compact_brief_planning(summary)
+            self.assertTrue(summary['planning']['details_omitted'])
+            self.assertNotIn('open_predicates_truncated', summary['planning'])
+            self.assertEqual(json.loads(Path(summary['record']).read_text(encoding='utf-8')), original)
+        self.assertEqual(advice, original)
+        self.assertEqual((graph, context), original_inputs)
+
     def test_cli_projection_preserves_scope_decision_and_exact_record_across_path_lengths(self):
         graph, context = fixture()
         for scope in ('LOCAL', 'GLOBAL', 'UNSCOPED'):

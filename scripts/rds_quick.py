@@ -1220,6 +1220,8 @@ def compact_brief_planning(summary):
             planning.pop(key, None)
     if not fits():
         summary['planning'] = {'scope': planning.get('scope'), 'details_omitted': True}
+        if planning.get('open_predicates_truncated'):
+            summary['planning']['open_predicates_truncated'] = planning['open_predicates_truncated']
 
 
 def brief(root, value, version, formal=False):
@@ -1302,6 +1304,9 @@ def brief(root, value, version, formal=False):
                                        'ready_obligations': list(planning.get('ready_obligations', [])),
                                        'omitted_ready_obligations': planning.get('omitted_ready_obligations', 0)}
                 projected = summary['planning']
+                truncated = sum(len(name) > 128 for name in planning.get('open_predicates', [])[:8])
+                if truncated:
+                    projected['open_predicates_truncated'] = truncated
                 for key, omitted in (('local_checks', 'local_checks_omitted'),
                                      ('open_predicates', 'open_predicates_omitted'),
                                      ('ready_obligations', 'omitted_ready_obligations')):

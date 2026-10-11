@@ -32,11 +32,25 @@ run. A receipt's successful process status can coexist with a failed goal.
 | `operational_results` | Receipt identities, execution failure/timeout/exit status separately from scientific refutation. |
 
 For direction-search `advise --brief`, the planning digest omits empty lists and
-unused counters. After adding workflow metadata, the CLI reduces planning lists
+unused counters. Its top-level `planning` display has this schema; the full
+working-set `selection.planning` above retains exact predicate identities:
+
+| Brief field | Consumer meaning |
+| --- | --- |
+| `planning.scope` | The unchanged `LOCAL`, `GLOBAL` or `UNSCOPED` partition. |
+| `planning.open_predicates` | Up to eight strings, each capped at 128 characters. Clipped strings are display labels, not exact identities; distinct IDs can share a label. Empty lists may be omitted. |
+| `planning.open_predicates_omitted` | Predicates outside the initial eight plus entries removed by CLI compaction. Character clipping does not increment this count. |
+| `planning.open_predicates_truncated` | Nonzero count of IDs clipped among the initial eight. Absent when none are clipped; retained even when later compaction removes their display strings. Read the exact IDs from `record`. |
+| `planning.local_checks` / `planning.local_checks_omitted` | Up to eight candidate/target displays, with omitted-entry counts. Candidates are capped at 64 characters; targets at 128, with `target_truncated: true` when clipped. |
+| `planning.ready_obligations` / `planning.omitted_ready_obligations` | Ready tokens and omitted-entry counts, including tokens removed by CLI compaction. |
+| `planning.details_omitted` | `true` when only scope and any nonzero truncation alert remain. Full details are in `record`. |
+
+After adding workflow metadata, the CLI reduces planning lists
 against the actual serialized UTF-8 size, including the absolute record path and
 newline. Omission counts include entries removed from this display. If those
-counts still crowd out the decision, only `scope` and `details_omitted: true`
-remain. The move explanation, analysis coverage and exact saved `record` locator
+counts still crowd out the decision, only `scope`, `details_omitted: true` and
+any nonzero `open_predicates_truncated` remain. The move explanation, analysis
+coverage and exact saved `record` locator
 stay intact; the full planning partition is unchanged in that record. This
 display budget does not cap the complete working-set or owned-report output.
 If the required decision fields and absolute locator alone exceed the budget,
