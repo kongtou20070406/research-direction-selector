@@ -162,6 +162,31 @@ class WorkspaceBindingTests(unittest.TestCase):
         coverage_now = coverage(self.root)
         self.assertEqual(coverage_now["status"], "MISMATCH")
 
+    def test_fresh_child_requires_a_live_bound_enclosing_owner(self):
+        child = self.root / '.rds' / 'exec' / 'fresh-child'
+        child.mkdir(parents=True)
+        for binding in self.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], child / binding['path'])
+        with self.assertRaisesRegex(ValueError, 'enclosing bound owner'):
+            ProjectStore(child).initialize(self.contract, fresh_workspace=self.store)
+        self.assertFalse(ProjectStore(child).path.exists())
+        bind(self.root)
+        self.store.path.unlink()
+        with self.assertRaisesRegex(ValueError, 'missing'):
+            ProjectStore(child).initialize(self.contract, fresh_workspace=self.store)
+        self.assertFalse(ProjectStore(child).path.exists())
+
+    def test_empty_child_lock_anchor_cannot_hide_enclosing_binding(self):
+        bind(self.root)
+        child = self.root / '.rds' / 'exec' / 'empty-anchor'
+        child_store = ProjectStore(child)
+        child_store.state_dir.mkdir(parents=True)
+        with sqlite3.connect(child_store.path):
+            pass
+        self.assertEqual(read_pointer(child)['event_digest'], read_pointer(self.root)['event_digest'])
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            child_store.initialize(self.contract)
+
     def test_stale_pointer_identity_is_reported_as_mismatch(self):
         self.bind_root(store=self.store)
         pointer = read_pointer(self.root)

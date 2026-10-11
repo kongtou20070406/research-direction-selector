@@ -71,6 +71,16 @@ def read_pointer(root):
                     and isinstance(pointer.get("ledger_sha256"), str) and pointer.get("ledger_sha256"),
                     "Unrecognized workspace identity pointer")
             return pointer
+        if (candidate / ".rds").is_dir() and candidate == start:
+            # An admitted QUICK child has its own initialized ledger before
+            # publishing its pointer. It must bind that ledger, not inherit
+            # the parent's event. Empty lock anchors are not project scopes.
+            store = _store(candidate)
+            if store.path.is_file():
+                with store._db(True) as db:
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+                            and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone():
+                        return None
         if (candidate / ".rds").is_dir() and candidate != start:
             # A nested project root with its own state dir stops upward search:
             # its own workspace, not the parent's binding.
