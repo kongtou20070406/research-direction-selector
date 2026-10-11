@@ -1,0 +1,29 @@
+{
+  "phase": "before-add",
+  "assets": [
+    "scripts/assets/.gitattributes",
+    "scripts/assets/dashboard/index.html",
+    "scripts/assets/hypergraph/app.js",
+    "scripts/assets/hypergraph/d3-bundle.js",
+    "scripts/assets/hypergraph/index.html",
+    "scripts/assets/hypergraph/pixi-LICENSE.txt",
+    "scripts/assets/hypergraph/style.css",
+    "scripts/assets/replica/app.js",
+    "scripts/assets/replica/extra.css",
+    "scripts/assets/replica/index.html",
+    "scripts/assets/replica/renderer-patches.json",
+    "scripts/assets/replica/worker-patches.json"
+  ],
+  "hosts": {
+    "claude": {
+      "selected_assets": []
+    },
+    "codex": {
+      "selected_assets": []
+    },
+    "omp": {
+      "selected_assets": []
+    }
+  },
+  "snapshot_assets": []
+}

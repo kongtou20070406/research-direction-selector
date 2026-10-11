@@ -69,6 +69,22 @@ class PluginPackageTests(unittest.TestCase):
                 self.assertNotIn(str(ROOT), command)
                 self.assertFalse((self.workspace / ".rds").exists())
 
+    def test_relocated_packages_include_and_load_external_presentation_assets(self):
+        assets = [p.relative_to(ROOT) for p in (ROOT / "scripts/assets").rglob("*") if p.is_file()]
+        self.assertTrue(assets)
+        for host in ("claude", "codex", "omp"):
+            with self.subTest(host=host):
+                skill = self.moved / host / build_plugins.NAME / "skills" / build_plugins.NAME
+                for relative in assets:
+                    self.assertEqual((skill / relative).read_bytes(), (ROOT / relative).read_bytes())
+                for script in ("rds_dashboard.py", "rds_hypergraph_view.py"):
+                    output = self.workspace / (host + "-" + script + ".html")
+                    result = subprocess.run([sys.executable, "-S", "-B", str(skill / "scripts" / script),
+                                             "--root", str(self.workspace), "--demo", "--output", str(output)],
+                                            cwd=self.workspace, capture_output=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(b"<!doctype html>", output.read_bytes())
+
     def test_hosts_do_not_load_each_others_hooks_and_paths_resolve(self):
         omp = self.moved / "omp" / build_plugins.NAME
         self.assertFalse((omp / ".claude-plugin").exists())
