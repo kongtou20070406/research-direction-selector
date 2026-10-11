@@ -71,7 +71,7 @@ class WorkspaceBindingShellTests(unittest.TestCase):
         contract_path.write_text(canonical(self.contract), encoding="utf-8")
         before = (self.store.path.read_bytes(), pointer_path(self.root).read_text(encoding="utf-8"))
         refused = self.cli("project", "init", "--contract", str(contract_path),
-                           "--separate-project", ok=False)
+                           "--separate-project", "independent fixture", ok=False)
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("--separate-project", refused.stderr + refused.stdout)
         self.assertEqual((self.store.path.read_bytes(), pointer_path(self.root).read_text(encoding="utf-8")),

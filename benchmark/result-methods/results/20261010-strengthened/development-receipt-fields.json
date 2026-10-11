@@ -1,0 +1,46 @@
+[
+  {
+    "run_id": "development-check",
+    "attempt_id": "d775f68a5c484fc9be41720d410e3a8f",
+    "run_status": "FAILED",
+    "exit_code": 1,
+    "timeout": true,
+    "resources": {
+      "wall_seconds": {
+        "unit": "seconds",
+        "measured": 91.60980170000039,
+        "unknown": false,
+        "charged_estimate": 0.0
+      }
+    },
+    "sha256": "8e6b0e3588572feecc51340397328b441676d0cff394b31d54c07dd2b9a8daad",
+    "workspace": "result-methods-development-20261010-03",
+    "test_results_present": false
+  },
+  {
+    "run_id": "development-check",
+    "attempt_id": "c33bbd5cc4814b00b9832abe71aa5306",
+    "run_status": "SUCCEEDED",
+    "exit_code": 0,
+    "timeout": false,
+    "resources": {
+      "wall_seconds": {
+        "unit": "seconds",
+        "measured": 2.978411199999755,
+        "unknown": false,
+        "charged_estimate": 0.0
+      }
+    },
+    "sha256": "6e8efb9415833bff3d35775fe69d705cf1ce9a6b9b45de0f1ab5cd26dad20256",
+    "workspace": "result-methods-development-20261010-04",
+    "test_results_present": true,
+    "test_observations": {
+      "case_count": 24,
+      "failure_count": 0,
+      "skipped_count": 0,
+      "failures": [],
+      "skipped": []
+    },
+    "advisor_record": "out/08-advice.json"
+  }
+]

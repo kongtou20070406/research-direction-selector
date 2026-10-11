@@ -280,4 +280,4 @@ def capture_completion(store, db, run, receipt, live_snapshot=None):
     require(live_snapshot['contract'] == contract_history(db)[-1]['contract'],
             'Owned completion snapshot differs from the verified live method')
     return append_checkpoint(db, store.root, after_id, live_snapshot, kind='project', decision=decision,
-                             idempotent=True, _owned_run_id=run['id'])
+                             idempotent=True, _owned_run_id=run['id'], _settled_attempt=run['attempt_id'])

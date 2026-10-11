@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RDS agent-authored hypergraph display information",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "graph_sha256", "snapshot_sha256", "graph", "nodes", "hyperedges"],
+  "properties": {
+    "schema": {"type": "integer", "const": 1},
+    "graph_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "snapshot_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "graph": {"$ref": "#/$defs/text"},
+    "nodes": {"type": "object", "maxProperties": 4096, "additionalProperties": {"$ref": "#/$defs/text"}},
+    "hyperedges": {"type": "object", "maxProperties": 8192, "additionalProperties": {"$ref": "#/$defs/text"}}
+  },
+  "$defs": {
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {"type": "string", "maxLength": 120},
+        "summary": {"type": "string", "maxLength": 600}
+      }
+    }
+  }
+}

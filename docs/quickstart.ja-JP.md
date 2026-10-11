@@ -30,7 +30,7 @@ Python 3.11 以降が必要です。リポジトリ内から実行し、**新し
 
 ```powershell
 python -B examples/project-runner/prepare.py --root ./my-project
-python -B scripts/rds_cli.py --root ./my-project project init --contract ./my-project/contract.json
+python -B scripts/rds_cli.py --root ./my-project project init --mode quick --contract ./my-project/contract.json
 python -B scripts/rds_cli.py --root ./my-project project status --brief
 ```
 

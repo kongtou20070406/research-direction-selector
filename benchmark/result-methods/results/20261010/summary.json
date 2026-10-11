@@ -1,0 +1,129 @@
+{
+  "status": "PASS",
+  "failures": [],
+  "versions": {
+    "python": "3.13.5",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "numpy": "2.2.6",
+    "scipy": "1.18.1",
+    "sklearn": "1.9.1"
+  },
+  "dataset_sha256": "8be5fc9e7cea8aca2a7a9fdc47c5ff0450cb350ee39ae39d9b2f3fc354e18e41",
+  "protocol_sha256": "1c884afd567dd2b5dca82e1033ffd82e19325ad108b8ede61a2398f001181d57",
+  "original_predictions_sha256": "e6b3f7fe0e85088354bc2dc4233acce3b80b53917e42e7b20699aff5003137d6",
+  "source_sha256": {
+    "scripts/rds_result_tools.py": "3f5c81271994b460a4e2dd890a9edfa2e51eab6cdbe05cbd28257ab62a206ef6",
+    "benchmark/result-methods/run.py": "ace5ae0934c86b813bbd519345fee292844bee6a89e4beaf9ca801ad15556194"
+  },
+  "samples": {
+    "train": 1078,
+    "head_fit": 359,
+    "heldout": 360
+  },
+  "accuracy": {
+    "baseline": 0.9111111111111111,
+    "candidate": 0.9638888888888889
+  },
+  "model_costs": [
+    {
+      "name": "baseline",
+      "epochs": 40,
+      "wall_seconds": 0.1252507000008336
+    },
+    {
+      "name": "candidate",
+      "epochs": 40,
+      "wall_seconds": 0.13229379999938828
+    },
+    {
+      "name": "gain-regressor",
+      "epochs": 80,
+      "wall_seconds": 0.07160990000011225
+    },
+    {
+      "name": "benefit-classifier",
+      "epochs": 80,
+      "wall_seconds": 0.11206029999993916
+    }
+  ],
+  "tool_timings": {
+    "existing_scalar": {
+      "repeats": 30,
+      "median_ms": 0.02984999900945695,
+      "min_ms": 0.029400000130408444,
+      "max_ms": 0.10599999950500205
+    },
+    "paired_360": {
+      "repeats": 30,
+      "median_ms": 0.47420000009879004,
+      "min_ms": 0.45390000013867393,
+      "max_ms": 0.6525999997393228
+    },
+    "diagnostic_360": {
+      "repeats": 30,
+      "median_ms": 4.983449999599543,
+      "min_ms": 4.933799998980248,
+      "max_ms": 5.901500000618398
+    },
+    "residual_360": {
+      "repeats": 30,
+      "median_ms": 0.5747000004703295,
+      "min_ms": 0.5583999991358723,
+      "max_ms": 0.8749000007810537
+    }
+  },
+  "oracle": {
+    "regression": {
+      "benefit": {
+        "accepted": 278,
+        "support": 312
+      },
+      "harm": {
+        "accepted": 29,
+        "support": 48
+      },
+      "neutral": {
+        "accepted": 0,
+        "support": 0
+      }
+    },
+    "classifier": {
+      "benefit": {
+        "accepted": 312,
+        "support": 312
+      },
+      "harm": {
+        "accepted": 48,
+        "support": 48
+      },
+      "neutral": {
+        "accepted": 0,
+        "support": 0
+      }
+    },
+    "gate": {
+      "benefit": {
+        "accepted": 278,
+        "support": 312
+      },
+      "harm": {
+        "accepted": 29,
+        "support": 48
+      },
+      "neutral": {
+        "accepted": 0,
+        "support": 0
+      }
+    }
+  },
+  "mean_loss_improvement": 0.17388210661297637,
+  "residual_max": 0.0,
+  "total_wall_seconds": 0.9047268000012991,
+  "cpu_seconds": "NOT_MEASURED",
+  "gpu_used": false,
+  "existing_scalar_scope": "descriptive aggregate loss only; no head diagnosis",
+  "analysis_speedup": "NOT_COMPARABLE_DIFFERENT_OUTPUT_SCOPE",
+  "model_quality_gain_from_rds": "NOT_MEASURED",
+  "agent_comparison": "NOT_RUN",
+  "scientific_gain": "UNKNOWN"
+}

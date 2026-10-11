@@ -126,21 +126,31 @@ def _transition(old, new, changes):
 
 
 def _lineage(db, genesis=None):
+    from rds_project_lifecycle import ACTIVATED, activation_transition
     initial = _genesis(db)
     require(genesis is None or initial == genesis, 'Genesis contract differs')
     history = [{'sha256': digest(initial), 'contract': initial}]
-    pending, seen_ids = None, set()
-    rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind') IN (?,?) ORDER BY id",
-                      (PREPARED, ADOPTED)).fetchall()
-    require(len(rows) <= 16, 'Method revision event limit exceeded')
+    pending, seen_ids, revisions = None, set(), 0
+    rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind') IN (?,?,?) ORDER BY id",
+                      (PREPARED, ADOPTED, ACTIVATED)).fetchall()
+    require(len(rows) <= 17, 'Contract transition event limit exceeded')
     for row in rows:
         event = json.loads(row['body'])
         require(event.get('sha256') == _event_hash(event), 'Method revision event integrity failure')
         require(event.get('genesis_sha256') == history[0]['sha256'], 'Method revision genesis mismatch')
-        if event['kind'] == PREPARED:
+        if event['kind'] == ACTIVATED:
+            require(pending is None and type(event.get('schema')) is int and event['schema'] == 1,
+                    'Advisor activation overlaps a pending revision or has an invalid schema')
+            require(event.get('parent_sha256') == history[-1]['sha256'] and
+                    event.get('contract_sha256') == digest(event['contract']) and
+                    event.get('policy_sha256') == digest(event['contract'].get('advisor_policy')),
+                    'Advisor activation lineage mismatch')
+            activation_transition(history[-1]['contract'], event['contract'])
+            history.append({'sha256': event['contract_sha256'], 'contract': event['contract']})
+        elif event['kind'] == PREPARED:
             require(pending is None and event['id'] not in seen_ids, 'Duplicate or overlapping method revision')
             require(event['parent_sha256'] == history[-1]['sha256'], 'Method revision parent mismatch or cycle')
-            require(len(history) <= initial.get('method_evolution', {}).get('max_revisions', 0),
+            require(revisions < initial.get('method_evolution', {}).get('max_revisions', 0),
                     'Method revision maximum reached')
             require(digest(event['contract']) == event['contract_sha256'], 'Revised contract integrity failure')
             require(event['contract_sha256'] not in {h['sha256'] for h in history}, 'Method revision cycle')
@@ -161,6 +171,7 @@ def _lineage(db, genesis=None):
                     and event['contract_sha256'] == pending['contract_sha256']
                     and event['proposal_sha256'] == pending['proposal_sha256'], 'Method adoption lineage mismatch')
             history.append({'sha256': pending['contract_sha256'], 'contract': pending['contract']})
+            revisions += 1
             pending = None
     return history, pending
 
@@ -317,7 +328,9 @@ def apply(store, proposal, *, admission_guard=None):
         else:
             validate_envelope(store, previous)
             require(previous.get('method_evolution'), 'Method evolution was not authorized at genesis')
-            require(len(history) <= previous['method_evolution']['max_revisions'], 'Method revision maximum reached')
+            adopted_count = db.execute("SELECT COUNT(*) FROM events WHERE json_extract(body,'$.kind')=?",
+                                       (ADOPTED,)).fetchone()[0]
+            require(adopted_count < previous['method_evolution']['max_revisions'], 'Method revision maximum reached')
             require(proposal['parent_sha256'] == history[-1]['sha256'], 'Revision parent differs from effective contract')
             _, errors = store._bindings(previous)
             require(not errors, '; '.join(errors))

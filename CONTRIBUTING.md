@@ -2,9 +2,11 @@
 
 **English** · [简体中文](CONTRIBUTING.zh-CN.md)
 
-Thanks for looking. RDS is a small project with a sharp question: which parts of agent-driven research can a cheap, testable program carry, so that the expensive and unpredictable agent does not have to? You can help without touching the kernel.
+Our purpose is to help AI better assist people in scientific research; RDS is our chosen implementation form. We ask how researchers and AI can clarify questions, choose useful next steps and interpret evidence while retaining the goal and decision history. Contributions should make that loop easier to use, inspect or evaluate. The [vision and acceptance criteria](docs/rds-purpose.md) explain the intended research benefit; deterministic program checks support it. You can help without touching the kernel.
 
 ## Ways to contribute
+
+For areas to join and a small first contribution, see [Join RDS](docs/RECRUITING.md).
 
 | You have… | Contribute | Where to start |
 | --- | --- | --- |
@@ -35,7 +37,7 @@ Keep one concrete purpose per PR. Explain what the researcher gains and why exis
 
 Fork [the repository](https://github.com/kongtou20070406/research-direction-selector/fork), make a branch from the intended base, and commit only your changed files. Describe the final problem and behavior, verification actually run, and material limits. Distinguish behavior already on the base ref, behavior introduced by the PR, and development candidates. Shared commands and evidence boundaries should agree across the READMEs and both contribution guides; a wording-only fix may affect just one language.
 
-Keep future README edits within the established layout: static banner and tagline, why RDS, measured results, two-minute start, the two sides of the research loop, five components, Skill/install, kernel, mathematical checks, Advisor, history, tests, repository layout, get involved, star history and license. Keep the main README in English and translations in their own files. Put detailed implementation and test reports in the linked guides rather than expanding the homepage. Every number in a README links to a public report of its design and data; when newer evidence changes it, update or remove the number in all languages.
+Keep the homepage centered on the research question, next-step decisions and evidence-driven revision. Describe recordkeeping as support for that loop, and link to [vision and scope](docs/rds-purpose.md) for the longer-term aim and its acceptance criteria. Preserve the distinction between current interfaces, engineering fixtures and measured research benefit. Keep future README edits within the established layout: static banner and tagline, why RDS, measured results, two-minute start, the two sides of the research loop, five components, Skill/install, kernel, mathematical checks, Advisor, history, tests, repository layout, get involved, star history and license. Keep the main README in English and translations in their own files. Put detailed implementation and test reports in the linked guides rather than expanding the homepage. Every number in a README links to a public report of its design and data; when newer evidence changes it, update or remove the number in all languages.
 
 ## Six checks that make a change reviewable
 

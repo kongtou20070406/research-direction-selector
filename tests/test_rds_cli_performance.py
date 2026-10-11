@@ -28,14 +28,9 @@ class CliConcurrencyTests(unittest.TestCase):
     def test_status_reads_committed_snapshot_while_writer_is_active(self):
         project = self.project()
         state = cli.RDSState(project.root)
-        writer = state.connect()
-        try:
-            writer.execute("BEGIN IMMEDIATE")
+        with state.transaction():
             status = cli.cmd_status(None, state)
             self.assertEqual(status["budget"]["spent"]["runs"], 0)
-        finally:
-            writer.rollback()
-            writer.close()
 
     def test_status_does_not_rewrite_state(self):
         project = self.project()

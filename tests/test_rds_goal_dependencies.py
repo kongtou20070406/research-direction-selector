@@ -121,8 +121,13 @@ class GoalDependencyTests(unittest.TestCase):
                 search = search_directions(graph, context)
                 review = search['selection_review']
                 self.assertEqual(review['next_move']['kind'], 'RESOLVE_PREMISE')
-                self.assertEqual(search['candidates'][0]['status'], 'READY')
+                self.assertEqual(search['candidates'][0]['local_status'], 'READY')
+                self.assertEqual(search['candidates'][0]['status'], 'NEEDS_COMPLETE_ANALYSIS')
+                self.assertFalse(search['analysis_coverage']['full'])
                 self.assertIn('DEPENDENCY_MAP_INCOMPLETE', [f['kind'] for f in review['flags']])
+                advice = {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH', 'search': search}]}
+                with self.assertRaisesRegex(ValueError, 'Complete graph analysis required'):
+                    choice(advice, context)
 
     def test_a_healthy_link_is_not_overridden_by_unrelated_invalid_candidate(self):
         graph, context = fixture()
@@ -213,12 +218,17 @@ class GoalDependencyTests(unittest.TestCase):
         self.assertTrue(record['require_goal_link'])
         # A stale/forged READY label cannot waive an actual input-map conflict.
         context['dependency_map']['nodes'][1]['status'] = 'SUPPORTED'
+        with self.assertRaisesRegex(ValueError, 'Advisor context changed after complete graph analysis'):
+            choice(advice, context)
+        advice['recommendations'][0]['search'] = search_directions(graph, context)
         with self.assertRaisesRegex(ValueError, 'not a current ready obligation'):
             choice(advice, context)
         context['dependency_map']['nodes'][0]['status'] = 'CONTRADICTED'
+        advice['recommendations'][0]['search'] = search_directions(graph, context)
         with self.assertRaisesRegex(ValueError, 'complete actual dependency map'):
             choice(advice, context)
         del context['dependency_map']
+        advice['recommendations'][0]['search'] = search_directions(graph, context)
         with self.assertRaisesRegex(ValueError, 'complete actual dependency map'):
             choice(advice, context)
 
@@ -229,6 +239,7 @@ class GoalDependencyTests(unittest.TestCase):
         advice = {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH', 'search': search}]}
         self.assertEqual(choice(advice, context)['scientific_support'], 'UNKNOWN')
         context['require_goal_link'] = 'yes'
+        advice['recommendations'][0]['search'] = search_directions(graph, context)
         with self.assertRaisesRegex(ValueError, 'must be boolean'):
             choice(advice, context)
 
@@ -262,13 +273,19 @@ class GoalDependencyTests(unittest.TestCase):
         old_search = search_directions(graph, context)
         advice = {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH', 'search': old_search}]}
         context['dependency_map']['nodes'][0]['status'] = 'SUPPORTED'
-        current = search_directions(graph, context)['selection_review']['dependency_review']
+        before = deepcopy((advice, context))
+        with self.assertRaisesRegex(ValueError, 'Advisor context changed after complete graph analysis'):
+            choice(advice, context)
+        self.assertEqual((advice, context), before)
+        current_search = search_directions(graph, context)
+        current = current_search['selection_review']['dependency_review']
+        advice['recommendations'][0]['search'] = current_search
         record = choice(advice, context)
         self.assertEqual(record['goal_guard']['input_sha256'], current['input_sha256'])
         self.assertEqual(record['goal_guard']['dependency_map'], context['dependency_map'])
         self.assertEqual(record['goal_guard']['ready_obligation'], 'node:unrestricted_lower')
         self.assertEqual(record['goal_guard']['contribution']['graph_path']['goal_review'], current['goals']['completion_standard'])
-        self.assertEqual(record['selection_review'], old_search['selection_review'])
+        self.assertEqual(record['selection_review'], current_search['selection_review'])
 
     def test_advice_cannot_override_or_supply_an_unchecked_current_binding(self):
         graph, context = fixture()
@@ -282,11 +299,13 @@ class GoalDependencyTests(unittest.TestCase):
                     context.pop('objective_binding', None)
                 else:
                     context['objective_binding'] = binding
+                advice['recommendations'][0]['search'] = search_directions(graph, context)
                 before = deepcopy((advice, context))
                 with self.assertRaisesRegex(ValueError, 'objective binding differs'):
                     choice(advice, context)
                 self.assertEqual((advice, context), before)
         context['objective_binding'] = deepcopy(advice['objective_binding'])
+        advice['recommendations'][0]['search'] = search_directions(graph, context)
         self.assertEqual(choice(advice, context)['goal_guard']['ready_obligation'], 'node:unrestricted_lower')
 
     def test_real_cli_rechecks_native_binding_before_guarding_raw_context(self):
@@ -324,7 +343,8 @@ class GoalDependencyTests(unittest.TestCase):
             '--', sys.executable, '-B', 'probe.py'])
         stale_advice = {'objective_binding': {**expected_binding, 'sha256': '0' * 64},
                         'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH',
-                                             'search': search_directions(graph, context)}]}
+                                             'search': search_directions(graph, {**deepcopy(context),
+                                                                                'objective_binding': expected_binding})}]}
         before = ProjectStore(ledger).snapshot()
         with self.assertRaisesRegex(ValueError, 'objective binding differs'):
             execute(args, (stale_advice, context))

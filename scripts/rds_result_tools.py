@@ -6,7 +6,8 @@ input and receipt bytes. Arithmetic and inventory do not establish scientific
 support. Extract the selected function with the existing ``rsi extract`` entry.
 """
 from json import loads
-from math import isfinite
+from math import isfinite, fsum
+from fractions import Fraction
 
 MAX_BYTES = 2097152
 MAX_NODES = 20000
@@ -190,9 +191,14 @@ def compare_metrics(candidate, baseline):
         result['reason'] = 'UNSUPPORTED_METRIC_DIRECTION'
     else:
         try:
-            delta = cv - bv
+            if isinstance(cv, int) != isinstance(bv, int):
+                exact_delta = Fraction(cv) - Fraction(bv)
+                delta = float(exact_delta)
+                _require(delta != 0 or exact_delta == 0, 'Unrepresentable difference')
+            else:
+                delta = cv - bv
             improvement = -delta if ci['direction'] == 'minimize' else delta
-        except ArithmeticError:
+        except (ArithmeticError, ValueError):
             result['reason'] = 'UNREPRESENTABLE_DIFFERENCE'
             return result
         if not _numeric(delta) or not _numeric(improvement):
@@ -259,4 +265,395 @@ def summarize_failures(raw_text, identity, limit=16):
     result['reasons'] = sorted(set(result['reasons']))
     if not result['reasons']:
         result['status'] = 'OBSERVED'
+    return result
+
+
+def _decision_text(value):
+    return (isinstance(value, str) and bool(value.strip())
+            and value.strip().upper() != 'UNKNOWN' and _utf8_size(value) <= 1024)
+
+
+def _decision_hash(value):
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in '0123456789abcdef' for c in value))
+
+
+def _decision_class(gain, sign, tolerance):
+    if abs(gain) <= tolerance:
+        return 'neutral'
+    return 'benefit' if (gain < 0) == (sign == 'negative') else 'harm'
+
+
+def diagnose_decisions(raw_text, identity, semantics, limit=16):
+    """Describe benefit decisions with explicit sign, threshold and provenance.
+
+    ``semantics`` declares benefit_sign (negative/positive), neutral_tolerance,
+    class_order (a permutation of benefit/neutral/harm), p_better_threshold,
+    protocol_id, data_split, evaluator_sha256 and stage. The classifier is an
+    explicit benefit-vs-rest threshold, never an inferred multiclass argmax.
+    Gate acceptance is regression benefit AND p_better >= the fixed threshold.
+
+    Original JSON contains rows and parents. Each row declares pair_id, group_id,
+    gain, predicted_gain, p_better, stage, origin (natural/artificial), depth,
+    upstream source_sha256, parent_id and parent_sha256. Natural depth-zero rows
+    have null parents. Other rows also declare parent_origin, and reference a
+    parent record with parent_id, source_sha256, origin, depth and stage. Parent
+    hashes are caller declarations, not verified bytes. Mixed origins and any
+    unresolved row invalidate pooled rates; zero observed harmful acceptance
+    is not a safety proof, even with valid harmful support.
+    """
+    _require(_count(limit) and limit <= 64, 'Diagnostic display limit must be 0..64')
+    identity = _identity(identity)
+    _require(isinstance(semantics, dict), 'Decision semantics must be an object')
+    _tree(semantics)
+    document = _document(raw_text)
+    _require(isinstance(document, dict), 'Decision report must be an object')
+    classes = ('benefit', 'neutral', 'harm')
+    stages = ('development', 'evaluation', 'heldout')
+    result = {'operation': 'diagnose_decisions', 'status': 'UNKNOWN',
+              'observation_status': 'UNKNOWN', 'support_status': 'UNKNOWN',
+              'identity': identity, 'semantics': {key: value.copy() if isinstance(value, list) else value
+                                                for key, value in semantics.items()},
+              'classifier_mode': 'benefit_vs_rest_threshold',
+              'gate_rule': 'regression_benefit_and_p_better_at_least_threshold',
+              'class_support': {label: 0 for label in classes}, 'heads': {},
+              'head_disagreements': {'regression_classifier': 0},
+              'rejection_reasons': {'regression_only': 0, 'classifier_only': 0,
+                                    'both': 0, 'accepted': 0},
+              'groups': {'status': 'UNKNOWN', 'scope': 'VALID_ROWS_ONLY',
+                         'group_count': 0, 'constant_classifier_mixed_truth_count': 0,
+                         'entries': [], 'omitted_groups': 0},
+              'depth_counts': {}, 'origin_counts': {}, 'stage_counts': {},
+              'entries': [], 'row_count': None, 'valid_row_count': 0,
+              'unknown_count': None, 'omitted_rows': None, 'reasons': [],
+              'identity_assurance': 'CALLER_METADATA', 'scientific_support': 'UNKNOWN'}
+    reasons = set()
+    if _missing(identity, SOURCE_FIELDS + ('data_split', 'evaluator_sha256')) or _conflicts(document, identity):
+        reasons.add('INCOMPLETE_OR_CONFLICTING_IDENTITY')
+    required = {'benefit_sign', 'neutral_tolerance', 'class_order', 'p_better_threshold',
+                'protocol_id', 'data_split', 'evaluator_sha256', 'stage'}
+    labels = semantics.get('class_order')
+    tolerance, threshold = semantics.get('neutral_tolerance'), semantics.get('p_better_threshold')
+    semantics_valid = (set(semantics) == required and semantics.get('benefit_sign') in ('negative', 'positive')
+        and _numeric(tolerance) and tolerance >= 0 and _numeric(threshold) and 0 <= threshold <= 1
+        and isinstance(labels, list) and len(labels) == 3
+        and all(isinstance(label, str) for label in labels) and set(labels) == set(classes)
+        and all(_decision_text(semantics.get(key)) for key in ('protocol_id', 'data_split'))
+        and _decision_hash(semantics.get('evaluator_sha256')) and semantics.get('stage') in stages)
+    if not semantics_valid:
+        reasons.add('MISSING_OR_UNSUPPORTED_SEMANTICS_DECLARE_SIGN_CLASSES_THRESHOLD_PROTOCOL_STAGE')
+    elif any(identity.get(key) != semantics[key] for key in ('data_split', 'evaluator_sha256')):
+        reasons.add('INCOMPATIBLE_SPLIT_OR_EVALUATOR')
+    protocol = document.get('protocol')
+    if isinstance(protocol, dict) and any(key in protocol and protocol[key] != semantics.get(key)
+            for key in ('protocol_id', 'data_split', 'evaluator_sha256', 'stage')):
+        reasons.add('INCOMPATIBLE_PROTOCOL')
+    rows, parents = document.get('rows'), document.get('parents')
+    if not isinstance(rows, list) or not isinstance(parents, list):
+        reasons.add('MISSING_ROWS_OR_PARENT_INVENTORY')
+        result['reasons'] = sorted(reasons)
+        return result
+    parent_map, duplicate_parents = {}, set()
+    for parent in parents:
+        valid = (isinstance(parent, dict) and _decision_text(parent.get('parent_id'))
+            and _decision_hash(parent.get('source_sha256'))
+            and parent.get('origin') in ('natural', 'artificial')
+            and _count(parent.get('depth')) and parent.get('stage') in stages
+            and (parent['origin'] != 'artificial' or parent['depth'] > 0))
+        if not valid:
+            reasons.add('INVALID_PARENT_PROVENANCE')
+        elif parent['parent_id'] in parent_map:
+            duplicate_parents.add(parent['parent_id'])
+            reasons.add('DUPLICATE_PARENT_ID')
+        else:
+            parent_map[parent['parent_id']] = parent
+    pair_counts = {}
+    for row in rows:
+        if isinstance(row, dict) and _decision_text(row.get('pair_id')):
+            pair_counts[row['pair_id']] = pair_counts.get(row['pair_id'], 0) + 1
+    groups = {}
+    for head in ('regression', 'classifier', 'gate'):
+        result['heads'][head] = {'confusion': {label: {'accepted': 0, 'rejected': 0} for label in classes},
+                                 'acceptance': {}}
+    result.update(row_count=len(rows), unknown_count=0)
+    for index, row in enumerate(rows):
+        row_reasons = set()
+        if not isinstance(row, dict):
+            row_reasons.add('INVALID_DECISION_ROW')
+            row = {}
+        if not all(_decision_text(row.get(key)) for key in ('pair_id', 'group_id')):
+            row_reasons.add('MISSING_PAIR_OR_GROUP_ID')
+        if _decision_text(row.get('pair_id')) and pair_counts[row['pair_id']] > 1:
+            row_reasons.add('DUPLICATE_PAIR_ID')
+        if (not all(_numeric(row.get(key)) for key in ('gain', 'predicted_gain', 'p_better'))
+                or _numeric(row.get('p_better')) and not 0 <= row['p_better'] <= 1):
+            row_reasons.add('MISSING_OR_INVALID_HEAD_VALUES')
+        if row.get('stage') not in stages:
+            row_reasons.add('UNKNOWN_STAGE_DECLARE_DEVELOPMENT_EVALUATION_OR_HELDOUT')
+        elif row['stage'] != semantics.get('stage'):
+            row_reasons.add('INCOMPATIBLE_STAGE')
+        for key in ('protocol_id', 'data_split', 'evaluator_sha256'):
+            if key in row and row[key] != semantics.get(key):
+                row_reasons.add('INCOMPATIBLE_PROTOCOL_SPLIT_OR_EVALUATOR')
+        origin, depth = row.get('origin'), row.get('depth')
+        if origin not in ('natural', 'artificial') or not _count(depth) or not _decision_hash(row.get('source_sha256')):
+            row_reasons.add('MISSING_OR_INVALID_LINEAGE')
+        elif depth == 0 and origin == 'natural':
+            if ('parent_id' not in row or 'parent_sha256' not in row
+                    or row['parent_id'] is not None or row['parent_sha256'] is not None
+                    or row.get('parent_origin') is not None):
+                row_reasons.add('ROOT_PARENT_CONFLICT_OR_MISSING_DECLARATION')
+        else:
+            parent_id = row.get('parent_id')
+            parent = parent_map.get(parent_id) if _decision_text(parent_id) else None
+            if parent is None or parent_id in duplicate_parents:
+                row_reasons.add('MISSING_OR_AMBIGUOUS_PARENT')
+            elif (row.get('parent_sha256') != parent['source_sha256']
+                    or row.get('parent_origin') != parent['origin']
+                    or origin == 'natural' and parent['origin'] == 'artificial'
+                    or depth != parent['depth'] + 1 or row['stage'] != parent['stage']):
+                row_reasons.add('STALE_PARENT_OR_PARENT_ORIGIN_DEPTH_STAGE_CONFLICT')
+        for field, value, counts in (('origin', origin, result['origin_counts']),
+                                    ('depth', depth, result['depth_counts']),
+                                    ('stage', row.get('stage'), result['stage_counts'])):
+            known = (_count(value) if field == 'depth' else
+                     value in (('natural', 'artificial') if field == 'origin' else stages))
+            if known:
+                key = str(value)
+                counts[key] = counts.get(key, 0) + 1
+        truth, predictions, rejection = None, None, None
+        if not semantics_valid:
+            row_reasons.add('UNRESOLVED_SEMANTICS')
+        if row_reasons:
+            result['unknown_count'] += 1
+            reasons.update(row_reasons)
+        else:
+            result['valid_row_count'] += 1
+            truth = _decision_class(row['gain'], semantics['benefit_sign'], tolerance)
+            regression = _decision_class(row['predicted_gain'], semantics['benefit_sign'], tolerance) == 'benefit'
+            classifier = row['p_better'] >= threshold
+            predictions = {'regression': regression, 'classifier': classifier, 'gate': regression and classifier}
+            result['class_support'][truth] += 1
+            for head, accepts in predictions.items():
+                result['heads'][head]['confusion'][truth]['accepted' if accepts else 'rejected'] += 1
+            result['head_disagreements']['regression_classifier'] += int(regression != classifier)
+            rejection = ('accepted' if regression and classifier else 'both' if not regression and not classifier
+                         else 'regression_only' if not regression else 'classifier_only')
+            result['rejection_reasons'][rejection] += 1
+            group_id = row['group_id']
+            if group_id not in groups:
+                groups[group_id] = {'truth': set(), 'classifier': set(), 'row_count': 0}
+            groups[group_id]['truth'].add(truth)
+            groups[group_id]['classifier'].add(classifier)
+            groups[group_id]['row_count'] += 1
+        if len(result['entries']) < limit:
+            result['entries'].append({'pointer': '/rows/' + str(index),
+                'pair_id': row.get('pair_id') if _decision_text(row.get('pair_id')) else None,
+                'group_id': row.get('group_id') if _decision_text(row.get('group_id')) else None,
+                'status': 'UNKNOWN' if row_reasons else 'OBSERVED', 'truth': truth,
+                'predictions': predictions, 'rejection_reason': rejection, 'reasons': sorted(row_reasons)})
+    if len(result['origin_counts']) > 1:
+        reasons.add('MIXED_ORIGINS_POOLED_RATES_UNSUPPORTED_SEPARATE_INPUTS')
+    if not rows:
+        reasons.add('NO_DECISION_ROWS')
+    result['groups']['group_count'] = len(groups)
+    for group_id, group in groups.items():
+        constant, mixed = len(group['classifier']) == 1, len(group['truth']) > 1
+        result['groups']['constant_classifier_mixed_truth_count'] += int(constant and mixed)
+        if len(result['groups']['entries']) < limit:
+            result['groups']['entries'].append({'group_id': group_id, 'row_count': group['row_count'],
+                'classifier_constant': constant, 'truth_mixed': mixed, 'truth_classes': sorted(group['truth'])})
+    result['groups']['omitted_groups'] = len(groups) - len(result['groups']['entries'])
+    result['omitted_rows'] = len(rows) - len(result['entries'])
+    observations_valid = not reasons
+    result['groups']['status'] = 'OBSERVED' if observations_valid else 'UNKNOWN'
+    result['observation_status'] = 'OBSERVED' if observations_valid else 'UNKNOWN'
+    support_valid = observations_valid and all(result['class_support'][label] > 0 for label in ('benefit', 'harm'))
+    result['support_status'] = 'OBSERVED' if support_valid else 'UNKNOWN'
+    for head in result['heads'].values():
+        for label in classes:
+            support = result['class_support'][label]
+            accepted = head['confusion'][label]['accepted']
+            head['acceptance'][label] = {'accepted': accepted, 'support': support,
+                'rate': accepted / support if observations_valid and support else None,
+                'status': 'OBSERVED' if observations_valid and support else 'UNKNOWN'}
+    if result['class_support']['benefit'] == 0:
+        reasons.add('NO_BENEFICIAL_SUPPORT')
+    if result['class_support']['harm'] == 0:
+        reasons.add('NO_HARMFUL_SUPPORT_CANNOT_ESTIMATE_HARM_ACCEPTANCE')
+    result['status'] = 'OBSERVED' if support_valid else 'UNKNOWN'
+    result['reasons'] = sorted(reasons)
+    return result
+
+
+def _paired_points(candidate, baseline):
+    _require(isinstance(candidate, dict) and isinstance(baseline, dict), 'Paired points must be objects')
+    _tree(candidate)
+    _tree(baseline)
+    cv, bv = candidate.get('values'), baseline.get('values')
+    cs, bs = candidate.get('sample_ids'), baseline.get('sample_ids')
+    _require(isinstance(cv, list) and isinstance(bv, list) and 1 <= len(cv) <= 2048
+             and len(cv) == len(bv), 'Supply 1..2048 paired values of equal length')
+    _require(all(_numeric(v) for v in cv + bv), 'Paired values must be finite numeric scalars')
+    _require(isinstance(cs, list) and isinstance(bs, list) and len(cs) == len(cv)
+             and len(bs) == len(bv) and all(isinstance(s, str) and s.strip()
+             and _utf8_size(s) <= 256 for s in cs + bs), 'Supply bounded explicit sample IDs')
+    report = compare_metrics({'value': 0, 'identity': candidate.get('identity')},
+                             {'value': 0, 'identity': baseline.get('identity')})
+    if candidate.get('status', 'OBSERVED') != 'OBSERVED' or baseline.get('status', 'OBSERVED') != 'OBSERVED':
+        report.update(status='UNKNOWN', reason='UNRESOLVED_INPUT')
+    if len(set(cs)) != len(cs) or len(set(bs)) != len(bs):
+        report.update(status='UNKNOWN', reason='DUPLICATE_SAMPLE_IDS')
+    elif cs != bs:
+        report.update(status='UNKNOWN', reason='PAIRED_SAMPLE_ORDER_MISMATCH')
+    return report, cv, bv
+
+
+def compare_paired_metrics(candidate, baseline, sampling):
+    """Describe paired differences; estimate SE only under an explicit IID premise."""
+    report, cv, bv = _paired_points(candidate, baseline)
+    _require(isinstance(sampling, dict) and set(sampling) <= {'unit', 'independent', 'pairing'},
+             'Unsupported sampling fields')
+    _tree(sampling)
+    result = {'operation': 'compare_paired_metrics', 'status': report['status'],
+              'reason': report['reason'], 'identity': {'candidate': report['candidate']['identity'],
+              'baseline': report['baseline']['identity']}, 'count': len(cv),
+              'sampling': sampling.copy(), 'mean_delta': None, 'mean_improvement': None,
+              'standard_error': None, 'uncertainty_status': 'UNKNOWN',
+              'uncertainty_reason': 'INDEPENDENCE_NOT_ESTABLISHED',
+              'missing_fields': report['missing_fields'], 'conflicting_fields': report['conflicting_fields'],
+              'identity_assurance': 'CALLER_METADATA', 'scientific_support': 'UNKNOWN'}
+    if (not isinstance(sampling.get('unit'), str) or not sampling['unit'].strip()
+            or _utf8_size(sampling['unit']) > 256 or sampling.get('pairing') != 'matched_sample_ids'
+            or not isinstance(sampling.get('independent'), bool)):
+        result.update(status='UNKNOWN', reason='DECLARE_SAMPLE_UNIT_PAIRING_AND_INDEPENDENCE')
+    if result['status'] != 'COMPARABLE':
+        return result
+    try:
+        # Mixed subtraction must preserve the inputs before float coercion.
+        differences = [Fraction(c) - Fraction(b) if isinstance(c, int) != isinstance(b, int) else c - b
+                       for c, b in zip(cv, bv)]
+        exact_mean = None
+        if any(isinstance(v, (int, Fraction)) for v in differences):
+            exact_mean = sum((Fraction(v) for v in differences), Fraction()) / len(differences)
+            mean = float(exact_mean)
+            _require(mean != 0 or exact_mean == 0, 'Unrepresentable paired difference')
+        else:
+            mean = fsum(differences) / len(differences)
+        improvement = -mean if report['candidate']['identity']['direction'] == 'minimize' else mean
+        _require(_numeric(mean) and _numeric(improvement), 'Unrepresentable paired difference')
+    except (ArithmeticError, ValueError):
+        result.update(status='UNKNOWN', reason='UNREPRESENTABLE_DIFFERENCE')
+        return result
+    result.update(mean_delta=mean, mean_improvement=improvement)
+    if sampling['independent'] and len(differences) > 1:
+        try:
+            if exact_mean is not None:
+                exact_centered = [Fraction(v) - exact_mean for v in differences]
+                centered = [float(v) for v in exact_centered]
+                _require(all(v == 0 or rounded != 0 for v, rounded in zip(exact_centered, centered)),
+                         'Unrepresentable centered differences')
+            else:
+                centered = [v - mean for v in differences]
+            _require(all(_numeric(v) for v in centered), 'Unrepresentable centered differences')
+            scale = max(abs(v) for v in centered)
+            se = (scale * (fsum((v / scale) ** 2 for v in centered)
+                          / (len(differences) - 1) / len(differences)) ** 0.5) if scale else 0.0
+            _require(_numeric(se) and (not scale or se > 0), 'Unrepresentable uncertainty')
+        except (ArithmeticError, ValueError):
+            result['uncertainty_reason'] = 'UNREPRESENTABLE_UNCERTAINTY'
+        else:
+            result.update(standard_error=se, uncertainty_status='ESTIMATED_UNDER_CALLER_IID_PREMISE',
+                          uncertainty_reason=None)
+    elif sampling['independent']:
+        result['uncertainty_reason'] = 'INSUFFICIENT_INDEPENDENT_UNITS'
+    return result
+
+
+def check_residuals(candidate, reference, domain):
+    """Check finite pointwise numeric residuals against a declared reference."""
+    report, cv, rv = _paired_points(candidate, reference)
+    _require(isinstance(domain, dict) and set(domain) <= {'domain', 'precision', 'atol', 'rtol', 'independent_reference'},
+             'Unsupported residual domain fields')
+    _tree(domain)
+    result = {'operation': 'check_residuals', 'status': 'UNKNOWN', 'reason': report['reason'],
+              'identity': {'candidate': report['candidate']['identity'], 'reference': report['baseline']['identity']},
+              'domain': domain.copy(), 'count': len(cv), 'max_abs_residual': None,
+              'violations': None, 'within_tolerance': None, 'worst_pointer': None,
+              'missing_fields': report['missing_fields'], 'conflicting_fields': report['conflicting_fields'],
+              'identity_assurance': 'CALLER_METADATA', 'assurance': 'FINITE_NUMERICAL_OBSERVATION',
+              'scientific_support': 'UNKNOWN'}
+    if (not all(isinstance(domain.get(k), str) and domain[k].strip() and _utf8_size(domain[k]) <= 1024
+                for k in ('domain', 'precision')) or domain.get('independent_reference') is not True
+            or not all(_numeric(domain.get(k)) and domain[k] >= 0 for k in ('atol', 'rtol'))):
+        result['reason'] = 'DECLARE_DOMAIN_PRECISION_TOLERANCE_AND_INDEPENDENT_REFERENCE'
+        return result
+    if report['status'] != 'COMPARABLE':
+        return result
+    try:
+        # Compare the original represented numbers exactly, before subtraction
+        # or tolerance multiplication can discard integer low bits.
+        residuals = [abs(Fraction(c) - Fraction(r)) for c, r in zip(cv, rv)]
+        tolerances = [Fraction(domain['atol']) + Fraction(domain['rtol']) * abs(Fraction(r)) for r in rv]
+        all_integer = all(isinstance(v, int) for v in cv + rv)
+        if not all_integer:
+            _require(all(_numeric(float(v)) for v in residuals), 'Unrepresentable residual')
+        # Retain the original finite arithmetic range gate without forcing
+        # exact all-integer thresholds into a float merely for validation.
+        _require(all(_numeric(domain['atol'] + domain['rtol'] * abs(r)) for r in rv),
+                 'Unrepresentable residual')
+        maximum = max(residuals)
+        reported_maximum = int(maximum) if all_integer else float(maximum)
+        _require(maximum == 0 or reported_maximum != 0, 'Unrepresentable residual')
+    except (ArithmeticError, ValueError):
+        result['reason'] = 'UNREPRESENTABLE_RESIDUAL'
+        return result
+    violations = sum(v > t for v, t in zip(residuals, tolerances))
+    result.update(status='OBSERVED', reason=None, max_abs_residual=reported_maximum, violations=violations,
+                  within_tolerance=violations == 0, worst_pointer='/values/' + str(residuals.index(maximum)))
+    return result
+
+
+def evaluate_decision_requirements(raw_text, identity, semantics, requirements):
+    """Check declared finite acceptance requirements, never population safety.
+
+    Recompute the diagnostic from original rows rather than trusting an imported
+    status/rate. Thresholds refer to observed sample counts; support requirements
+    are explicit and do not establish independence or calibrated uncertainty.
+    """
+    _require(isinstance(requirements, dict), 'Decision requirements must be an object')
+    _tree(requirements)
+    names = ('min_benefit_support', 'min_harm_support', 'min_benefit_acceptance', 'max_harm_acceptance')
+    result = {'operation': 'evaluate_decision_requirements', 'status': 'UNKNOWN', 'met': None,
+              'reason': 'DECLARE_DECISION_REQUIREMENTS', 'identity': _identity(identity),
+              'requirements': requirements.copy(), 'checks': {name: {'status': 'UNKNOWN', 'observed': None,
+              'required': requirements.get(name)} for name in names}, 'diagnostic_status': None,
+              'diagnostic_reasons': [], 'identity_assurance': 'CALLER_METADATA',
+              'assurance': 'FINITE_SAMPLE_REQUIREMENTS', 'scientific_support': 'UNKNOWN'}
+    if (set(requirements) != set(names) | {'head'} or requirements.get('head') not in ('gate', 'regression', 'classifier')
+            or not all(_count(requirements.get(k)) and 1 <= requirements[k] <= MAX_NODES for k in names[:2])
+            or not all(_numeric(requirements.get(k)) and 0 <= requirements[k] <= 1 for k in names[2:])):
+        return result
+    diagnostic = diagnose_decisions(raw_text, identity, semantics, 0)
+    result.update(diagnostic_status=diagnostic['status'], diagnostic_reasons=diagnostic['reasons'])
+    if diagnostic['status'] != 'OBSERVED':
+        result['reason'] = 'UNRESOLVED_DIAGNOSTIC'
+        return result
+    acceptance = diagnostic['heads'][requirements['head']]['acceptance']
+    for label in ('benefit', 'harm'):
+        key = 'min_' + label + '_support'
+        support = acceptance[label]['support']
+        result['checks'][key].update(observed=support,
+                                    status='PASS' if support >= requirements[key] else 'FAIL')
+    if any(result['checks'][k]['status'] != 'PASS' for k in names[:2]):
+        result['reason'] = 'INSUFFICIENT_CLASS_SUPPORT'
+        return result
+    for label, key in (('benefit', names[2]), ('harm', names[3])):
+        fraction = Fraction(str(requirements[key]))
+        count, support = acceptance[label]['accepted'], acceptance[label]['support']
+        left, right = count * fraction.denominator, support * fraction.numerator
+        passed = left >= right if label == 'benefit' else left <= right
+        result['checks'][key].update(observed=acceptance[label]['rate'], status='PASS' if passed else 'FAIL')
+    met = all(check['status'] == 'PASS' for check in result['checks'].values())
+    result.update(status='PASS' if met else 'FAIL', met=met, reason=None if met else 'REQUIREMENTS_NOT_MET')
     return result

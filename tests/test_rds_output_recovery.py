@@ -137,7 +137,7 @@ class OutputRecoveryCLITests(unittest.TestCase):
         contract = {'schema': 1, 'bindings': bindings, 'allowed_commands': list(self.commands.values()),
                     'output_roots': ['outputs'], 'budget': {'wall_seconds': 30, 'cpu_seconds': 10},
                     'execution_policy': {'schema': 1, 'max_attempts': 2}}
-        self.call('project', 'init', '--contract', self.write_json('contract.json', contract))
+        self.call('project', 'init', '--mode', 'quick', '--contract', self.write_json('contract.json', contract))
 
     def write_json(self, name, value):
         path = self.root / name

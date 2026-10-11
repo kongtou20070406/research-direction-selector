@@ -7,12 +7,13 @@ own writes and declared artifacts, not every write performed by that code.
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, ExitStack
 import ctypes
 import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import shlex
@@ -22,6 +23,8 @@ import subprocess
 import sys
 import time
 import uuid
+
+from rds_mutation import mutation
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -267,9 +270,16 @@ class ProjectStore:
 
     def _advisor_finished(self, contract):
         """Collection is post-commit; never mutate the owned receipt or repeat a run."""
+        self.last_advisor_review_reused = False
         if "advisor_policy" not in contract:
             return
         try:
+            from rds_campaign import retained_owned_review
+            retained = retained_owned_review(self)
+            if retained is not None:
+                self.last_advisor_review = retained
+                self.last_advisor_review_reused = True
+                return
             from rds_owned_advisor import after_finish
             self.last_advisor_review = after_finish(self)
         except Exception as exc:
@@ -430,18 +440,37 @@ class ProjectStore:
         return len(prior), used
 
     @contextmanager
-    def _db(self, readonly=False):
+    def _db(self, readonly=False, *, settlement=None):
+        from rds_mutation import mutation
+        with (nullcontext() if readonly else mutation()):
+            with self._open_db(readonly, settlement=settlement) as db:
+                yield db
+
+    @contextmanager
+    def _open_db(self, readonly=False, *, settlement=None):
         if readonly:
             if not self.path.is_file():
                 raise FileNotFoundError("Project contract has not been initialized")
+            require(self.path.resolve().is_relative_to(self.root), "Project database escapes root")
             db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=10)
             db.execute("PRAGMA query_only=ON")
         else:
+            from rds_campaign import binding, enforce
+            # A binding can appear while an already admitted foreign attempt is
+            # running. Its exact attempt may retain progress/settle costs, but
+            # cannot initialize, reserve, change policy or dispatch again.
+            bound = enforce(self.root) if settlement is None else binding(self.root)
             require(self.path.resolve().is_relative_to(self.root), "Project database escapes root")
-            db = sqlite3.connect(self.path, timeout=10)
+            existing = bound is not None or settlement is not None
+            target = self.path.as_uri() + '?mode=rw' if existing else self.path
+            db = sqlite3.connect(target, uri=existing, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
         try:
+            if settlement is not None:
+                run_id, attempt_id = settlement
+                require(attempt_id is not None and self._run(db, run_id)['attempt_id'] == attempt_id,
+                        'Settlement requires the original admitted attempt')
             with db:
                 yield db
         finally:
@@ -623,28 +652,33 @@ class ProjectStore:
             store, record = predecessor, link
         return chain
 
-    def initialize(self, contract, supersedes=None, separate_project=False, fresh_workspace=False):
-        # #282: a bound workspace admits only its canonical ledger. This check
-        # precedes every write, so a refusal leaves attempts, receipts and
-        # budget unchanged. Unbound legacy workflows are unaffected.
-        # A fresh tool-exec child under a bound owner is admitted by quick exec
-        # (`fresh_workspace=<owner store>`): the caller must already have
-        # passed admission on the owner's ledger, and the child binds to its
-        # own ledger afterwards — it is a new job workspace, not an attempt to
-        # replace the owner's canonical ledger.
-        from rds_workspace import check_admission
+    @mutation()
+    def initialize(self, contract, supersedes=None, separate_project=False, fresh_workspace=False, *, scope_declaration=None):
+        from rds_campaign import binding, enforce
+        enforce(self.root)
+        if supersedes is not None:
+            inherited = binding(supersedes)
+            require(inherited is None, 'A bound research campaign cannot be superseded into a new ledger; '
+                    'continue or revise the canonical project')
+        from rds_workspace import check_admission, read_pointer, pointer_path
         require(fresh_workspace is False or isinstance(fresh_workspace, ProjectStore),
                 "fresh_workspace must be the admitted owner ProjectStore")
         if fresh_workspace is False:
-            check_admission(self.root, supersedes=supersedes, separate_project=separate_project)
+            check_admission(self.root, supersedes=supersedes,
+                            separate_project=bool(separate_project or scope_declaration is not None))
         else:
-            # The child must sit inside the owner's bound tree and must not
-            # already carry a pointer; otherwise the bypass would open a
-            # second identity outside the owner's coverage.
-            from rds_workspace import read_pointer, pointer_path
-            require(self.root.resolve().is_relative_to(fresh_workspace.root.resolve()),
+            # Budget ownership alone does not admit a child workspace. Recheck
+            # the enclosing binding before using this private QUICK path.
+            owner = fresh_workspace
+            check_admission(owner.root)
+            require(read_pointer(owner.root) is not None and
+                    self.root.is_relative_to(owner.root / '.rds' / 'exec'),
                     "fresh_workspace must be admitted by the enclosing bound owner")
-            require(read_pointer(self.root) is None and not pointer_path(self.root).is_file(),
+            require(supersedes is None and not separate_project and scope_declaration is None,
+                    "Fresh QUICK workspace cannot declare a separate accounting scope")
+            inherited = read_pointer(self.root)
+            require(not pointer_path(self.root).exists() and not self.path.exists() and
+                    (inherited is None or inherited == read_pointer(owner.root)),
                     "Workspace already carries a binding; fresh_workspace applies only to new workspaces")
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
@@ -788,8 +822,10 @@ class ProjectStore:
             db.execute("BEGIN IMMEDIATE")
             old = db.execute("SELECT sha256 FROM contract WHERE id=1").fetchone()
             if old:
-                require(old["sha256"] == digest(contract), "Contract is frozen; use a new project root"
-                        f" (project init --supersedes {_shell_argument(str(self.root))} links it to this root's ledger)")
+                require(old["sha256"] == digest(contract), "Contract is frozen; reuse this project for additional runs. "
+                        "Use project enable-advisor for same-ledger activation, or project revise for authorized method changes. "
+                        "A genuinely changed research contract needs an explicit successor "
+                        f"(project init --supersedes {_shell_argument(str(self.root))})")
                 if predecessor is not None:
                     recorded = self._link_record(db)[0] or {}
                     require(recorded.get("root_path") == predecessor["root_path"]
@@ -808,6 +844,14 @@ class ProjectStore:
                         db.execute(f"CREATE TRIGGER predecessor_no_{action.lower()} BEFORE {action} ON predecessor "
                                    "BEGIN SELECT RAISE(ABORT,'predecessor is append-only'); END")
                     db.execute("INSERT INTO predecessor VALUES (1,?,?)", (digest(predecessor), canonical(predecessor)))
+            if scope_declaration is not None:
+                row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='PROJECT_SCOPE_DECLARED' LIMIT 1").fetchone()
+                require(not old or row is not None,
+                        'Independent project scope must be declared with the original contract; it cannot be added after initialization')
+                require(row is None or json.loads(row['body']) == scope_declaration,
+                        'Independent project declaration is already recorded')
+                if row is None:
+                    db.execute('INSERT INTO events(body) VALUES (?)', (canonical(scope_declaration),))
         return self.snapshot()
 
     @staticmethod
@@ -822,9 +866,8 @@ class ProjectStore:
     @contextmanager
     def theory_allowance(self, spec, request, allowance):
         """Precharge bounded controller work; unused allowances are not refunded."""
-        # #282: this transaction charges budget and appends an event, so a
-        # replaced bound ledger must be refused here, before the allowance
-        # write — not only at the later register() call.
+        from rds_campaign import enforce
+        enforce(self.root)
         from rds_workspace import check_admission
         check_admission(self.root)
         started = time.monotonic()
@@ -889,8 +932,8 @@ class ProjectStore:
             return json.loads(row["body"])
 
     def register(self, spec, *, executor_sha256=None):
-        # #282: a bound workspace's canonical ledger admits every mutating
-        # entry, not only initialize, so a replaced ledger cannot reserve work.
+        from rds_campaign import enforce
+        enforce(self.root)
         from rds_workspace import check_admission
         check_admission(self.root)
         require(isinstance(spec, dict) and type(spec.get("schema")) is int
@@ -1124,19 +1167,24 @@ class ProjectStore:
         run["run_status"] = "SUCCEEDED" if run["status"] == "COMPLETED" else run["status"]
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))
 
-    def execute(self, run_id, background=False, *, admission_guard=None):
-        # #282: refuse dispatch against a replaced bound ledger before any
-        # reservation, attempt or receipt write.
+    def execute(self, run_id, background=False, *, admission_guard=None, admission_context=None):
+        from rds_campaign import enforce
+        enforce(self.root)
         from rds_workspace import check_admission
         check_admission(self.root)
         # An internal caller may restrict admission after all ordinary checks.
         # This callback grants no authority and is never supplied by the CLI.
         require(admission_guard is None or callable(admission_guard), "Invalid admission guard")
+        require(admission_context is None or callable(admission_context), "Invalid admission context")
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
-        advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
-        with self._db() as db:
+        # Parents must be acquired before this child write transaction. Exit
+        # order commits the attempt before releasing the admission context.
+        with ExitStack() as context:
+            context.enter_context(admission_context() if admission_context is not None else nullcontext())
+            advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
+            db = context.enter_context(self._db())
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
             self._runs(db)
@@ -1219,6 +1267,27 @@ class ProjectStore:
         return {**receipt, **observation}
 
     def _execute_claim(self, run_id, attempt_id):
+        try:
+            return self._execute_admitted(run_id, attempt_id)
+        except ValueError as exc:
+            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)):
+                raise
+            from rds_campaign import binding
+            bound = binding(self.root)
+            if bound is None or Path(bound['project_root']) == self.root:
+                raise
+            with self._db(True) as db:
+                retained = self._run(db, run_id)
+                if retained['status'] != 'RESERVED' or retained['attempt_id'] != attempt_id:
+                    raise
+            # A binding installed after admission may stop startup. Keep the
+            # exact attempt and conservatively settle its original reservation.
+            return self._finish(run_id, attempt_id, 'FAILED', None, None, None,
+                                ['Campaign changed before launch: ' + str(exc)], only_unstarted=True)
+
+    def _execute_admitted(self, run_id, attempt_id):
+        from rds_campaign import enforce
+        enforce(self.root)
         attempt_start = time.monotonic()
         admission_error = None
         advisor_token = self._advisor_prepare_run(run_id)
@@ -1295,15 +1364,40 @@ class ProjectStore:
                     deadline = self._campaign_deadline(db, contract)
                     if deadline is not None:
                         policy_deadline = time.monotonic() + max(0.0, deadline - time.time())
+                    worker_options = {}
+                    if 'autonomy_request' in current:
+                        # The frozen copied adapter uses the same kernel guard.
+                        # Only an admitted native model route receives this path;
+                        # it is not taken from the experiment's request fields.
+                        worker_options['env'] = {**os.environ,
+                            'RDS_RUNTIME_SCRIPTS': str(Path(__file__).resolve().parent)}
+                    executable_name = Path(argv[0]).name.casefold().removesuffix('.exe')
+                    is_bash = re.fullmatch(r'bash(?:[-_]?\d+(?:\.\d+)*)?', executable_name) is not None
+                    startup_variables = (
+                        {'node_options'} if executable_name in {'node', 'nodejs'} else
+                        {'rubyopt', 'rubylib', 'rubygems_gemdeps'} if re.fullmatch(r'ruby(?:\d+(?:\.\d+)*)?', executable_name) else
+                        {'perl5opt'} if re.fullmatch(r'perl(?:\d+(?:\.\d+)*)?', executable_name) else
+                        {'phprc', 'php_ini_scan_dir'} if re.fullmatch(r'php(?:\d+(?:\.\d+)*)?', executable_name) else
+                        {'bash_env', 'bashopts', 'shellopts'} if is_bash else set())
+                    if startup_variables:
+                        # Recheck at launch, including host changes after admission.
+                        # Preserve frozen argv and the parent environment; inherited
+                        # interpreter options must not introduce unbound startup code.
+                        environment = dict(worker_options.get('env', os.environ))
+                        for key in list(environment):
+                            if key.casefold() in startup_variables:
+                                del environment[key]
+                        worker_options['env'] = environment
                     process = subprocess.Popen(argv, cwd=self.root, shell=False, stdin=subprocess.DEVNULL,
-                                               stdout=out, stderr=err, creationflags=flags, start_new_session=os.name != "nt")
+                                               stdout=out, stderr=err, creationflags=flags,
+                                               start_new_session=os.name != "nt", **worker_options)
                     started = True
                     job = _Job(process)
                     current["pid"] = process.pid
                     self._save(db, current)
                 while process.poll() is None:
                     elapsed = time.monotonic() - start
-                    with self._db() as db:
+                    with self._db(settlement=(run_id, attempt_id)) as db:
                         current = self._run(db, run_id)
                         current["observed_wall_seconds"] = elapsed
                         self._save(db, current)
@@ -1363,7 +1457,7 @@ class ProjectStore:
 
     def _finish(self, run_id, attempt_id, status, exit_code, wall, started, errors, before=None, timeout=False,
                 only_unstarted=False, recovering=False, stop_reason=None):
-        with self._db() as db:
+        with self._db(True) as db:
             run = self._run(db, run_id)
             contract = self._contract(db)
         require(run["attempt_id"] == attempt_id, "Attempt mismatch")
@@ -1426,7 +1520,7 @@ class ProjectStore:
             receipt['maintenance_review'] = run['maintenance_review']
             receipt["assessment"] = {"task_gain": "UNKNOWN", "mechanism": "UNKNOWN", "purpose": "MAINTENANCE"}
         receipt["sha256"] = digest(receipt)
-        with self._db() as db:
+        with self._db(settlement=(run_id, attempt_id)) as db:
             db.execute("BEGIN IMMEDIATE")
             self._runs(db)
             old = db.execute("SELECT run_id,sha256,body FROM receipts WHERE run_id=?", (run_id,)).fetchone()
@@ -1465,6 +1559,8 @@ class ProjectStore:
             receipt = self._receipt(old) if old else None
         if receipt is not None:
             self._advisor_finished(contract)
+            from rds_quick import _recover_prospective
+            _recover_prospective(self, contract, receipt)
             return receipt
         if run["attempt_id"] is None:
             return {**run, "recovery": "Unstarted reservation; no process to restart"}
@@ -1472,11 +1568,15 @@ class ProjectStore:
             return {**run, "recovery": "Dispatched scheduler task; do not start another process"}
         if _alive(run["worker_pid"]) is not False or _alive(run["pid"]) is not False:
             return {**run, "recovery": "Process may still be active; no rerun or termination"}
-        return self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
-                            ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
+        receipt = self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
+                              ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
+        from rds_quick import _recover_prospective
+        _recover_prospective(self, contract, receipt)
+        return receipt
 
-    def snapshot(self, check_bindings=False):
+    def snapshot(self, check_bindings=False, *, _dialogue=False):
         require(isinstance(check_bindings, bool), "check_bindings must be Boolean")
+        require(type(_dialogue) is bool, "dialogue snapshot must be Boolean")
         with self._db(True) as db:
             db.execute("BEGIN")
             contract = self._contract(db)
@@ -1494,12 +1594,29 @@ class ProjectStore:
             steering = current(db)
             if steering is not None:
                 snapshot['steering'] = view(steering)
-            if 'method_evolution' in contract:
-                from rds_method_revision import contract_history, pending_revision
-                snapshot['contract_history'] = contract_history(db)
+            from rds_method_revision import contract_history, pending_revision
+            history = contract_history(db)
+            if 'method_evolution' in contract or len(history) > 1:
+                snapshot['contract_history'] = history
                 pending = pending_revision(db)
                 snapshot['method_revision_pending'] = ({'id': pending['id'], 'sha256': pending['sha256']}
                                                        if pending else None)
+            if _dialogue:
+                # Optional view inputs share this original read; ordinary
+                # snapshots do not collect owned history or report context.
+                from rds_owned_advisor import _state
+                row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
+                                 "ORDER BY id DESC LIMIT 1").fetchone()
+                context = {'instruction': steering, 'report_event': dict(row) if row else None}
+                try:
+                    context['state'] = _state(self, db)
+                except (ValueError, KeyError, TypeError, OSError, UnicodeError, sqlite3.Error) as exc:
+                    # Optional display cannot impose owned-history bounds on
+                    # the ordinary plan. Preserve this read's original facts.
+                    from rds_steering import view
+                    context['state'] = {'contract': contract, 'runs': snapshot['runs'], 'steering': view(steering)}
+                    context['error'] = str(exc)[:512]
+                snapshot['_dialogue_context'] = context
         if check_bindings:
             found, errors = self._bindings(contract)
             snapshot["binding_check"] = {"files": found, "errors": errors}
@@ -1508,9 +1625,9 @@ class ProjectStore:
             # Pinned checkpoint digests stay in the link record; the snapshot names the IDs only.
             snapshot["predecessor_chain"] = [{k: v for k, v in hop.items() if k != "checkpoint_shas"} for hop in chain]
         from rds_workspace import coverage
-        binding = coverage(self.root)
-        if binding["status"] != "UNBOUND":  # Unbound legacy workflows keep their original snapshot shape.
-            snapshot["workspace_binding"] = binding
+        workspace_binding = coverage(self.root)
+        if workspace_binding["status"] != "UNBOUND":
+            snapshot["workspace_binding"] = workspace_binding
         return snapshot
 
     def _receipt_result(self, receipt):

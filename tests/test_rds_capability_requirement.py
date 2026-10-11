@@ -363,6 +363,8 @@ class CapabilityRequirementCLITests(unittest.TestCase):
             self.assertLess(len(proc.stdout.encode('utf-8')), 1024)
             summary = json.loads(proc.stdout)
             self.assertEqual(summary['next_move'], 'SPECIFY_CAPABILITY')
+            self.assertEqual(summary['analysis_coverage'], {
+                'status': 'FULL', 'full': True, 'graph_count': 1, 'node_count': 1, 'edge_count': 0})
             full = json.loads(Path(summary['record']).read_text(encoding='utf-8'))
             search = next(r['search'] for r in full['recommendations'] if r['type'] == 'EXECUTABLE_DIRECTION_SEARCH')
             self.assertEqual(search['selection_review'], first)
