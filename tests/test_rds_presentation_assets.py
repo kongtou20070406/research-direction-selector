@@ -1,11 +1,14 @@
 """External resources preserve the original presentation bytes and relocation."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -15,6 +18,43 @@ from rds_quick import _inputs, MAX_FILES, MAX_TOTAL_BYTES
 
 
 class PresentationAssetTests(unittest.TestCase):
+    def test_asset_decoding_preserves_crlf_cr_and_unicode(self):
+        raw = b"\r\nUTF-8: \xe4\xb8\xad\xe6\x96\x87\r\nlast\r"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "assets").mkdir()
+            resource = root / "assets/fixture.txt"
+            resource.write_bytes(raw)
+            for module in (dashboard, viewer):
+                with self.subTest(module=module.__name__), patch.object(module, "__file__", str(root / "module.py")):
+                    self.assertEqual(module._asset_text("fixture.txt").encode("utf-8"), raw)
+                    resource.write_bytes(b"\xff")
+                    with self.assertRaises(UnicodeDecodeError):
+                        module._asset_text("fixture.txt")
+                    resource.write_bytes(raw)
+
+    def test_hostile_labels_survive_rendering_as_data(self):
+        hostile = ('</script><script>alert("owned")</script>&\u2028\u2029'
+                   '__GRAPH_CSS____GRAPH_JS____D3_BUNDLE____GRAPH_DATA__'
+                   '__STYLE____PIXI____D3____WORKER____RENDERER____APP____DATA__'
+                   '__RDS_SNAPSHOT__')
+        snapshot = {"state": {"contract": {"claim": hostile}}}
+        spec = json.loads((ROOT / "examples/hypergraph-view.json").read_bytes())
+        spec["nodes"][0]["label"] = hostile
+        graph = viewer.graph_view(spec, "synthetic:asset-escaping")
+        for page, key in ((dashboard.render_html(snapshot), "state"),
+                          (viewer.render_html(graph), "graph")):
+            with self.subTest(key=key):
+                matches = re.findall(r'<script id="snapshot" type="application/json">(.*?)</script>', page, re.S)
+                self.assertEqual(len(matches), 1)
+                payload = json.loads(matches[0])
+                actual = (payload["state"]["contract"]["claim"] if key == "state"
+                          else payload["graph"]["nodes"][0]["label"])
+                self.assertEqual(actual, hostile)
+                self.assertNotIn('<script>alert("owned")</script>', page)
+                self.assertNotIn("\u2028", matches[0])
+                self.assertNotIn("\u2029", matches[0])
+
     def test_public_strings_match_pre_extraction_bytes(self):
         # Hashes of evaluated literals at 9154f2f, including leading/trailing LF.
         expected = {
@@ -75,6 +115,54 @@ class PresentationAssetTests(unittest.TestCase):
             self.assertEqual(raw[ROOT / path], (ROOT / path).read_bytes())
         self.assertEqual(MAX_FILES, 128)
         self.assertEqual(MAX_TOTAL_BYTES, 64 * 1024 * 1024)
+
+    def test_quick_runtime_asset_change_refuses_reuse_without_rerendering(self):
+        assets = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "scripts/assets").rglob("*")
+                        if p.is_file() and p.name != ".gitattributes")
+        inputs = ["data=" + path for path in assets + ["examples/hypergraph-view.json"]]
+        command = [sys.executable, "-B", "scripts/rds_hypergraph_view.py", "--demo", "--output", "render.html"]
+        selected, raw = _inputs(ROOT, command, inputs)
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            for path in selected:
+                target = workspace / path.relative_to(ROOT)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw[path])
+            argv = [sys.executable, "-B", str(ROOT / "scripts/rds_cli.py"), "--root", str(workspace),
+                    "exec", "--name", "asset-render", "--timeout", "10", "--output", "render.html", "--json"]
+            for binding in inputs:
+                argv.extend(["--bind", binding])
+            argv.extend(["--", *command])
+            env = {**os.environ, "RDS_USAGE_DB": str(workspace / "usage.sqlite3")}
+
+            def run():
+                return subprocess.run(argv, cwd=directory, capture_output=True, text=True,
+                                      encoding="utf-8", env=env, timeout=25)
+
+            first = run()
+            self.assertEqual(first.returncode, 0, first.stderr)
+            original = json.loads(first.stdout)
+            self.assertEqual(original["receipt"]["run_status"], "SUCCEEDED")
+            rendered = Path(original["job_root"]) / "render.html"
+            page = rendered.read_bytes()
+            self.assertIn(b"<!doctype html>", page)
+            receipt_inputs = {row["path"]: row for row in original["receipt"]["bindings_before"]}
+            for asset in assets:
+                self.assertIn(asset, receipt_inputs)
+                self.assertEqual(receipt_inputs[asset]["role"], "data")
+                self.assertEqual(receipt_inputs[asset]["sha256"],
+                                 hashlib.sha256((workspace / asset).read_bytes()).hexdigest())
+            second = run()
+            self.assertEqual(second.returncode, 0, second.stderr)
+            reused = json.loads(second.stdout)
+            self.assertFalse(reused["execution_started"])
+            self.assertEqual(reused["receipt"]["sha256"], original["receipt"]["sha256"])
+            asset = workspace / "scripts/assets/hypergraph/app.js"
+            asset.write_bytes(asset.read_bytes() + b"\n// changed runtime asset\n")
+            refused = run()
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("new --name", refused.stderr)
+            self.assertEqual(rendered.read_bytes(), page)
 
 
 if __name__ == "__main__":
