@@ -225,11 +225,27 @@ def bind(root):
                     "The ledger already records a different workspace identity; "
                     "each bound ledger serves one workspace")
             event_digest = recorded_body["event_digest"]
+            ledger_sha = recorded_body["ledger_sha256"]
         max_id = db.execute("SELECT MAX(id) FROM events").fetchone()[0]
-    pointer = {"schema": SCHEMA, "assurance": ASSURANCE, "ledger_sha256": ledger_sha,
-               "contract_sha256": identity["contract_sha256"], "event_digest": event_digest,
-               "event_id": max_id}
-    _write_pointer(root, pointer)
+        # Re-read and publish under the same writer lock; a delayed binder must
+        # not replace progress committed after its initial discovery.
+        current = read_pointer(root)
+        if current is not None:
+            require(current.get('event_digest') == event_digest,
+                    'Workspace ledger identity does not match; accounting resets are refused')
+            anchor = current.get('event_id')
+            require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,
+                    'A ledger snapshot was restored after binding; accounting resets are refused')
+            pointer = {**current, 'event_id': max_id}
+        else:
+            pointer = {"schema": SCHEMA, "assurance": ASSURANCE, "ledger_sha256": ledger_sha,
+                       "contract_sha256": identity["contract_sha256"], "event_digest": event_digest,
+                       "event_id": max_id}
+        if pointer != current:
+            _write_pointer(root, pointer)
+        # The binding event already anchors these exact pending rows. Normal
+        # writes still create a progress event when no event represents them.
+        db.committed_changes = db.total_changes
     return {"status": "ALREADY_BOUND" if recovered else "BOUND", "pointer": pointer,
             "ledger_root": str(store.root)}
 
@@ -300,12 +316,14 @@ def _anchor_transaction(root, db):
     """
     if not db.in_transaction:
         return
-    # Generic writers inherit ancestor admission, even when their own pointer
-    # is absent. The one initial QUICK connection was separately validated.
-    if not db.workspace_materializing or pointer_path(root).is_file():
-        check_admission(root)
     if not pointer_path(root).is_file():
+        # Generic writers inherit ancestor admission. Only the separately
+        # validated initial QUICK connection may materialize without a pointer.
+        if not db.workspace_materializing:
+            check_admission(root)
         return
+    # Validate the effective pointer against this transaction's view: the
+    # initial binding event is not yet visible to a separate read connection.
     pointer = read_pointer(root)
     row = db.execute(
         "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
