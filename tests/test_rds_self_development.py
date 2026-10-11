@@ -2,6 +2,8 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -28,6 +30,18 @@ class DevelopmentSnapshotTests(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         development.git(self.source, "add", "--force", "--", name)
         return path
+
+    def test_mixed_missing_or_empty_test_module_never_reports_success(self):
+        tests=self.target/'tests'
+        tests.mkdir()
+        (tests/'test_present.py').write_text('import unittest\nclass Present(unittest.TestCase):\n def test_real(self): self.assertEqual(2+2,4)\n',encoding='utf-8')
+        (tests/'test_empty.py').write_text('# no regression cases\n',encoding='utf-8')
+        for pattern in ('test_missing.py','test_empty.py'):
+            with self.subTest(pattern=pattern):
+                (self.target/'development-config.json').write_text(json.dumps({'test_patterns':['test_present.py',pattern]}),encoding='utf-8')
+                result=subprocess.run([sys.executable,'-B',str(ROOT/'examples/self-development/test_driver.py')],cwd=self.target,capture_output=True,text=True,timeout=10)
+                self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertIn(pattern,result.stderr)
 
     def test_closure_preserves_worktree_bytes_and_excludes_untracked_private_and_git_configuration(self):
         public = ["docs/command-map.md", "SKILL.md", "LICENSE", "formal/lean-toolchain",

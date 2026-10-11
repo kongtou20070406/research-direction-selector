@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import uuid
 
 
@@ -24,6 +25,10 @@ HEX = re.compile(r"[0-9a-f]{64}\Z")
 CONTRACT_KEYS = {"contract_id", "metric", "threshold", "evaluator_sha256",
                  "data_slice_sha256", "wall_ms", "screen_wall_ms"}
 CLI = Path(__file__).with_name("rds_cli.py")
+MAX_PROPOSER_BYTES = 256
+MAX_INBOX_ROW_BYTES = 4096
+MAX_INBOX_BYTES = 1024 * 1024
+MAX_INBOX_ROWS = 1024
 
 
 class WheelError(ValueError):
@@ -100,7 +105,8 @@ def rsi_gate(old, new, delta, paired_receipts=None):
              and all(finite(item.get(key)) and item[key] >= 0 for item in (old, new)
                      for key in ("violations", "spin_count", "budget_to_true_cell")))
     eligible = bool(valid and new["violations"] == 0 and new["spin_count"] <= old["spin_count"]
-                    and new["budget_to_true_cell"] <= old["budget_to_true_cell"] - delta)
+                    and Fraction(str(new["budget_to_true_cell"])) <=
+                    Fraction(str(old["budget_to_true_cell"])) - Fraction(str(delta)))
     # This change does not implement a paired rule-evaluation protocol. Even an
     # unverified caller-supplied number cannot establish measured regret.
     return {"adoption_eligible": eligible, "regret": "UNKNOWN", "rule_edits": False,
@@ -149,10 +155,7 @@ class Wheel:
         path.parent.mkdir(parents=True, exist_ok=True)
         raw = value if text else canonical(value) + "\n"
         if once:
-            with path.open("x", encoding="utf-8", newline="\n") as stream:
-                stream.write(raw)
-                stream.flush()
-                os.fsync(stream.fileno())
+            self._publish_once(path, raw.encode("utf-8"))
         else:
             temporary = path.with_name(path.name + ".tmp")
             with temporary.open("w", encoding="utf-8", newline="\n") as stream:
@@ -160,6 +163,23 @@ class Wheel:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
+
+    def _publish_once(self, path, raw):
+        # Publish a complete file without replacing an existing identity. The
+        # temporary and target are on the same filesystem; process interruption
+        # before linking leaves only an unpublished temporary, not a partial target.
+        temporary = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
+        created = False
+        try:
+            with temporary.open("xb") as stream:
+                created = True
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.link(temporary, path)
+        finally:
+            if created:
+                temporary.unlink(missing_ok=True)
 
     def append(self, relative, raw):
         with self.state_path(relative).open("a", encoding="utf-8", newline="\n") as stream:
@@ -201,9 +221,9 @@ class Wheel:
         self.write("state.json", state)
 
     @contextmanager
-    def lock(self):
+    def lock(self, path=None):
         # OS locks disappear on process exit; no stale PID lease can authorize work.
-        stream = self.state_path("writer.lock").open("r+b")
+        stream = (path or self.state_path("writer.lock")).open("r+b")
         acquired = False
         try:
             if os.name == "nt":
@@ -258,7 +278,10 @@ class Wheel:
         require(not any(evaluator == p or evaluator.is_relative_to(p) for p in writable),
                 "evaluator is in an agent-writable tree")
         require(evaluator.is_file() and sha(evaluator) == contract["evaluator_sha256"], "evaluator hash mismatch", 3)
-        require(sha(self.path(setup["data_path"])) == contract["data_slice_sha256"], "data slice hash mismatch", 3)
+        data = self.path(setup["data_path"])
+        require(not any(data == p or data.is_relative_to(p) for p in writable),
+                "data slice is in an agent-writable tree")
+        require(sha(data) == contract["data_slice_sha256"], "data slice hash mismatch", 3)
         for role, path, expected in (("evaluator", setup["evaluator_path"], contract["evaluator_sha256"]),
                                      ("data", setup["data_path"], contract["data_slice_sha256"])):
             require(any(b.get("role") == role and b.get("path") == path and b.get("sha256") == expected
@@ -273,10 +296,31 @@ class Wheel:
         self.mapping, self.contract, self.project_contract = setup, contract, project_contract
         self.protocol = {key: protocols[0][key] for key in ("path", "sha256")}
         self.direction = metric["direction"]
+        self.validate_mapping_ids()
         return setup
 
+    def validate_mapping_ids(self):
+        """Validate the entire frozen run namespace before any dispatch or write."""
+        mapped = []
+        for kind in ("control", "initial"):
+            template = self.mapping.get(kind)
+            require(isinstance(template, dict), "missing " + kind + " mapping")
+            mapped.append(self.manifest(template.get("factor"), kind))
+        routes = self.mapping.get("routes", {})
+        require(isinstance(routes, dict), "routes must be an object")
+        for factor, route in routes.items():
+            require(isinstance(route, dict), "factor route must be an object")
+            require(route and set(route) <= {"main", "screen"},
+                    "route must contain only main or screen mappings")
+            for kind in ("main", "screen"):
+                if kind in route:
+                    mapped.append(self.manifest(factor, kind))
+        seen = set()
+        for manifest in mapped:
+            require(manifest["id"] not in seen, "mapped run IDs must be distinct: " + manifest["id"])
+            seen.add(manifest["id"])
+
     def initialize(self, project_contract_path):
-        require(not self.directory.exists(), "wheel is already initialized")
         contract = read_json(project_contract_path)
         setup = self.setup(contract, initialized=False)
         factors = setup.get("factors")
@@ -286,6 +330,41 @@ class Wheel:
             self.manifest(factor, "main")
         self.manifest(setup["initial"]["factor"], "initial")
         self.manifest(setup["control"]["factor"], "control")
+        # A stable lock outside the final directory serializes first publication.
+        # Never unlink it: concurrent initializers must lock the same inode.
+        init_lock = self.path(".rds/wheel-init.lock")
+        init_lock.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with init_lock.open("xb") as stream:
+                stream.write(b"0")
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError:
+            pass
+        with self.lock(init_lock) as acquired:
+            require(acquired, "wheel initialization is busy")
+            require(not self.directory.exists(), "wheel is already initialized")
+            final = self.directory
+            require(final.resolve().is_relative_to(self.root), "wheel directory escapes project")
+            with tempfile.TemporaryDirectory(prefix="wheel-init-", dir=init_lock.parent) as staged:
+                self.directory = Path(staged)
+                try:
+                    self.initial_state(factors)
+                finally:
+                    self.directory = final
+                # The native kernel validates all bindings and is idempotent for
+                # the same genesis contract; retry never resets its actual ledger.
+                mode = "full" if "advisor_policy" in contract else "quick"
+                self.project("init", "--contract", str(project_contract_path), "--mode", mode)
+                snapshot = self.project("status")
+                require(snapshot.get("contract") == contract
+                        and snapshot.get("contract_sha256") == digest(contract),
+                        "accepted project contract differs", 3)
+                # Same-filesystem rename publishes all initial files at once.
+                # A crash beforehand leaves only an untrusted staging directory.
+                os.rename(staged, final)
+
+    def initial_state(self, factors):
         self.write("contract.json", self.contract, once=True)
         self.write("factors.txt", "".join(f + "\n" for f in factors), text=True, once=True)
         self.write("dead.txt", "", text=True, once=True)
@@ -298,7 +377,6 @@ class Wheel:
         self.write("transitions.jsonl", "", text=True, once=True)
         self.write("rsi.json", {"slice_id": protocol_slice(self.contract), "regret": "UNKNOWN",
                                 "rule_edits": False, "scientific_accuracy_gain": "UNKNOWN"}, once=True)
-        self.project("init", "--contract", str(project_contract_path))
 
     def manifest(self, factor, kind, budget_ms=None):
         require(isinstance(factor, str) and TOKEN.fullmatch(factor), "invalid factor")
@@ -307,6 +385,8 @@ class Wheel:
         else:
             template = self.mapping.get("routes", {}).get(factor, {}).get(kind)
         require(isinstance(template, dict), "missing preauthorized evaluator mapping for " + factor)
+        if kind in ("main", "screen"):
+            require(template.get("factor") == factor, "template factor differs from route factor")
         argv = template.get("argv")
         require(isinstance(argv, list) and argv in self.project_contract["allowed_commands"],
                 "factor command was not frozen")
@@ -360,10 +440,12 @@ class Wheel:
             require(len(artifacts) == 1, "one recorded metric output required")
             artifact = artifacts[0]
             path = self.path(artifact["path"])
-            require(sha(path) == artifact["sha256"], "metric artifact hash mismatch")
-            value = read_json(path).get(self.contract["metric"])
+            raw = path.read_bytes()
+            require(hashlib.sha256(raw).hexdigest() == artifact["sha256"], "metric artifact hash mismatch")
+            output = decode(raw.decode("utf-8"))
+            value = output.get(self.contract["metric"]) if isinstance(output, dict) else None
             return value if finite(value) else None
-        except (ValueError, OSError, KeyError, TypeError):
+        except (ValueError, OSError, KeyError, TypeError, RecursionError):
             return None
 
     def pause(self, reason):
@@ -382,26 +464,39 @@ class Wheel:
         quota = read_json(self.state_path("quota.json"))
         require(isinstance(quota, dict) and all(type(v) is int and 0 <= v <= 2 for v in quota.values()), "invalid proposer quota")
         dead = set(self.tokens("dead.txt"))
-        for line in self.state_path("inbox.jsonl").read_text(encoding="utf-8").splitlines():
+        for raw in self.inbox_contents()[1]:
             try:
-                row = decode(line)
+                require(len(raw) <= MAX_INBOX_ROW_BYTES, "proposal row exceeds byte limit")
+                row = decode(raw.decode("utf-8"))
                 require(isinstance(row, dict) and set(row) == {"proposal_id", "proposer_id", "kind", "factor", "parent_contract_id", "ts"},
                         "invalid proposal schema")
-                require(str(uuid.UUID(row["proposal_id"])) == row["proposal_id"], "invalid proposal UUID")
-                require(isinstance(row["proposer_id"], str) and row["proposer_id"], "missing proposer")
+                require(isinstance(row["proposal_id"], str)
+                        and str(uuid.UUID(row["proposal_id"])) == row["proposal_id"], "invalid proposal UUID")
+                require(isinstance(row["proposer_id"], str) and row["proposer_id"]
+                        and len(row["proposer_id"].encode("utf-8")) <= MAX_PROPOSER_BYTES, "invalid proposer_id")
                 require(row["kind"] == "factor" and isinstance(row["factor"], str) and TOKEN.fullmatch(row["factor"]), "invalid factor")
                 require(row["parent_contract_id"] == self.contract["contract_id"], "proposal contract differs")
                 require(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)", row["ts"]), "invalid RFC3339")
                 datetime.fromisoformat(row["ts"].replace("Z", "+00:00"))
                 if (row["factor"] not in dead and row["proposal_id"] not in state["screened"]
                         and row["factor"] not in state["used"] and quota.get(row["proposer_id"], 1) > 0):
-                    template = self.mapping.get("routes", {}).get(row["factor"], {}).get("screen")
-                    if isinstance(template, dict) and self.mapping_consumed(template.get("id"), "screen", snapshot):
+                    # An inbox token cannot authorize its own evaluator. Validate
+                    # the frozen screen mapping before choosing this row.
+                    manifest = self.manifest(row["factor"], "screen")
+                    if self.mapping_consumed(manifest["id"], "screen", snapshot):
                         continue  # Keep duplicate rows and their proposers' quota unchanged.
                     return row
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError, RecursionError):
                 continue  # Append-only inbox retains rejected original rows.
         return None
+
+    def inbox_contents(self):
+        with self.state_path("inbox.jsonl").open("rb") as stream:
+            raw = stream.read(MAX_INBOX_BYTES + 1)
+        require(len(raw) <= MAX_INBOX_BYTES, "proposal inbox exceeds byte limit")
+        rows = raw.splitlines()
+        require(len(rows) <= MAX_INBOX_ROWS, "proposal inbox exceeds row limit")
+        return raw, rows
 
     def dispatch(self, state, manifest, factor, kind, snapshot, proposal=None):
         relative = ("screen/" if kind == "screen" else "manifests/") + manifest["id"] + ".json"
@@ -419,6 +514,85 @@ class Wheel:
         self.project("create", "--manifest", str(self.state_path(relative)))
         state["pending"]["submitted"] = True
         self.write("state.json", state)  # Ambiguous execution never causes an automatic resend.
+        self.project("execute", "--id", manifest["id"])
+        return 0
+
+    def _pending_unstarted(self, run, manifest, snapshot):
+        effective = run.get("effective_contract_sha256")
+        require(run.get("manifest") == manifest and run.get("manifest_sha256") == digest(manifest)
+                and isinstance(effective, str) and HEX.fullmatch(effective)
+                and effective == snapshot.get("contract_sha256"),
+                "pending run belongs to another manifest or contract", 4)
+        require(run.get("status") == "RESERVED" and "attempt_id" in run and run["attempt_id"] is None
+                and all(run.get(k) is None for k in ("worker_pid", "pid", "started_at", "scheduler")),
+                "pending execution has an attempt or unknown state; inspect original project status", 4)
+
+    def _restore_pending_manifest(self, relative, manifest):
+        path = self.state_path(relative)
+        if not path.exists():
+            self.write(relative, manifest, once=True)
+            return
+        expected = (canonical(manifest) + "\n").encode("utf-8")
+        with path.open("rb") as stream:
+            raw = stream.read(len(expected) + 1)
+        require(len(raw) <= len(expected), "retained pending manifest exceeds its canonical payload", 3)
+        try:
+            retained = decode(raw.decode("utf-8"))
+        except (ValueError, UnicodeError, RecursionError):
+            require(len(raw) < len(expected) and expected.startswith(raw),
+                    "retained pending manifest is not its canonical partial prefix", 3)
+        else:
+            require(retained == manifest, "retained pending manifest changed", 3)
+            return
+        # Retain exact original bytes before restoring an attributable legacy
+        # partial. Caller has already checked the frozen pending and native state.
+        evidence = self.state_path("interrupted/" + manifest["id"] + "-"
+                                   + hashlib.sha256(raw).hexdigest() + ".partial")
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._publish_once(evidence, raw)
+        except FileExistsError:
+            with evidence.open("rb") as stream:
+                require(stream.read(len(raw) + 1) == raw, "retained partial evidence differs", 3)
+        with path.open("rb") as stream:
+            require(stream.read(len(raw) + 1) == raw, "pending manifest changed before restoration", 3)
+        self.write(relative, manifest)
+
+    def resume_pending(self, state, snapshot):
+        """Finish only a journaled manifest with no native execution attempt."""
+        pending = state["pending"]
+        manifest, kind = pending["manifest"], pending["kind"]
+        require(kind in {"main", "screen"}, "invalid pending dispatch kind", 3)
+        if kind == "screen":
+            seconds = manifest.get("resource_estimates", {}).get("wall_seconds")
+            require(finite(seconds), "invalid pending screen reservation", 3)
+            milliseconds = Fraction(str(seconds)) * 1000
+            require(milliseconds.denominator == 1 and 0 < milliseconds <= self.contract["screen_wall_ms"],
+                    "invalid pending screen reservation", 3)
+            expected = self.manifest(pending["factor"], kind, int(milliseconds))
+        else:
+            expected = self.manifest(pending["factor"], kind)
+        require(manifest == expected, "pending manifest differs from frozen mapping", 3)
+        relative = ("screen/" if kind == "screen" else "manifests/") + manifest["id"] + ".json"
+        require(isinstance(snapshot.get("runs"), list)
+                and snapshot.get("contract_sha256") == digest(self.project_contract),
+                "pending native registration or contract is unknown", 4)
+        runs = [r for r in snapshot["runs"] if r.get("id") == manifest["id"]]
+        require(len(runs) <= 1, "ambiguous pending run identity", 4)
+        if runs:
+            self._pending_unstarted(runs[0], manifest, snapshot)
+        self._restore_pending_manifest(relative, manifest)
+        if not runs:
+            self.project("create", "--manifest", str(self.state_path(relative)))
+            snapshot = self.project("status")
+            runs = [r for r in snapshot.get("runs", []) if r.get("id") == manifest["id"]]
+        require(len(runs) == 1, "pending run registration is unknown", 4)
+        run = runs[0]
+        self._pending_unstarted(run, manifest, snapshot)
+        # The kernel claims the attempt atomically. A concurrent caller cannot
+        # launch the same run again even if it passed the preceding read.
+        pending["submitted"] = True
+        self.write("state.json", state)
         self.project("execute", "--id", manifest["id"])
         return 0
 
@@ -460,7 +634,8 @@ class Wheel:
             require(all(self.mapping[k]["id"] in receipts for k in ("control", "initial")), "missing tick-0 paired receipts", 4)
             if pending:
                 execute_id, factor = pending["manifest"]["id"], pending["factor"]
-                require(execute_id in receipts, "pending execution has no receipt; inspect original project status", 4)
+                if execute_id not in receipts:
+                    return self.resume_pending(state, snapshot)
                 treatment = receipts[execute_id]
                 expected = pending["manifest"]
             else:
@@ -545,11 +720,21 @@ class Wheel:
                 token = token[:-1]
             if not TOKEN.fullmatch(token) or token in self.tokens("dead.txt"):
                 return False
-            require(isinstance(proposer_id, str) and proposer_id, "proposer_id required")
+            require(isinstance(proposer_id, str) and proposer_id
+                    and len(proposer_id.encode("utf-8")) <= MAX_PROPOSER_BYTES, "bounded proposer_id required")
             require(sha(self.path(self.mapping["evaluator_path"])) == self.contract["evaluator_sha256"], "evaluator changed", 3)
-            self.append("inbox.jsonl", canonical({"proposal_id": str(uuid.uuid4()), "proposer_id": proposer_id,
+            raw = canonical({"proposal_id": str(uuid.uuid4()), "proposer_id": proposer_id,
                         "kind": "factor", "factor": token, "parent_contract_id": self.contract["contract_id"],
-                        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}) + "\n")
+                        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}) + "\n"
+            require(len(raw.encode("utf-8")) <= MAX_INBOX_ROW_BYTES, "proposal row exceeds byte limit")
+            before, rows = self.inbox_contents()
+            separator = "\n" if before and not before.endswith((b"\n", b"\r")) else ""
+            require(len(rows) < MAX_INBOX_ROWS
+                    and len(before) + len((separator + raw).encode("utf-8")) <= MAX_INBOX_BYTES,
+                    "proposal inbox is full")
+            # Preserve a crash-truncated row as an invalid original line;
+            # the accepted row must start separately, never be swallowed by it.
+            self.append("inbox.jsonl", separator + raw)
             return True
 
 

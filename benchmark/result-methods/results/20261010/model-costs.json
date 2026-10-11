@@ -1,0 +1,22 @@
+[
+  {
+    "name": "baseline",
+    "epochs": 40,
+    "wall_seconds": 0.1252507000008336
+  },
+  {
+    "name": "candidate",
+    "epochs": 40,
+    "wall_seconds": 0.13229379999938828
+  },
+  {
+    "name": "gain-regressor",
+    "epochs": 80,
+    "wall_seconds": 0.07160990000011225
+  },
+  {
+    "name": "benefit-classifier",
+    "epochs": 80,
+    "wall_seconds": 0.11206029999993916
+  }
+]

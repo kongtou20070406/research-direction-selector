@@ -71,6 +71,26 @@ class QuickTests(unittest.TestCase):
         contract['execution_policy'] = {'schema': 1, 'max_attempts': max_attempts}
         ProjectStore(self.ledger).initialize(contract)
 
+    def test_prospective_exec_binds_native_goal_without_manual_goal_link_flag(self):
+        from rds_math import bind_objective
+        from test_rds_native_research import GOAL
+        bind_objective(self.root, json.dumps(GOAL).encode('utf-8'))
+        self.initialize_ledger()
+        self.context['decision']['scope'] = copy.deepcopy(GOAL['scope'])
+        self.context_path.write_text(json.dumps(self.context), encoding='utf-8')
+        original = self.context_path.read_bytes()
+        self.assertNotIn('objective_binding', self.context)
+        self.assertNotIn('require_goal_link', self.context)
+        self.script('print("bounded local check")\n')
+        result = json.loads(self.job('native-local', True, *self.policy_options()).stdout)
+        full = json.loads(Path(result['record']).read_text(encoding='utf-8'))
+        self.assertEqual(full['receipt']['run_status'], 'SUCCEEDED')
+        self.assertEqual(self.context_path.read_bytes(), original)
+        before = ProjectStore(self.ledger).snapshot()['budget']
+        retried = json.loads(self.job('native-local', True, *self.policy_options()).stdout)
+        self.assertFalse(json.loads(Path(retried['record']).read_text(encoding='utf-8'))['execution_started'])
+        self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
+
     def policy_options(self):
         return ['--context', str(self.context_path), '--graph', str(self.graph_path), '--ledger', str(self.ledger)]
 
@@ -172,11 +192,16 @@ class QuickTests(unittest.TestCase):
         job_root = Path(json.loads(Path(json.loads(first.stdout)['record']).read_text())['job_root'])
         before = ProjectStore(self.ledger).snapshot()['budget']
         marker.unlink()
+        with ProjectStore(self.ledger)._db(True) as db:
+            checkpoints = [tuple(row) for row in db.execute('SELECT id,sha FROM checkpoints ORDER BY id')]
+        self.assertEqual(len(checkpoints), 2)
         second = self.job('success-renamed', True, *options)
         self.assertEqual(json.loads(second.stdout)['status'], 'EXISTING_JOB')
         self.assertFalse(marker.exists())
         self.assertFalse((self.root / '.rds/exec/success-renamed').exists())
         self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
+        with ProjectStore(self.ledger)._db(True) as db:
+            self.assertEqual([tuple(row) for row in db.execute('SELECT id,sha FROM checkpoints ORDER BY id')], checkpoints)
         (job_root / 'outputs/result').unlink()
         rejected = self.job('missing-output-reuse', False, *options)
         self.assertNotEqual(rejected.returncode, 0)
@@ -480,20 +505,34 @@ raise SystemExit(rds_cli.main())
         from rds_quick import choice
         self.initialize_ledger()
         invalid = self.graph['nodes'][0]
-        invalid['executable']['action']['required_observables'] = []
         ready = copy.deepcopy(invalid)
         ready['id'] = 'healthy'
-        ready['executable']['action']['required_observables'] = ['x']
+        complete = {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH',
+            'search': search_directions({'nodes': [ready], 'edges': []}, self.context)}]}
+        self.assertTrue(complete['recommendations'][0]['search']['analysis_coverage']['full'])
+        complete_original = copy.deepcopy((complete, self.context))
+        for selected in ('healthy:inspect-x', 'inspect-x', None):
+            self.assertEqual(choice(complete, self.context, selected)['candidate']['id'], 'healthy:inspect-x')
+        for selected in ('nonexistent', 'route', 'route:inspect', 'inspect'):
+            with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, 'missing, pruned or ambiguous candidate'):
+                choice(complete, self.context, selected)
+        self.assertEqual((complete, self.context), complete_original)
+        # Once an invalid primary is declared, even the healthy route cannot
+        # be selected until complete analysis is restored. Exact diagnostic
+        # lookup remains read-only and never licenses execution.
+        invalid['executable']['action']['required_observables'] = []
         self.graph['nodes'].append(ready)
         advice = {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH',
             'search': search_directions(self.graph, self.context)}]}
         original = copy.deepcopy((advice, self.context))
+        self.assertFalse(advice['recommendations'][0]['search']['analysis_coverage']['full'])
         for selected in ('healthy:inspect-x', 'inspect-x', None):
-            self.assertEqual(choice(advice, self.context, selected)['candidate']['id'], 'healthy:inspect-x')
+            with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, 'Complete graph analysis required'):
+                choice(advice, self.context, selected)
         with self.assertRaisesRegex(ValueError, 'Selected candidate was discarded.*missing required observables'):
             choice(advice, self.context, 'route:inspect-x')
         for selected in ('nonexistent', 'route', 'route:inspect', 'inspect'):
-            with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, 'missing, pruned or ambiguous candidate') as error:
+            with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, 'Complete graph analysis required') as error:
                 choice(advice, self.context, selected)
             self.assertNotIn('missing required observables', str(error.exception))
         self.assertEqual((advice, self.context), original)
@@ -505,19 +544,26 @@ raise SystemExit(rds_cli.main())
         other = copy.deepcopy(self.graph['nodes'][0])
         other['id'] = 'other'
         self.graph['nodes'].append(other)
+        def advice():
+            return {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH',
+                'search': search_directions(self.graph, self.context)}]}
+        self.assertTrue(advice()['recommendations'][0]['search']['analysis_coverage']['full'])
+        with self.assertRaisesRegex(ValueError, 'ambiguous candidate') as error:
+            choice(advice(), self.context, 'inspect-x')
+        self.assertNotIn('missing required observables', str(error.exception))
         invalid = copy.deepcopy(other)
         invalid['id'] = 'invalid'
         invalid['executable']['action']['required_observables'] = []
         self.graph['nodes'].append(invalid)
-        def advice():
-            return {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH',
-                'search': search_directions(self.graph, self.context)}]}
-        with self.assertRaisesRegex(ValueError, 'ambiguous candidate') as error:
+        self.assertFalse(advice()['recommendations'][0]['search']['analysis_coverage']['full'])
+        with self.assertRaisesRegex(ValueError, 'Complete graph analysis required') as error:
             choice(advice(), self.context, 'inspect-x')
         self.assertNotIn('missing required observables', str(error.exception))
+        with self.assertRaisesRegex(ValueError, 'Selected candidate was discarded.*missing required observables'):
+            choice(advice(), self.context, 'invalid:inspect-x')
         self.graph['nodes'][0]['executable']['action']['outcomes'] = []
         self.graph['nodes'][1]['executable']['action']['required_observables'] = []
-        with self.assertRaisesRegex(ValueError, 'ambiguous candidate') as error:
+        with self.assertRaisesRegex(ValueError, 'Complete graph analysis required') as error:
             choice(advice(), self.context, 'inspect-x')
         self.assertNotIn('no outcome', str(error.exception))
         with self.assertRaisesRegex(ValueError, 'no outcome can distinguish next decisions'):
@@ -556,7 +602,10 @@ raise SystemExit(rds_cli.main())
         self.graph['nodes'][0]['executable']['action'] = None
         advice = {'recommendations': [{'type': 'EXECUTABLE_DIRECTION_SEARCH',
             'search': search_directions(self.graph, self.context)}]}
-        with self.assertRaisesRegex(ValueError, 'missing, pruned or ambiguous candidate'):
+        search = advice['recommendations'][0]['search']
+        self.assertFalse(search['analysis_coverage']['full'])
+        self.assertEqual(search['discarded_candidates'], [{'rule_id': 'route', 'reason': 'missing action identity'}])
+        with self.assertRaisesRegex(ValueError, 'Complete graph analysis required'):
             choice(advice, self.context, 'route:inspect-x')
         with self.assertRaisesRegex(ValueError, 'No READY candidate.*missing action identity'):
             choice(advice, self.context)

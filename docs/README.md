@@ -2,12 +2,25 @@
 
 [简体中文](README.zh-CN.md) · [Project homepage](../README.md) · [Contributing](../CONTRIBUTING.md)
 
-Start with the research workflow, then read the verifier guide for mathematical claims. The terminology guide keeps protocols, program checks and scientific conclusions consistent across languages.
+Start with [vision and scope](rds-purpose.md): our purpose is better AI assistance for human research, and RDS connects goals, evidence, decisions and execution to support it. Then follow the workflow you need.
 
-This guide targets v5.6.0-rc.1, including the mathematical implementation introduced in PR #2, the Advisor/dashboard integration introduced in PR #3, and the first [M01–M06 tool workflow](development-loop.md). Mathematical capability tables retain `f020b2c` as a historical comparison; their supported scope is unchanged. Broader planned adapters remain unimplemented. See the [five components](rds-purpose.md), [Advisor design](advisor-graph-design.md), [dashboard](dashboard.md), [component benchmark](advisor-benchmark.md), and [roadmap](roadmap.md).
+| You want to… | Start here |
+| --- | --- |
+| Try RDS with your agent | [Quick start](quickstart.md), [CPU receipt example](../examples/autoresearch-receipts/README.md) |
+| Understand the research decision loop | [Research workflow](research-workflow.md), [owned Advisor](program-owned-advisor.md) |
+| Change a failed approach and continue | [Problem structure](problem-structure.md), [bounded research drive](autonomy-loop.md), [deterministic continuation](deterministic-continuation.md) |
+| Find a supported command or installation path | [Command map](command-map.md), [host plugins](host-plugins.md) |
+| Assess evidence and long-term claims | [Research autonomy](research-autonomy.md), [benchmark protocol](../benchmark/README.md), [RSI evidence](../references/rsi-evidence.md) |
+
+## Guide catalogue
+
+Want to help build the loop? See [Join RDS](RECRUITING.md) for research, engineering, evaluation and documentation contributions.
+
+These guides describe the checkout's documented interfaces. Dated proposals, comparison revisions and benchmark reports retain their original scope; they are not a current release-wide acceptance report. Check the revision you use, its [preview notes](releases/5.9.0-rc.2-preview.md), and the relevant command help.
 
 | Guide | English | 简体中文 |
 | --- | --- | --- |
+| Vision, current entry points and evidence needed for progress | [Vision and scope](rds-purpose.md) | [愿景与范围](rds-purpose.zh-CN.md) |
 | Proposed 5.8 goals, architecture, status and collaboration packages | [5.8 vision](5.8-vision.md) | [5.8 完整目标与协作计划](5.8-vision.zh-CN.md) |
 | Published autonomy taxonomy and current implementation scope | [Research autonomy](research-autonomy.md) | [原框架与当前能力](research-autonomy.md) |
 | Research responsibilities and experiment flow | [Research workflow](research-workflow.md) | [科研工作流](research-workflow.zh-CN.md) |
@@ -30,4 +43,4 @@ This guide targets v5.6.0-rc.1, including the mathematical implementation introd
 
 The [execution contract](../references/l3-state-machine.md) defines the runtime in the checkout being used. [SKILL.md](../SKILL.md) defines the research protocol. When the two differ, report the inconsistency instead of interpreting a protocol instruction as an implemented guarantee.
 
-The homepage examples target public `main`. Its checked certificate and scoped multidimensional interfaces originate in [PR #2](https://github.com/kongtou20070406/research-direction-selector/pull/2). Check each adapter's implementation revision and documented limits before choosing a backend. The release regression run skipped two native-Lean checks because a toolchain was not configured and two PyTorch checks because PyTorch was absent; those skips do not establish validation of the optional paths.
+Homepage examples target the documented checkout. For mathematical interfaces, consult [formal verification](formal-verification.md) and retain the actual backend, status and assurance. Unavailable optional dependencies or skipped checks do not establish validation of those paths.

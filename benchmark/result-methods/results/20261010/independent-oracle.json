@@ -1,0 +1,44 @@
+{
+  "regression": {
+    "benefit": {
+      "accepted": 278,
+      "support": 312
+    },
+    "harm": {
+      "accepted": 29,
+      "support": 48
+    },
+    "neutral": {
+      "accepted": 0,
+      "support": 0
+    }
+  },
+  "classifier": {
+    "benefit": {
+      "accepted": 312,
+      "support": 312
+    },
+    "harm": {
+      "accepted": 48,
+      "support": 48
+    },
+    "neutral": {
+      "accepted": 0,
+      "support": 0
+    }
+  },
+  "gate": {
+    "benefit": {
+      "accepted": 278,
+      "support": 312
+    },
+    "harm": {
+      "accepted": 29,
+      "support": 48
+    },
+    "neutral": {
+      "accepted": 0,
+      "support": 0
+    }
+  }
+}

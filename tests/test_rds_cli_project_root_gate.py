@@ -24,7 +24,7 @@ class ProjectRootGateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.project_root = Path(prepare(Path(self.temp.name) / "proj")["root"])
-        run_cli(self.project_root, "project", "init", "--contract", str(self.project_root / "contract.json"))
+        run_cli(self.project_root, "project", "init", "--mode", "quick", "--contract", str(self.project_root / "contract.json"))
 
     def tearDown(self):
         self.temp.cleanup()

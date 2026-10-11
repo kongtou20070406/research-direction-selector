@@ -195,6 +195,45 @@ class AdvisorCLITests(unittest.TestCase):
                         self.assertEqual(candidate['budget_status'], 'WITHIN_REPORTED_BUDGET')
             self.assertFalse((project / '.rds').exists())
 
+    def test_artifact_choice_keeps_saved_dependency_identity(self):
+        import test_rds_project as fixtures
+        from rds_tms_store import save, current
+        from rds_checkpoints import read_checkpoint
+        fixture = fixtures.ProjectTests('test_real_success_receipt_and_distinct_costs')
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        project = fixture.root
+        manifest, graph = self.cost_fixture(project)
+        dependency = {'schema': 1, 'nodes': [
+            {'id': 'goal', 'status': 'UNKNOWN', 'source': 'synthetic open obligation'}],
+            'hyperedges': [], 'goals': ['goal']}
+        pin = save(project, dependency, expected=None)
+        context = project / 'context.json'
+        context.write_text(json.dumps({'decision': {'id': 'choose', 'goal_revision': 'synthetic-v1',
+                                                   'scope': {'dataset': 'synthetic'}}}), encoding='utf-8')
+        answer = self.call(project, '--artifacts', str(manifest), '--graph', str(graph),
+                           '--research-context', str(context), '--record', 'artifact-choice')
+        search = next(row['search'] for row in answer['recommendations']
+                      if row.get('type') == 'EXECUTABLE_DIRECTION_SEARCH')
+        self.assertTrue(search['analysis_coverage']['full'])
+        self.assertEqual(current(project)['sha256'], pin)
+        with fixture.store._db(True) as db:
+            checkpoint = read_checkpoint(db, 'artifact-choice', root=project)
+        self.assertEqual(checkpoint['record']['decision']['candidate']['id'],
+                         answer['checkpoint']['candidate_id'])
+        # A caller cannot re-use the old pin after the saved graph advances.
+        dependency['nodes'].append({'id': 'new', 'status': 'UNKNOWN', 'source': 'new synthetic obligation'})
+        save(project, dependency, expected=pin)
+        context.write_text(json.dumps({'dependency_snapshot_sha256': pin}), encoding='utf-8')
+        rejected = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'),
+            '--root', str(project), 'advise', '--artifacts', str(manifest), '--graph', str(graph),
+            '--research-context', str(context), '--record', 'stale-choice'],
+            cwd=ROOT, capture_output=True, encoding='utf-8', timeout=10)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('snapshot changed', rejected.stderr)
+        with fixture.store._db(True) as db:
+            self.assertIsNone(read_checkpoint(db, 'stale-choice', root=project))
+
     def test_manual_only_cost_is_sourced_and_budgeted_alongside_imported_facts(self):
         with tempfile.TemporaryDirectory() as raw:
             project = Path(raw)
@@ -390,6 +429,10 @@ class AdvisorCLITests(unittest.TestCase):
             actual = next(row['search']['experiment_composition'] for row in with_artifacts['recommendations']
                           if row.get('type') == 'EXECUTABLE_DIRECTION_SEARCH')
             self.assertTrue(actual['candidates'])
+            # Importing an empty manifest adds explicit context fields; bind
+            # that input identity while preserving identical computed results.
+            self.assertEqual(len(actual['rule_search'].pop('context_sha256')), 64)
+            self.assertEqual(len(expected['rule_search'].pop('context_sha256')), 64)
             self.assertEqual(actual, expected)
             self.assertTrue(all(not candidate['execution_authorized'] for candidate in actual['candidates']))
             self.assertFalse((project / '.rds').exists())

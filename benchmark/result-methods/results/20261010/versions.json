@@ -1,0 +1,7 @@
+{
+  "python": "3.13.5",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "numpy": "2.2.6",
+  "scipy": "1.18.1",
+  "sklearn": "1.9.1"
+}

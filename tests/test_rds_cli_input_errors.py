@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -38,8 +39,15 @@ class CLIInputErrorTests(unittest.TestCase):
 
     def assertRejected(self, result, message, init=False):
         self.assertEqual(result.returncode, 1, result.stderr)
-        hint = ("\n[RDS-HINT] python -B examples/project-runner/prepare.py --root ./my-project\n"
-                if init else "\n")
+        hint = "\n"
+        if init:
+            # This absolute fixture path contains Windows separators, so its
+            # PowerShell display argument is quoted. Keep the entire error and
+            # hint exact; recovery discovers this root instead of making a new one.
+            root_argument = ("'" + str(self.root).replace("'", "''") + "'"
+                             if os.name == 'nt' else shlex.quote(str(self.root)))
+            hint += ("[RDS-HINT] Inspect the existing project first: python -B scripts/rds_cli.py --root "
+                     + root_argument + " project discover; see docs/project-lifecycle.md\n")
         self.assertEqual(result.stderr, "[RDS-REJECT] " + message + hint)
 
     def initialize(self):

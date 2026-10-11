@@ -160,6 +160,7 @@ def with_saved_dependencies(root, context):
     saved = current(root)
     require(saved is not None, 'No saved dependency map; declare the current dependencies with hypergraph first')
     spec = deepcopy(saved['dependency_map'])
+    spec['record_source_base_dir'] = saved['source_base_dir']
     # Preserve source resolution when advice/exec runs from a different cwd.
     for key in ('nodes', 'hyperedges'):
         for record in spec[key]:

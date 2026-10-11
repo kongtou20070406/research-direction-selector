@@ -5,11 +5,14 @@ Definition, admission, observation and logical support remain separate.
 """
 from copy import deepcopy
 from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import time
+import threading
 import uuid
 
 from rds_project import ProjectStore, canonical, digest, require, TERMINAL, _alive
@@ -23,6 +26,116 @@ import rds_search_allocation as search_allocation
 
 PREFIX = 'STRUCTURE_'
 MAX_BYTES = 128 * 1024
+_CONTROL_OWNER = ContextVar('rds_structure_control_owner', default=None)
+_CONTROL_RESERVATION = ContextVar('rds_structure_control_reservation', default=None)
+_ACTIVE_RESERVATIONS = {}
+
+
+class StructureControlBusy(ValueError):
+    pass
+
+
+class _ReservedControl:
+    def __init__(self, store, ident, cap):
+        self.root, self.pid, self.thread = str(store.root.resolve()), os.getpid(), threading.get_ident()
+        self.id, self.cap, self.used = ident, cap, 0.
+        self.suspended, self.active, self.paused = 0., False, False
+
+    @contextmanager
+    def suspend(self):
+        require(_CONTROL_RESERVATION.get() is self and self.active and not self.paused
+                and _ACTIVE_RESERVATIONS.get(self.id) is self and self.pid == os.getpid()
+                and self.thread == threading.get_ident(),
+                'Only the current reserved controller can suspend its worker wait')
+        self.paused = True
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self.suspended += time.monotonic() - started
+            self.paused = False
+
+
+def _reservation_check(store, events, reservation, cap):
+    require(isinstance(reservation, _ReservedControl) and reservation.active
+            and _ACTIVE_RESERVATIONS.get(reservation.id) is reservation
+            and reservation.root == str(store.root.resolve()) and reservation.pid == os.getpid()
+            and reservation.thread == threading.get_ident() and not reservation.paused,
+            'Structure reservation belongs to another project/process/caller')
+    parent = next((e for e in events if e['kind'] == PREFIX + 'CONTROL_STARTED'
+                   and e['id'] == reservation.id), None)
+    require(parent is not None and parent.get('reservation_parent') is True
+            and parent['pid'] == reservation.pid and parent['cap'] == reservation.cap,
+            'Structure parent reservation is missing')
+    require(reservation.used + cap <= reservation.cap, 'Insufficient reserved structure control allowance')
+    return parent
+
+
+@contextmanager
+def reserved_control(store, operation, cap):
+    """Hold future direct-controller work in its original ledger budget.
+
+    This is independent of an autonomy drive claim. Child diagnostics borrow
+    this real reservation; only the outer scope bills elapsed control once.
+    """
+    require(_CONTROL_OWNER.get() is None and _CONTROL_RESERVATION.get() is None,
+            'Nested or drive-owned direct controller reservations are forbidden')
+    with _meter(store, operation, _cap=cap, _parent=True) as reservation:
+        reservation.active = True
+        _ACTIVE_RESERVATIONS[reservation.id] = reservation
+        token = _CONTROL_RESERVATION.set(reservation)
+        try:
+            yield reservation
+        finally:
+            _CONTROL_RESERVATION.reset(token)
+            _ACTIVE_RESERVATIONS.pop(reservation.id, None)
+            reservation.active = False
+
+
+def _owned_control_check(store, db, context, cap=0.):
+    from rds_autonomy import _events as autonomy_events
+    require(str(store.root.resolve()) == context['root'] and os.getpid() == context['pid'],
+            'Structure control scope belongs to another project/process')
+    active = None
+    for event in autonomy_events(db, ('AUTONOMY_DRIVE_CLAIMED', 'AUTONOMY_DRIVE_RELEASED')):
+        if event['kind'] == 'AUTONOMY_DRIVE_CLAIMED':
+            active = event
+        elif active and event['owner'] == active['owner']:
+            active = None
+    require(active is not None and active['owner'] == context['owner'] and active['pid'] == os.getpid(),
+            'Structure control owner is no longer the active drive')
+    if 'claim_sha256' in context:
+        require(active['sha256'] == context['claim_sha256'], 'Structure control owner claim changed')
+    allowance = active['controller_reservation']
+    remaining = context['remaining']()
+    require(type(remaining) in (int, float) and math.isfinite(remaining)
+            and cap <= remaining <= allowance, 'Insufficient owned structure control allowance')
+    row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
+    require(row is not None and row['reserved'] + 1e-9 >= allowance,
+            'Structure control owner reservation is missing')
+    store._campaign_deadline(db, store._contract(db), admit=True)
+    return active
+
+
+@contextmanager
+def owned_control(store, owner, remaining):
+    """Explicitly use one active drive's declared allowance, never a PID guess.
+
+    The owner accounts this elapsed control work once when releasing its claim.
+    Child events retain diagnostics and crash recovery without a second reserve.
+    """
+    require(isinstance(owner, str) and owner and callable(remaining), 'Declare an owner and remaining allowance callback')
+    require(_CONTROL_OWNER.get() is None, 'Nested structure control owner scopes are forbidden')
+    context = {'root': str(store.root.resolve()), 'owner': owner, 'pid': os.getpid(), 'remaining': remaining}
+    with store._db() as db:
+        db.execute('BEGIN IMMEDIATE')
+        active = _owned_control_check(store, db, context)
+        context['claim_sha256'] = active['sha256']
+    token = _CONTROL_OWNER.set(context)
+    try:
+        yield
+    finally:
+        _CONTROL_OWNER.reset(token)
 
 
 def _read_ref(store, ref):
@@ -62,11 +175,10 @@ def _find(store, kind, ident):
     return value
 
 
-def _put(store, kind, ident, value, *, expected=None, check_snapshot=False):
+def _put(store, kind, ident, value, *, expected=None, check_snapshot=False, _db=None):
     require(len(canonical(value).encode('utf-8')) <= MAX_BYTES, 'Structure record exceeds 128 KiB')
     ref = cas_json(store.root, value)
-    with store._db() as db:
-        db.execute('BEGIN IMMEDIATE')
+    def commit(db):
         events = _events(store, db)
         old = next((e for e in events if e['kind'] == PREFIX + kind and e.get('id') == ident), None)
         if old:
@@ -86,40 +198,74 @@ def _put(store, kind, ident, value, *, expected=None, check_snapshot=False):
             search_allocation.claim(events, value, lambda ref: _read_ref(store, ref))
         db.execute('INSERT INTO events(body) VALUES (?)',
                    (canonical({'kind': PREFIX + kind, 'id': ident, 'sha256': ref['sha256'], 'record': ref}),))
+    if _db is None:
+        with store._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            commit(db)
+    else:
+        commit(_db)
+
     return value
 
 
 @contextmanager
-def _meter(store, operation):
+def _meter(store, operation, *, _cap=2., _parent=False):
     """Reserve bounded controller work in the original budget, even on failure.
 
     Interrupted reservations are reconciled explicitly; they cannot disappear
     when an invocation or branch changes. Worker time is accounted separately.
     """
-    ident, cap = uuid.uuid4().hex, 2.0
+    require(type(_cap) in (int, float) and math.isfinite(_cap) and 2 <= _cap <= 14
+            and (_parent or _cap == 2), 'Invalid internal structure control reservation')
+    ident, cap = uuid.uuid4().hex, float(_cap)
+    context = _CONTROL_OWNER.get()
+    reservation = _CONTROL_RESERVATION.get()
+    require(not (context is not None and reservation is not None), 'Structure control accounting owners conflict')
+    clock = _ReservedControl(store, ident, cap)
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         events = _events(store, db)
         settled = {e['id'] for e in events if e['kind'] == PREFIX + 'CONTROL_FINISHED'}
-        require(all(e['id'] in settled for e in events if e['kind'] == PREFIX + 'CONTROL_STARTED'),
-                'Interrupted structure controller reservation; use structure recover')
-        row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
-        require(row and row['cap'] - row['spent'] - row['charged'] - row['reserved'] >= cap,
-                'Insufficient wall_seconds for bounded structure control work')
-        store._campaign_deadline(db, store._contract(db), admit=True)
-        db.execute("UPDATE budget SET reserved=reserved+? WHERE resource='wall_seconds'", (cap,))
+        pending = [e for e in events if e['kind'] == PREFIX + 'CONTROL_STARTED' and e['id'] not in settled]
+        if reservation is not None:
+            _reservation_check(store, events, reservation, cap)
+            require(all(e['id'] == reservation.id for e in pending),
+                    'Interrupted structure controller reservation; use structure recover')
+            row = db.execute("SELECT reserved FROM budget WHERE resource='wall_seconds'").fetchone()
+            require(row and row['reserved'] + 1e-9 >= reservation.cap, 'Structure parent budget reservation is missing')
+            store._campaign_deadline(db, store._contract(db), admit=True)
+        else:
+            if any(e.get('reservation_parent') is True and _alive(e.get('pid')) is not False for e in pending):
+                raise StructureControlBusy('Active structure controller reservation is busy')
+            require(not pending, 'Interrupted structure controller reservation; use structure recover')
+        if reservation is not None:
+            reservation.used += cap
+        elif context is not None:
+            _owned_control_check(store, db, context, cap)
+        else:
+            row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
+            require(row and row['cap'] - row['spent'] - row['charged'] - row['reserved'] >= cap,
+                    'Insufficient wall_seconds for bounded structure control work')
+            store._campaign_deadline(db, store._contract(db), admit=True)
+            db.execute("UPDATE budget SET reserved=reserved+? WHERE resource='wall_seconds'", (cap,))
         db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': PREFIX + 'CONTROL_STARTED',
-                   'id': ident, 'operation': operation, 'cap': cap, 'pid': os.getpid()}),))
+                   'id': ident, 'operation': operation, 'cap': cap, 'pid': os.getpid(),
+                   **({'reservation_parent': True} if _parent else {}),
+                   **({'reservation_owner': reservation.id} if reservation else {}),
+                   **({'budget_owner': context['owner'], 'owner_claim_sha256': context['claim_sha256']} if context else {})}),))
     start = time.monotonic()
     try:
-        yield
+        yield clock
     finally:
-        elapsed = time.monotonic() - start
+        elapsed = time.monotonic() - start - clock.suspended
         with store._db() as db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute("UPDATE budget SET reserved=reserved-?,spent=spent+? WHERE resource='wall_seconds'", (cap, elapsed))
+            if context is None and reservation is None:
+                db.execute("UPDATE budget SET reserved=reserved-?,spent=spent+? WHERE resource='wall_seconds'", (cap, elapsed))
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': PREFIX + 'CONTROL_FINISHED',
-                       'id': ident, 'wall_seconds': elapsed, 'over_cap': elapsed > cap}),))
+                       'id': ident, 'wall_seconds': elapsed, 'over_cap': elapsed > cap,
+                       **({'reservation_owner': reservation.id, 'accounting': 'PARENT_STRUCTURE_RESERVATION'} if reservation else {}),
+                       **({'budget_owner': context['owner'], 'accounting': 'OWNING_DRIVE_ALLOWANCE'} if context else {})}),))
 
 
 def recover_control(root):
@@ -132,9 +278,25 @@ def recover_control(root):
         for event in pending:
             require(event.get('pid') is not None and _alive(event['pid']) is False,
                     'Controller may still be active; retain reservation for host reconciliation')
-            db.execute("UPDATE budget SET reserved=reserved-?,charged=charged+? WHERE resource='wall_seconds'", (event['cap'], event['cap']))
+            if 'reservation_owner' in event:
+                parent = next((e for e in events if e['kind'] == PREFIX + 'CONTROL_STARTED'
+                               and e['id'] == event['reservation_owner']), None)
+                require(parent is not None and parent.get('reservation_parent') is True
+                        and parent['pid'] == event['pid'] and parent['cap'] >= event['cap'],
+                        'Interrupted structure parent reservation is missing')
+            elif 'budget_owner' not in event:
+                db.execute("UPDATE budget SET reserved=reserved-?,charged=charged+? WHERE resource='wall_seconds'", (event['cap'], event['cap']))
+            else:
+                from rds_autonomy import _events as autonomy_events
+                claims = autonomy_events(db, ('AUTONOMY_DRIVE_CLAIMED',))
+                require(any(e['owner'] == event['budget_owner'] and e['sha256'] == event['owner_claim_sha256']
+                            and e['pid'] == event['pid'] for e in claims), 'Interrupted structure owner claim is missing')
             db.execute('INSERT INTO events(body) VALUES (?)', (canonical({'kind': PREFIX + 'CONTROL_FINISHED',
-                       'id': event['id'], 'wall_seconds': None, 'charged_estimate': event['cap'], 'status': 'UNKNOWN'}),))
+                       'id': event['id'], 'wall_seconds': None,
+                       'charged_estimate': event['cap'] if 'budget_owner' not in event and 'reservation_owner' not in event else 0.,
+                       **({'reservation_owner': event['reservation_owner'], 'accounting': 'PARENT_STRUCTURE_RESERVATION'} if 'reservation_owner' in event else {}),
+                       'status': 'UNKNOWN', **({'budget_owner': event['budget_owner'],
+                        'accounting': 'OWNING_DRIVE_ALLOWANCE'} if 'budget_owner' in event else {})}),))
     return {'status': 'RECOVERED', 'reconciled_controls': len(pending), 'execution_started': False}
 
 
@@ -262,7 +424,7 @@ def _live(store, req, allow_owned_updates=False):
     return state, saved
 
 
-def propose(root, proposal):
+def propose(root, proposal, *, _prepare_only=False):
     store = ProjectStore(root)
     require(isinstance(proposal, dict) and len(canonical(proposal).encode('utf-8')) <= MAX_BYTES, 'Invalid structure proposal')
     ident = proposal.get('id')
@@ -271,7 +433,7 @@ def propose(root, proposal):
     previous = _find(store, 'PROPOSAL', proposal['id'])
     if previous:
         require(previous['proposal_sha256'] == digest(proposal), 'Proposal ID reused with changed content')
-        return previous
+        return {'record': previous, 'expected': previous['snapshot_sha256']} if _prepare_only else previous
     with _meter(store, 'propose'):
         req = _find(store, 'REQUEST', proposal.get('request_id'))
         require(req is not None, 'Unknown exploration request')
@@ -343,6 +505,8 @@ def propose(root, proposal):
                         'Evidence slot must check the same scoped hypothesis')
         reason = _route_constraint(store, value)
         require(reason is None, 'Evidence route constraint: ' + str(reason))
+        if _prepare_only:
+            return {'record': value, 'expected': saved['sha256']}
         return _put(store, 'PROPOSAL', value['id'], value, expected=saved['sha256'], check_snapshot=True)
 
 
@@ -698,6 +862,15 @@ def drive(root, steps=1):
     for _ in range(steps):
         decision = next_step(root)
         if decision['selected'] is None:
+            if decision['status'] == 'REQUEST_OPEN_EXPLORATION':
+                from rds_jump import generate, _origin
+                store = ProjectStore(root)
+                origin = _origin(store, store.snapshot())
+                completed = origin is not None and _find(store, 'JUMP_FINISHED', origin[0]['id']) is not None
+                generated = generate(root)
+                if generated['status'] != 'JUMP_NOT_CONFIGURED' and not completed:
+                    return {'status': generated['status'], 'decisions': history + [decision],
+                            'generation': generated, 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}
             return {'status': decision['status'], 'decisions': history + [decision],
                     'agent_tasks': request(root)['tasks'] if decision['status'] == 'REQUEST_OPEN_EXPLORATION' else [],
                     'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'}

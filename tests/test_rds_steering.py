@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -21,7 +22,7 @@ import test_rds_quick as quick_fixture
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from rds_project import ProjectStore, canonical, digest
-from rds_steering import submit
+from rds_steering import current as current_steering, submit
 
 
 class SteeringCLITests(unittest.TestCase):
@@ -224,6 +225,22 @@ class SteeringCLITests(unittest.TestCase):
         # Cross the original one-second completion window before the real CLI.
         self.assert_running_work_finishes_under_original_receipt(steering_delay=1.25)
 
+    def test_committed_pause_releases_worker_before_delayed_cli_response(self):
+        steer = self.steer
+        held = []
+        def delayed_response(request):
+            accepted = steer(request)  # The real CLI submits the original pause.
+            held.append(accepted['received_revision'])
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if self.snapshot()['runs'][0]['status'] not in {'RESERVED', 'RUNNING'}:
+                    return accepted
+                time.sleep(.02)
+            self.fail('Original worker did not finish while pause response was held')
+        with patch.object(self, 'steer', delayed_response):
+            self.assert_running_work_finishes_under_original_receipt(steering_delay=1.25)
+        self.assertEqual(len(held), 1)
+
     def assert_running_work_finishes_under_original_receipt(self, *, steering_delay=0):
         release = self.root / 'outputs/steering-release'
         script = fixture.SCRIPT.replace(
@@ -235,20 +252,58 @@ class SteeringCLITests(unittest.TestCase):
         with patch.object(fixture, 'SCRIPT', script):
             self.initialize(mode='slownegative', timeout=6)
         self.create()
-        with ThreadPoolExecutor(max_workers=1) as pool:
+        stop = threading.Event()
+        observed = []
+        store = ProjectStore(self.root)
+        with ThreadPoolExecutor(max_workers=2) as pool:
             running = pool.submit(self.call, 'project', 'execute', '--id', 'baseline')
             try:
                 deadline = time.monotonic() + 10
                 while not self.starts() and time.monotonic() < deadline:
                     time.sleep(.02)
                 self.assertEqual(self.starts(), ['baseline'])
+                with store._db(True) as db:
+                    original_run = store._run(db, 'baseline')
+                self.assertEqual(original_run['status'], 'RUNNING')
+                self.assertIsNotNone(original_run['attempt_id'])
                 if steering_delay:
                     time.sleep(steering_delay)
-                accepted = self.steer(self.request('pause'))
+                request = self.request('pause')
+                source = 'current-user-message:synthetic-case'
+                identity = digest({'request': request, 'source': source})
+                def release_on_commit():
+                    deadline = time.monotonic() + 10
+                    while not stop.is_set() and time.monotonic() < deadline:
+                        with store._db(True) as db:
+                            db.execute('BEGIN')
+                            event = current_steering(db)
+                            if event and event['request']['id'] == request['id']:
+                                self.assertEqual(event['request'], request)
+                                self.assertEqual(event['source'], source)
+                                self.assertEqual(event['request_sha256'], identity)
+                                self.assertEqual(event['request']['contract_sha256'], digest(store._contract(db)))
+                                self.assertEqual(event['previous_sha256'], request['expected_revision'])
+                                self.assertTrue(event['dispatch']['paused'])
+                                run = store._run(db, 'baseline')
+                                self.assertEqual(run['attempt_id'], original_run['attempt_id'])
+                                self.assertEqual(run['status'], 'RUNNING')
+                                self.assertIsNone(db.execute('SELECT sha256 FROM receipts WHERE run_id=?', ('baseline',)).fetchone())
+                                self.assertIsNone(db.execute("SELECT id FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
+                                    "AND json_extract(body,'$.run_id')=?", ('baseline',)).fetchone())
+                                observed.append(event['sha256'])
+                                release.touch()
+                                return
+                        time.sleep(.02)
+                    self.fail('Matching native pause was not committed before original worker completion')
+                observer = pool.submit(release_on_commit)
+                accepted = self.steer(request)
+                observer.result(timeout=15)
+                self.assertEqual(observed, [accepted['received_revision']])
                 self.assertIn(accepted['active_work'][0]['disposition'],
                               {'FINISH_OR_RECOVER_ORIGINAL_ATTEMPT', 'DISPATCH_UNCERTAIN_RECONCILE_ONLY'})
             finally:
                 # Release even if a marker or pause assertion fails.
+                stop.set()
                 release.parent.mkdir(parents=True, exist_ok=True)
                 release.touch()
             running.result(timeout=15)
@@ -387,7 +442,10 @@ class SteeringDriveTests(unittest.TestCase):
                         '--user-directed', '--source', 'current-user:drive-fixture')
 
     def test_paused_drive_has_no_provider_call_and_resume_reaches_original_quality_endpoint(self):
-        self.build()
+        # This checks steering and the quality endpoint, not provider latency.
+        # The default4s worker leaves only2s for the provider; keep a bounded
+        # startup allowance and exercise a real response beyond that old limit.
+        self.build(modes={'repair1': 'delayed'}, timeout=10)
         before = self.store.snapshot()['budget']
         self.steer('pause')
         result = self.cli('project', 'drive', '--max-steps', '4')
@@ -396,10 +454,16 @@ class SteeringDriveTests(unittest.TestCase):
         self.assertEqual(self.store.snapshot()['budget'], before)
         self.assertEqual(self.events('AUTONOMY_DRIVE_CLAIMED'), [])
         self.steer('resume')
-        self.cli('project', 'drive', '--max-steps', '4')
+        result = self.cli('project', 'drive', '--max-steps', '4')
+        receipts = self.store.snapshot()['receipts']
+        diagnostics = {'drive': result, 'receipts': receipts}
+        self.assertEqual(result['status'], 'GOAL_PREDICATES_MET_CONFIRMATION_UNDECLARED', diagnostics)
         self.assertEqual(self.calls(), ['repair1'])
+        self.assertEqual({r['run_id']: r['run_status'] for r in receipts},
+                         {'repair1': 'SUCCEEDED', 'solve': 'SUCCEEDED'}, diagnostics)
+        self.assertTrue(all(not r['errors'] for r in receipts), diagnostics)
         self.assertEqual(json.loads((self.root / 'outputs/solve.json').read_text())['score'], 6)
-        self.assertEqual(len(self.store.snapshot()['receipts']), 2)
+        self.assertEqual(len(receipts), 2)
 
     def test_exhausted_drive_accepts_pause_without_controller_allowance(self):
         self.build()

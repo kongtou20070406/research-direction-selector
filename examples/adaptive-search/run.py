@@ -40,7 +40,7 @@ def prepare(root, *, enabled=True, budget=240, search_policy=None):
         paths.append((POLICY_PATH, 'config'))
     commands = []
     for ident in ('baseline', 'p1', 'p2', 'p3', 'p4', 'alternative', 'alias', 'unknown'):
-        for mode in ('zero', 'linear', 'quadratic'):
+        for mode in ('zero', 'linear', 'quadratic', 'weak', 'near-linear', 'overshoot', 'negative', 'steeper-negative'):
             commands.append([sys.executable, '-B', 'candidate.py', mode, f'out/{ident}.json'])
         for mode in ('ok', 'missing'):
             commands.append([sys.executable, '-B', 'evaluator.py', ident, f'out/{ident}.json', f'out/{ident}-verdict.json', mode])

@@ -122,7 +122,9 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([row['action']['id'] for row in ordinary['candidates']], ['first-test'])
         prioritized = search_directions(graph, context, max_candidates=1, priority_action_ids=('active-test',))
         self.assertEqual([row['id'] for row in prioritized['candidates']], ['trigger:active-test'])
-        self.assertEqual(prioritized['candidates'][0]['status'], 'READY')
+        # Retention priority cannot authorize a route from a partial comparison.
+        self.assertEqual(prioritized['candidates'][0]['status'], 'NEEDS_COMPLETE_ANALYSIS')
+        self.assertFalse(prioritized['analysis_coverage']['full'])
         self.assertEqual(prioritized['truncation']['limits']['max_candidates'], 1)
         self.assertIn('candidate limit', prioritized['truncation']['reasons'])
         self.assertTrue(prioritized['truncation']['truncated'])
@@ -200,11 +202,14 @@ class SearchTests(unittest.TestCase):
                     graph['nodes'][1]['executable']['preconditions'] = [{'fact': 'unread', 'value': True}]
                 result = search_directions(graph, context, max_candidates=1, priority_action_ids=('active-test',))
                 self.assertEqual([row['action']['id'] for row in result['candidates']], ['first-test'])
-                self.assertEqual(result['candidates'][0]['status'], 'READY')
+                self.assertEqual(result['candidates'][0]['status'],
+                                 'NEEDS_COMPLETE_ANALYSIS' if blocker == 'unknown-premise' else 'READY')
                 if blocker != 'unknown-premise':
                     self.assertEqual(result['blocked_candidates'][0]['status'],
                                      'BLOCKED_BUDGET' if blocker == 'budget' else 'BLOCKED_METHOD')
-                self.assertTrue(result['truncation']['truncated'])
+                # Budget/method refusals are fully evaluated and reported; an
+                # omitted conditional candidate is still a truncated comparison.
+                self.assertEqual(result['truncation']['truncated'], blocker == 'unknown-premise')
 
     def test_unrelated_actions_with_matching_decision_text_do_not_compete_on_cost(self):
         graph = {"nodes": [node("cheap"), node("important")], "edges": []}
@@ -250,6 +255,26 @@ class SearchTests(unittest.TestCase):
         result = search_directions({"nodes": [root]}, self.context(facts={"ready": fact(False)}))
         self.assertEqual(result['discarded_candidates'], [{"rule_id": "root", "id": "root:repair",
             "action_id": "repair", "reason": "missing required observables"}])
+
+    def test_off_decision_fallback_does_not_inherit_an_unrelated_current_choice(self):
+        fallback = node('unused')['executable']['action']
+        fallback.update(id='interpretation', kind='INTERPRETATION_UPDATE',
+                        outcomes=[{'observation': 'different boundary', 'next_decision': 'keep'}])
+        unrelated = node('other', [{'fact': 'ready', 'value': True, 'on_false': fallback}])
+        unrelated['executable']['decisions'] = ['other-decision']
+        graph = {'nodes': [node('root'), unrelated], 'edges': []}
+        context = {'decision': {'id': 'choose', 'current_choice': 'keep'},
+                   'facts': {'ready': fact(False)}}
+        result = search_directions(graph, context)
+        row = next(r for r in result['graph_coverage']['analyzed_nodes'] if r['id'] == 'other')
+        self.assertTrue(row['fallback_actions'][0]['action_validation']['valid'])
+        self.assertFalse(any('Invalid active fallback for other' in reason
+                             for reason in result['graph_coverage']['reasons']))
+        self.assertFalse(any(r.get('action', {}).get('id') == 'interpretation' for r in result['candidates']))
+        context['decision']['id'] = 'other-decision'
+        selected = search_directions(graph, context)
+        self.assertTrue(any('Invalid active fallback for other' in reason
+                            for reason in selected['graph_coverage']['reasons']))
 
     def test_distinct_resources_never_dominate_or_share_budget(self):
         graph = {"nodes": [node("cpu"), node("gpu")], "edges": []}
