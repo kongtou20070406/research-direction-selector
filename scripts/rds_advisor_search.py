@@ -542,6 +542,9 @@ def _goal_targets(context):
     decision = context.get("decision", {})
     goals = decision.get("goal_conditions", []) if isinstance(decision, dict) else []
     targets = {g["fact"] for g in goals if isinstance(g, dict) and isinstance(g.get("fact"), str)} if isinstance(goals, list) else set()
+    declared = _affirmation_predicates(decision) if isinstance(decision, dict) else None
+    if declared:
+        targets.update(predicate["fact"] for predicates in declared.values() for predicate in predicates)
     if isinstance(context.get("objective_binding"), dict) and context["objective_binding"]:
         targets.add("completion_standard")
     return targets
@@ -569,7 +572,7 @@ def _goal_contribution(action, context, dependency=None):
                 "reason": "A contribution path must start at action.target, the obligation being checked or measured."}
     if spec["target"] not in targets:
         return {**report, "status": UNKNOWN,
-                "reason": "The contribution target is not an existing goal predicate or bound completion_standard."}
+                "reason": "The contribution target is not a declared goal or affirmative predicate or bound completion_standard."}
     result = {**report, **deepcopy(spec), "status": "DECLARED_PATH",
               "reason": "The supplied text path names an existing goal; it is not an evaluated graph path, proof or verified completion."}
     if dependency is not None:
