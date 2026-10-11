@@ -48,6 +48,10 @@ def link_errors(root, documents):
     errors = []
     root = root.resolve()
     for document in documents:
+        # Resolve the document too: on Windows a temporary directory may be
+        # spelled in 8.3 short form while resolve() yields the long name, and
+        # the relative_to() below needs both sides in the same spelling.
+        document = document.resolve()
         for target in local_links(document.read_text(encoding="utf-8-sig")):
             path, _, fragment = target.partition("#")
             destination = (document.parent / path).resolve() if path else document.resolve()
