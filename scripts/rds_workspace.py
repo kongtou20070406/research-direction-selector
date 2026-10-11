@@ -212,11 +212,14 @@ def _bounded_bind_ledger_sha(path, deadline):
     _check_bind_deadline(deadline)
     metadata = path.stat()
     require(stat.S_ISREG(metadata.st_mode), 'Workspace ledger must be a regular file')
+    require(metadata.st_nlink == 1, 'Cannot bind a workspace ledger with multiple hard links')
     require(metadata.st_size <= MAX_BIND_LEDGER_BYTES, 'Workspace ledger size bound exceeded')
     _check_bind_deadline(deadline)
     hashed, size = hashlib.sha256(), 0
     with path.open('rb') as stream:
-        require(os.fstat(stream.fileno()).st_size <= MAX_BIND_LEDGER_BYTES,
+        opened = os.fstat(stream.fileno())
+        require(opened.st_nlink == 1, 'Cannot bind a workspace ledger with multiple hard links')
+        require(opened.st_size <= MAX_BIND_LEDGER_BYTES,
                 'Workspace ledger size bound exceeded')
         while True:
             _check_bind_deadline(deadline)

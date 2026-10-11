@@ -901,7 +901,8 @@ def cmd_meta(args, rds):
         return result
     elif args.action == "rollback-rule":
         from rds_meta import rollback_rule
-        return rollback_rule(args.record, graph_path=args.graph, dry_run=args.dry_run)
+        return rollback_rule(args.record, graph_path=args.graph, dry_run=args.dry_run,
+                             record_dir=rds.directory / "rsi")
     elif args.action == "reflect":
         if _has_project_contract(args.root):
             from rds_project import ProjectStore
