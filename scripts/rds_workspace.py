@@ -352,6 +352,13 @@ def _anchor_transaction(root, db):
         _write_pointer(root, {**pointer, 'event_id': max_id})
 
 
+def check_reference_admission(root):
+    """Validate a reference writer; keep mutation() held through its commit."""
+    check_admission(root)
+    require(read_pointer(root) is None,
+            'A bound workspace uses its canonical project ledger; reference accounting is refused')
+
+
 class _AnchoredConnection(sqlite3.Connection):
     def _before_commit(self):
         try:
@@ -361,12 +368,13 @@ class _AnchoredConnection(sqlite3.Connection):
             raise
 
     def commit(self):
-        self._before_commit()
-        result = super().commit()
-        self.committed_changes = self.total_changes
-        self.workspace_materializing = False
-        self.workspace_binding_digest = None
-        return result
+        with mutation():
+            self._before_commit()
+            result = super().commit()
+            self.committed_changes = self.total_changes
+            self.workspace_materializing = False
+            self.workspace_binding_digest = None
+            return result
 
     def rollback(self):
         result = super().rollback()
@@ -377,13 +385,14 @@ class _AnchoredConnection(sqlite3.Connection):
 
     def __exit__(self, exc_type, exc_value, traceback):
         # SQLite's context manager does not call the Python commit override.
-        if exc_type is None:
-            self._before_commit()
-        result = super().__exit__(exc_type, exc_value, traceback)
-        self.committed_changes = self.total_changes
-        self.workspace_materializing = False
-        self.workspace_binding_digest = None
-        return result
+        with mutation():
+            if exc_type is None:
+                self._before_commit()
+            result = super().__exit__(exc_type, exc_value, traceback)
+            self.committed_changes = self.total_changes
+            self.workspace_materializing = False
+            self.workspace_binding_digest = None
+            return result
 
 
 def connect(root, database, *, _materialization=None, **kwargs):

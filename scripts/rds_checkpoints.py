@@ -176,11 +176,8 @@ def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
                      timeout=15, isolation_level=None)
     else:
         # Match RDSState reference admission before opening the raw writer.
-        from rds_project import require
-        from rds_workspace import check_admission, read_pointer
-        check_admission(root)
-        require(read_pointer(root) is None,
-                'A bound workspace uses its canonical project ledger; reference accounting is refused')
+        from rds_workspace import check_reference_admission
+        check_reference_admission(root)
         db = sqlite3.connect(_database(root, kind).as_uri() + '?mode=rw', uri=True,
                              timeout=15, isolation_level=None)
     db.row_factory = sqlite3.Row
@@ -201,6 +198,8 @@ def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
                 raise ValueError('Dependency snapshot changed before checkpoint publication; '
                                  'reanalyze the current map before recording a choice')
         result = append_checkpoint(db, root, checkpoint_id, snapshot, kind=kind, decision=decision)
+        if kind == 'reference':
+            check_reference_admission(root)
         db.commit()
     except sqlite3.IntegrityError as exc:
         db.rollback()

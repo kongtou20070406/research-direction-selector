@@ -206,10 +206,8 @@ class RDSState:
         if not readonly:
             from rds_campaign import enforce
             enforce(self.root, kind='reference')
-            from rds_workspace import check_admission, read_pointer
-            check_admission(self.root)
-            require(read_pointer(self.root) is None,
-                    'A bound workspace uses its canonical project ledger; reference accounting is refused')
+            from rds_workspace import check_reference_admission
+            check_reference_admission(self.root)
         if create:
             require(not (self.directory / "contract.json").exists(),
                     "Legacy v5 JSON state found; preserve it and initialize a new root")
@@ -285,11 +283,15 @@ class RDSState:
             db.execute("BEGIN IMMEDIATE")
             state = self.read_state(db)
             yield db, state
-            if state:
-                self.invariants(state)
-                db.execute("INSERT INTO state VALUES (1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
-                           (canonical(state),))
-            db.commit()
+            from rds_mutation import mutation
+            from rds_workspace import check_reference_admission
+            with mutation():
+                check_reference_admission(self.root)
+                if state:
+                    self.invariants(state)
+                    db.execute("INSERT INTO state VALUES (1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+                               (canonical(state),))
+                db.commit()
         except BaseException:
             db.rollback()
             raise
