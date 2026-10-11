@@ -2,11 +2,14 @@
 import argparse
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -16,7 +19,7 @@ sys.path.insert(0, str(ROOT / 'tests'))
 from benchmark.run import Project
 import rds_cli as cli
 from rds_project import ProjectStore
-from rds_workspace import bind
+from rds_workspace import _arg, bind, check_admission, coverage, pointer_path
 from rds_quick import _charge_ledger
 import test_rds_project
 
@@ -114,6 +117,103 @@ class WorkspaceAdmissionTests(unittest.TestCase):
         self.assertEqual(state.db_path.read_bytes(), before)
         with state.snapshot() as (_, snapshot):
             self.assertEqual(snapshot['budget']['spent']['runs'], 0)
+
+    def nested_project(self):
+        child = self.root / 'preexisting'
+        child.mkdir()
+        for binding in self.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], child / binding['path'])
+        store = ProjectStore(child)
+        store.initialize(deepcopy(self.contract))
+        return store
+
+    def test_preexisting_nested_ledger_cannot_shadow_new_ancestor_binding(self):
+        child = self.nested_project()
+        bind(self.root)
+        before = child.path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            child.register(self.helper.spec('r1', 'nonzero'))
+        self.assertEqual(child.path.read_bytes(), before)
+        self.assertEqual(coverage(child.root)['status'], 'MISMATCH')
+
+    def test_preexisting_nested_pointer_cannot_shadow_new_ancestor_binding(self):
+        child = self.nested_project()
+        bind(child.root)
+        original = pointer_path(child.root).read_bytes()
+        bind(self.root)
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            check_admission(child.root)
+        self.assertEqual(coverage(child.root)['status'], 'MISMATCH')
+        self.assertEqual(pointer_path(child.root).read_bytes(), original)
+
+    def test_grandchild_of_preexisting_ledger_still_inherits_ancestor_binding(self):
+        child = self.nested_project()
+        bind(self.root)
+        grandchild = child.root / 'another-ledger'
+        grandchild.mkdir()
+        for binding in self.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], grandchild / binding['path'])
+        with self.assertRaisesRegex(ValueError, 'bound to a project ledger that is now missing'):
+            ProjectStore(grandchild).initialize(deepcopy(self.contract))
+        self.assertFalse(ProjectStore(grandchild).path.exists())
+
+    def test_existing_exec_directory_with_frozen_request_is_not_a_paid_scope(self):
+        child = self.root / '.rds' / 'exec' / 'preexisting'
+        child.mkdir(parents=True)
+        for binding in self.contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], child / binding['path'])
+        contract = deepcopy(self.contract)
+        contract['budget'] = {'wall_seconds': 5}
+        candidate = ProjectStore(child)
+        candidate.initialize(contract)
+        (child / 'rds-exec-request.json').write_text('{"operation":"unfunded"}', encoding='utf-8')
+        bind(self.root)
+        with self.assertRaisesRegex(ValueError, 'identity does not match'):
+            check_admission(child)
+        self.assertEqual(coverage(child)['status'], 'MISMATCH')
+
+    def test_malformed_pointer_coverage_is_json_mismatch_without_invented_hashes(self):
+        bind(self.root)
+        before = self.store.path.read_bytes()
+        pointer_path(self.root).write_text('{broken', encoding='utf-8')
+        report = coverage(self.root)
+        self.assertEqual(report['status'], 'MISMATCH')
+        self.assertIn('unreadable', report['mismatch'])
+        self.assertNotIn('ledger_sha256', report)
+        result = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(self.root),
+             'workspace', 'coverage'], capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'], 'MISMATCH')
+        self.assertEqual(self.store.path.read_bytes(), before)
+
+    def test_unreadable_pointer_coverage_retains_diagnostic(self):
+        bind(self.root)
+        with patch.object(Path, 'read_text', side_effect=PermissionError('pointer denied')):
+            report = coverage(self.root)
+        self.assertEqual(report['status'], 'MISMATCH')
+        self.assertIn('pointer denied', report['mismatch'])
+        self.assertNotIn('ledger_sha256', report)
+
+    def test_posix_suggested_argument_quotes_all_shell_syntax(self):
+        for value in ('/tmp/rds;next', '/tmp/rds$(value)', '/tmp/rds`value`', '/tmp/rds\tvalue', ''):
+            with self.subTest(value=value), patch('rds_project.os.name', 'posix'):
+                rendered = _arg(value)
+                self.assertEqual(rendered, shlex.quote(value))
+                self.assertEqual(shlex.split(rendered), [value])
+
+    def test_windows_suggested_argument_uses_powershell_apostrophes(self):
+        with patch('rds_project.os.name', 'nt'):
+            self.assertEqual(_arg("D:\\O'Brien project"), "'D:\\O''Brien project'")
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'PowerShell host unavailable')
+    def test_windows_suggested_argument_roundtrips_through_powershell(self):
+        value = "D:\\O'Brien project"
+        result = subprocess.run([shutil.which('pwsh'), '-NoProfile', '-Command',
+                                 '[Console]::Out.Write(' + _arg(value) + ')'],
+                                capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, value)
 
 
 if __name__ == '__main__':
