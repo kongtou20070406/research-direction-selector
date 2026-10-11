@@ -14,6 +14,7 @@ import math
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -321,8 +322,7 @@ class Wheel:
             seen.add(manifest["id"])
 
     def initialize(self, project_contract_path):
-        from rds_workspace import check_admission
-        check_admission(self.root)
+        self.check_workspace()
         contract = read_json(project_contract_path)
         setup = self.setup(contract, initialized=False)
         factors = setup.get("factors")
@@ -619,12 +619,20 @@ class Wheel:
         manifest = self.manifest(row["factor"], "screen", budget)
         return self.dispatch(state, manifest, row["factor"], "screen", snapshot, row)
 
+    def check_workspace(self):
+        from rds_workspace import check_admission
+        try:
+            check_admission(self.root)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            raise WheelError(str(exc)) from exc
+
     def tick(self):
         if self.state_path("pause.json").exists():
             return 0
         with self.lock() as acquired:
             if not acquired or self.state_path("pause.json").exists():
                 return 0
+            self.check_workspace()
             snapshot = self.project("status")
             if any(run.get("status") in {"RUNNING", "STARTING", "COLLECTING"} for run in snapshot.get("runs", [])):
                 return 0
@@ -697,6 +705,7 @@ class Wheel:
 
     def proposal_gate(self):
         require(not self.state_path("pause.json").exists(), "wheel is paused")
+        self.check_workspace()
         snapshot = self.project("status")
         self.setup(snapshot.get("contract"))
         state = read_json(self.state_path("state.json"))
