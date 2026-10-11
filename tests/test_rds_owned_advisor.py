@@ -650,13 +650,16 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                     receipt = state['receipts'][0]
                     failed = mode == 'partialbadjson'
                     self.assertEqual(receipt['run_status'], 'FAILED' if failed else 'SUCCEEDED')
-                    report = self.output('advise', status_codes=(0,) if failed else (2,))
+                    gap_expected = failed or mode == 'missing-selector'
+                    report = self.output('advise', status_codes=(0,) if gap_expected else (2,))
                     self.assert_verified_observation_source(report, receipt)
                     fact = report['context']['facts']['baseline.score']
                     self.assertEqual((fact['kind'], fact['value'], fact['reliable']), ('UNKNOWN', None, False))
                     self.assertIsNone(report['selected_run'])
                     self.assertEqual(report['coverage']['parsed_observations'], 0)
-                    self.assertTrue(report['coverage']['gaps'] if failed else report['coverage']['errors'])
+                    self.assertTrue(report['coverage']['gaps'] if gap_expected else report['coverage']['errors'])
+                    if gap_expected:
+                        self.assertEqual(report['coverage']['errors'], [])
                     self.call('project', 'advance', ok=False)
                     self.assertEqual(self.starts(), ['baseline'])
                     self.assertEqual(self.snapshot()['budget'], state['budget'])
