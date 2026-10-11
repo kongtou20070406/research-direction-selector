@@ -58,16 +58,21 @@ class ConversationHookTests(unittest.TestCase):
                 self.assertNotIn("hookSpecificOutput", json.dumps(output or {}))
 
     def test_session_start_shows_the_operator_state_only_where_verified(self):
-        # Claude Code keeps top-level systemMessage on SessionStart and renders it
-        # to the person. Codex and OMP have no verified operator surface yet.
-        output = self.run_hook({"hook_event_name": "SessionStart"}, host="claude")
-        self.assertEqual(set(output), {"systemMessage"})
-        self.assertEqual(output["systemMessage"], hook.OPERATOR_STATUS)
-        self.assertIn("not enabled", output["systemMessage"])
-        self.assertLessEqual(len(output["systemMessage"]), 160)
-        for host in ("codex", "omp"):
+        # Claude Code renders top-level systemMessage on SessionStart to the
+        # person; Codex documents the same field as a UI warning on that event.
+        # OMP has no verified operator surface yet and must stay silent.
+        for host in ("claude", "codex"):
             with self.subTest(host=host):
-                self.assertIsNone(self.run_hook({"hook_event_name": "SessionStart"}, host=host))
+                output = self.run_hook({"hook_event_name": "SessionStart"}, host=host)
+                # Exactly one field: Codex fails a hook run that returns
+                # unsupported fields, so no continue/stopReason/suppressOutput.
+                self.assertEqual(set(output), {"systemMessage"})
+                self.assertEqual(output["systemMessage"], hook.OPERATOR_STATUS)
+                self.assertIn("not enabled", output["systemMessage"])
+                self.assertLessEqual(len(output["systemMessage"]), 160)
+                self.assertTrue(output["systemMessage"].isascii())
+        with self.subTest(host="omp"):
+            self.assertIsNone(self.run_hook({"hook_event_name": "SessionStart"}, host="omp"))
 
     def test_direct_absolute_and_relative_calls_use_exact_entry(self):
         for command in (f'python -B "{CLI}" advise',

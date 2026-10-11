@@ -100,6 +100,35 @@ Hook input is bounded; malformed input, timeouts and display failures add no
 authority or research-state changes. Hooks never copy raw commands, prompts,
 logs, paths or retrieved content into their additional instructions.
 
+## Session-start status for the person
+
+The session switch is off by default, so a `SessionStart` hook would otherwise
+be invisible: the person would have no way to tell whether RDS was participating
+in the conversation. Two hosts have a documented field that renders text to the
+**person rather than the model**, and the hook uses only those:
+
+| Host | Channel | Evidence (observed 2026-10-11) | State |
+| --- | --- | --- | --- |
+| Claude Code | top-level `systemMessage`, "Warning message shown to the user"; `SessionStart` is context-only and is not in the dropped-field list | [Claude hooks](https://code.claude.com/docs/en/hooks) | implemented |
+| Codex | top-level `systemMessage`, "surfaced as a warning in the UI or event stream"; `SessionStart` is a documented event for shared output fields | [Codex hooks](https://developers.openai.com/codex/hooks) | implemented |
+| OMP | `ctx.ui.setStatus("rds", text)` exists in the extension API, but display was not observed | [OMP extensions](https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md) | UNKNOWN |
+
+The emitted object is a bare `{"systemMessage": ...}` with exactly one field.
+This matters for Codex: a hook run that returns unsupported fields is marked
+failed, so `continue`, `stopReason` and `suppressOutput` are never added, and no
+model-facing `additionalContext` is produced on this event. The text is the
+same short ASCII line on every host, so a person sees one stable string:
+
+```text
+RDS | session not enabled (default off); no RDS context injected
+```
+
+This is an operator surface, not model context and not a permission decision. An
+enabled-session path does not exist in this checkout yet, so "not enabled" is
+the truthful state rather than a placeholder. A future enablement change must
+keep the field set to one supported key and must not turn this line into a
+claim that RDS was used.
+
 ## Using Advisor before a choice
 
 Calling Advisor on one preselected direction does not establish a comparison.
@@ -145,3 +174,8 @@ Upstream contracts checked on 2026-10-03:
 [Codex packaging](https://developers.openai.com/plugins/build/plugins),
 [Codex hooks](https://learn.chatgpt.com/docs/hooks), and
 [OMP extensions](https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md).
+
+Re-checked on 2026-10-11: the Codex hooks page is reachable at
+`https://developers.openai.com/codex/hooks` (plain HTTP clients without a user
+agent can get 403), and it serves byte-identical content to
+`learn.chatgpt.com/docs/hooks`, so the two URLs are one source, not two.
