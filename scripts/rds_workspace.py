@@ -251,9 +251,15 @@ def _refuse_active_descendants(root):
                 inventory.entry()
                 metadata = entry.stat(follow_symlinks=False)
                 _check_bind_deadline(deadline)
-                # Windows junctions are reparse points too; never traverse them.
+                # Metadata links can hide supported ledgers. Refuse binding
+                # rather than silently omitting them or following link cycles.
                 if (stat.S_ISLNK(metadata.st_mode)
                         or getattr(metadata, 'st_file_attributes', 0) & 0x400):
+                    require(not (os.path.normcase(entry.name) == '.rds'
+                                 or (os.path.normcase(directory.name) == '.rds'
+                                     and os.path.normcase(entry.name) in {'project.sqlite3', 'state.sqlite3'})),
+                            'Cannot bind workspace with linked workspace metadata; '
+                            'settle existing work and use real metadata paths before binding')
                     continue
                 path = Path(entry.path)
                 if not path.resolve().is_relative_to(root):
