@@ -13,7 +13,7 @@ import sqlite3
 import time
 
 from rds_artifacts import ArtifactFact
-from rds_source_documents import SourceDocument, strict_json
+from rds_source_documents import MissingPointer, SourceDocument, strict_json
 from rds_project import canonical, digest, number, require
 
 OWNED_PREFIX = 'owned:'
@@ -444,6 +444,15 @@ def _collect(store, state):
                     coverage['unparsed_outputs'].remove(unparsed)
                 if not reliable:
                     coverage['gaps'].append({'run_id': rid, 'fact': fid, 'reason': fact['reason']})
+            except MissingPointer:
+                pointer = obs['selector']['pointer']
+                locator = 'pointer:' + pointer
+                fact.update(source={'path': relative, 'sha256': artifact['sha256'], 'locator': locator,
+                                    'receipt_id': receipt['sha256']},
+                            reason='Declared JSON observation is absent at ' + locator)
+                coverage['gaps'].append({'run_id': rid, 'fact': fid, 'path': relative,
+                                         'sha256': artifact['sha256'], 'locator': locator,
+                                         'reason': fact['reason']})
             except (OSError, ValueError, KeyError, TypeError, IndexError, UnicodeError) as exc:
                 fact['reason'] = str(exc)
                 # A failed attempt legitimately may have no measurement. It

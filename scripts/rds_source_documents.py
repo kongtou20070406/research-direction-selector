@@ -62,10 +62,21 @@ def _pointer(document, pointer):
         if isinstance(result, list):
             # RFC 6901 indexes are ASCII; Unicode digits would alias one element under a second locator.
             require(key.isascii() and key.isdigit() and (key == "0" or not key.startswith("0")), "invalid array index")
-            result = result[int(key)]
+            try:
+                result = result[int(key)]
+            except IndexError as exc:
+                raise MissingPointer(key) from exc
+        elif isinstance(result, dict):
+            if key not in result:
+                raise MissingPointer(key)
+            result = result[key]
         else:
             result = result[key]
     return result
+
+
+class MissingPointer(KeyError):
+    """A syntactically valid JSON pointer selects an absent object member or array item."""
 
 
 
