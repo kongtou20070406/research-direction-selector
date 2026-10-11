@@ -117,6 +117,16 @@ def _recorded_quick_contract(db, allowance):
                  if entry['sha256'] == allowance.get('contract_sha256')), None)
 
 
+def _matching_identity(pointer, event):
+    if not isinstance(event, dict):
+        return False
+    identity = {key: event.get(key) for key in
+                ('schema', 'ledger_sha256', 'contract_sha256', 'root')}
+    return (event.get('event_digest') == pointer.get('event_digest') == digest(identity)
+            and all(pointer.get(key) == identity[key]
+                    for key in ('schema', 'ledger_sha256', 'contract_sha256')))
+
+
 def _charged_quick_scope(child, owner, owner_pointer):
     """Only a frozen, parent-funded QUICK ledger may shadow its enclosing scope."""
     if not child.is_relative_to(owner / '.rds' / 'exec'):
@@ -134,7 +144,7 @@ def _charged_quick_scope(child, owner, owner_pointer):
         event = json.loads(identity['body']) if identity else None
         max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
         anchor = owner_pointer.get('event_id')
-        require(event is not None and event.get('event_digest') == owner_pointer.get('event_digest')
+        require(_matching_identity(owner_pointer, event)
                 and event.get('root') == str(owner), 'Owning QUICK workspace identity does not match')
         require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,
                 'Owning QUICK workspace ledger was rolled back; accounting resets are refused')
@@ -179,6 +189,48 @@ def read_pointer(root):
     return selected
 
 
+def _refuse_active_descendants(root):
+    """Inspect reservations under the mutation gate, before taking a writer lock."""
+    import stat
+
+    root = Path(root).resolve()
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                metadata = entry.stat(follow_symlinks=False)
+                # Windows junctions are reparse points too; never traverse them.
+                if (stat.S_ISLNK(metadata.st_mode)
+                        or getattr(metadata, 'st_file_attributes', 0) & 0x400):
+                    continue
+                path = Path(entry.path)
+                if not path.resolve().is_relative_to(root):
+                    continue
+                if stat.S_ISDIR(metadata.st_mode):
+                    pending.append(path)
+                elif (entry.name == 'project.sqlite3' and directory.name == '.rds'
+                      and directory.parent != root and stat.S_ISREG(metadata.st_mode)):
+                    # Raw read-only discovery avoids identity checks and any
+                    # child mutation lock while examining already-owned pointers.
+                    db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=1)
+                    try:
+                        db.execute('PRAGMA query_only=ON')
+                        tables = {row[0] for row in db.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'")}
+                        if 'contract' not in tables or 'runs' not in tables:
+                            continue
+                        if db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() is None:
+                            continue
+                        active = db.execute(
+                            "SELECT id,status FROM runs WHERE status IN ('RESERVED','RUNNING') LIMIT 1").fetchone()
+                        require(active is None,
+                                f'Cannot bind workspace with an active descendant: {directory.parent}; '
+                                'settle or recover its original reservation first')
+                    finally:
+                        db.close()
+
+
 @mutation()
 def bind(root):
     """Bind this workspace, once, to the canonical ledger it already contains.
@@ -200,6 +252,7 @@ def bind(root):
         except ValueError as exc:
             raise ValueError(f'This workspace is already bound; {exc}') from exc
         return {"status": "ALREADY_BOUND", "pointer": pointer, "ledger_root": str(store.root)}
+    _refuse_active_descendants(store.root)
     ledger_sha = file_sha(store.path)
     with store._db() as db:
         contract = store._contract(db)
@@ -287,7 +340,7 @@ def check_admission(root, supersedes=None, separate_project=False):
             "This workspace is bound to a project ledger that is now missing; restore the ledger "
             f"at {store.root} or record the loss explicitly with a new unbound root")
     event = _recorded_event(store)
-    require(event is not None and event.get("event_digest") == pointer.get("event_digest"),
+    require(_matching_identity(pointer, event),
             "This workspace is bound to a canonical ledger whose recorded identity does not match "
             "the workspace pointer; the ledger was replaced or its identity event is damaged. "
             "Accounting resets are refused; restore the bound ledger")
@@ -340,7 +393,7 @@ def _anchor_transaction(root, db):
         "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
         (EVENT_KIND,)).fetchone()
     event = json.loads(row['body']) if row is not None else None
-    require(event is not None and event.get('event_digest') == pointer.get('event_digest'),
+    require(_matching_identity(pointer, event),
             'Workspace ledger identity does not match; accounting resets are refused')
     require(binding_digest is None or binding_digest == event.get('event_digest'),
             'Workspace binding transaction identity does not match')
