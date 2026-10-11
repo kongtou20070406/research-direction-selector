@@ -4,6 +4,7 @@ This projection has no selector, execution permission, model call or memory DB.
 Large details stay in the existing CAS. Structure reads never use metered APIs.
 """
 from copy import deepcopy
+from pathlib import Path
 
 from rds_project import digest, canonical, require
 from rds_quick import cas_json
@@ -12,8 +13,12 @@ ITEM_LIMIT = 4
 DETAIL_BYTES = 2048
 
 
+def _fits(value):
+    return len(canonical(value).encode('utf-8')) <= DETAIL_BYTES
+
+
 def _compact(store, value):
-    if len(canonical(value).encode('utf-8')) <= DETAIL_BYTES:
+    if _fits(value):
         return deepcopy(value)
     # Do not silently cut predicates or exact identities into altered meanings.
     identity = {k: value[k] for k in ('id', 'status', 'observation', 'feedback_sha256',
@@ -24,13 +29,44 @@ def _compact(store, value):
         # Keep the partition visible when its exact obligations exceed the item budget.
         result['planning'] = {'scope': planning.get('scope'), 'details_omitted': True,
                               'original': cas_json(store.root, planning)}
+    if not _fits(result) and 'planning' in result:
+        # The full original already contains the exact planning partition.
+        result['planning'].pop('original')
+    if not _fits(result):
+        original = result['original']
+        planning = result.get('planning')
+        result = {'details_omitted': True, 'original': original}
+        if identity:
+            result['identity_omitted'] = True
+        if planning is not None:
+            result['planning_omitted'] = True
+        if not _fits(result):
+            # Existing root / ref['path'] CAS consumers accept this form. State
+            # the base explicitly; never clip an absolute locator or identity.
+            result['original'] = {**original, 'path_base': 'project_root',
+                'path': Path(original['path']).relative_to(Path(store.root).resolve()).as_posix()}
+        require(_fits(result), 'Working-set original locator exceeds detail byte limit')
+        for key in ('status', 'observation'):
+            if key in identity and _fits({**result, key: identity[key]}):
+                result[key] = identity[key]
+        if planning is not None:
+            candidate = {k: v for k, v in result.items() if k != 'planning_omitted'}
+            candidate['planning'] = planning
+            if _fits(candidate):
+                result = candidate
+        for key, item in identity.items():
+            if key not in result and _fits({**result, key: item}):
+                result[key] = item
+        if all(key in result for key in identity):
+            result.pop('identity_omitted', None)
     for key in ('original_observation', 'goal_status', 'trigger', 'allowed_trigger_purposes',
                 'blocked_hypothesis_key', 'discriminator', 'next_move', 'selection_basis', 'summary', 'comparison'):
         if isinstance(value, dict) and key in value:
             candidate = {**result, key: deepcopy(value[key])}
-            if len(canonical(candidate).encode('utf-8')) <= DETAIL_BYTES:
+            if _fits(candidate):
                 result = candidate
-    return result
+    require(_fits(result), 'Working-set item exceeds detail byte limit')
+    return deepcopy(result)
 
 
 def _section(store, rows):
