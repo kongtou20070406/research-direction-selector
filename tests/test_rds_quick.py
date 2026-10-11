@@ -368,6 +368,7 @@ raise SystemExit(rds_cli.main())
         self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
 
     def test_policy_guarded_success_reuses_original_review_and_missing_review_refuses(self):
+        from rds_workspace import _write_pointer, check_admission, read_pointer
         self.initialize_policy_ledger()
         marker = self.root / 'guard-launch-marker'
         comparison = {'question_id': 'fixture', 'goal_revision': 'fixed', 'scope': {'domain': 'fixture'},
@@ -392,10 +393,21 @@ raise SystemExit(rds_cli.main())
         self.assertEqual(reused['receipt']['sha256'], saved['receipt']['sha256'])
         self.assertFalse(marker.exists())
         self.assertEqual(ProjectStore(self.ledger).snapshot()['budget'], before)
-        with child._db() as db:
-            # Model the post-command/pre-review crash window in this disposable ledger.
+        pointer = read_pointer(child.root)
+        # Restore a consistent post-command/pre-review snapshot in this disposable
+        # fixture; supported writes must still refuse a ledger-only rollback.
+        with closing(sqlite3.connect(child.path)) as db, db:
+            review_id = db.execute(
+                "SELECT id FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW'").fetchone()[0]
+            self.assertEqual(db.execute('SELECT MAX(id) FROM events').fetchone()[0], review_id)
+            self.assertEqual(pointer['event_id'], review_id)
+            trigger = db.execute("SELECT sql FROM sqlite_master WHERE name='events_no_delete'").fetchone()[0]
             db.execute('DROP TRIGGER events_no_delete')
             db.execute("DELETE FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW'")
+            db.execute(trigger)
+            restored_event_id = db.execute('SELECT MAX(id) FROM events').fetchone()[0]
+        _write_pointer(child.root, {**pointer, 'event_id': restored_event_id})
+        check_admission(child.root)
         rejected = self.job('guard-unfinished', False, *options)
         self.assertIn('Guard review is unfinished', rejected.stderr)
         self.assertFalse(marker.exists())
