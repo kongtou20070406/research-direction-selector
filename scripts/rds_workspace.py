@@ -274,6 +274,9 @@ def _refuse_active_descendants(root):
                       and os.path.normcase(directory.name) == '.rds'
                       and (directory.parent != root or os.path.normcase(entry.name) == 'state.sqlite3')
                       and stat.S_ISREG(metadata.st_mode)):
+                    # DirEntry.stat does not populate link counts on Windows.
+                    require(path.stat().st_nlink == 1,
+                            'Cannot bind workspace containing a ledger with multiple hard links')
                     # Raw read-only discovery avoids identity checks and any
                     # child mutation lock while examining already-owned pointers.
                     db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True,
