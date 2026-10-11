@@ -226,7 +226,7 @@ def _refuse_active_descendants(root):
                                 continue
                             from rds_cli import RDSState
                             state = RDSState.read_state(db)
-                            active = any(plan['run_status'] in {'RESERVED', 'RUNNING'}
+                            active = any(plan['run_status'] in {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
                                          for plan in state.get('plans', {}).values())
                         else:
                             if 'contract' not in tables or 'runs' not in tables:
@@ -235,6 +235,8 @@ def _refuse_active_descendants(root):
                                 continue
                             active = db.execute(
                                 "SELECT id,status FROM runs WHERE status IN ('RESERVED','RUNNING') LIMIT 1").fetchone()
+                            if not active and 'budget' in tables:
+                                active = db.execute('SELECT 1 FROM budget WHERE reserved!=0 LIMIT 1').fetchone()
                             if not active:
                                 active = db.execute(
                                     "SELECT 1 FROM events a WHERE json_extract(a.body,'$.kind')='THEORY_ALLOWANCE' "
