@@ -341,6 +341,7 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                 require(Path(prior['job_root']).is_dir(),
                         'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
                 child = ProjectStore(prior['job_root'])
+                check_admission(child.root)
                 require(child.path.is_file(), 'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
                 from rds_project import load_json
                 stored = load_json(child.root / 'rds-exec-request.json')
@@ -997,7 +998,6 @@ def execute(args, review=None, *, _native_preparation_root=None):
         with ProjectStore(owner)._db(True) as parent_db:
             partial_child = _pending_partial_child(parent_db, workspace)
     if workspace.exists() and not partial_child:
-        check_admission(workspace)
         from rds_project import load_json
         previous = load_json(workspace / 'rds-exec-request.json')
         require(previous == request, 'Job identity is frozen; changed inputs need a new --name')

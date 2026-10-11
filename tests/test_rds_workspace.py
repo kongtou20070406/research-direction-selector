@@ -179,6 +179,7 @@ class WorkspaceBindingTests(unittest.TestCase):
     def test_empty_child_lock_anchor_cannot_hide_enclosing_binding(self):
         bind(self.root)
         child = self.root / '.rds' / 'exec' / 'empty-anchor'
+        child.mkdir(parents=True)
         child_store = ProjectStore(child)
         child_store.state_dir.mkdir(parents=True)
         with sqlite3.connect(child_store.path):
