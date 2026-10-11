@@ -469,6 +469,8 @@ class RDSAdvisor:
         legacy = self._legacy_entries() if self._needs_legacy_migration() else []
         with mutation():
             enforce(self.root_dir)
+            from rds_workspace import check_admission
+            check_admission(self.root_dir)
             self.knowledge_db.parent.mkdir(parents=True, exist_ok=True)
             db = sqlite3.connect(self.knowledge_db, timeout=15, isolation_level=None)
             try:
