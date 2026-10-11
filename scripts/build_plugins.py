@@ -14,6 +14,8 @@ import subprocess
 
 NAME = "research-direction-selector"
 SOURCE = Path(__file__).resolve().parent.parent
+# Top-level entries include all indexed descendants, including scripts/assets.
+# Runtime presentation resources must be staged just like Python source files.
 DIRECTORIES = {"scripts", "references", "docs", "examples", "agents", "formal",
                "native", "benchmark", "tests"}
 ROOT_FILES = {"SKILL.md", "LICENSE", "README.md", "README.zh-CN.md", "README.ja-JP.md",

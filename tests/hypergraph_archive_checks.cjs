@@ -108,7 +108,7 @@ check('coincident density members remain paginated and a selected record keeps i
 });
 async function workerChecks(){
   const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path');
-  const source=fs.readFileSync(path.join(__dirname,'../scripts/rds_hypergraph_view.py'),'utf8'),d3=source.split("D3_BUNDLE = r'''")[1].split("'''")[0];
+  const d3=fs.readFileSync(path.join(__dirname,'../scripts/assets/hypergraph/d3-bundle.js'),'utf8');
   const tasks=new Map(),messages=[];let taskId=0,clock=0;
   const context=vm.createContext({console,Blob,Response,DecompressionStream,atob,Uint8Array,Uint32Array,Float32Array,ArrayBuffer,performance:{now:()=>clock},setTimeout:(fn)=>{const id=++taskId;tasks.set(id,fn);return id;},clearTimeout:id=>tasks.delete(id),setInterval:()=>++taskId,clearInterval(){},self:{postMessage:m=>messages.push(m)}});
   vm.runInContext(d3,context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/worker.js'),'utf8'),context);
@@ -135,7 +135,7 @@ async function workerChecks(){
 }
 async function workerParityChecks(){
   const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path');
-  const py=fs.readFileSync(path.join(__dirname,'../scripts/rds_hypergraph_view.py'),'utf8'),d3=py.split("D3_BUNDLE = r'''")[1].split("'''")[0];
+  const d3=fs.readFileSync(path.join(__dirname,'../scripts/assets/hypergraph/d3-bundle.js'),'utf8');
   const tasks=new Map(),messages=[];let taskId=0,clock=0;
   const ctx=vm.createContext({console,Blob,Response,DecompressionStream,atob,Uint8Array,Uint32Array,Float32Array,ArrayBuffer,performance:{now:()=>clock},setTimeout:fn=>{const id=++taskId;tasks.set(id,fn);return id;},clearTimeout:id=>tasks.delete(id),setInterval:()=>++taskId,clearInterval(){},self:{postMessage:m=>messages.push(m)}});
   vm.runInContext(d3,ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/worker.js'),'utf8'),ctx);
@@ -165,7 +165,7 @@ async function workerParityChecks(){
 }
 async function workerPauseRegressions(){
   const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path');
-  const py=fs.readFileSync(path.join(__dirname,'../scripts/rds_hypergraph_view.py'),'utf8'),d3=py.match(/D3_BUNDLE = r'{3}([\s\S]*?)'{3}/)[1];
+  const d3=fs.readFileSync(path.join(__dirname,'../scripts/assets/hypergraph/d3-bundle.js'),'utf8');
   const messages=[],tasks=new Map();let taskId=0,clock=0;
   const ctx=vm.createContext({Blob,Response,DecompressionStream,atob,Uint8Array,Uint32Array,Float32Array,ArrayBuffer,performance:{now:()=>clock},setTimeout:fn=>{const id=++taskId;tasks.set(id,fn);return id;},clearTimeout:id=>tasks.delete(id),setInterval:()=>++taskId,clearInterval(){},self:{postMessage:m=>messages.push(m)}});
   vm.runInContext(d3,ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/worker.js'),'utf8'),ctx);
@@ -198,7 +198,7 @@ async function workerPauseRegressions(){
   cases++;console.log('PASS final pause supersedes an older queued resume during yielded aggregate commit');
 }
 async function workerContinuityChecks(){
-  const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path'),py=fs.readFileSync(path.join(__dirname,'../scripts/rds_hypergraph_view.py'),'utf8'),d3=py.split("D3_BUNDLE = r'''")[1].split("'''")[0];
+  const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path'),d3=fs.readFileSync(path.join(__dirname,'../scripts/assets/hypergraph/d3-bundle.js'),'utf8');
   const tasks=new Map(),messages=[];let next=0,clock=0;
   const ctx=vm.createContext({Blob,Response,DecompressionStream,atob,Uint8Array,Uint32Array,Float32Array,ArrayBuffer,performance:{now:()=>clock},setTimeout:fn=>{const id=++next;tasks.set(id,fn);return id;},clearTimeout:id=>tasks.delete(id),setInterval:()=>++next,clearInterval(){},self:{postMessage:m=>messages.push(m)}});
   vm.runInContext(d3,ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/worker.js'),'utf8'),ctx);const send=data=>ctx.self.onmessage({data});
@@ -237,7 +237,7 @@ async function workerContinuityChecks(){
 
 }
 async function workerSegmentChecks(){
-  const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path'),py=fs.readFileSync(path.join(__dirname,'../scripts/rds_hypergraph_view.py'),'utf8'),d3=py.match(/D3_BUNDLE = r'{3}([\s\S]*?)'{3}/)[1],worker=fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/worker.js'),'utf8');
+  const fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),path=require('node:path'),d3=fs.readFileSync(path.join(__dirname,'../scripts/assets/hypergraph/d3-bundle.js'),'utf8'),worker=fs.readFileSync(path.join(__dirname,'../scripts/hypergraph_archive/worker.js'),'utf8');
   async function run(strength,own){const data=fixture(4);data.nodes.forEach((n,i)=>{n.x=[1000,0,400,200][i];n.y=[1000,0,0,8][i];n.type=i===1?'hyperedge':'claim';});data.edges=[[0,1,0,0,0],[0,2,0,0,1],[0,3,0,0,2],[1,2,0,0,3]];if(own==='budget')for(let i=0;i<1030;i++)data.edges.push([0,1,0,0,data.edges.length]);if(own){data.semantics.push('OWN');data.edge_types.push(own==='source'?'source_binding':'and_premise');data.edges.push([3,1,1,3,data.edges.length]);}data.source.edge_count=data.edges.length;const tasks=new Map(),messages=[];let id=0,clock=0;const ctx=vm.createContext({Blob,Response,DecompressionStream,atob,Uint8Array,Uint32Array,Float32Array,ArrayBuffer,performance:{now:()=>clock},setTimeout:fn=>{const key=++id;tasks.set(key,fn);return key;},clearTimeout:key=>tasks.delete(key),setInterval:()=>++id,clearInterval(){},self:{postMessage:m=>messages.push(m)}});vm.runInContext(d3,ctx);vm.runInContext(worker,ctx);const send=data=>ctx.self.onmessage({data});await send({type:'init',compressed:zlib.gzipSync(JSON.stringify(data)).toString('base64')});await send({type:'configure',options:{repelStrength:0,flowStrength:0,groupStrength:0,linkStrength:0,centerStrength:0,edgeRepulsion:strength,edgeClearance:35,relations:own==='none'?{'OWN|and_premise':{mode:'none',strength:1}}:own==='zero'?{'OWN|and_premise':{mode:'attract',strength:0}}:{}}});await send({type:'drag',id:'n0',x:1000,y:1000});let loops=0;while((messages.filter(m=>m.type==='physics').at(-1)?.steps||0)<12&&tasks.size&&loops++<100){const [key,fn]=tasks.entries().next().value;tasks.delete(key);clock+=35;fn();}const packet=messages.filter(m=>m.type==='physics').at(-1);assert.ok(packet&&packet.nodes<=512&&packet.springs<=1024);const offset=packet.ids.indexOf('n3')*2,coords=new Float32Array(packet.buffer);await send({type:'pause'});return {x:coords[offset],y:coords[offset+1],errors:messages.filter(m=>m.type==='error')};}
   const neutral=await run(0,false),repelled=await run(.6,false),own=await run(.6,true);assert.ok(Math.hypot(200,8)>35,'nonmember fixture is far outside the hub circle');assert.equal(neutral.y,8);assert.ok(repelled.y>neutral.y+1,'whole incidence segment repels a nonmember far from the hub');assert.equal(own.x,200,'own member is exempt from the same nearby segment');assert.equal(own.y,8);assert.equal(neutral.errors.length+repelled.errors.length+own.errors.length,0);cases++;console.log('PASS actual local incidence segments repel unrelated nodes far from hubs and exempt own members');
   for(const mode of ['none','zero','budget']){const own=await run(.6,mode);assert.equal(own.x,200,mode+' preserves true AND membership despite spring filtering');assert.equal(own.y,8);assert.equal(own.errors.length,0);}const provenance=await run(.6,'source');assert.ok(provenance.y>8,'a provenance binding does not grant AND-member exemption');cases++;console.log('PASS full AND membership survives none zero and spring caps while provenance remains nonmember');
