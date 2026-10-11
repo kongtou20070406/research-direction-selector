@@ -235,7 +235,7 @@ def _qualification_root(root):
     from rds_workspace import check_admission
     check_admission(root)
     require(binding(root) is None,
-            'Bound campaign tool qualification requires an existing approved canonical project route; '
+            'Bound campaign tool qualification requires an existing approved canonical project ledger route; '
             'public validation cannot create another preparation experiment')
 
 
