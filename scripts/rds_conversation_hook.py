@@ -17,6 +17,12 @@ TOOLS = {"Bash", "bash", "PowerShell", "exec_command", "functions.exec_command",
 COMMANDS = frozenset("init hypothesis gate plan run data decide status project checkpoint artifacts formal meta history advise advancement branch usage exec reject guard hypergraph math rsi host-hook".split())
 ROOT_OPTIONS = {"--root", "--workspace", "--project-root", "-w", "-d", "--dir"}
 
+# Operator-visible status. Claude Code renders top-level systemMessage to the
+# person, not to the model, and SessionStart is a context-only event that keeps
+# the field. Until phase R implements the session switch there is no enable
+# path in this checkout, so the truthful session state is "not enabled".
+OPERATOR_STATUS = "RDS | session not enabled (default off); no RDS context injected"
+
 
 def literal_argv(command):
     """Parse only plain words or whole quoted words, preserving Windows slashes.
@@ -138,15 +144,21 @@ def _result_status(payload):
 
 
 def respond(payload, host):
-    """Return event-specific additionalContext, never permissions or UI warnings."""
+    """Return event-specific additionalContext, never permissions or UI warnings.
+
+    Session start deliberately contributes nothing. An unconditional banner is
+    model context the operator cannot see and did not request, so it is removed
+    until the session gate (phase R) can answer before any injection.
+    """
     if host not in {"claude", "codex", "omp"} or not isinstance(payload, dict):
         return None
     event = payload.get("hook_event_name")
     if event == "SessionStart":
-        if host == "omp":
+        # Codex and OMP have no verified operator-visible channel (docs/host-plugins.md):
+        # record UNKNOWN rather than inventing one. Claude Code has one.
+        if host != "claude":
             return None
-        context = ("RDS | plugin: available\n"
-                   "plugin_available != skill_loaded != cli_invoked; display_once(current_event_only);")
+        return {"systemMessage": OPERATOR_STATUS}
     elif event in {"PreToolUse", "PostToolUse"} or event == "PostToolUseFailure" and host == "claude":
         label = invocation(payload)
         if label is None:

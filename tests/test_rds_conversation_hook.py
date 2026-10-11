@@ -48,12 +48,26 @@ class ConversationHookTests(unittest.TestCase):
         self.assertTrue(output["additionalContext"].isascii())
         return output["additionalContext"]
 
-    def test_session_start_only_announces_availability_for_both_hosts(self):
-        for host in ("codex", "claude"):
-            text = self.context({"hook_event_name": "SessionStart"}, host=host)
-            self.assertEqual(text.splitlines()[0], "RDS | plugin: available")
-            self.assertIn("plugin_available != skill_loaded != cli_invoked", text)
-            self.assertNotIn("cli_invoked=false", text)
+    def test_session_start_injects_no_model_context_on_any_host(self):
+        # Availability text was model context the operator cannot see and did not
+        # request. Until the session gate can answer first (phase R), inject none.
+        for host in ("codex", "claude", "omp"):
+            with self.subTest(host=host):
+                output = self.run_hook({"hook_event_name": "SessionStart"}, host=host)
+                self.assertNotIn("plugin: available", json.dumps(output or {}))
+                self.assertNotIn("hookSpecificOutput", json.dumps(output or {}))
+
+    def test_session_start_shows_the_operator_state_only_where_verified(self):
+        # Claude Code keeps top-level systemMessage on SessionStart and renders it
+        # to the person. Codex and OMP have no verified operator surface yet.
+        output = self.run_hook({"hook_event_name": "SessionStart"}, host="claude")
+        self.assertEqual(set(output), {"systemMessage"})
+        self.assertEqual(output["systemMessage"], hook.OPERATOR_STATUS)
+        self.assertIn("not enabled", output["systemMessage"])
+        self.assertLessEqual(len(output["systemMessage"]), 160)
+        for host in ("codex", "omp"):
+            with self.subTest(host=host):
+                self.assertIsNone(self.run_hook({"hook_event_name": "SessionStart"}, host=host))
 
     def test_direct_absolute_and_relative_calls_use_exact_entry(self):
         for command in (f'python -B "{CLI}" advise',
