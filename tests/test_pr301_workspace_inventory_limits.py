@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 sys.path.insert(0, str(ROOT / 'tests'))
 import rds_campaign as campaign
 import rds_workspace as workspace
-from rds_project import file_sha
+from rds_project import ProjectStore, file_sha
 import test_rds_project as fixture
 
 
@@ -64,6 +64,41 @@ class WorkspaceInventoryLimitsTests(unittest.TestCase):
             os.link(self.store.path, alias)
             self.assertGreater(self.store.path.stat().st_nlink, 1)
             self.refused_unchanged('multiple hard links')
+            alias.unlink()
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_hard_linked_reference_ledger_refuses_before_binding(self):
+        import argparse
+        import tempfile
+        import rds_cli
+        import test_pr301_reference_checkpoint_admission as reference
+        state, _ = reference.ReferenceCheckpointAdmissionTests().reference(self.root)
+        rds_cli.cmd_cancel(argparse.Namespace(id='P1'), state)
+        with tempfile.TemporaryDirectory(prefix='rds-reference-alias-') as directory:
+            alias = Path(directory) / 'state.sqlite3'
+            os.link(state.db_path, alias)
+            before = state.db_path.read_bytes()
+            self.refused_unchanged('multiple hard links')
+            self.assertEqual(state.db_path.read_bytes(), before)
+            alias.unlink()
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_hard_linked_descendant_ledger_refuses_before_binding(self):
+        import shutil
+        import tempfile
+        child_root = self.root / 'child'
+        child_root.mkdir()
+        contract = self.store.snapshot()['contract']
+        for binding in contract['bindings']:
+            shutil.copyfile(self.root / binding['path'], child_root / binding['path'])
+        child = ProjectStore(child_root)
+        child.initialize(contract)
+        with tempfile.TemporaryDirectory(prefix='rds-descendant-alias-') as directory:
+            alias = Path(directory) / 'project.sqlite3'
+            os.link(child.path, alias)
+            before = child.path.read_bytes()
+            self.refused_unchanged('multiple hard links')
+            self.assertEqual(child.path.read_bytes(), before)
             alias.unlink()
         self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
 
