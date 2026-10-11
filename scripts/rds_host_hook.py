@@ -18,6 +18,7 @@ from pathlib import Path
 import sys
 
 from rds_project import ProjectStore, canonical, digest, file_sha
+from rds_mutation import mutation
 
 SCHEMA = 1
 ASSURANCE = "BOUND_ADMISSION_IDENTITY_CHECK_NOT_OS_SANDBOX"
@@ -33,8 +34,11 @@ def _guard_path(root):
     return Path(root) / ".rds" / GUARD_NAME
 
 
+@mutation()
 def install(root, strict=True):
     """Record the supported-host hook next to an existing project ledger."""
+    from rds_workspace import check_admission
+    check_admission(root)
     store = ProjectStore(root)
     if not store.path.is_file():
         raise ValueError("Install the host hook after the project ledger exists")
