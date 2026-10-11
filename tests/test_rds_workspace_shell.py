@@ -64,6 +64,34 @@ class WorkspaceBindingShellTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("No project ledger to bind", result.stderr)
 
+    def test_corrupt_bound_ledger_coverage_json_and_exit_two(self):
+        self.cli('workspace', 'bind')
+        self.store.path.write_bytes(b'not a SQLite database')
+        before = self.store.path.read_bytes(), pointer_path(self.root).read_bytes()
+        result = self.cli('workspace', 'coverage', ok=False)
+        self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload['status'], 'MISMATCH')
+        self.assertIn('not a database', payload['mismatch'])
+        self.assertIsNone(payload['next_command'])
+        self.assertEqual((self.store.path.read_bytes(), pointer_path(self.root).read_bytes()), before)
+
+    def test_idempotent_bind_refuses_restored_snapshot_via_cli(self):
+        self.cli('workspace', 'bind')
+        with tempfile.TemporaryDirectory(prefix='rds snapshot fixture ') as directory:
+            backup = Path(directory) / 'post-bind.sqlite3'
+            shutil.copyfile(self.store.path, backup)
+            self.store.register(self.spec('r1', 'ok'))
+            shutil.copyfile(backup, self.store.path)
+        before = self.store.path.read_bytes(), pointer_path(self.root).read_bytes()
+        result = self.cli('workspace', 'bind', ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('snapshot was restored', result.stderr)
+        self.assertEqual((self.store.path.read_bytes(), pointer_path(self.root).read_bytes()), before)
+        coverage = self.cli('workspace', 'coverage', ok=False)
+        self.assertEqual(coverage.returncode, 2)
+        self.assertEqual(json.loads(coverage.stdout)['status'], 'MISMATCH')
+
     def test_paid_failed_run_then_separate_project_refusal_via_cli(self):
         self.paid_failed_run()
         self.cli("workspace", "bind")

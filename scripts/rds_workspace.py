@@ -21,6 +21,7 @@ SCHEMA = 1
 POINTER_NAME = ".rds-workspace.json"
 EVENT_KIND = "WORKSPACE_BOUND"
 ASSURANCE = "SUPPORTED_API_IDENTITY_CHECK_NOT_OS_SANDBOX"
+WINDOWS = os.name == 'nt'
 
 
 def pointer_path(root):
@@ -28,21 +29,50 @@ def pointer_path(root):
 
 
 def _write_pointer(root, pointer):
-    """Replace the pointer atomically: a torn write is never observable.
+    """Publish complete sibling bytes with the campaign's OS durability barrier.
 
-    Recovery must survive the very crash this function guards against, so the
-    pointer is written to a temporary sibling, flushed, and moved into place.
-    On Windows os.replace fails while the destination is open elsewhere and
-    the old pointer stays intact — damage is refused, never half-adopted.
+    Refuse success when file sync, replacement or directory sync fails. If the
+    replacement is already visible, retain the advanced pointer: rolling it
+    back could admit older accounting after an uncertain publication.
     """
     import uuid
+    require(WINDOWS or hasattr(os, 'O_DIRECTORY'),
+            'Durable workspace publication is unsupported on this platform')
     target = pointer_path(root)
     tmp = target.with_name(f"{POINTER_NAME}.{uuid.uuid4().hex}.tmp")
-    with open(tmp, "wb") as handle:
-        handle.write(canonical(pointer).encode("utf-8"))
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, target)
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(canonical(pointer).encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        if WINDOWS:
+            _replace_write_through(tmp, target)
+        else:
+            os.replace(tmp, target)
+            _sync_directory(target.parent)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _sync_directory(path):
+    """Persist POSIX pointer replacement, or refuse success."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _replace_write_through(source, destination):
+    """Replace on Windows with write-through and no cross-volume fallback."""
+    import ctypes
+    from ctypes import wintypes
+    move = ctypes.WinDLL('kernel32', use_last_error=True).MoveFileExW
+    move.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD)
+    move.restype = wintypes.BOOL
+    # MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH, as progress advances.
+    if not move(str(source), str(destination), 0x1 | 0x8):
+        raise ctypes.WinError(ctypes.get_last_error())
 
 
 _OVERWRITE = ("Workspace identity pointer is frozen; delete the workspace, not the ledger, "
@@ -111,17 +141,12 @@ def bind(root):
     require(store.path.is_file(), f"No project ledger to bind at {store.root}")
     pointer = read_pointer(root)
     if pointer is not None:
-        # An existing pointer with a matching recorded identity is idempotent
-        # recovery; a conflicting pointer is a refusal. Identity rides the
-        # ledger's append-only WORKSPACE_BOUND event, not database file bytes
-        # (SQLite checkpoints legitimately rewrite those).
-        event = _recorded_event(store)
-        require(event is not None and event.get("event_digest") == pointer.get("event_digest"),
-                "This workspace is already bound to a different project ledger; "
-                "delete the workspace, not the ledger, to start a different project")
-        require(str(store.root) == event.get("root"),
-                "This workspace is a copy of a bound workspace; the recorded identity names "
-                f"{event.get('root')}. A bound ledger serves exactly one workspace")
+        # Idempotence requires the same root, identity and committed progress;
+        # never repair an older snapshot by lowering the existing pointer.
+        try:
+            check_admission(root)
+        except ValueError as exc:
+            raise ValueError(f'This workspace is already bound; {exc}') from exc
         return {"status": "ALREADY_BOUND", "pointer": pointer, "ledger_root": str(store.root)}
     ledger_sha = file_sha(store.path)
     with store._db() as db:
@@ -313,7 +338,7 @@ def coverage(root):
         check = check_admission(root)
         status = "BOUND"
         mismatch = None
-    except ValueError as exc:
+    except (ValueError, sqlite3.Error, OSError) as exc:
         status, mismatch, check = "MISMATCH", str(exc), None
     return {"schema": SCHEMA, "status": status, "assurance": ASSURANCE,
             "pointer": POINTER_NAME, "ledger_root": str(store.root),

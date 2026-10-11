@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 import test_rds_project  # noqa: E402  (module import keeps its TestCase out of this module's discovery)
+import rds_workspace  # noqa: E402
 from rds_project import ProjectStore, canonical, digest, file_sha  # noqa: E402
 from rds_workspace import (ASSURANCE, EVENT_KIND, POINTER_NAME, bind, check_admission,  # noqa: E402
                            coverage, pointer_path, read_pointer)
@@ -125,6 +126,85 @@ class WorkspaceBindingTests(unittest.TestCase):
                 self.store.register(self.spec('r1', 'ok'))
         self.assertEqual(self._dump(self.root), before)
 
+    def test_posix_directory_sync_failure_rolls_back_and_refuses_admission(self):
+        self._assert_directory_sync_failure(explicit=False)
+
+    def test_posix_directory_sync_failure_at_explicit_commit_is_failclosed(self):
+        self._assert_directory_sync_failure(explicit=True)
+
+    def _assert_directory_sync_failure(self, explicit):
+        bind(self.root)
+        before_rows, before_pointer = self._dump(self.root)
+        with patch('rds_workspace.WINDOWS', False), \
+                patch('rds_workspace.os.O_DIRECTORY', 0, create=True), \
+                patch('rds_workspace._sync_directory',
+                      side_effect=OSError('directory sync failed')):
+            with self.assertRaisesRegex(OSError, 'directory sync failed'):
+                if explicit:
+                    with self.store._db() as db:
+                        db.execute('BEGIN IMMEDIATE')
+                        db.execute("UPDATE budget SET reserved=reserved+1 WHERE resource='wall_seconds'")
+                        db.commit()
+                else:
+                    self.store.register(self.spec('r1', 'ok'))
+        rows, pointer = self._dump(self.root)
+        self.assertEqual(rows, before_rows)
+        self.assertNotEqual(pointer, before_pointer)
+        with self.assertRaisesRegex(ValueError, 'snapshot was restored'):
+            check_admission(self.root)
+        with self.assertRaisesRegex(ValueError, 'snapshot was restored'):
+            bind(self.root)
+        self.assertEqual(coverage(self.root)['status'], 'MISMATCH')
+        self.assertEqual(list(self.root.glob(f'{POINTER_NAME}.*.tmp')), [])
+
+    def test_windows_write_through_failure_preserves_pointer_and_rolls_back(self):
+        bind(self.root)
+        before = self._dump(self.root)
+        with patch('rds_workspace.WINDOWS', True), \
+                patch('rds_workspace._replace_write_through',
+                      side_effect=OSError('write-through failed')):
+            with self.assertRaisesRegex(OSError, 'write-through failed'):
+                self.store.register(self.spec('r1', 'ok'))
+        self.assertEqual(self._dump(self.root), before)
+        self.assertEqual(coverage(self.root)['status'], 'BOUND')
+        self.assertEqual(list(self.root.glob(f'{POINTER_NAME}.*.tmp')), [])
+
+    def test_file_sync_failure_preserves_pointer_and_rolls_back(self):
+        bind(self.root)
+        before = self._dump(self.root)
+        with patch('rds_workspace.os.fsync', side_effect=OSError('file sync failed')):
+            with self.assertRaisesRegex(OSError, 'file sync failed'):
+                self.store.register(self.spec('r1', 'ok'))
+        self.assertEqual(self._dump(self.root), before)
+        self.assertEqual(list(self.root.glob(f'{POINTER_NAME}.*.tmp')), [])
+
+    def test_posix_pointer_publication_syncs_file_then_replace_then_directory(self):
+        bind(self.root)
+        pointer = read_pointer(self.root)
+        order = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def file_sync(descriptor):
+            real_fsync(descriptor)
+            order.append('file')
+
+        def replace(source, target):
+            real_replace(source, target)
+            order.append('replace')
+
+        def directory_sync(directory):
+            self.assertEqual(directory, self.root)
+            self.assertEqual(read_pointer(self.root), pointer)
+            order.append('directory')
+
+        with patch('rds_workspace.WINDOWS', False), \
+                patch('rds_workspace.os.O_DIRECTORY', 0, create=True), \
+                patch('rds_workspace.os.fsync', side_effect=file_sync), \
+                patch('rds_workspace.os.replace', side_effect=replace), \
+                patch('rds_workspace._sync_directory', side_effect=directory_sync):
+            rds_workspace._write_pointer(self.root, pointer)
+        self.assertEqual(order, ['file', 'replace', 'directory'])
+
     def test_explicit_commit_anchors_reservation_and_reads_do_not_write(self):
         bind(self.root)
         initial = self._dump(self.root)
@@ -152,6 +232,43 @@ class WorkspaceBindingTests(unittest.TestCase):
             bind(copied)
         self.assertEqual(coverage(copied)['status'], 'MISMATCH')
         self.assertEqual(self._dump(copied), before)
+
+    def test_idempotent_bind_refuses_restored_snapshot_without_lowering_anchor(self):
+        bind(self.root)
+        backup = Path(self.tmp.name) / 'idempotent-post-bind.sqlite3'
+        shutil.copyfile(self.store.path, backup)
+        self.store.register(self.spec('r1', 'ok'))
+        pointer = read_pointer(self.root)
+        shutil.copyfile(backup, self.store.path)
+        before = self._dump(self.root)
+        with self.assertRaisesRegex(ValueError, 'snapshot was restored'):
+            bind(self.root)
+        self.assertEqual(self._dump(self.root), before)
+        self.assertEqual(read_pointer(self.root), pointer)
+        self.assertEqual(coverage(self.root)['status'], 'MISMATCH')
+
+    def test_corrupt_bound_ledger_coverage_retains_reason_without_writes(self):
+        bind(self.root)
+        self.store.path.write_bytes(b'not a SQLite database')
+        before = self.store.path.read_bytes(), pointer_path(self.root).read_bytes()
+        result = coverage(self.root)
+        self.assertEqual(result['status'], 'MISMATCH')
+        self.assertIn('not a database', result['mismatch'])
+        self.assertIsNone(result['next_command'])
+        self.assertEqual((self.store.path.read_bytes(), pointer_path(self.root).read_bytes()), before)
+
+    def test_unreadable_bound_ledger_coverage_retains_reason(self):
+        bind(self.root)
+        before = self._dump(self.root)
+        for error in (sqlite3.OperationalError('unable to open database file'),
+                      PermissionError('ledger access denied')):
+            with self.subTest(error=error):
+                with patch('rds_workspace._recorded_event', side_effect=error):
+                    result = coverage(self.root)
+                self.assertEqual(result['status'], 'MISMATCH')
+                self.assertEqual(result['mismatch'], str(error))
+                self.assertIsNone(result['next_command'])
+        self.assertEqual(self._dump(self.root), before)
 
     def _try_bind(self):
         try:
@@ -388,6 +505,40 @@ class WorkspaceBindingTests(unittest.TestCase):
                         EVENT_KIND))
         with self.assertRaisesRegex(ValueError, "different workspace identity"):
             bind(self.root)
+
+
+class WorkspacePublicationTests(unittest.TestCase):
+    def test_windows_replacement_requests_write_through_without_copy_fallback(self):
+        with patch('ctypes.WinDLL', create=True) as library:
+            move = library.return_value.MoveFileExW
+            move.return_value = 1
+            rds_workspace._replace_write_through(Path('source.tmp'), Path('pointer.json'))
+        library.assert_called_once_with('kernel32', use_last_error=True)
+        move.assert_called_once_with('source.tmp', 'pointer.json', 0x1 | 0x8)
+
+    def test_windows_replacement_error_propagates_without_fallback(self):
+        error = OSError('Windows denied replacement')
+        with patch('ctypes.WinDLL', create=True) as library, \
+                patch('ctypes.get_last_error', return_value=5, create=True), \
+                patch('ctypes.WinError', return_value=error, create=True) as win_error:
+            move = library.return_value.MoveFileExW
+            move.return_value = 0
+            with self.assertRaises(OSError) as caught:
+                rds_workspace._replace_write_through(Path('source.tmp'), Path('pointer.json'))
+        self.assertIs(caught.exception, error)
+        win_error.assert_called_once_with(5)
+        self.assertEqual(move.call_count, 1)
+
+    def test_directory_sync_error_propagates_and_closes_descriptor(self):
+        with patch('rds_workspace.os.O_DIRECTORY', 0, create=True), \
+                patch('rds_workspace.os.open', return_value=123) as opened, \
+                patch('rds_workspace.os.fsync', side_effect=OSError('directory unavailable')) as synced, \
+                patch('rds_workspace.os.close') as closed:
+            with self.assertRaisesRegex(OSError, 'directory unavailable'):
+                rds_workspace._sync_directory(Path('workspace'))
+        opened.assert_called_once_with(Path('workspace'), os.O_RDONLY)
+        synced.assert_called_once_with(123)
+        closed.assert_called_once_with(123)
 
 
 if __name__ == "__main__":
