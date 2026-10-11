@@ -40,15 +40,25 @@ if mode == "nonzero":
 if mode == "missing":
     raise SystemExit(0)
 path = pathlib.Path(output)
-if mode == "badjson":
+if mode in ("badjson", "partialbadjson"):
     path.write_text("{broken", encoding="utf-8")
 elif mode == "nan":
     path.write_text('{"score": NaN}', encoding="utf-8")
+elif mode == "nonscalar":
+    path.write_text('{"score": [1, 2]}', encoding="utf-8")
+elif mode == "badutf8":
+    path.write_bytes(b"\\xff")
+elif mode == "overflow":
+    path.write_text('{"score": 1e999}', encoding="utf-8")
+elif mode == "oversize":
+    path.write_text('{"score": -1, "padding": "' + 'x' * 2097152 + '"}', encoding="utf-8")
 else:
     score = -1 if mode in ("negative", "slownegative", "large", "missing-extra") else 1
     path.write_text(json.dumps({"score": score, "run_id": run_id}), encoding="utf-8")
 if mode == "large":
     pathlib.Path("outputs/weights.bin").write_bytes(b"synthetic unparsed weights\\n" * 130000)
+if mode == "partialbadjson":
+    raise SystemExit(7)
 '''
 
 
@@ -136,7 +146,9 @@ class OwnedAdvisorCLITests(unittest.TestCase):
             mutate_policy(self.policy)
         if include_policy:
             self.contract['advisor_policy'] = self.policy
-        return self.call('project', 'init', '--contract', self.write_json('contract.json', self.contract), ok=ok)
+        # Only the deliberate legacy fixture opts out of the new FULL default.
+        mode_args = () if include_policy else ('--mode', 'quick')
+        return self.call('project', 'init', *mode_args, '--contract', self.write_json('contract.json', self.contract), ok=ok)
 
     def create(self, run_id='baseline', *, spec=None, ok=True):
         return self.call('project', 'create', '--manifest',
@@ -168,6 +180,45 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]['sha256'], receipt['sha256'])
 
+    def test_record_bindings_reach_real_cli_without_promoting_scientific_support(self):
+        self.initialize()
+        initial = self.output('project', 'next')
+        self.assertEqual(initial['record_relations'], [])
+        self.assertTrue(all(issue['reason'] == 'RUN_NOT_REGISTERED'
+                            for issue in initial['record_topology']['issues']))
+        pending_nodes = current(self.root)['dependency_map']['nodes']
+        self.assertTrue(all('run_id' not in node for node in pending_nodes
+                            if node.get('record_kind') in {'lifecycle_fact', 'observation'}))
+        self.create()
+        pending = self.output('advise')
+        self.assertEqual(pending['record_topology']['relation_counts']['run_lifecycle_fact'], 5)
+        self.assertEqual(pending['record_topology']['relation_counts']['declared_output'], 1)
+        output = next(node for node in current(self.root)['dependency_map']['nodes']
+                      if node.get('record_kind') == 'declared_output')
+        self.assertEqual((output['output_path'], output['status'], output['interpretation']),
+                         ('outputs/baseline.json', 'UNKNOWN', 'PENDING'))
+        complete = self.execute()
+        self.assert_owned_receipt(complete['receipt'], 'baseline', 'SUCCEEDED')
+        review = complete['advisor']
+        self.assertEqual(review['record_topology']['relation_counts']['run_receipt'], 1)
+        self.assertEqual(review['record_topology']['relation_counts']['artifact_observation'], 1)
+        nodes = current(self.root)['dependency_map']['nodes']
+        run = next(node for node in nodes if node.get('record_kind') == 'run')
+        receipt = next(node for node in nodes if node.get('record_kind') == 'receipt')
+        self.assertEqual(run['run_id'], 'baseline')
+        self.assertEqual(receipt['run_id'], run['run_id'])
+        self.assertEqual(receipt['receipt_id'], complete['receipt']['sha256'])
+        self.assertTrue(all(node['run_id'] == 'baseline' and node['receipt_id'] == receipt['receipt_id']
+                            for node in nodes if node.get('record_kind') == 'lifecycle_fact' and 'run_id' in node))
+        self.assertTrue(all(relation['scientific_support'] == 'UNKNOWN' for relation in review['record_relations']))
+        before = self.snapshot()
+        repeated = self.output('project', 'next')
+        self.assertEqual(repeated['record_relations'], review['record_relations'])
+        self.assertEqual(repeated['record_topology'], review['record_topology'])
+        self.assertEqual(self.snapshot()['budget'], before['budget'])
+        self.assertEqual(self.snapshot()['receipts'], before['receipts'])
+        self.assertEqual(self.starts(), ['baseline'])
+
     def test_negative_result_is_collected_without_model_context_and_changes_route(self):
         self.initialize()
         self.assertEqual(self.output('advise')['selected_run'], 'baseline')
@@ -198,9 +249,41 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.snapshot()['budget'], state['budget'])
         self.assertEqual(self.starts(), ['baseline'])
 
-    def test_candidate_limit_counts_pending_routes_without_erasing_completed_dependency(self):
+    # Full-analysis admission now needs room for all configured conditional routes.
+    # Cap refusal is tested separately in test_rds_advisor_coverage; these cases
+    # preserve the original execution, race, history and budget assertions.
+    def test_default_candidate_cap_covers_thirteen_frozen_routes(self):
+        def add_routes(policy):
+            for i in range(11):
+                ident = 'extra-' + str(i)
+                route = deepcopy(policy['routes'][0])
+                route['candidate'] = route['manifest']['id'] = ident
+                route['manifest']['argv'] = [sys.executable, '-B', 'code.py', ident, 'positive', 'outputs/' + ident + '.json']
+                route['manifest']['outpaths'] = ['outputs/' + ident + '.json']
+                self.contract['allowed_commands'].append(route['manifest']['argv'])
+                node = deepcopy(policy['graph']['nodes'][0])
+                node['id'] = node['executable']['action']['id'] = ident
+                policy['routes'].append(route)
+                policy['graph']['nodes'].append(node)
+        self.initialize(mutate_policy=add_routes)
+        result = self.output('project', 'next')
+        search = next(row['search'] for row in result['recommendations'] if 'search' in row)
+        self.assertEqual(search['truncation']['limits']['max_candidates'], 13)
+        self.assertFalse(search['truncation']['truncated'])
+        self.assertTrue(search['analysis_coverage']['full'])
+        self.assertEqual(len(search['candidates']) + len(search['blocked_candidates']), 13)
+        self.assertEqual(self.starts(), [])
+
+    def test_invalid_explicit_candidate_cap_is_refused_before_init(self):
+        result = self.initialize(mutate_policy=lambda policy: policy['context'].update(max_candidates=True), ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('must be an integer', result.stderr)
+        self.assertFalse(ProjectStore(self.root).path.exists())
+        self.assertEqual(self.starts(), [])
+
+    def test_complete_search_retains_pending_routes_and_completed_dependencies(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             value['graph']['nodes'][0]['executable']['satisfied_when'] = [
                 {'fact': 'baseline.score', 'op': 'lt', 'value': 0}]
             value['graph']['edges'] = [{'from': 'baseline', 'to': 'repair', 'relation': 'prerequisite_for'}]
@@ -208,12 +291,12 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         frozen = deepcopy(self.snapshot()['contract']['advisor_policy'])
         first = self.output('project', 'next')
         search = next(row['search'] for row in first['recommendations'] if 'search' in row)
-        self.assertTrue(search['truncation']['truncated'])
-        self.assertIn('candidate limit', search['truncation']['reasons'])
+        self.assertFalse(search['truncation']['truncated'])
+        self.assertTrue(search['analysis_coverage']['full'])
         completed = self.output('project', 'advance')
         self.assertEqual(completed['advisor']['selected_run'], 'repair')
         search = next(row['search'] for row in completed['advisor']['recommendations'] if 'search' in row)
-        self.assertEqual(search['truncation']['limits']['max_candidates'], 1)
+        self.assertEqual(search['truncation']['limits']['max_candidates'], 2)
         self.assertFalse(search['truncation']['truncated'])
         self.assertEqual([row['action']['id'] for row in search['candidates']], ['repair'])
         self.assertTrue(any(step.get('step') == 'dependency' and step.get('from') == 'baseline'
@@ -237,9 +320,9 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertIsNone(self.output('project', 'advance')['selected_run'])
         self.assertEqual(self.snapshot()['budget'], final['budget'])
 
-    def test_active_reservation_precedes_newly_ready_earlier_route_under_candidate_limit(self):
+    def test_active_reservation_precedes_newly_ready_route_within_complete_search(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             value['graph']['nodes'][0]['executable']['preconditions'] = [
                 {'fact': 'run.repair.status', 'value': 'RESERVED'}]
             value['graph']['nodes'][1]['executable']['preconditions'] = []
@@ -250,8 +333,8 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         advice = self.output('project', 'next')
         self.assertEqual(advice['selected_run'], 'repair')
         search = next(row['search'] for row in advice['recommendations'] if 'search' in row)
-        self.assertEqual([row['action']['id'] for row in search['candidates']], ['repair'])
-        self.assertTrue(search['truncation']['truncated'])
+        self.assertEqual([row['action']['id'] for row in search['candidates']], ['baseline', 'repair'])
+        self.assertFalse(search['truncation']['truncated'])
         self.assertEqual(self.snapshot()['budget'], reserved['budget'])
         completed = self.output('project', 'advance')
         self.assert_owned_receipt(completed['receipt'], 'repair', 'SUCCEEDED')
@@ -265,7 +348,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
 
     def test_active_fallback_keeps_its_slot_before_a_new_reservation(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             baseline, trigger = value['graph']['nodes']
             spare = deepcopy(trigger)
             spare['id'] = 'spare'
@@ -289,9 +372,9 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         advice = self.output('project', 'next')
         self.assertEqual(advice['selected_run'], 'spare')
         search = next(row['search'] for row in advice['recommendations'] if 'search' in row)
-        self.assertEqual([row['action']['id'] for row in search['candidates']], ['spare'])
-        self.assertTrue(search['truncation']['truncated'])
-        self.assertEqual(search['truncation']['limits']['max_candidates'], 1)
+        self.assertEqual([row['action']['id'] for row in search['candidates']], ['baseline', 'spare'])
+        self.assertFalse(search['truncation']['truncated'])
+        self.assertEqual(search['truncation']['limits']['max_candidates'], 2)
         self.assertNotEqual(self.create('baseline', ok=False).returncode, 0)
         self.assertEqual(self.snapshot()['budget'], reserved['budget'])
         self.assertEqual(self.snapshot()['runs'], reserved['runs'])
@@ -307,7 +390,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
 
     def test_terminal_fallback_cannot_consume_pending_candidate_slot(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 3
             baseline, repair = value['graph']['nodes']
             diagnosis = deepcopy(repair)
             diagnosis['id'] = 'diagnosis'
@@ -334,7 +417,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
 
     def test_candidate_limit_does_not_reopen_exhausted_resource_budget(self):
         def policy(value):
-            value['context']['max_candidates'] = 1
+            value['context']['max_candidates'] = 2
             self.contract['budget']['cpu_seconds'] = 1
         self.initialize(mutate_policy=policy)
         completed = self.output('project', 'advance')
@@ -348,7 +431,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.starts(), ['baseline'])
 
     def test_positive_result_closes_declared_goal_without_repair_launch(self):
-        self.initialize('positive', mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize('positive', mutate_policy=lambda value: value['context'].update(max_candidates=2))
         result = self.output('project', 'advance')
         self.assert_owned_receipt(result['receipt'], 'baseline', 'SUCCEEDED')
         self.assertIsNone(result['advisor']['selected_run'])
@@ -475,7 +558,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.starts(), ['baseline'])
 
     def test_missing_or_changed_negative_artifact_blocks_dispatch_and_can_be_recovered(self):
-        self.initialize(mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize(mutate_policy=lambda value: value['context'].update(max_candidates=2))
         self.output('project', 'advance')
         path = self.root / 'outputs/baseline.json'
         original = path.read_bytes()
@@ -492,6 +575,12 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                 self.assertEqual(self.starts(), ['baseline'])
                 self.assertEqual(self.snapshot()['budget'], before['budget'])
                 self.assertEqual(len(self.snapshot()['receipts']), 1)
+                broken = self.output('advise', status_codes=(2,))
+                self.assertNotIn('sha256', broken['context']['facts']['baseline.score']['source'])
+                observed = next(n for n in current(self.root)['dependency_map']['nodes']
+                                if n.get('owned_fact', {}).get('id') == 'baseline.score')
+                self.assertFalse(any(r['kind'] == 'artifact_observation' and r['to'] == observed['id']
+                                     for r in broken['record_relations']))
                 path.write_bytes(original)
                 self.assertEqual(self.output('advise')['selected_run'], 'repair')
         self.output('project', 'advance')
@@ -523,13 +612,74 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                     self.assertEqual(review['context']['facts']['baseline.score']['kind'], 'UNKNOWN')
                     if mode in ('badjson', 'nan'):
                         self.assertTrue(review['coverage']['errors'])
+                        self.assert_verified_observation_source(review, receipt)
                     else:
                         self.assertTrue(review['coverage']['gaps'])
+                        self.assertNotIn('sha256', review['context']['facts']['baseline.score']['source'])
+                    self.assertEqual(review['coverage']['parsed_observations'], 0)
                     self.call('project', 'advance', ok=False)
                     self.assertEqual(self.starts(), ['baseline'])
                     self.assertEqual(self.snapshot()['budget'], state['budget'])
                 finally:
                     self.root, self.env = original_root, original_env
+
+    def assert_verified_observation_source(self, report, receipt):
+        artifact = next(a for a in receipt['artifacts'] if a['path'] == 'outputs/baseline.json')
+        fact = report['context']['facts']['baseline.score']
+        self.assertEqual(fact['source']['path'], artifact['path'])
+        self.assertEqual(fact['source']['sha256'], artifact['sha256'])
+        self.assertEqual(fact['source']['receipt_id'], receipt['sha256'])
+        self.assertTrue(fact['source']['locator'])
+        node = next(n for n in current(self.root)['dependency_map']['nodes'] if n.get('owned_fact', {}).get('id') == 'baseline.score')
+        self.assertEqual(node['status'], 'UNKNOWN')
+        self.assertEqual(node['source']['file'], artifact['path'])
+        self.assertTrue(any(r['kind'] == 'artifact_observation' and r['to'] == node['id']
+                            and r['scientific_support'] == 'UNKNOWN' for r in report['record_relations']))
+
+    def test_parse_failure_kinds_keep_verified_bytes_without_measurement_or_dispatch(self):
+        for mode in ('badjson', 'nan', 'nonscalar', 'badutf8', 'overflow', 'missing-selector', 'partialbadjson'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix='owned-parse-source-') as directory:
+                original_root, original_env = self.root, self.env
+                self.root = Path(directory)
+                self.env = {**os.environ, 'RDS_USAGE_DB': str(self.root / 'usage.sqlite3')}
+                try:
+                    mutate = (lambda policy: policy['observations'][0]['selector'].update(pointer='/absent')) if mode == 'missing-selector' else None
+                    self.initialize('negative' if mode == 'missing-selector' else mode, mutate_policy=mutate)
+                    self.create(); self.execute(ok=False)
+                    state = self.snapshot()
+                    receipt = state['receipts'][0]
+                    failed = mode == 'partialbadjson'
+                    self.assertEqual(receipt['run_status'], 'FAILED' if failed else 'SUCCEEDED')
+                    report = self.output('advise', status_codes=(0,) if failed else (2,))
+                    self.assert_verified_observation_source(report, receipt)
+                    fact = report['context']['facts']['baseline.score']
+                    self.assertEqual((fact['kind'], fact['value'], fact['reliable']), ('UNKNOWN', None, False))
+                    self.assertIsNone(report['selected_run'])
+                    self.assertEqual(report['coverage']['parsed_observations'], 0)
+                    self.assertTrue(report['coverage']['gaps'] if failed else report['coverage']['errors'])
+                    self.call('project', 'advance', ok=False)
+                    self.assertEqual(self.starts(), ['baseline'])
+                    self.assertEqual(self.snapshot()['budget'], state['budget'])
+                finally:
+                    self.root, self.env = original_root, original_env
+
+    def test_oversized_requested_json_keeps_existing_source_and_unknown_semantics(self):
+        self.initialize('oversize')
+        self.create(); self.execute()
+        state = self.snapshot()
+        report = self.output('advise')
+        self.assert_verified_observation_source(report, state['receipts'][0])
+        fact = report['context']['facts']['baseline.score']
+        self.assertEqual((fact['kind'], fact['value'], fact['reliable']), ('UNKNOWN', None, False))
+        self.assertEqual(fact['source']['locator'], 'verified original over JSON parse byte limit')
+        self.assertGreater(fact['source']['size'], 2 * 1024 * 1024)
+        self.assertEqual(report['coverage']['parsed_observations'], 0)
+        self.assertEqual(report['coverage']['errors'], [])
+        self.assertTrue(report['coverage']['gaps'])
+        self.assertIsNone(report['selected_run'])
+        self.call('project', 'advance', ok=False)
+        self.assertEqual(self.starts(), ['baseline'])
+        self.assertEqual(self.snapshot()['budget'], state['budget'])
 
     def test_unparsed_large_output_is_in_inventory_and_tampering_blocks_dispatch(self):
         self.initialize('large')
@@ -575,6 +725,18 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         missing = next(row for row in review['coverage']['declared_outputs'] if row['path'] == 'outputs/weights.bin')
         self.assertEqual(missing, {'run_id': 'baseline', 'path': 'outputs/weights.bin', 'status': 'MISSING'})
         self.assertTrue(review['coverage']['gaps'])
+        declared = [row for row in review['record_relations'] if row['kind'] == 'declared_output']
+        self.assertTrue(declared)
+        self.assertTrue(all(row['binding'] == 'DECLARED_OUTPUT' and row['scientific_support'] == 'UNKNOWN'
+                            for row in declared))
+        # Partial original bytes can retain provenance without supplying a reliable measurement.
+        self.assertEqual(review['context']['facts']['baseline.score']['kind'], 'UNKNOWN')
+        self.assert_verified_observation_source(review, self.snapshot()['receipts'][0])
+        self.assertEqual(review['coverage']['parsed_observations'], 1)
+        saved_outputs = [node for node in current(self.root)['dependency_map']['nodes']
+                         if node.get('record_kind') == 'declared_output']
+        self.assertTrue(all(node['status'] == 'UNKNOWN' and node['interpretation'] == 'MISSING'
+                            for node in saved_outputs))
         before = self.snapshot()['budget']
         self.call('project', 'advance', ok=False)
         self.assertEqual(self.starts(), ['baseline'])
@@ -698,7 +860,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(len(self.snapshot()['receipts']), 2)
         self.assertEqual(self.snapshot()['budget']['cpu_seconds']['charged_estimate'], 2)
 
-    def test_matching_structured_checkpoint_is_reviewed_without_blocking_dispatch(self):
+    def test_matching_manual_checkpoint_is_rejected_without_blocking_owned_dispatch(self):
         self.initialize()
         advice = self.output('advise')
         context = advice['context']
@@ -709,11 +871,16 @@ class OwnedAdvisorCLITests(unittest.TestCase):
                     'scope': context['decision']['scope'], 'candidate': search['candidates'][0],
                     'outcome': 'deferred', 'evidence': context['facts']}
         path = self.write_json('owned-decision.json', decision)
-        self.output('checkpoint', 'save', '--id', 'matching-owned', '--decision', path)
+        before = self.snapshot()
+        rejected = self.call('checkpoint', 'save', '--id', 'matching-owned', '--decision', path, ok=False)
+        self.assertEqual(rejected.returncode, 1)
+        self.assertIn('owns decision checkpoints', rejected.stderr)
+        self.assertEqual(self.snapshot(), before)
         after = self.output('advise')
         search = next(row['search'] for row in after['recommendations']
                       if row.get('type') == 'EXECUTABLE_DIRECTION_SEARCH')
-        self.assertEqual(search['loop_review']['flags'], [])
+        # Refusal created no checkpoint, so an empty history may omit this view.
+        self.assertEqual(search.get('loop_review', {}).get('flags', []), [])
         self.assertEqual(after['selected_run'], 'baseline')
         self.assert_owned_receipt(self.output('project', 'advance')['receipt'], 'baseline', 'SUCCEEDED')
         self.assertEqual(self.starts(), ['baseline'])
@@ -770,7 +937,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assert_owned_checkpoint_rejected('contract', 'Checkpoint contract mismatch')
 
     def test_concurrent_advance_cannot_launch_the_same_attempt_twice(self):
-        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=2))
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: self.call('project', 'advance', ok=False), range(2)))
         self.assertTrue(any(result.returncode == 0 for result in results),
@@ -783,7 +950,7 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.assertEqual(self.output('advise')['selected_run'], 'repair')
 
     def test_late_duplicate_registration_cannot_block_identical_reserved_map_execution(self):
-        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=1))
+        self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=2))
         gates = self.root / 'gates'
         gates.mkdir()
         wrapper = gates / 'advance.py'

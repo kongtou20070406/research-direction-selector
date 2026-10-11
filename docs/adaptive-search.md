@@ -133,3 +133,81 @@ for separately authorized matched-model research-benefit measurements.
 MDL scoring, actual model-generated follow-up trials, execution-opportunity
 reallocation and matched-budget scientific efficacy remain follow-ups to #226.
 The shipped claim is bounded original-evidence generation control.
+
+## Parent-relative progress and stalled neighborhoods
+
+Opt into `"strategy": "bounded_neighborhood_v1"` and add
+`"stagnation_trials": 2` to the frozen schema-1 policy above. The latter must be
+an integer from 2 through 8. Existing `bounded_feedback_v1` contracts retain
+their original behavior. No graph coordinates, probability model or semantic
+service are inferred.
+
+This policy separates a point's measured quality from the observed change along
+a declared preparation lineage. For a minimizing metric, these are
+`baseline - child` and `parent - child`. Maximizing metrics reverse the signs.
+For example, baseline error 10, parent error 2 and child error 3 describe a good
+point (+7 against baseline) but an adverse direction (-1 against its parent).
+Baseline 10, parent 14 and child 12 describe a worse point (-2) but an improving
+direction (+2). The threshold and repeated-run requirement still apply.
+
+Refinement automatically binds its selected parent. A repeat in an **evidence**
+slot inherits the repeated intervention's original anchor, provided the
+declared experiment identity matches. Thus 8 -> 6 -> repeat 6 records two +2
+observations, not a second zero. An evidence proposal changing the computation
+does not silently inherit a local comparison.
+
+An **explore** proposal may explicitly declare a known comparison anchor:
+
+```json
+"search": {"slot": 0, "anchor_proposal_id": "previous-poor-result"}
+```
+
+That anchor must have original numeric feedback in this goal's current
+allocation. Copy its exact feedback trigger with `purpose: "ALTERNATIVE"`.
+Missing, UNKNOWN, forged or cross-goal anchors are rejected. The new hypothesis
+still faces the original refutation gate. An ordinary exploration trigger is
+only a reaction to feedback; without the explicit anchor, a new exploration
+seed continues to use the frozen baseline. This permits a poor measured seed
+to produce a useful local direction without first beating the global baseline.
+
+`neighborhood.comparisons` exposes both differences, the exact parent and
+feedback hashes. Qualification groups an original parent/child experiment pair,
+counts distinct candidate runs and uses the conservative observed parent/child
+envelope. UNKNOWN, incompatible repeats, mixed threshold-crossing evidence and
+refuted child hypotheses cannot establish a useful direction. This is an
+observational heuristic, not a confidence interval, causal effect or calibrated
+gradient. Repeated exposed data are still development data.
+
+A local trial requires the configured number of distinct runs before it can
+count as stagnant. A trial is stagnant only when its entire observed difference
+range falls below the declared improvement threshold. After `stagnation_trials`
+distinct stagnant computations at an anchor, that anchor is paused for
+refinement. Renaming a hypothesis while keeping the same candidate command and
+protocol does not mint another computation for this counter. A settled useful
+direction resets the ordered stagnant-trial count; other anchors remain
+eligible. The originals stay available for inspection and diagnosis.
+
+When no eligible refinement parent remains and an anchor is paused, the unused
+refinement slots become **explore** slots with `reason: "LOCAL_STAGNATION"`.
+The declared total proposal allowance is unchanged. Evidence and exploration
+floors remain; slots reserve neither workers nor compute. A new request replays
+the same originals, so rereading or renaming a request cannot reset the counter.
+The policy controls generation and proposal admission; already admitted runs
+retain their original execution ordering and gates.
+
+This is discrete adaptive exploration over the existing structure workflow.
+The hypergraph still represents AND dependencies; it is not a differentiable
+objective. A proposed topology is based on the current original snapshot, not
+automatically on its preparation parent's candidate map. Parentage therefore
+does not certify graph-edit distance or scientific comparability beyond the
+declared measurement protocol. Actual parameter step sizes, controlled causal
+probes, execution-budget allocation and global-optimum guarantees are outside
+this increment. The real CLI regression in `test_rds_search_neighborhood.py`
+checks the finite worse-point/improving-direction trajectory; matched-model
+scientific benefit and LLM savings remain unmeasured.
+
+Design references: [BoTorch's TuRBO tutorial](https://botorch.org/docs/next/tutorials/turbo_1)
+for evidence-driven adaptation and restarts, and
+[ScienceFlow v2](https://arxiv.org/abs/2608.14354v2) for evidence-aware allocation
+and re-anchoring. This policy does not implement their algorithms or inherit
+their reported results.

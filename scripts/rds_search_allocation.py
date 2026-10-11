@@ -15,14 +15,19 @@ from rds_discrimination import hypothesis_key
 
 POLICY_PATH = 'structure-search.json'
 STRATEGY = 'bounded_feedback_v1'
+NEIGHBORHOOD = 'bounded_neighborhood_v1'
 
 
 def validate(policy):
-    require(isinstance(policy, dict) and set(policy) == {
-        'schema', 'strategy', 'metric', 'baseline_proposal_id', 'slots', 'min_repeats'},
+    fields = {'schema', 'strategy', 'metric', 'baseline_proposal_id', 'slots', 'min_repeats'}
+    if isinstance(policy, dict) and policy.get('strategy') == NEIGHBORHOOD:
+        fields.add('stagnation_trials')
+        require(type(policy.get('stagnation_trials')) is int and 2 <= policy['stagnation_trials'] <= 8,
+                'Neighborhood policy requires 2..8 distinct stagnant trials')
+    require(isinstance(policy, dict) and set(policy) == fields,
         'Search policy requires schema, strategy, metric, baseline_proposal_id, slots and min_repeats')
     require(type(policy['schema']) is int and policy['schema'] == 1
-            and policy['strategy'] == STRATEGY, 'Unsupported search allocation policy')
+            and policy['strategy'] in (STRATEGY, NEIGHBORHOOD), 'Unsupported search allocation policy')
     require(isinstance(policy['baseline_proposal_id'], str) and
             re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', policy['baseline_proposal_id']),
             'Search policy requires a predeclared baseline proposal ID')
@@ -63,15 +68,28 @@ def load_policy(store, state):
     return validate(strict_json(raw.decode('utf-8-sig')))
 
 
+def output_argv(run):
+    """Normalize declared output names, retaining option prefixes and ordinals."""
+    outputs = run['outpaths']
+    def argument(value):
+        prefix, separator, tail = value.partition('=')
+        attached = separator and prefix.startswith('-')
+        token = tail if attached else value
+        if token not in outputs:
+            return value
+        normalized = '<output:' + str(outputs.index(token)) + '>'
+        return prefix + '=' + normalized if attached else normalized
+    return [argument(a) for a in run['argv']]
+
+
 def experiment_key(row):
     """Only declared identical interventions count as repeated observations.
 
     Output filenames may differ. Arbitrary argument aliases are not inferred.
     """
     run = row['proposal']['experiment']['runs'][0]
-    outputs = run['outpaths']
     return digest({'hypothesis': hypothesis_key(row['discriminator']),
-                   'argv': ['<output:' + str(outputs.index(a)) + '>' if a in outputs else a for a in run['argv']],
+                   'argv': output_argv(run),
                    'protocol': run['protocol']})
 
 
@@ -99,7 +117,7 @@ def _measurement(policy, row, observed):
                          'conditions': sorted(discriminator['conditions'], key=lambda x: x['path']),
                          'protocol': verifier['protocol'],
                          'evaluator_argv': [locators.get(a, a) for a in verifier['argv']]})
-    return Fraction(value), comparable, None
+    return Fraction(str(value)) if type(value) is float else Fraction(value), comparable, None
 
 
 def build(policy, rows, feedback, state, *, scope_feedback=None):
@@ -169,15 +187,25 @@ def build(policy, rows, feedback, state, *, scope_feedback=None):
             target.append((worst, key, parent, len(runs)))
     qualified.sort(key=lambda x: (-x[0], x[1]))
     promising.sort(key=lambda x: (-x[0], x[1]))
+    neighborhood = None
+    if policy['strategy'] == NEIGHBORHOOD:
+        from rds_search_neighborhood import review
+        qualified, promising, neighborhood = review(policy, rows, evidence, usable, parent_eligible)
     selected_parent = qualified[0][2] if qualified else None
     unknowns = [e['proposal_id'] for e in evidence if e['observation'] == 'UNKNOWN'
                 and parent_eligible(e['proposal_id'])]
     evidence_parent = (unknowns[-1] if unknowns else promising[0][2] if promising
                        else selected_parent or (baseline_id if baseline and by_id[baseline_id]['observation'] == 'SUPPORT'
                                                 and parent_eligible(baseline_id) else None))
+    if neighborhood and not unknowns and neighborhood['evidence_parent']:
+        evidence_parent = neighborhood['evidence_parent']
     slots, withheld = [], []
     for kind, parent in [('explore', None), ('evidence', evidence_parent), ('refine', selected_parent)]:
         for _ in range(policy['slots'][kind]):
+            if kind == 'refine' and parent is None and neighborhood and neighborhood['paused_parents']:
+                slots.append({'slot': len(slots), 'kind': 'explore', 'parent_proposal_id': None,
+                              'trigger': None, 'redirected_from': 'refine', 'reason': 'LOCAL_STAGNATION'})
+                continue
             if kind != 'explore' and parent is None:
                 withheld.append({'kind': kind, 'reason': 'NO_EVIDENCE_TARGET' if kind == 'evidence' else 'NO_ELIGIBLE_REPEATED_COMPARABLE_IMPROVEMENT'})
                 continue
@@ -186,7 +214,7 @@ def build(policy, rows, feedback, state, *, scope_feedback=None):
                           'trigger': {'proposal_id': parent, 'feedback_sha256': source['feedback_sha256'],
                                       'observation': source['observation'],
                                       'purpose': 'EVIDENCE' if kind == 'evidence' else 'ALTERNATIVE'} if source else None})
-    result = {'schema': 1, 'strategy': STRATEGY, 'assurance': 'HEURISTIC',
+    result = {'schema': 1, 'strategy': policy['strategy'], 'assurance': 'HEURISTIC',
               'policy_sha256': digest(policy), 'baseline_proposal_id': baseline_id,
               'selected_parent': selected_parent, 'slots': slots, 'withheld': withheld,
               'limits': deepcopy(policy['slots']), 'comparisons': evidence, 'scoped_refutations': refutations,
@@ -197,6 +225,8 @@ def build(policy, rows, feedback, state, *, scope_feedback=None):
               'instruction': 'Use one slot per proposal. Explore may introduce unlisted concepts. Evidence repeats or diagnoses the bound parent. '
                              'Refine starts from the selected original result. New constraints remain proposals; original gates and total budget apply.',
               'scientific_support': 'UNKNOWN', 'research_policy_gain_measured': False}
+    if neighborhood is not None:
+        result['neighborhood'] = neighborhood
     return {**result, 'sha256': digest(result)}
 
 
@@ -212,10 +242,21 @@ def validate_reply(store, req, proposal, state, feedback, policy):
             and req['feedback_sha256'] == [digest(r) for r in feedback],
             'Stale search evidence; request current feedback before generating a proposal')
     search = proposal.get('search')
-    require(isinstance(search, dict) and set(search) == {'slot'} and type(search['slot']) is int,
+    fields = ({'slot'}, {'slot', 'anchor_proposal_id'}) if policy['strategy'] == NEIGHBORHOOD else ({'slot'},)
+    require(isinstance(search, dict) and set(search) in fields and type(search['slot']) is int,
             'Search proposal must name one integer slot')
     slot = next((s for s in allocation['slots'] if s['slot'] == search['slot']), None)
     require(slot is not None, 'Unknown or withheld search slot')
+    slot = deepcopy(slot)
+    if 'anchor_proposal_id' in search:
+        require(slot['kind'] == 'explore' and isinstance(search['anchor_proposal_id'], str),
+                'Only exploration can declare a comparison anchor')
+        anchor = next((e for e in allocation['comparisons'] if e['proposal_id'] == search['anchor_proposal_id']), None)
+        require(anchor is not None and anchor['comparison_sha256'] is not None,
+                'Comparison anchor requires original numeric feedback for this goal')
+        slot['comparison_parent_proposal_id'] = anchor['proposal_id']
+        slot['trigger'] = {'proposal_id': anchor['proposal_id'], 'feedback_sha256': anchor['feedback_sha256'],
+                           'observation': anchor['observation'], 'purpose': 'ALTERNATIVE'}
     if slot['trigger'] is not None:
         require(proposal.get('trigger') == slot['trigger'], 'Search proposal must consume its exact allocated parent feedback')
     return {**deepcopy(slot), 'allocation_sha256': allocation['sha256'], 'policy_sha256': digest(policy)}

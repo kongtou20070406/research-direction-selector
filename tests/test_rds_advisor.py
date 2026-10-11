@@ -123,7 +123,7 @@ class AdvisorTests(unittest.TestCase):
         self.assertTrue(any("未独立验证" in s for s in result["limitations"]))
         self.assertNotIn("100%", json.dumps(result))
 
-    def test_graph_search_requires_explicit_context_and_preserves_reported_evidence(self):
+    def test_graph_analysis_runs_without_decision_and_preserves_reported_evidence(self):
         context = {"decision": "next-experiment", "facts": {"ready": {"value": True, "source": "run-1"}}}
         state, graph = {"advisor_context": context}, {"nodes": []}
         before = copy.deepcopy((state, graph))
@@ -133,7 +133,8 @@ class AdvisorTests(unittest.TestCase):
         with patch.dict(sys.modules, {"rds_advisor_search": SimpleNamespace(
                 search_directions=callback, review_selection=review_selection)}):
             self.advisor.recommend_next_directions({}, graph)
-            callback.assert_not_called()
+            callback.assert_called_once_with(graph, {})
+            callback.reset_mock()
             reports = self.advisor.recommend_next_directions(state, graph)
         callback.assert_called_once_with(graph, context)
         report = next(r for r in reports if r["type"] == "EXECUTABLE_DIRECTION_SEARCH")

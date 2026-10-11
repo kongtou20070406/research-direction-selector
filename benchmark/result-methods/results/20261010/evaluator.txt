@@ -1,0 +1,1 @@
+Per-example loss=-log(clip(p[true digit],1e-15,1)); gain=candidate loss-baseline loss; benefit if gain<0.

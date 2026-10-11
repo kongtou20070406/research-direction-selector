@@ -216,6 +216,14 @@ def _refresh(store, request, proposal_path):
 
 def prepare(store, code_path, identifier):
     """Generate/refresh one immutable request and editable candidate/proposal pair."""
+    from rds_campaign import enforce
+    from rds_mutation import mutation
+    with mutation():
+        enforce(store.root)
+        return _prepare(store, code_path, identifier)
+
+
+def _prepare(store, code_path, identifier):
     require(isinstance(identifier, str) and re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,79}', identifier),
             'Invalid workbench ID')
     prefix = '.rds/tool-workbench/' + identifier + '/'

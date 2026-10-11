@@ -22,6 +22,7 @@ run. A receipt's successful process status can coexist with a failed goal.
 | `scope` | Frozen decision/goal revision, contract, structure scope, dependency snapshot and owned report fingerprint. Scope identity and collection freshness are separate. |
 | `goals` | Declared predicates, TRUE/FALSE/UNKNOWN comparison and the program-collected fact with its original hash/location. Includes effective confirmation predicates when configured. |
 | `selection` | Final owned `selected_run`, `next_move`, status and selection basis. No new selector and no extra permission. |
+| `shadow_plan` | Bounded global milestone/alternative/jump summary and comparison with the original selection. Expand with `project plan --shadow`; its heuristic never changes execution admission. |
 | `budget` | Current caps, measured spending, conservative charges, reservations and remaining resources, with units. Reading the projection does not charge another structure operation. |
 | `unresolved_hypotheses` | Same-scope pending or UNKNOWN proposals, executable discriminator if available, exact hypothesis identity and existing route constraint. These are declarations, not accepted explanations. |
 | `unresolved_dependencies` | Existing unsupported dependency nodes and sources; these are not automatically classified as hypotheses. |

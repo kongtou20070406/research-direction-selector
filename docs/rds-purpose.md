@@ -1,46 +1,72 @@
-# RDS：辅助人类持续推进科研
+# RDS: vision, research decisions and evidence
 
-RDS（Research Direction Selector）把研究想法转成可检验的实验，保存真实证据，再据此决定下一步。它减少研究者反复盯方向、核对实验、解释结果、纠正 AI 和翻找历史记录的负担。人类决定研究目标与投入；结论的强度由实际证据决定。
+[简体中文](rds-purpose.zh-CN.md) · [Homepage](../README.md) · [Research workflow](research-workflow.md) · [Roadmap](roadmap.md)
 
-## 六个科研环节
+Our fundamental purpose is to help AI better assist people in scientific research. Research Direction Selector (RDS) is the implementation form we have chosen: connecting research goals, evidence, decisions and execution so researchers and AI can clarify questions, compare hypotheses, test ideas and learn from results. More useful assistance, better decisions and less repeated work are intended benefits to evaluate; execution records and software tests establish narrower properties.
 
-| 环节 | 责任 | 每轮应回答的问题 |
+## What the name commits us to
+
+| Word | Design responsibility | Question a researcher should be able to inspect |
 | --- | --- | --- |
-| 明确研究目标 | 明确问题、主要指标、基线、约束与预算 | 本轮要推进什么？ |
-| 选择下一步实验 | 调查资料，比较候选解释和路线 | 什么结果会改变下一决定？ |
-| 检查实验设计 | 检查干预、比较口径和可证伪条件 | 这个实验能回答原来的问题吗？ |
-| 管理实验过程 | 安排执行、记录配置、收集日志与核算资源 | 结果来自什么运行，成本是多少？ |
-| 判断实验结果 | 分开判断运行成功、任务收益和机制证据 | 现在知道什么，仍不知道什么？ |
-| 积累并继续推进 | 保存适用条件与反例，恢复状态，选择继续、修订、分支或停止 | 下一步是什么，为什么值得做？ |
+| **Research** | Preserve the original question, competing explanations and the conditions for accepting a result. | Does this action address the scientific question, or just complete a convenient subtask? |
+| **Direction** | Allow hypotheses, methods, representations and dependency structures to be proposed and revised after evidence. | If this approach fails, what assumption should change, and what observation would distinguish the alternative? |
+| **Selector** | Connect declared evidence, prerequisites and authorized resources to an executable next action or an unresolved blocker. | Why this step, what can it establish, and what result would change the decision? |
 
-## 五个关键组件
+Selection is scoped to the evidence and candidates supplied to the workflow. Omitted alternatives remain unassessed. A chosen route is not a proof of optimal scientific value, and an exhausted route set is not a proof that the research goal is impossible.
 
-| 部分 | 职责 |
+## Researcher, AI and program collaborate
+
+The researcher sets the goal, resource limits and acceptance conditions. Agents contribute hypotheses, domain reasoning, experiment code and interpretations. RDS connects these proposals to recorded evidence, applicable admission checks, execution and recovery. Domain tools and evaluators supply the observations and checks the question requires.
+
+```mermaid
+flowchart TD
+    G["Researcher: goal, resources and acceptance"] --> P["Agent: hypotheses and candidate methods"]
+    P --> A["Advisor: evidence, prerequisites and eligible routes"]
+    A --> K["Kernel: admission and authorized execution"]
+    K --> E["Original results, receipts, costs and failures"]
+    E --> A
+    A --> D["Continue, propose a reformulation, or stop"]
+    D -->|Authorized revised proposal| P
+    D -->|Scoped result and remaining unknowns| R["Researcher review"]
+```
+
+The five software responsibilities remain **Skill, execution and acceptance kernel, research state and memory, Advisor, and RSI**. Their detailed contracts belong in the [workflow](research-workflow.md). The ledger preserves continuity; Advisor consumes that state for the next decision. RSI evaluates proposed changes to RDS's tools or policies, separately from progress on the researcher's task.
+
+Use the optional [Obelisk history bridge](../references/obelisk.md) for exact past-session details, and [project preferences](../references/optional-preferences.md) for decisions such as reusing compatible controls or when additional seeds are justified. These resources do not expand execution authority.
+
+## Current entry points and their limits
+
+These are documented interfaces in the development checkout. Check the installed revision and each guide before use; this table does not promise that every interface is packaged in an older release.
+
+| Need | Entry point | What it does not establish |
+| --- | --- | --- |
+| Discuss evidence and design the next comparison | [Skill and quick start](quickstart.md) | Agent advice alone does not verify a hypothesis or authorize new resources. |
+| Select from a policy-bound project using retained results | [Owned Advisor](program-owned-advisor.md), `advise`, `project advance` | Selection uses declared routes and predicates; it is not general scientific judgment. |
+| Test another formulation when the decomposition fails | [Problem structure](problem-structure.md), `structure` | Proposed concepts and relations remain unconfirmed; public scripted cases are engineering fixtures. |
+| Continue execution or request a scoped method repair | [Research drive](autonomy-loop.md), `project drive` | The controller preserves limits; a completed pass does not establish autonomous discovery. |
+| Retain expensive work across interruptions | [Command wrapper](agent-entry.md#wrap-a-command), execution receipts and recovery | RDS does not control commands launched outside its supported entry points. |
+| Check a mathematical or domain-specific statement | [Formal verification](formal-verification.md), [domain confirmation](domain-confirmation.md) | The report applies to the checked statement and assumptions; it does not establish the broader scientific mechanism. |
+
+The [homepage measurements](../README.md#measured-not-promised) report task-specific agent comparisons, including negative results. They do not establish general direction-selection gains, a complete autonomous discovery loop or RSI improvement.
+
+## The longer view
+
+The first goal is useful support across the research workflow: clarify the question, select a discriminating test, check its design, execute it, interpret the result and carry the evidence into the next decision. The researcher retains control over the goal, material resource changes and scientific acceptance.
+
+The longer-term question is how AI can provide deeper, sustained assistance in more research domains: propose a new approach after failure, check it with an independent evaluator and resume without losing the researcher's goal or costs. Bounded automation and problem reformulation are means to support that collaboration. Their value should be judged by usefulness to the researcher and the resulting evidence. There is no promised completion date or claim that these benefits have already been demonstrated.
+
+The adopted L0–L5 taxonomy and the difference between component automation and discovery autonomy belong in [research autonomy](research-autonomy.md). It is an external scope framework, not a quality score or safety certification. Tool-policy improvement through RSI is a separate axis.
+
+## What would demonstrate progress
+
+Evaluate on unused research tasks with the same model, tools, information access and total budget. For studies of human assistance, also state the researcher's role, expertise and effort, and assess whether the person can understand, verify and correct the advice. Agent-only trials and studies involving researchers support different claims. Publish failures and negative outcomes alongside successful trajectories. The [benchmark protocol](../benchmark/README.md), [problem-structure evaluation](problem-structure-evaluation.md) and [RSI evidence requirements](../references/rsi-evidence.md) define their respective scopes.
+
+| Claim | Evidence needed |
 | --- | --- |
-| Skill | 供单个模型使用的科研协作规程：理解意图、查证据、设计实验、解释结果、持续接续。 |
-| 执行与验收内核 | 实验计划、执行与验证、状态机、预算、数据使用、产物和收据。 |
-| 研究状态与记忆 | 保存目标、配置、结果、失败条件与决策依据；项目记录、判断图和 Obelisk 历史接口支持接续。 |
-| Advisor 建议引擎 | 从真实观测、历史与规则出发，沿判断依赖生成可判别的候选测试，按是否改变下一决定与成本筛选，并保留推导来源。 |
-| RSI 自改进模块 | 把规则与工作策略作为改进对象：提出修订、评估、采用或回退。 |
+| Better next-step decisions | Independent task acceptance and decision errors across matched research trajectories, including failed attempts and evaluation cost. |
+| Useful reformulation after failure | Original failed approach, competing revised formulations, a distinguishing test, its original result and the resulting change of action. |
+| Less repeated work or human correction | Attempt and receipt history, duplicate work, time to leave a dead end, and recorded human interventions. |
+| Reliable continuation | Interrupted and resumed trajectories preserving completed work, spent/reserved resources, data exposure and unresolved failures. |
+| Improved RDS policy | A candidate and baseline evaluated on unused cases at matched total cost, with adoption and rollback evidence. |
 
-六环节是科研流程，五组件是软件职责：前三个支撑基本闭环，Advisor 和 RSI 增强建议与工具自身的改进。日志压缩、预算、探针和形式检查主要属于执行内核；判断图和历史接口主要属于状态与记忆。科研自主程度采用 Kramer 等（2026）的 L0–L5 六级框架，不自建四级。L1 辅助科研某一方面；L2 完全自动化一个重要发现环节；L3 自动化限定领域内完整发现循环；L4 跨多个科研领域完成闭环并能有限自主设置目标。编号与含义保留原框架，不表示质量评分、SAE 合规或安全认证，详见[自主程度说明](research-autonomy.md)。
-
-执行契约的行动、数据、评估器、环境、预算、停止、保存产物和恢复要求是 RDS 操作约束，不是论文的等级定义。RSI 是独立改进轴，修订规则与工作策略并非 L4 定义；声称改善需要未使用独立案例上的等总预算前瞻研究轨迹比较，不代表底层模型智力自动提高。
-
-## 近期与长期目标
-
-近期产品目标是“全环节 L2”：六个科研环节都有可用的自动化支持，研究者保留研究方向、关键判断与科学结果接受的决定权。这是产品覆盖目标，不重定义原论文 L2，也不表示完成科学 L3 闭环；当前仍是局部 L2 功能。
-
-长期研究方向是原框架的 L4、L5：多领域发现闭环与有限自主设定目标，以及科研各方面的全面自主。这是研究方向，不是时间或已实现能力承诺。各环节交付与证据门槛见[路线图](roadmap.md)。
-
-## 工具协作与成本
-
-Lean4/mathlib 可配合科研过程中的数学命题、证明义务与反例，并将检查结果反馈给研究决策。证明适用的数学性质、观察到真实干预、获得任务收益、支持科学机制是不同结论。普通探索无需先形式化所有内容。Obelisk 提供历史检索与来源追溯，RDS 不另建会话镜像或向量记忆库。
-
-研究者保持普通对话；模型在后台组织必要文件和调用工具。验证优先复用已有日志与兼容的已完成基线。代码、seed、数据等关键身份一致时优先复用对照；多 seed 不作为默认建议，只有已有证据显示 seed 不稳定且可能改变决策时，才考虑有预算的追加。
-
-## 实现与证据边界
-
-这份文档描述职责和目标，不宣称所有环节已自动贯通。当前主线有单模型协作协议、受限标量参考执行内核、项目账本、判断规则、Advisor 和 Obelisk 桥接；实际接入能力以所用提交及验证结果为准。当前主要提供面向人的规程与受限自动化组件；自动参考计算与显式绑定候选搜索具有局部 L2 功能，不表示通用科研等级认证。尚未证明采用框架的完整 L3、L4 科研闭环、端到端 GPU 科研服务或独立轨迹上的 RSI 收益。现有 L3 运行器及原先 L4-RSI 标签是历史工程命名，不能映射为外部自主等级。真实深度学习训练需要连接项目训练器与观测产物。
-
-哈希核对产物身份，不能证明假说有价值。数学检查不能单独证明性能改善的原因。回归测试不能保证未来所有研究场景不退化。Advisor 的线索需要适用条件与后续证据；单点 loss 不足以确诊欠拟合、过拟合或健康收敛。对外表述不得使用“绝对可靠”“完全替代专家”或未经评估的省时、成功率、零误报指标。
+A process can exit successfully while the goal remains unmet. A metric can improve while mechanism support remains `UNKNOWN`. A certificate checks a particular mathematical statement. Preserve those distinctions in every result and every public claim.

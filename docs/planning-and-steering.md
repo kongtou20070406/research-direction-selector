@@ -43,6 +43,79 @@ without overwriting an existing file. `--save-as first-plan` retains the draft i
 the initialized project's existing CAS and checkpoint ledger. There is no second
 research state for cold starts.
 
+### Explain a retained decision together
+
+Add `--dialogue` to `project plan` when the person needs to understand or redirect
+the research decision. The optional `dialogue` object is a host-facing projection;
+the Agent should explain it in a short connected response: current understanding,
+why the recorded step follows, what each declared observation would change, and
+how the person can redirect the work. Do not paste hashes or technical cards into
+the ordinary conversation, invent competing explanations, or require confirmation
+each round. For fixed requested work, retain its scope.
+
+### Host-initiated research discussion
+
+With the Skill loaded, the host Agent initiates the research conversation during
+the active task. It should not wait for the person to request a CLI explanation.
+Start from the actual research question, give a reasoned next-step recommendation,
+and revisit it when evidence or the person's direction changes the decision.
+
+| Meaningful change | What the Agent brings into the conversation |
+| --- | --- |
+| First understanding or a changed research question | Its understanding of the goal, consequential unknowns and a useful next step |
+| New, negative or conflicting evidence | What the original observation changes, what remains unresolved and which check could change the next decision |
+| A human explanation, correction or instruction | Discuss the explanation as unverified when needed; explain the received instruction's actual scope and continuation consequences |
+| A material method or resource boundary | Recommend a route within current authority; group the missing choices that genuinely require the person |
+
+Ask a focused question when its uninferable answer would change a material pending
+decision. Continue already authorized work; if an answer is required, hold only
+the work depending on it. User questions are not automatically steering commands,
+and discussion or silence does not authorize a new goal, method or resource.
+The Agent may propose a new explanation, but must distinguish that proposal from
+declared action semantics and checked evidence. A fixed proof or requested task
+does not need invented competing routes.
+
+For example, when a completed run's evidence collection fails, the Agent can
+explain that the measurement is unavailable, recommend inspecting the original
+output and recovering collection, and continue that recovery within existing
+authority. It must not present the failed review as guidance or repeat the
+completed run to obtain another result. When a pause is followed by a hypothesis,
+discuss the hypothesis while keeping new dispatch paused. Starting a new run for
+a distinguishing check requires explicit resumption under the existing steering
+rules; already authorized inspection of existing evidence can continue.
+
+Use current original evidence directly when sufficient. The optional dialogue
+view supplies inspectable retained context when needed; it is not a mandatory
+call per message, a reason to repeat unchanged summaries, or a confirmation gate.
+This behavior lives in the host Skill, rather than a CLI conversation service.
+Instruction validation and software tests do not establish conversation quality
+or scientific benefit; those require separate real-Agent evidence.
+
+The view reads only the latest owned Advisor event and its hash-bound CAS report.
+It checks current contract, budget, steering, dependency snapshot, frozen inputs
+and original report evidence. `COMPATIBLE_RECORDED_ADVICE` means the saved selection
+has compatible records; dispatch still requires normal admission checks. The
+actual `selected_run` is separate from advisory candidates. Original action
+descriptions, explanation declarations, observation-to-next-decision outcomes,
+costs, warnings and search truncation retain their original meaning and locators.
+Unknown fields remain `UNKNOWN`; a saved heuristic ranking is not a measured
+research recommendation or a global optimum.
+
+Missing, corrupt or stale advice yields no selection. An intact old report keeps
+its historical selection separately, with a reason and an explicit refresh step.
+The latest human instruction and original active-work dispositions remain visible
+even then. Reads do not collect evidence, search, buy a model call, reserve/run a
+job, create events, or write CAS objects. Large sections show at most four entries;
+details over 2048 bytes are omitted with original locators. Read omitted records
+before a consequential choice. Plain `project plan` keeps its existing cheap read
+and avoids this additional source audit. CLI usage accounting still applies.
+
+`project steer ... --dialogue` records the original instruction once, then returns
+the same view explaining affected frozen routes, original active work and whether
+continuation requires recovery, a hypothesis check or material revision. A new
+instruction usually makes prior advice stale. This optional presentation does not
+change steering dispatch semantics or create another research ledger.
+
 Once explicit predicates, actions, actual files, evaluators and authorized
 resources are available, [project assembly](project-assembly.md) can compile one
 structured recipe into the existing owned contract. `project init --recipe`

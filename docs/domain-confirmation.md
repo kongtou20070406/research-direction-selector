@@ -65,6 +65,23 @@ consumes the original paid baseline without rerunning it or rewriting its
 receipt. A caller-supplied history cannot supply ancestry, and changed original
 baseline bytes remain UNKNOWN.
 
+## Finite continuous expressions
+
+`domain="continuous"` with `rules.kind="numerical_expression_evaluation"`
+replays a bounded expression against separately frozen feature and label files.
+It independently computes finite-row NRMSE, R² and RMSE rather than accepting a
+candidate's metrics. A PASS establishes only the declared finite numeric fit;
+it does not establish unexposed labels, generalization, symbolic identity or
+causality. The current shared project bindings remain explicitly reported as
+exposed. See [schema, limits and runnable controls](continuous-confirmation.md).
+
+Continuous labels are omitted from automatic repair excerpts, and a started
+final-confirmation attempt cannot trigger a fresh repair request. Use separate
+development routes for validation feedback. Serialization filtering is not
+filesystem isolation. The separate [opt-in benchmark runner](blind-evaluation.md)
+requires live isolation checks and refuses execution when they are unavailable;
+ordinary project execution and native provider transport are unchanged.
+
 ## CPU MLP with post-commit samples
 
 An additional opt-in deep-learning declaration uses

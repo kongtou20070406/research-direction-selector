@@ -34,4 +34,4 @@ Generate a real, immediately valid demonstration contract with `python -B "<skil
 }
 ```
 
-With `python -B "<skill-dir>/scripts/rds_cli.py" --root "<user-project>"` as the command prefix, run `project init --contract <user-project>/contract.json`, register each arm with `project create --manifest <user-project>/<arm>.json`, and follow `project next`. Binding paths and allowed commands refer to the user project, not the Skill directory. See the [project tools](development-loop.md) for execution and recovery.
+With `python -B "<skill-dir>/scripts/rds_cli.py" --root "<user-project>"` as the command prefix, run `project init --mode quick --contract <user-project>/contract.json`, register each arm with `project create --manifest <user-project>/<arm>.json`, and follow `project next`. Binding paths and allowed commands refer to the user project, not the Skill directory. See the [project tools](development-loop.md) for execution and recovery.

@@ -1,13 +1,13 @@
 # RDS in autoresearch workflows
 
-RDS supports evidence-driven autoresearch for academic research: an agent and a researcher propose experiments, while a local program tracks what is permitted, what ran and what its original evidence supports. A useful result must still address the research question; bookkeeping and a successful process do not establish scientific benefit.
+RDS uses evidence-driven autoresearch to help AI better assist the human researcher. It connects the researcher's question to the next decision: agents and researchers propose experiments, Advisor reviews evidence and eligible routes, and the local kernel carries out permitted work while preserving its costs and results. The [vision and scope](rds-purpose.md) describe the longer-term direction-selection goal. A useful result must still address the research question; bookkeeping and a successful process do not establish scientific benefit.
 
 ## From a question to a recorded next step
 
 1. State a hypothesis, a control, a distinguishing observation and the available resources with your agent.
 2. Bind the permitted command, inputs, evaluator and resource allowance before execution. For a campaign whose next route depends on results, use a frozen [owned Advisor policy](program-owned-advisor.md).
 3. Execute a bounded job through the CLI. Read its original outputs and receipt, including failures and timeouts; an identical wrapped request reads the existing job instead of launching it again.
-4. Interpret the evidence with the researcher. Continue with the next permitted step, revise a supported premise or retain an explicit `UNKNOWN` when the evidence is missing.
+4. Interpret the evidence with the researcher. Continue with the next permitted step, propose a testable revision when an approach fails, or retain an explicit `UNKNOWN` when evidence is missing. [Problem-structure exploration](problem-structure.md) and [bounded research drive](autonomy-loop.md) provide scoped entries for reformulation and method repair; revisions preserve the original goal and accounting.
 
 Start with the [CPU receipt example](../examples/autoresearch-receipts/README.md). It compares a constant and a line on the same six recorded points, using the existing project-runner fixture. The original CLI runs each arm once and then checks identical-call reuse. Its small comparison is an observed fixture result, not a research benchmark or evidence that an agent becomes a better scientist.
 

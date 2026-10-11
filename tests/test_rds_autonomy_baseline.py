@@ -1,11 +1,15 @@
 """Original baseline before material repair, verified by actual owned CLI."""
+from contextlib import closing
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,9 +38,62 @@ class BaselineLineageCLITests(unittest.TestCase):
             (root / 'contract.json').write_text(json.dumps(contract), encoding='utf-8')
             trace = []
             def cli(*args):
-                p = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(root), *args],
-                                   cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=50,
-                                   env={**os.environ, 'RDS_USAGE_DB': str(root / '.rds/usage.sqlite3')})
+                # The controller allowance excludes worker time. Wait for the
+                # original frozen campaign window, without changing any native
+                # budget, worker timeout, step limit, or recovery assertion.
+                timeout = contract['stop_policy']['wall_seconds'] if args[:2] == ('project', 'drive') else 50
+                try:
+                    p = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(root), *args],
+                                       cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=timeout,
+                                       env={**os.environ, 'RDS_USAGE_DB': str(root / '.rds/usage.sqlite3')})
+                except subprocess.TimeoutExpired as exc:
+                    # subprocess.run has killed/reaped the parent CLI here;
+                    # inspect only, never recover or launch another controller.
+                    captured = {}
+                    failure = {'argv': list(args), 'status': 'HARNESS_TIMEOUT', 'timeout_seconds': timeout,
+                               'exception': str(exc)[:2048], 'child_settlement': 'UNKNOWN'}
+                    for name, value in (('stdout', exc.stdout), ('stderr', exc.stderr)):
+                        raw = value.encode('utf-8') if isinstance(value, str) else value or b''
+                        captured[name] = raw
+                        failure[name] = {'captured_bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
+                                         'tail_utf8': raw[-4096:].decode('utf-8', errors='replace'),
+                                         'omitted_bytes': max(0, len(raw) - 4096)}
+                    database = root / '.rds/project.sqlite3'
+                    failure['ledger'] = {'status': 'MISSING'}
+                    if database.is_file():
+                        try:
+                            with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=1)) as db:
+                                db.row_factory = sqlite3.Row
+                                deadline = time.monotonic() + 1
+                                db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+                                db.execute('BEGIN')
+                                failure['ledger'] = {
+                                    'status': 'READ_ONLY_PARTIAL', 'row_limit': 10,
+                                    'runs': [dict(row) for row in db.execute(
+                                        "SELECT id,status,json_extract(body,'$.attempt_id') AS attempt_id,"
+                                        "json_extract(body,'$.pid') AS pid FROM runs ORDER BY id LIMIT 10")],
+                                    'receipts': [dict(row) for row in db.execute(
+                                        'SELECT run_id,sha256 FROM receipts ORDER BY run_id LIMIT 10')],
+                                    'budget': [dict(row) for row in db.execute(
+                                        'SELECT * FROM budget ORDER BY resource LIMIT 10')],
+                                    'event_tail': [dict(row) for row in db.execute(
+                                        'SELECT id,length(body) AS original_chars,substr(body,1,1024) AS body_head '
+                                        'FROM events ORDER BY id DESC LIMIT 8')]}
+                        except (sqlite3.Error, OSError, ValueError) as diagnostic_error:
+                            failure['ledger'] = {'status': 'UNKNOWN', 'read_error': str(diagnostic_error)[:1024]}
+                    trace.append(failure)
+                    evidence = os.environ.get('RDS_AUTONOMY_EVIDENCE')
+                    if evidence:
+                        try:
+                            directory = Path(evidence) / self._testMethodName
+                            directory.mkdir(parents=True, exist_ok=True)
+                            for name, raw in captured.items():
+                                (directory / ('timeout-' + name + '.bin')).write_bytes(raw)
+                            (directory / 'cli-transcript.json').write_text(json.dumps(trace), encoding='utf-8')
+                        except OSError as diagnostic_error:
+                            failure['evidence_write_error'] = str(diagnostic_error)[:1024]
+                    self.fail('CLI harness deadline exceeded; retained attempts must be inspected, not rerun: '
+                              + json.dumps(failure, ensure_ascii=True))
                 trace.append({'argv': list(args), 'returncode': p.returncode, 'stdout': p.stdout, 'stderr': p.stderr})
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
                 return json.loads(p.stdout)

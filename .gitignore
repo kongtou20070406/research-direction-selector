@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .rds/
 .rds.lock
+.rds-campaign.json
 .codex/*
 !.codex/instructions.md
 *.sqlite*

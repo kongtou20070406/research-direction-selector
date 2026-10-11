@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "scope": "SYNTHETIC UI EXAMPLE. No experiment or scientific confirmation has been performed.",
+  "nodes": [
+    {"id":"data-protocol","label":{"zh":"数据与评价协议","en":"Data & evaluation"},"status":"SUPPORTED","source":"synthetic:protocol-declaration"},
+    {"id":"matched-budget","label":{"zh":"等预算比较","en":"Matched budget"},"status":"SUPPORTED","source":"synthetic:budget-declaration"},
+    {"id":"baseline-evidence","label":{"zh":"原始基线记录","en":"Baseline records"},"status":"SUPPORTED","source":"synthetic:baseline-declaration"},
+    {"id":"fair-comparison","label":{"zh":"公平比较条件","en":"Fair comparison"},"status":"UNKNOWN","source":"synthetic:comparison-obligation"},
+    {"id":"mechanism-test","label":{"zh":"机制判别实验","en":"Discriminating test"},"status":"UNKNOWN","source":"synthetic:unexecuted-test"},
+    {"id":"extra-compute","label":{"zh":"额外计算解释","en":"Extra-compute rival"},"status":"CONTRADICTED","source":"synthetic:contradiction-for-display-only"},
+    {"id":"task-benefit","label":{"zh":"任务收益证据","en":"Task benefit"},"status":"UNKNOWN","source":"synthetic:unmeasured-task-benefit"},
+    {"id":"mechanism-support","label":{"zh":"机制支持证据","en":"Mechanism support"},"status":"UNKNOWN","source":"synthetic:unverified-mechanism"},
+    {"id":"research-goal","label":{"zh":"确认有效的研究改进","en":"Confirm research gain"},"status":"UNKNOWN","source":"synthetic:original-goal"}
+  ],
+  "hyperedges": [
+    {"id":"comparison-gate","premises":["data-protocol","matched-budget"],"conclusion":"fair-comparison","status":"SUPPORTED","source":"synthetic:comparison-rule"},
+    {"id":"benefit-check","premises":["fair-comparison","baseline-evidence"],"conclusion":"task-benefit","status":"PROPOSED","source":"synthetic:unverified-benefit-rule"},
+    {"id":"mechanism-check","premises":["fair-comparison","mechanism-test"],"conclusion":"mechanism-support","status":"PROPOSED","source":"synthetic:unverified-mechanism-rule"},
+    {"id":"rival-route","premises":["extra-compute"],"conclusion":"task-benefit","status":"CONTRADICTED","source":"synthetic:contradicted-route-for-display"},
+    {"id":"goal-check","premises":["task-benefit","mechanism-support"],"conclusion":"research-goal","status":"PROPOSED","source":"synthetic:unverified-goal-rule"}
+  ],
+  "goals": ["research-goal"]
+}
