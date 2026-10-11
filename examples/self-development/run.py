@@ -17,6 +17,7 @@ PATTERNS = ["test_rds_artifacts.py", "test_rds_costs.py", "test_rds_experiments.
 
 # Only versioned public inputs enter the development copy. Never copy the
 # checkout's Git metadata, local host configuration or private research state.
+# Recursive scripts selection includes indexed runtime scripts/assets resources.
 PUBLIC_DIRECTORIES = {"scripts", "tests", "references", "examples", "benchmark",
                       "docs", "formal", "native", "integrations", "agents", ".github"}
 PUBLIC_ROOT_FILES = {"SKILL.md", "LICENSE", "README.md", "README.zh-CN.md", "README.ja-JP.md",
@@ -122,6 +123,8 @@ def main():
     write(root / "development-config.json", config)
     # Dynamic fixtures, native locks, documents and package inputs all belong
     # to this workload's identity, regardless of how a test imports them.
+    # External HTML/CSS/JS and patch JSON under scripts/assets bind as data;
+    # Python static-import discovery alone cannot find these runtime reads.
     bindings = [{"path": item["path"], "sha256": item["sha256"],
                  "role": "code" if Path(item["path"]).suffix in {".py", ".mjs", ".lean", ".rs"} else "data"}
                 for item in sources]
