@@ -24,7 +24,94 @@ def observed(value, locator):
                         reading_identity=('metrics.json', locator))
 
 
+def affirmative_check_fixture(group, gap=None):
+    graph, context = fixture()
+    target = group + '_gap'
+    context['decision']['goal_conditions'] = [{'fact': 'goal', 'value': True}]
+    context['decision']['affirmations'] = {
+        name: [{'fact': name + '_ok', 'value': True}, {'fact': name + '_gap', 'value': True}]
+        for name in ('portable', 'applicable')}
+    context['facts'] = {name: observed(True, '/' + name) for name in
+                        ('goal', 'portable_ok', 'portable_gap', 'applicable_ok', 'applicable_gap')}
+    context['facts'][target] = observed(gap, '/' + target)
+    action = graph['nodes'][0]['executable']['action']
+    action.update(target=target, goal_contribution={
+        'target': target, 'path': [target], 'source': 'declared-affirmative-plan.json'})
+    return graph, context
+
+
 class PlanningReviewTests(unittest.TestCase):
+    def test_ready_declared_affirmative_checks_scope_open_facts_locally(self):
+        for group in ('portable', 'applicable'):
+            for gap in (False, None, 'reported_true'):
+                with self.subTest(group=group, gap=gap):
+                    graph, context = affirmative_check_fixture(group, gap)
+                    target = group + '_gap'
+                    if gap == 'reported_true':
+                        context['facts'][target] = {'value': True, 'source': 'reported-only.json'}
+                    before = deepcopy((graph, context))
+                    search = search_directions(graph, context)
+                    self.assertEqual(search['candidates'][0]['status'], 'READY')
+                    review = search['selection_review']
+                    self.assertEqual(review['candidates'][0]['goal_contribution']['status'], 'DECLARED_PATH')
+                    self.assertEqual(review['planning']['scope'], 'LOCAL')
+                    self.assertEqual(review['planning']['open_predicates'], [target])
+                    self.assertEqual(review['planning']['local_checks'][0]['goal_target'], target)
+                    self.assertEqual(review['goal']['status'], 'TRUE')
+                    self.assertEqual(review['goal']['triple_affirmative'][group]['conditions'][1]['affirms'],
+                                     'FALSE' if gap is False else 'UNKNOWN')
+                    self.assertEqual(review['authorization'], 'UNCHANGED')
+                    self.assertEqual((graph, context), before)
+
+    def test_undeclared_and_closed_affirmative_targets_cannot_scope_an_open_gap(self):
+        for group in ('portable', 'applicable'):
+            for target in ('not_declared', group + '_ok', 'goal'):
+                with self.subTest(group=group, target=target):
+                    graph, context = affirmative_check_fixture(group)
+                    action = graph['nodes'][0]['executable']['action']
+                    action.update(target=target, goal_contribution={
+                        'target': target, 'path': [target], 'source': 'declared-plan.json'})
+                    before = deepcopy((graph, context))
+                    search = search_directions(graph, context)
+                    self.assertEqual(search['candidates'][0]['status'], 'READY')
+                    review = search['selection_review']
+                    self.assertEqual(review['candidates'][0]['goal_contribution']['status'],
+                                     'UNKNOWN' if target == 'not_declared' else 'DECLARED_PATH')
+                    self.assertEqual(review['planning']['scope'], 'GLOBAL')
+                    self.assertEqual(review['planning']['open_predicates'], [group + '_gap'])
+                    self.assertEqual((graph, context), before)
+
+    def test_affirmative_targets_still_require_existing_path_and_readiness_gates(self):
+        for group in ('portable', 'applicable'):
+            for gate in ('valid_map', 'not_map_goal', 'wrong_start', 'unready'):
+                with self.subTest(group=group, gate=gate):
+                    graph, context = affirmative_check_fixture(group)
+                    target = group + '_gap'
+                    context['dependency_map'] = {'schema': 1, 'nodes': [
+                        {'id': target, 'status': 'UNKNOWN', 'source': 'synthetic existing obligation'},
+                        {'id': 'other', 'status': 'UNKNOWN', 'source': 'synthetic other obligation'}],
+                        'hyperedges': [], 'goals': [target]}
+                    if gate == 'not_map_goal':
+                        context['dependency_map']['goals'] = ['other']
+                    elif gate == 'wrong_start':
+                        graph['nodes'][0]['executable']['action']['target'] = 'other'
+                    elif gate == 'unready':
+                        graph['nodes'][0]['executable']['preconditions'] = [
+                            {'fact': 'missing_prerequisite', 'value': True}]
+                    before = deepcopy((graph, context))
+                    search = search_directions(graph, context)
+                    review = search['selection_review']
+                    if gate == 'unready':
+                        self.assertFalse(any(c['action'].get('id') == 'probe' and c['status'] == 'READY'
+                                             for c in search['candidates']))
+                        self.assertEqual(review['planning']['local_checks'], [])
+                    else:
+                        self.assertEqual(review['candidates'][0]['goal_contribution']['status'],
+                                         'DECLARED_PATH' if gate == 'valid_map' else 'UNKNOWN')
+                    self.assertEqual(review['planning']['scope'], 'LOCAL' if gate == 'valid_map' else 'GLOBAL')
+                    self.assertEqual(context['facts'][target]['value'], None)
+                    self.assertEqual((graph, context), before)
+
     def test_compact_selection_retains_planning_and_exact_originals(self):
         value = {'status': 'REVIEWED', 'selected_run': None,
                  'next_move': {'kind': 'RESOLVE_PREMISE'}, 'selection_basis': None,
