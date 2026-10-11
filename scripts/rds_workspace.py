@@ -14,7 +14,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from rds_project import ProjectStore, canonical, digest, file_sha, require
+from rds_project import ProjectStore, canonical, digest, file_sha, load_json, require
 from rds_mutation import mutation
 
 SCHEMA = 1
@@ -83,48 +83,89 @@ def _store(root):
     return ProjectStore(root)
 
 
-def read_pointer(root):
-    """The bound identity pointer, or None; a malformed pointer is damage, not absence.
+def _read_pointer_at(root):
+    path = pointer_path(root)
+    if not path.is_file():
+        return None
+    try:
+        pointer = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError(f"Workspace identity pointer is unreadable: {path}: {exc}") from exc
+    require(isinstance(pointer, dict) and pointer.get("schema") == SCHEMA
+            and isinstance(pointer.get("ledger_sha256"), str) and pointer.get("ledger_sha256"),
+            "Unrecognized workspace identity pointer")
+    return pointer
 
-    The nearest pointer walking up from `root` governs: a bound workspace binds
-    the whole tree beneath it, so a sibling project root cannot escape the
-    canonical ledger by re-rooting. A pointer inside `.rds` would be lost with
-    the ledger; this pointer lives outside it.
+
+def _initialized(root):
+    store = _store(root)
+    if not store.path.is_file():
+        return False
+    with store._db(True) as db:
+        return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+                    and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone())
+
+
+def _charged_quick_scope(child, owner, owner_pointer):
+    """Only a frozen, parent-funded QUICK ledger may shadow its enclosing scope."""
+    if not child.is_relative_to(owner / '.rds' / 'exec'):
+        return False
+    request_path = child / 'rds-exec-request.json'
+    if not request_path.is_file() or not _initialized(child):
+        return False
+    request = load_json(request_path)
+    parent, child_store = _store(owner), _store(child)
+    with parent._db(True) as db:
+        db.execute('BEGIN')
+        identity = db.execute(
+            "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
+            (EVENT_KIND,)).fetchone()
+        event = json.loads(identity['body']) if identity else None
+        max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
+        anchor = owner_pointer.get('event_id')
+        require(event is not None and event.get('event_digest') == owner_pointer.get('event_digest')
+                and event.get('root') == str(owner), 'Owning QUICK workspace identity does not match')
+        require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,
+                'Owning QUICK workspace ledger was rolled back; accounting resets are refused')
+        rows = db.execute(
+            "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+            "AND json_extract(body,'$.job_root')=?", (str(child),)).fetchall()
+        if len(rows) != 1:
+            return False
+        allowance = json.loads(rows[0]['body'])
+        charged = db.execute("SELECT charged FROM budget WHERE resource='wall_seconds'").fetchone()
+        with child_store._db(True) as child_db:
+            budget = child_store._contract(child_db).get('budget')
+        amount = allowance.get('amount')
+        return (isinstance(request, dict) and allowance.get('request_sha256') == digest(request)
+                and allowance.get('contract_sha256') == digest(parent._contract(db))
+                and allowance.get('materialization_state') == 'PENDING'
+                and allowance.get('resource') == 'wall_seconds'
+                and allowance.get('accounting') == 'CONSERVATIVE_ALLOWANCE'
+                and type(amount) in (int, float) and amount >= 0
+                and charged is not None and charged['charged'] >= amount
+                and budget == {'wall_seconds': amount})
+
+
+def read_pointer(root):
+    """Find the effective binding; initialized nested ledgers cannot hide ancestors.
+
+    Paid QUICK scopes retain their own pointer (or bind their new ledger while
+    materialization is pending). Every enclosing binding is examined, including
+    chains of QUICK children; ordinary nested ledgers inherit the outer identity.
+    Malformed or unreadable pointers are damage, not absence.
     """
     start = Path(root).resolve()
+    scope, selected = None, None
     for candidate in (start, *start.parents):
-        path = candidate / POINTER_NAME
-        if path.is_file():
-            try:
-                pointer = json.loads(path.read_text(encoding="utf-8"))
-            except (ValueError, UnicodeError) as exc:
-                raise ValueError(f"Workspace identity pointer is unreadable: {path}: {exc}") from exc
-            require(isinstance(pointer, dict) and pointer.get("schema") == SCHEMA
-                    and isinstance(pointer.get("ledger_sha256"), str) and pointer.get("ledger_sha256"),
-                    "Unrecognized workspace identity pointer")
-            return pointer
-        if (candidate / ".rds").is_dir() and candidate == start:
-            # An admitted QUICK child has its own initialized ledger before
-            # publishing its pointer. It must bind that ledger, not inherit
-            # the parent's event. Empty lock anchors are not project scopes.
-            store = _store(candidate)
-            if store.path.is_file():
-                with store._db(True) as db:
-                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
-                            and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone():
-                        return None
-        if (candidate / ".rds").is_dir() and candidate != start:
-            # A nested *admitted* project root stops upward search: it owns its
-            # own workspace, not the parent's binding. An empty lock anchor
-            # (a bare `.rds` with no contract) is not a project scope and must
-            # not hide an enclosing binding from a deeper successor root (#282).
-            store = _store(candidate)
-            if store.path.is_file():
-                with store._db(True) as db:
-                    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
-                            and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone():
-                        return None
-    return None
+        pointer = _read_pointer_at(candidate)
+        if pointer is not None:
+            if scope is None or not _charged_quick_scope(scope, candidate, pointer):
+                selected = pointer
+            scope = candidate
+        elif scope is None and _initialized(candidate):
+            scope = candidate
+    return selected
 
 
 @mutation()
@@ -327,14 +368,14 @@ def _recorded_event(store):
 def coverage(root):
     """Read-only binding coverage for discovery/status; claims no enforcement beyond supported APIs."""
     store = _store(root)
-    pointer = read_pointer(root)
-    bound = pointer is not None
-    if not bound:
-        return {"schema": SCHEMA, "status": "UNBOUND", "assurance": ASSURANCE,
-                "pointer": POINTER_NAME, "ledger_root": str(store.root),
-                "next_command": "python -B scripts/rds_cli.py --root "
-                                f"{_arg(str(store.root))} workspace bind"}
+    pointer = None
     try:
+        pointer = read_pointer(root)
+        if pointer is None:
+            return {"schema": SCHEMA, "status": "UNBOUND", "assurance": ASSURANCE,
+                    "pointer": POINTER_NAME, "ledger_root": str(store.root),
+                    "next_command": "python -B scripts/rds_cli.py --root "
+                                    f"{_arg(str(store.root))} workspace bind"}
         check = check_admission(root)
         status = "BOUND"
         mismatch = None
@@ -342,14 +383,16 @@ def coverage(root):
         status, mismatch, check = "MISMATCH", str(exc), None
     return {"schema": SCHEMA, "status": status, "assurance": ASSURANCE,
             "pointer": POINTER_NAME, "ledger_root": str(store.root),
-            "ledger_sha256": pointer["ledger_sha256"], "contract_sha256": pointer.get("contract_sha256"),
+            **({"ledger_sha256": pointer["ledger_sha256"],
+                "contract_sha256": pointer.get("contract_sha256")} if pointer is not None else {}),
             **({"mismatch": mismatch} if mismatch else {}),
             "next_command": ("python -B scripts/rds_cli.py --root "
                              f"{_arg(str(store.root))} project status" if status == "BOUND" else None)}
 
 
 def _arg(value):
-    return "'" + value.replace("'", "'\\''") + "'" if " " in value or os.name == "nt" and "'" in value else value
+    from rds_project import _shell_argument
+    return _shell_argument(value)
 
 
 def check_canonical_continuation(root):
