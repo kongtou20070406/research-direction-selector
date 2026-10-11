@@ -44,3 +44,30 @@ class PointerIdentityTests(unittest.TestCase):
         for field in ('contract_sha256', 'ledger_sha256', 'event_digest'):
             self.assertEqual(after[field], before[field])
         self.assertEqual(workspace.coverage(self.root)['status'], 'BOUND')
+
+    def test_missing_or_null_anchor_cannot_admit_restored_accounting(self):
+        path = workspace.pointer_path(self.root)
+        bound_bytes = self.store.path.read_bytes()
+        self.store.register(self.spec('r1', 'ok'))
+        self.assertGreater(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+        pointer = json.loads(path.read_text(encoding='utf-8'))
+        self.store.path.write_bytes(bound_bytes)
+        for omitted in (True, False):
+            with self.subTest(omitted=omitted):
+                damaged = {key: value for key, value in pointer.items() if key != 'event_id'}
+                if not omitted:
+                    damaged['event_id'] = None
+                path.write_text(json.dumps(damaged), encoding='utf-8')
+                before = path.read_bytes(), self.store.path.read_bytes()
+                self.assertEqual(workspace.coverage(self.root)['status'], 'MISMATCH')
+                with self.assertRaisesRegex(ValueError, 'progress anchor'):
+                    self.store.register(self.spec('r1', 'ok'))
+                self.assertEqual((path.read_bytes(), self.store.path.read_bytes()), before)
+
+    def test_anchor_type_and_positive_integer_are_required(self):
+        path = workspace.pointer_path(self.root)
+        pointer = json.loads(path.read_text(encoding='utf-8'))
+        for anchor in (False, True, 0, -1, 1.0, '1'):
+            with self.subTest(anchor=anchor):
+                path.write_text(json.dumps({**pointer, 'event_id': anchor}), encoding='utf-8')
+                self.assertEqual(workspace.coverage(self.root)['status'], 'MISMATCH')
