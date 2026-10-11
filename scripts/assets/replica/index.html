@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; worker-src blob:; connect-src 'none'">
+<title>RDS · 关系图谱</title><style>__STYLE__</style></head><body class="theme-dark">
+<header class="view-header"><span id="source-name">RDS</span><span class="title">关系图谱</span><span class="spacer"></span>
+<button class="icon-btn" id="graph-info" aria-label="研究说明" title="研究说明" hidden>ⓘ</button>
+<button class="icon-btn" id="fit" aria-label="适应画布" title="适应画布">⊡</button>
+<button class="icon-btn" id="restart" aria-label="重新布局" title="重新布局">↻</button>
+<button class="icon-btn" id="grow" aria-label="重播生长" title="重播生长">▷</button>
+<button class="icon-btn" id="skip-growth" aria-label="立即显示全部" title="立即显示全部" hidden>»</button>
+<button class="icon-btn" id="theme" aria-label="切换主题" title="切换主题">◐</button>
+<button class="icon-btn" id="settings" aria-label="图谱设置" title="图谱设置">⚙</button></header>
+<main id="graph" aria-label="RDS 超图画布"><div class="graph-controls" id="controls"></div>
+<button class="icon-btn graph-controls-gear" id="gear" aria-label="展开图谱设置">⚙</button>
+<section class="note-card" id="note-card" aria-label="节点详查"></section>
+<aside id="legend" aria-label="图例"></aside><div id="counts"></div><div id="state" role="status"></div><div id="analysis-note" role="note"></div><div id="hover-info" role="tooltip" hidden></div><div id="growth-info"></div></main>
+<script id="snapshot" type="application/json">__DATA__</script>
+<script id="d3-worker-lib" type="text/plain">__D3__</script>
+<script>__PIXI__</script><script>__WORKER__</script><script>__RENDERER__</script><script>__APP__</script></body></html>

@@ -46,7 +46,9 @@ class DevelopmentSnapshotTests(unittest.TestCase):
     def test_closure_preserves_worktree_bytes_and_excludes_untracked_private_and_git_configuration(self):
         public = ["docs/command-map.md", "SKILL.md", "LICENSE", "formal/lean-toolchain",
                   "formal/lakefile.lean", "integrations/omp/rds-status.mjs", "tests/public.py",
-                  ".github/assets/public.svg"]
+                  ".github/assets/public.svg", "scripts/assets/dashboard/index.html",
+                  "scripts/assets/hypergraph/app.js", "scripts/assets/hypergraph/style.css",
+                  "scripts/assets/replica/renderer-patches.json", "scripts/assets/hypergraph/pixi-LICENSE.txt"]
         for name in public:
             self.tracked(name)
         changed = self.source / "docs/command-map.md"

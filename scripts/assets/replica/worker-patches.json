@@ -1,0 +1,46 @@
+[
+  [
+    "schedule();\n  if (nodes.length === 0) return;",
+    "if (nodes.length === 0) return;\n  schedule();"
+  ],
+  [
+    "repelStrength: 1000",
+    "repelStrength: 1000, damping: 0.4, flowStrength: 0.025, groupStrength: 0.035, edgeRepulsion: 0.25, edgeClearance: 45, relations: {}"
+  ],
+  [
+    "const VELOCITY_KEEP = 0.6;",
+    "// Damping is adjustable; .4 retains upstream velocity multiplier .6."
+  ],
+  [
+    "n.vx *= VELOCITY_KEEP;",
+    "n.vx *= 1 - Math.max(0.1, Math.min(0.85, params.damping));"
+  ],
+  [
+    "n.vy *= VELOCITY_KEEP;",
+    "n.vy *= 1 - Math.max(0.1, Math.min(0.85, params.damping));"
+  ],
+  [
+    "const forces = [fx, fy, fLink, fCharge, fCollide];",
+    "function fFlow(a) {\n  if(!params.flowStrength) return;\n  for(const l of links) {\n    const s=l.source,t=l.target;\n    const cfg=params.relations[l.relation];if(cfg && (cfg.mode==='none'||cfg.strength===0))continue;\n    if(l.family==='membership' || s.flowX == null || t.flowX == null || t.flowX<=s.flowX) continue;\n    const k=Math.min(5,Math.max(0,params.linkDistance*.6-(t.x-s.x))*params.flowStrength)*a;\n    s.vx-=k*.5;t.vx+=k*.5;\n  }\n}\nfunction fGroups(a) {\n  if(!params.groupStrength) return;\n  const centers=new Map();\n  for(const n of nodes) if(n.group) { const c=centers.get(n.group)||[0,0,0]; c[0]+=n.x;c[1]+=n.y;c[2]++;centers.set(n.group,c); }\n  for(const n of nodes) if(n.group) {const c=centers.get(n.group); n.vx+=(c[0]/c[2]-n.x)*params.groupStrength*a; n.vy+=(c[1]/c[2]-n.y)*params.groupStrength*a; }\n}\nfunction fSigned(a) {\n  for(const l of links) {\n    const cfg=params.relations[l.relation] || {mode:'attract',strength:1};\n    if(cfg.mode !== 'repel' || !cfg.strength || !params.linkStrength) continue;\n    const s=l.source,t=l.target; let dx=t.x-s.x,dy=t.y-s.y,d=Math.hypot(dx,dy);\n    if(d<.001){dx=.001;dy=0;d=.001;}\n    const k=Math.min(8,Math.max(0,params.linkDistance-d)*.12)*cfg.strength*params.linkStrength*a/d;\n    s.vx-=dx*k*.5;s.vy-=dy*k*.5;t.vx+=dx*k*.5;t.vy+=dy*k*.5;\n  }\n}\n// A capsule field along each incidence leg, excluding the whole hyperedge's\n// membership. Spatial bins and a rotating bounded budget keep work local.\nlet edgeOffset=0;\nfunction fEdgeField(a) {\n  if(!params.edgeRepulsion) return;\n  const radius=Math.max(5,params.edgeClearance),cell=radius*2,grid=new Map();\n  for(const n of nodes) {const key=Math.floor(n.x/cell)+','+Math.floor(n.y/cell);const bucket=grid.get(key)||[];bucket.push(n);grid.set(key,bucket);}\n  const edges=links.filter(l=>l.hyperedge),budget=60000;let checks=0,processed=0;\n  for(let i=0;i<edges.length && checks<budget;i++) {\n    const l=edges[(edgeOffset+i)%edges.length],s=l.source,t=l.target,cfg=params.relations[l.relation];\n    processed++;if(cfg && (cfg.mode==='none'||cfg.strength===0))continue;\n    const members=nodeById.get(l.hyperedge)?.members || new Set([s.id,t.id]);\n    const dx=t.x-s.x,dy=t.y-s.y,length2=dx*dx+dy*dy;if(length2<1e-8)continue;\n    const samples=Math.min(64,Math.max(1,Math.ceil(Math.sqrt(length2)/cell))),seen=new Set();\n    for(let j=0;j<=samples && checks<budget;j++) {\n      const bx=Math.floor((s.x+dx*j/samples)/cell),by=Math.floor((s.y+dy*j/samples)/cell);\n      for(let gx=bx-1;gx<=bx+1;gx++)for(let gy=by-1;gy<=by+1;gy++)for(const n of grid.get(gx+','+gy)||[]) {\n        if(checks++>=budget)break;if(n===s||n===t||members.has(n.id)||n.id===l.hyperedge||seen.has(n.id))continue;seen.add(n.id);\n        const u=Math.max(0,Math.min(1,((n.x-s.x)*dx+(n.y-s.y)*dy)/length2));\n        let nx=n.x-(s.x+dx*u),ny=n.y-(s.y+dy*u),d=Math.hypot(nx,ny);if(d>=radius)continue;\n        if(d<.001){const len=Math.sqrt(length2);nx=-dy/len;ny=dx/len;d=1;}\n        const force=Math.min(6,(radius-d)*params.edgeRepulsion)*a,px=nx/d*force,py=ny/d*force;\n        n.vx+=px;n.vy+=py;s.vx-=px*(1-u);s.vy-=py*(1-u);t.vx-=px*u;t.vy-=py*u;\n      }\n    }\n  }\n  if(edges.length)edgeOffset=(edgeOffset+Math.max(1,processed))%edges.length;\n}\nconst forces = [fx, fy, fLink, fCharge, fCollide, fFlow, fGroups, fSigned, fEdgeField];"
+  ],
+  [
+    "fLink.strength((l, i, ls) => params.linkStrength * baseLinkStrength(l, i, ls));",
+    "fLink.strength((l,i,ls) => { const cfg=params.relations[l.relation] || {mode:'attract',strength:1}; return cfg.mode === 'attract' ? params.linkStrength*cfg.strength*baseLinkStrength(l,i,ls) : 0; });\n  // Relative flow uses current parameters; no fixed column coordinates."
+  ],
+  [
+    ".map(([s, t]) => ({ source: nodeById.get(s), target: nodeById.get(t) }));",
+    ".map(([s,t,meta]) => ({...meta, source:nodeById.get(s), target:nodeById.get(t)}));"
+  ],
+  [
+    "fLink.distance(params.linkDistance);",
+    "fLink.distance(l=>params.linkDistance*(l.family==='membership'?2:1));"
+  ],
+  [
+    "fCharge.strength(-Math.max(1, Math.abs(params.repelStrength)));",
+    "fCharge.strength(n=>-Math.max(1,Math.abs(params.repelStrength))*Math.max(1,Math.min(3,n.chargeWeight || 1)));\n  fCollide.radius(n=>Math.max(24,Math.min(120,n.collisionRadius || 60)));"
+  ],
+  [
+    "if (m.forceNode) {",
+    "if(m.layoutTargets) {\n    for(const n of nodes) {const target=m.layoutTargets[n.id]; n.flowX=target?.flowX ?? null; n.group=target?.group ?? null; n.members=new Set(target?.members || []);n.chargeWeight=target?.chargeWeight ?? 1;n.collisionRadius=target?.collisionRadius ?? 60;}\n    needParams=true; needInit=true;\n  }\n  if (m.forceNode) {"
+  ]
+]

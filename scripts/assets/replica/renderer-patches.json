@@ -1,0 +1,110 @@
+[
+  [
+    "new Blob([`(${workerMain.toString()})()`]",
+    "new Blob([document.getElementById('d3-worker-lib').textContent, `\\n(${workerMain.toString()})()`]"
+  ],
+  [
+    "this.worker = new Worker(blobUrl",
+    "this.workerBlobUrl = blobUrl; this.worker = new Worker(blobUrl"
+  ],
+  [
+    "getSize() { return this.r.opts.nodeSize * Math.max(8, Math.min(3 * Math.sqrt(this.weight + 1), 30)); }",
+    "getSize() { return (this.rds?.size || 1) * this.r.opts.nodeSize * (this.rds?.radius ?? Math.max(8, Math.min(3*Math.sqrt(this.weight+1),30))); }\n    drawBody(c) {\n      const shape=this.type==='hyperedge'?'diamond':this.rds?.shape || 'circle';\n      this.rdsShape=shape;c.clear();\n      if(shape==='ring'){c.lineStyle(22,0xffffff,1).drawCircle(0,0,88);return;}\n      c.beginFill(0xffffff);\n      if(shape==='diamond')c.drawPolygon([0,-100,100,0,0,100,-100,0]);\n      else if(shape==='square')c.drawRect(-82,-82,164,164);\n      else if(shape==='triangle')c.drawPolygon([0,-100,95,75,-95,75]);\n      else if(shape==='hexagon')c.drawPolygon([100,0,50,87,-50,87,-100,0,-50,-87,50,-87]);\n      else c.drawCircle(0,0,100);\n      c.endFill();\n    }\n    renderStatusOutline(x,y,size,ns,alpha,visible) {\n      const state=this.rds?.outline;\n      if(!state){if(this.statusOutline)this.statusOutline.visible=false;return;}\n      let c=this.statusOutline;\n      if(!c){c=this.statusOutline=new PIXI.Graphics();this.statusOutlineShape=null;c.eventMode='none';c.zIndex=1.5;this.r.hanger.addChild(c);}\n      const shape=this.type==='hyperedge'?'diamond':this.rds?.shape || 'circle';\n      // Unit geometry follows the body transform; only shape changes redraw it.\n      if(this.statusOutlineShape!==shape){\n        this.statusOutlineShape=shape;c.clear().lineStyle(14,0xffffff,1);\n        if(shape==='diamond')c.drawPolygon([0,-116,116,0,0,116,-116,0]);\n        else if(shape==='square')c.drawRect(-98,-98,196,196);\n        else if(shape==='triangle')c.drawPolygon([0,-116,110,87,-110,87]);\n        else if(shape==='hexagon')c.drawPolygon([116,0,58,101,-58,101,-116,0,-58,-101,58,-101]);\n        else c.drawCircle(0,0,116);\n      }\n      c.visible=visible;c.tint=parseInt(state.color.slice(1),16);\n      c.x=x;c.y=y;c.scale.set(size/100*ns);c.alpha=alpha;\n    }"
+  ],
+  [
+    "if (this.rendered) return false;",
+    "if (this.rendered || this.rdsHidden) return false;"
+  ],
+  [
+    "const r = this.r, { x, y } = this",
+    "if(this.rdsHidden){this.circle.visible=this.text.visible=false;if(this.highlight)this.highlight.visible=false;if(this.statusOutline)this.statusOutline.visible=false;return;}\n      const r = this.r, { x, y } = this"
+  ],
+  [
+    "['circle', 'highlight', 'text']",
+    "['circle', 'highlight', 'text', 'statusOutline']"
+  ],
+  [
+    "text.visible = textVis;",
+    "this.renderStatusOutline(x,y,size,ns,nodeAlpha,circleVis);\n      text.visible = textVis;"
+  ],
+  [
+    "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();",
+    "const r = this.r, s = this.source, t = this.target, hl = r.getHighlightNode();\n      if(s.rdsHidden || t.rdsHidden){this.px.visible=this.arrow.visible=false;return;}"
+  ],
+  [
+    "if (n.rendered) continue;",
+    "if (n.rendered || n.rdsHidden) continue;"
+  ],
+  [
+    "c.beginFill(0xffffff).drawCircle(0, 0, 100).endFill();",
+    "this.drawBody(c);"
+  ],
+  [
+    "const c = this.circle;\n      c.tint",
+    "const c = this.circle;\n      if(this.rdsShape!==(this.type==='hyperedge'?'diamond':this.rds?.shape || 'circle'))this.drawBody(c);\n      c.tint"
+  ],
+  [
+    "const related = !hl || isHl || this.neighbors.has(hl.id);",
+    "const related = !hl || isHl || r.rdsRelated?.has(this.id) || this.neighbors.has(hl.id);"
+  ],
+  [
+    "const on = s === hl || t === hl;",
+    "const on = s === hl || t === hl || (this.rds?.hyperedge && r.rdsRelated?.has(this.rds.hyperedge));"
+  ],
+  [
+    "const col = on ? r.colors.lineHighlight : r.colors.line;",
+    "const col = on ? r.colors.lineHighlight : this.rds?.color ? hexToColor(this.rds.color) : r.colors.line;"
+  ],
+  [
+    "a *= col.a;",
+    "a *= col.a * (this.rds?.opacity ?? 1);"
+  ],
+  [
+    "const w = r.opts.lineSize / r.scale;",
+    "const w = r.opts.lineSize * (this.rds?.width || 1) / r.scale;"
+  ],
+  [
+    "let showArrow = r.opts.showArrow && vis",
+    "let showArrow = r.opts.showArrow && this.rds?.arrow && vis"
+  ],
+  [
+    "new PIXI.Sprite(PIXI.Texture.WHITE)",
+    "new PIXI.TilingSprite(this.rds?.dash ? r.rdsDashTexture : PIXI.Texture.WHITE,1,1)"
+  ],
+  [
+    "line.tint = lerpColor(line.tint, col.rgb);",
+    "line.tint = lerpColor(line.tint, col.rgb); line.tileScale.set(1/r.scale, w/4);"
+  ],
+  [
+    "this.nodes = []; this.nodeLookup",
+    "const dashCanvas=document.createElement('canvas'); dashCanvas.width=12; dashCanvas.height=4; const dc=dashCanvas.getContext('2d'); dc.fillStyle='#fff'; dc.fillRect(0,0,6,4); this.rdsDashTexture=PIXI.Texture.from(dashCanvas);\n      this.nodes = []; this.nodeLookup"
+  ],
+  [
+    "for (const [s, t] of data.links)",
+    "for (const [s, t, meta] of data.links)"
+  ],
+  [
+    "this.links.push(l); this.linkLookup.set(key, l); changed = true;",
+    "l.rds = meta; this.links.push(l); this.linkLookup.set(key, l); changed = true;"
+  ],
+  [
+    "n.label = spec.label || id;\n        } else",
+    "n.label = spec.label || id; n.rds = spec.rds;\n        } else"
+  ],
+  [
+    "n.color = spec.color || null; n.label = spec.label || id;",
+    "n.color = spec.color || null; n.label = spec.label || id; n.rds = spec.rds;"
+  ],
+  [
+    "links: this.links.map(l => [l.source.id, l.target.id])",
+    "links: this.links.map(l => [l.source.id, l.target.id, l.rds])"
+  ],
+  [
+    "app.stage.on('pointerup', up).on('pointerupoutside', up);",
+    "app.stage.on('pointerup', up).on('pointerupoutside', up);\n      window.addEventListener('blur', up); view.addEventListener('pointercancel', up);"
+  ],
+  [
+    "getHighlightNode() { return this.dragNode || this.highlightNode; }",
+    "getHighlightNode() {\n      const hl=this.dragNode || this.highlightNode || this.rdsPinned;\n      if(this.rdsLastHL !== hl) {\n        this.rdsLastHL=hl; this.rdsRelated=new Set(hl ? [hl.id] : []);\n        if(hl) for(const n of this.nodes) if(n.rds?.members && (n===hl || n.rds.members.includes(hl.id))) {\n          this.rdsRelated.add(n.id); for(const id of n.rds.members) this.rdsRelated.add(id);\n        }\n      }\n      return hl;\n    }"
+  ]
+]
