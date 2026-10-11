@@ -98,6 +98,8 @@ def _read_pointer_at(root):
     require(isinstance(pointer, dict) and pointer.get("schema") == SCHEMA
             and isinstance(pointer.get("ledger_sha256"), str) and pointer.get("ledger_sha256"),
             "Unrecognized workspace identity pointer")
+    require(type(pointer.get('event_id')) is int and pointer['event_id'] > 0,
+            'Invalid workspace progress anchor')
     return pointer
 
 
