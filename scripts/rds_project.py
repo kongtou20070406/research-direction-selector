@@ -654,7 +654,8 @@ class ProjectStore:
         return chain
 
     @mutation()
-    def initialize(self, contract, supersedes=None, separate_project=False, fresh_workspace=False, *, scope_declaration=None):
+    def initialize(self, contract, supersedes=None, separate_project=False, fresh_workspace=False, *,
+                   scope_declaration=None, _fresh_workspace_admission=None):
         from rds_campaign import binding, enforce
         enforce(self.root)
         if supersedes is not None:
@@ -681,6 +682,36 @@ class ProjectStore:
             require(not pointer_path(self.root).exists() and not self.path.exists() and
                     (inherited is None or inherited == read_pointer(owner.root)),
                     "Workspace already carries a binding; fresh_workspace applies only to new workspaces")
+            require(isinstance(_fresh_workspace_admission, tuple) and len(_fresh_workspace_admission) == 2,
+                    "Fresh QUICK workspace requires its locked charged allowance")
+            parent_db, request = _fresh_workspace_admission
+            require(isinstance(parent_db, sqlite3.Connection) and parent_db.in_transaction and
+                    Path(parent_db.execute('PRAGMA database_list').fetchone()[2]).resolve() == owner.path,
+                    "Fresh QUICK workspace requires its owning charged allowance transaction")
+            require(isinstance(request, dict), "Fresh QUICK workspace requires its charged allowance request")
+            rows = parent_db.execute(
+                "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
+                "AND json_extract(body,'$.job_root')=?", (str(self.root),)).fetchall()
+            require(len(rows) == 1, "Fresh QUICK workspace has no unique charged allowance")
+            allowance = json.loads(rows[0]['body'])
+            require(allowance.get('request_sha256') == digest(request) and
+                    allowance.get('contract_sha256') == digest(owner._contract(parent_db)) and
+                    allowance.get('materialization_state') == 'PENDING' and
+                    allowance.get('resource') == 'wall_seconds' and
+                    allowance.get('accounting') == 'CONSERVATIVE_ALLOWANCE',
+                    "Fresh QUICK workspace charged allowance does not match its frozen request")
+            require(parent_db.execute(
+                "SELECT 1 FROM events WHERE json_extract(body,'$.kind')='QUICK_JOB_ADMITTED' "
+                "AND json_extract(body,'$.job_root')=?", (str(self.root),)).fetchone() is None,
+                    "Fresh QUICK workspace charged allowance was already materialized")
+            amount = number(allowance.get('amount'), 'charged QUICK allowance', True)
+            charged = parent_db.execute(
+                "SELECT charged FROM budget WHERE resource='wall_seconds'").fetchone()
+            require(charged is not None and charged['charged'] >= amount and
+                    isinstance(contract, dict) and contract.get('budget') == {'wall_seconds': amount},
+                    "Fresh QUICK workspace budget must match its charged allowance")
+            require(load_json(self.root / 'rds-exec-request.json') == request,
+                    "Fresh QUICK workspace frozen request differs from its charged allowance")
         require(isinstance(contract, dict) and type(contract.get("schema")) is int
                 and contract["schema"] == 1, "Project contract schema must be 1")
         require(set(contract) <= {"schema", "bindings", "allowed_commands", "output_roots", "output_files", "budget", "description",

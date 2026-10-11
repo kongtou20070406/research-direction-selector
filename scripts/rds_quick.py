@@ -1150,7 +1150,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
         bound_owner = (ProjectStore(owner) if owner is not None
                        and workspace.is_relative_to(owner / '.rds' / 'exec')
                        and read_pointer(owner) is not None else False)
-        store.initialize(contract, fresh_workspace=bound_owner)
+        store.initialize(contract, fresh_workspace=bound_owner,
+                         _fresh_workspace_admission=(locked_parents[owner], request) if bound_owner else None)
         if owner is not None:
             from rds_workspace import bind as bind_workspace
             check_admission(owner)

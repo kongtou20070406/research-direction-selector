@@ -140,7 +140,8 @@ def engine_id():
                    "methods": digest((here / "rds_methods.py").read_bytes()),
                    "direction_search": digest((here / "rds_advisor_search.py").read_bytes()),
                    "direction_advisor": digest((here / "rds_advisor.py").read_bytes()),
-                   "usage": digest((here / "rds_usage.py").read_bytes()),
+                    "usage": digest((here / "rds_usage.py").read_bytes()),
+                    "workspace": digest((here / "rds_workspace.py").read_bytes()),
                    "guard": digest((here / "rds_guard.py").read_bytes()),
                    "probe": digest((here / "rds_probe.py").read_bytes()),
                    "formal_kernel": digest((here / "rds_formal_kernel.py").read_bytes()),
@@ -205,6 +206,10 @@ class RDSState:
         if not readonly:
             from rds_campaign import enforce
             enforce(self.root, kind='reference')
+            from rds_workspace import check_admission, read_pointer
+            check_admission(self.root)
+            require(read_pointer(self.root) is None,
+                    'A bound workspace uses its canonical project ledger; reference accounting is refused')
         if create:
             require(not (self.directory / "contract.json").exists(),
                     "Legacy v5 JSON state found; preserve it and initialize a new root")
