@@ -254,8 +254,10 @@ class WorkspaceAdmissionTests(unittest.TestCase):
 
     def test_unreadable_pointer_coverage_retains_diagnostic(self):
         bind(self.root)
-        with patch.object(Path, 'open', side_effect=PermissionError('pointer denied')):
+        with patch('rds_bounded_io.read_regular_bytes',
+                   side_effect=PermissionError('pointer denied')) as reader:
             report = coverage(self.root)
+        reader.assert_called_once()
         self.assertEqual(report['status'], 'MISMATCH')
         self.assertIn('pointer denied', report['mismatch'])
         self.assertNotIn('ledger_sha256', report)
