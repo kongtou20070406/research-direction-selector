@@ -23,6 +23,23 @@ def run_cli(root, *argv):
 
 
 class CLIErrorTagTests(unittest.TestCase):
+    def test_observation_classification_cannot_be_reached_by_spelling(self):
+        # Section 6.3: commands and aliases are normalized first, so no accepted
+        # spelling of an observation command can drift into the logged path,
+        # and no writing command can be classified as observation by accident.
+        observation = (['--version'], ['--help'], ['-h'], ['--root', '.', '--version'],
+                       ['status'], ['status', '--brief'], ['status', '--digest'],
+                       ['--root', '.', 'status'], ['stat'], ['project', 'discover'])
+        for argv in observation:
+            with self.subTest(argv=argv):
+                self.assertTrue(rds_cli.observation_argv(argv), argv)
+        logged = (['--root'], ['status', '--json'], ['status', '--days', '2'],
+                  ['usage', '--days', '2'], ['formal', 'rules'], ['advise', '--help'],
+                  [], ['--version', '--help'], ['status', '--brief', '--json'])
+        for argv in logged:
+            with self.subTest(argv=argv):
+                self.assertFalse(rds_cli.observation_argv(argv), argv)
+
     def test_gate_rejection_keeps_reject_tag_and_exit_code(self):
         with tempfile.TemporaryDirectory() as raw:
             result = run_cli(Path(raw), "status", "--brief")

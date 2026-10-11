@@ -330,6 +330,26 @@ class SandboxUsageTests(unittest.TestCase):
         self.assertTrue(all('RDS-USAGE-DEGRADED' not in result.stderr for result in results), results)
         self.assertEqual(self.rows(self.fallback), [('advise', 'help', 0)] * 12)
 
+    def test_observation_touches_no_default_usage_location_even_when_unusable(self):
+        # Plan section 6.6, second row: the default path must be exercised, not
+        # an RDS_USAGE_DB override. Replacing the default database with a
+        # directory makes any open fail loudly, so a silently successful
+        # observation is real proof that nothing tried to read or write it.
+        self.default.mkdir(parents=True)
+        observations = (['--version'], ['--help'], ['status'], ['status', '--brief'],
+                        ['status', '--digest'], ['project', 'discover'])
+        for argv in observations:
+            with self.subTest(argv=argv):
+                result = self.cli(*argv)
+                self.assertNotIn('RDS-USAGE-DEGRADED', result.stderr)
+                self.assertFalse(self.fallback.exists())
+                self.assertEqual([p.name for p in self.root.iterdir()], [])
+        # A logged command against the same broken default must still fall back,
+        # otherwise the observations above would prove nothing.
+        control = self.cli('advise', '--help')
+        self.assertEqual(control.returncode, 0, control.stderr)
+        self.assertEqual(self.rows(self.fallback), [('advise', 'help', 0)])
+
 
 class UsageTests(unittest.TestCase):
     def setUp(self):
