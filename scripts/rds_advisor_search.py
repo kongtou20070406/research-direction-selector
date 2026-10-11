@@ -785,6 +785,12 @@ def _obstruction_review(records, context, goal, read_receipt=None):
     truths = {}
     for condition in (goal or {}).get("conditions", []):
         truths.setdefault(condition["fact"], []).append(condition["truth"])
+    # A comparison alone cannot close an affirmative; all predicates for the
+    # obligation must affirm, including repeated facts across affirmative groups.
+    triple = (goal or {}).get("triple_affirmative") or {}
+    for name in ("found",) + AFFIRMATIVES:
+        for condition in triple.get(name, {}).get("conditions", []):
+            truths.setdefault(condition["fact"], []).append(condition["affirms"])
     decision = context.get("decision")
     # The ledger keys loop history by decision.scope; the context-level scope is the documented fallback.
     scope = decision["scope"] if isinstance(decision, dict) and "scope" in decision else context.get("scope")
