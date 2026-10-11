@@ -110,6 +110,13 @@ def _initialized(root):
                     and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone())
 
 
+def _recorded_quick_contract(db, allowance):
+    """Keep paid scope identity across verified owner contract transitions."""
+    from rds_method_revision import contract_history
+    return next((entry['contract'] for entry in contract_history(db)
+                 if entry['sha256'] == allowance.get('contract_sha256')), None)
+
+
 def _charged_quick_scope(child, owner, owner_pointer):
     """Only a frozen, parent-funded QUICK ledger may shadow its enclosing scope."""
     if not child.is_relative_to(owner / '.rds' / 'exec'):
@@ -142,7 +149,7 @@ def _charged_quick_scope(child, owner, owner_pointer):
             budget = child_store._contract(child_db).get('budget')
         amount = allowance.get('amount')
         return (isinstance(request, dict) and allowance.get('request_sha256') == digest(request)
-                and allowance.get('contract_sha256') == digest(parent._contract(db))
+                and _recorded_quick_contract(db, allowance) is not None
                 and allowance.get('materialization_state') == 'PENDING'
                 and allowance.get('resource') == 'wall_seconds'
                 and allowance.get('accounting') == 'CONSERVATIVE_ALLOWANCE'
