@@ -6,6 +6,7 @@
 
 | 你想…… | 从这里开始 |
 | --- | --- |
+| 在本仓库做出第一次改动 | [上手指南](onboarding.zh-CN.md) |
 | 与 Agent 一起试用 RDS | [快速入门](quickstart.zh-CN.md)、[CPU 回执示例](../examples/autoresearch-receipts/README.md) |
 | 理解科研决策闭环 | [科研工作流](research-workflow.zh-CN.md)、[程序持有的 Advisor](program-owned-advisor.md) |
 | 修订失败路线并接续 | [问题结构](problem-structure.md)、[有界研究推进](autonomy-loop.md)、[确定性接续](deterministic-continuation.md) |
@@ -20,6 +21,7 @@
 
 | 指南 | 简体中文 | English |
 | --- | --- | --- |
+| 首次上手：clone 检出、跑一组聚焦测试、开第一个 PR | [上手指南](onboarding.zh-CN.md) | [Onboarding](onboarding.md) |
 | 愿景、当前入口与进展证据 | [愿景与范围](rds-purpose.zh-CN.md) | [Vision and scope](rds-purpose.md) |
 | 5.8 提案：目标、架构、状态和可分工事项 | [5.8 完整目标与协作计划](5.8-vision.zh-CN.md) | [5.8 vision](5.8-vision.md) |
 | 已有自主分级与当前实现范围 | [原框架与当前能力](research-autonomy.md) | [Research autonomy](research-autonomy.md) |

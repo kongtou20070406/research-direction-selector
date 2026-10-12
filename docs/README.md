@@ -6,6 +6,7 @@ Start with [vision and scope](rds-purpose.md): our purpose is better AI assistan
 
 | You want to… | Start here |
 | --- | --- |
+| Make your first change to this repository | [Onboarding](onboarding.md) |
 | Try RDS with your agent | [Quick start](quickstart.md), [CPU receipt example](../examples/autoresearch-receipts/README.md) |
 | Understand the research decision loop | [Research workflow](research-workflow.md), [owned Advisor](program-owned-advisor.md) |
 | Change a failed approach and continue | [Problem structure](problem-structure.md), [bounded research drive](autonomy-loop.md), [deterministic continuation](deterministic-continuation.md) |
@@ -20,6 +21,7 @@ These guides describe the checkout's documented interfaces. Dated proposals, com
 
 | Guide | English | 简体中文 |
 | --- | --- | --- |
+| First run: clone the checkout, run a focused test, open your first pull request | [Onboarding](onboarding.md) | [上手指南](onboarding.zh-CN.md) |
 | Vision, current entry points and evidence needed for progress | [Vision and scope](rds-purpose.md) | [愿景与范围](rds-purpose.zh-CN.md) |
 | Proposed 5.8 goals, architecture, status and collaboration packages | [5.8 vision](5.8-vision.md) | [5.8 完整目标与协作计划](5.8-vision.zh-CN.md) |
 | Published autonomy taxonomy and current implementation scope | [Research autonomy](research-autonomy.md) | [原框架与当前能力](research-autonomy.md) |
