@@ -163,14 +163,14 @@ mkdir -p ~/rds-first-look
 python -B scripts/rds_cli.py --root ~/rds-first-look project discover
 ```
 
-`--root` is the directory whose project you are asking about. It does not have to exist yet, and it does not have to be a Git repository. `--root` may be written before or after the subcommand; both forms behave identically. Quote it in PowerShell whenever the path contains a space or a non-ASCII character, and quote it in bash whenever it contains a space.
+`--root` is the directory whose project you are asking about. It must already exist, so keep the directory-creation command above; it does not have to be a Git repository. A missing directory exits with status `1` and `[RDS-REJECT] Project root must exist`, not `NO_PROJECT_FOUND`. `--root` may be written before or after the subcommand; both forms behave identically. Quote it in PowerShell whenever the path contains a space or a non-ASCII character, and quote it in bash whenever it contains a space.
 
-Expected output is the same JSON object as in the previous section, with `"requested_root"` set to the directory you passed and `"status"` still `"NO_PROJECT_FOUND"`, because that directory has no project in it:
+Expected output is the same JSON object as in the previous section, with `"requested_root"` set to the resolved absolute path of the directory you passed and `"status"` still `"NO_PROJECT_FOUND"`, provided neither that directory nor its ancestors contains a project. Selected top-level fields are shown below; the separate `workflow.project_root` field contains the requested directory, while the top-level `project_root` is `null`:
 
 ```text
   "status": "NO_PROJECT_FOUND",
+  "requested_root": "<your directory>",
   "project_root": null,
-    "project_root": "<your directory>",
   "execution_started": false,
   "search_scope": "REQUESTED_ROOT_AND_ANCESTORS",
 ```
@@ -239,13 +239,13 @@ The last row matters even for a documentation change: `docs/` is copied into the
 
 If a test file you expected does not exist, `discover` prints `Ran 0 tests` and exits `5`. That means your `-p` pattern matched no file, not that the tests passed.
 
-## 6. Change one character and land it
+## 6. Make a small change and contribute it
 
-This section is what turns you from a reader into a contributor. The worked example is a real defect in this checkout.
+This section shows the contribution workflow using a hypothetical broken link. The example link is already correct in this checkout: verify it, then find a real documentation correction before committing or opening a pull request.
 
-### 6.1 Find and fix a real one-line defect
+### 6.1 Inspect a link and understand a hypothetical fix
 
-`docs/advisor-frontier.md` links to a section of `docs/theory-reformulation.md` using the wrong anchor text, so the link lands at the top of the target page instead of the section it promises. Find it:
+`docs/advisor-frontier.md` links to a section of `docs/theory-reformulation.md`. Inspect the current link:
 
 ```powershell
 Select-String -Path docs\advisor-frontier.md -Pattern "theory-reformulation.md#"
@@ -254,7 +254,7 @@ Select-String -Path docs\advisor-frontier.md -Pattern "theory-reformulation.md#"
 Expected: one matching line, containing
 
 ```text
-[预载工具](theory-reformulation.md#按需查预载工具)
+[预载工具](theory-reformulation.md#按需查预载工具与可运行算子脚手架)
 ```
 
 In bash the equivalent search is `grep -n "theory-reformulation.md#" docs/advisor-frontier.md`. Now read the headings of the target file to get the correct anchor:
@@ -263,13 +263,21 @@ In bash the equivalent search is `grep -n "theory-reformulation.md#" docs/adviso
 Select-String -Path docs\theory-reformulation.md -Pattern "^#{1,6} "
 ```
 
-Expected: one heading begins with `按需查预载工具与可运行算子脚手架`. An anchor is the heading text with spaces replaced by `-`, so that heading's anchor is `按需查预载工具与可运行算子脚手架`, and the link is missing its second half.
+Expected: the heading `## 按需查预载工具与可运行算子脚手架`. Its anchor is `按需查预载工具与可运行算子脚手架`, which matches the current link. The search above returns one correct link and no link with the shorter anchor below; there is nothing to repair here.
 
-Edit that single line with any editor, appending `与可运行算子脚手架` to the anchor inside the parentheses. Your change is one line: one insertion, one deletion.
+For comparison, suppose a link instead read:
+
+```text
+[预载工具](theory-reformulation.md#按需查预载工具)
+```
+
+That hypothetical link would be missing the heading's second half. The fix would append `与可运行算子脚手架` to the anchor inside the parentheses, producing the current correct link. Do not append it again to the existing link or introduce a broken link just to fix it. If you have not found a real correction, stop here; there is no change to submit.
 
 This is the shape of every first contribution — a broken link, a misspelled word, one sentence that reads better. You are not expected to understand the kernel, the part of the program that actually executes work and records the results, and the defect does not have to be this one: any one-line documentation correction follows the same steps.
 
 ### 6.2 Check, commit, push
+
+Continue only after making a real documentation correction. The branch, file and commit message below illustrate the hypothetical anchor fix; adapt all three to your actual change.
 
 ```powershell
 git diff --check
@@ -292,13 +300,15 @@ git config --global user.name "Your Name"
 git config --global user.email "you@example.com"
 ```
 
-Now publish the branch to your own fork. Fork the repository in the browser first, then:
+Now publish the branch to your own fork. Section 2.3 cloned the upstream repository, so `origin` still points there. Fork the repository in the browser first, replace `YOUR_GITHUB_USERNAME` with the account that owns your fork, then add a separate remote:
 
 ```powershell
-git push -u origin docs/fix-broken-anchor
+git remote add fork https://github.com/YOUR_GITHUB_USERNAME/research-direction-selector.git
+git remote -v
+git push -u fork docs/fix-broken-anchor
 ```
 
-Expected: Git reports the new branch. If the push is rejected because you lack write access, you are pushing at the project repository instead of your fork; run `git remote -v` to see which URL `origin` points at, and push to your fork's URL.
+Expected: `git remote -v` shows `origin` at `kongtou20070406/research-direction-selector` and `fork` at your own repository; the push reports the new branch on `fork`. If `fork` already exists, inspect its URL before using it. If the push is rejected, check the `fork` URL and your authentication for that account.
 
 ### 6.3 Open the pull request
 

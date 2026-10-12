@@ -163,14 +163,14 @@ mkdir -p ~/rds-first-look
 python -B scripts/rds_cli.py --root ~/rds-first-look project discover
 ```
 
-`--root` 是你想查询其项目的那个目录。它现在可以不存在，也不必是 Git 仓库。`--root` 写在子命令之前或之后都可以，两种写法行为一致。路径里有空格或非 ASCII 字符时，在 PowerShell 里要加引号；路径里有空格时，在 bash 里也要加引号。
+`--root` 是你想查询其项目的那个目录。它必须已经存在，所以要保留上面的目录创建命令；它不必是 Git 仓库。目录不存在时，命令退出码为 `1`，并打印 `[RDS-REJECT] Project root must exist`，不会返回 `NO_PROJECT_FOUND`。`--root` 写在子命令之前或之后都可以，两种写法行为一致。路径里有空格或非 ASCII 字符时，在 PowerShell 里要加引号；路径里有空格时，在 bash 里也要加引号。
 
-期望输出与上一节是同一个 JSON 对象，其中 `"requested_root"` 是你传入的目录，`"status"` 仍是 `"NO_PROJECT_FOUND"`，因为那个目录里没有项目：
+期望输出与上一节是同一个 JSON 对象，其中 `"requested_root"` 是你传入目录解析后的绝对路径；如果该目录及其上级目录都没有项目，`"status"` 仍是 `"NO_PROJECT_FOUND"`。下面节选顶层字段；另一个嵌套字段 `workflow.project_root` 是请求查询的目录，而顶层 `project_root` 为 `null`：
 
 ```text
   "status": "NO_PROJECT_FOUND",
+  "requested_root": "<你的目录>",
   "project_root": null,
-    "project_root": "<你的目录>",
   "execution_started": false,
   "search_scope": "REQUESTED_ROOT_AND_ANCESTORS",
 ```
@@ -239,13 +239,13 @@ OK
 
 如果你以为存在的测试文件不存在，`discover` 会打印 `Ran 0 tests` 并退出 `5`。那说明你的 `-p` 模式没有匹配到任何文件，不是测试通过了。
 
-## 6. 改一个字，走完整流程
+## 6. 做一处小改动并贡献它
 
-这一节把你从读者变成贡献者。示例是这个 checkout 里真实存在的缺陷。
+这一节用一个假设性的坏链接演示贡献流程。这个 checkout 中的示例链接已经正确：先核对它，再找到一处真实的文档问题，才进行提交或开 PR。
 
-### 6.1 找到并修一个真实的一行缺陷
+### 6.1 检查链接并理解假设性修复
 
-`docs/advisor-frontier.md` 用错误的锚点文本链接到 `docs/theory-reformulation.md` 的某一节，所以链接会落在目标页顶部，而不是它承诺的那一节。先找到它：
+`docs/advisor-frontier.md` 链接到 `docs/theory-reformulation.md` 的某一节。先检查当前链接：
 
 ```powershell
 Select-String -Path docs\advisor-frontier.md -Pattern "theory-reformulation.md#"
@@ -254,7 +254,7 @@ Select-String -Path docs\advisor-frontier.md -Pattern "theory-reformulation.md#"
 期望：一行匹配，其中包含
 
 ```text
-[预载工具](theory-reformulation.md#按需查预载工具)
+[预载工具](theory-reformulation.md#按需查预载工具与可运行算子脚手架)
 ```
 
 bash 中等价的查找是 `grep -n "theory-reformulation.md#" docs/advisor-frontier.md`。接着读目标文件的标题，拿到正确的锚点：
@@ -263,13 +263,21 @@ bash 中等价的查找是 `grep -n "theory-reformulation.md#" docs/advisor-fron
 Select-String -Path docs\theory-reformulation.md -Pattern "^#{1,6} "
 ```
 
-期望：其中一个标题以 `按需查预载工具与可运行算子脚手架` 开头。锚点就是标题文本把空格换成 `-`，所以那个标题的锚点是 `按需查预载工具与可运行算子脚手架`，而这个链接缺了后半截。
+期望：找到标题 `## 按需查预载工具与可运行算子脚手架`。它的锚点是 `按需查预载工具与可运行算子脚手架`，与当前链接一致。上面的查找会返回一个正确链接，没有下面这个短锚点的链接；这里没有需要修复的缺陷。
 
-用任意编辑器改那一行，在括号内锚点的末尾补上 `与可运行算子脚手架`。你的改动是一行：一次插入、一次删除。
+作为对照，假设某个链接写成了：
+
+```text
+[预载工具](theory-reformulation.md#按需查预载工具)
+```
+
+这个假设性的链接缺了标题的后半截。修复方式是在括号内锚点的末尾补上 `与可运行算子脚手架`，得到当前的正确链接。不要给现有链接再补一遍，也不要为了修复而故意制造坏链接。如果还没找到真实的修正，到这里就可以停下；没有改动就无需提交。
 
 这就是每一个首次贡献的形状——一个坏链接、一个错别字、一句更通顺的话。你不需要理解内核（真正执行工作并记录结果的那部分程序），也未必非得是这一个缺陷：任何一行的文档修正都走同样的步骤。
 
 ### 6.2 检查、提交、推送
+
+只有完成一处真实的文档修正后，才继续以下步骤。下面的分支、文件与提交信息是在演示假设性的锚点修复；请按你的实际改动调整这三项。
 
 ```powershell
 git diff --check
@@ -292,13 +300,15 @@ git config --global user.name "Your Name"
 git config --global user.email "you@example.com"
 ```
 
-现在把分支推到你自己 fork 的仓库。先在浏览器里 fork 仓库，然后：
+现在把分支推到你自己 fork 的仓库。第 2.3 节 clone 的是上游仓库，所以 `origin` 仍然指向上游。先在浏览器里 fork 仓库，把 `YOUR_GITHUB_USERNAME` 替换为拥有该 fork 的账号，再添加一个独立 remote：
 
 ```powershell
-git push -u origin docs/fix-broken-anchor
+git remote add fork https://github.com/YOUR_GITHUB_USERNAME/research-direction-selector.git
+git remote -v
+git push -u fork docs/fix-broken-anchor
 ```
 
-期望：Git 报告新分支。如果推送因为缺少写权限被拒，说明你在往项目仓库推而不是你的 fork；用 `git remote -v` 看 `origin` 指向哪个 URL，改成推你 fork 的 URL。
+期望：`git remote -v` 显示 `origin` 指向 `kongtou20070406/research-direction-selector`，`fork` 指向你自己的仓库；推送会报告 `fork` 上的新分支。如果 `fork` 已存在，先检查它的 URL 再使用。如果推送被拒，检查 `fork` 的 URL 以及该账号的认证状态。
 
 ### 6.3 开 PR
 
