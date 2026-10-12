@@ -2,6 +2,7 @@
 import ast
 import hashlib
 import inspect
+import json
 import os
 from pathlib import Path
 import sys
@@ -16,8 +17,20 @@ import rds_cli as cli
 import rds_quick as quick
 
 # Exact original function ASTs from parent e6f22e2, including @mutation().
-OLD_AST = {'cas_json': 'bb7676c7936c244abcf0f4291221bb09ac7aaf5189e42d203fa7e5496e591987',
-           'cas_bytes': 'f6c6979d8236c995dee41db2b741594c3d19aa1bf413cb9df5a46994cdaa9ec8'}
+OLD_AST = {
+    "cas_json": "e4399ccfe6995d4fc09299c33a503e2c4b9c0c4ad15dbd2e1d2944e3e910a3cc",
+    "cas_bytes": "a0e9424af3e56b3ac06881665829bf4a31cbb378ae09f08bb2d4765daf127f43"
+}
+
+
+def frozen_ast(node):
+    # ast.dump omits empty optional fields on newer supported interpreters.
+    if isinstance(node, ast.AST):
+        return [type(node).__name__, [[key, frozen_ast(value)]
+                for key, value in ast.iter_fields(node) if key != 'type_params' or value]]
+    if isinstance(node, list):
+        return [frozen_ast(value) for value in node]
+    return node
 
 
 class CasServiceTests(unittest.TestCase):
@@ -34,10 +47,7 @@ class CasServiceTests(unittest.TestCase):
             function = getattr(cas, name)
             self.assertIs(function, getattr(quick, name))
             node = ast.parse(inspect.getsource(function)).body[0]
-            for child in ast.walk(node):
-                if hasattr(child, 'type_params'):
-                    del child.type_params
-            self.assertEqual(hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest(), expected)
+            self.assertEqual(hashlib.sha256(json.dumps(frozen_ast(node), ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest(), expected)
 
     def test_original_bytes_json_and_existing_integrity(self):
         raw = b'\x00\xffpayload'
