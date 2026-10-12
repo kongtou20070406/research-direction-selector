@@ -139,6 +139,23 @@ class AffirmedObstructionTests(unittest.TestCase):
         self.assertEqual(selection['obstruction_review'][0]['status'], 'APPLICABLE')
         self.assertEqual(selection['next_move']['kind'], 'RESOLVE_PREMISE')
 
+    def test_found_reported_true_unsupported_operation_selects_specify_capability(self):
+        graph, context = affirmative_check_fixture('portable', True)
+        context['facts']['goal'] = {'value': True, 'source': 'reported-only.json'}
+        search = reviewed(graph, context)
+        before = deepcopy(search['selection_review'])
+        self.assertEqual(before['goal']['conditions'][0]['truth'], 'TRUE')
+        self.assertEqual(before['goal']['triple_affirmative']['found']['conditions'][0]['affirms'], 'UNKNOWN')
+        self.assertEqual(before['next_move']['kind'], 'RESOLVE_PREMISE')
+        context['obstructions'] = [obstruction('goal', 'UNSUPPORTED_OPERATION', requirement=REQUIREMENT)]
+        review_obstructions(search, context)
+        selection = search['selection_review']
+        self.assertEqual(selection['obstruction_review'][0]['status'], 'APPLICABLE')
+        self.assertEqual(selection['obstruction_review'][0]['response'], 'CAPABILITY_REQUIRED')
+        self.assertEqual(selection['next_move']['kind'], 'SPECIFY_CAPABILITY')
+        self.assertEqual(selection['next_move']['supersedes'],
+                         {'kind': before['next_move']['kind'], 'reason': before['next_move']['reason']})
+
 
 class OwnedAffirmedObstructionTests(unittest.TestCase):
     def test_imported_affirmative_does_not_steer_owned_open_goal(self):

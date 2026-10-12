@@ -863,7 +863,7 @@ def _specify_capability(move, review, entries, integrity):
     if goal.get("status") == TRUE and (not triple or triple.get("status") == TRUE):
         return False
     unknown = {c["fact"] for c in goal.get("conditions", []) if c["truth"] == UNKNOWN}
-    for name in AFFIRMATIVES:
+    for name in ("found",) + AFFIRMATIVES:
         for c in triple.get(name, {}).get("conditions", []):
             if c.get("affirms") != TRUE:
                 unknown.add(c["fact"])

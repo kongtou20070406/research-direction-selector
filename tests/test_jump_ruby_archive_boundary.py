@@ -30,7 +30,8 @@ class RubyArchiveBoundaryTests(unittest.TestCase):
             DEVNULL = object()
             def Popen(_, actual, **options):
                 seen.append((list(actual), options)); return object()
-        namespace = {'Path':Path,'os':os,'re':re,'subprocess':Observer(),
+        observer = Observer()
+        namespace = {'Path':Path,'os':os,'re':re,'subprocess':observer,'_WindowsPopen':observer.Popen,
                      '__file__':str(source),'current':{'autonomy_request':{}} if autonomy else {},
                      'argv':argv,'self':type('Store',(),{'root':source.parent})(),
                      'out':object(),'err':object(),'flags':0}
