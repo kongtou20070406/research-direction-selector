@@ -51,10 +51,16 @@ def lexical_resolver(tree, parents):
     bindings = {node: {} for node in ast.walk(tree) if isinstance(node, scopes)}
 
     def enclosing(node):
-        node = parents.get(node)
-        while node is not None and not isinstance(node, scopes):
-            node = parents.get(node)
-        return node
+        child, parent = node, parents.get(node)
+        while parent is not None:
+            if isinstance(parent, scopes):
+                body = getattr(parent, 'body', [])
+                inside_body = child is body if isinstance(parent, ast.Lambda) else child in body
+                # Defaults, annotations, decorators and class bases use the outer scope.
+                if isinstance(parent, ast.Module) or inside_body:
+                    return parent
+            child, parent = parent, parents.get(parent)
+        return None
 
     def bind(scope, name, value):
         bindings[scope].setdefault(name, set()).add(value)
@@ -71,6 +77,8 @@ def lexical_resolver(tree, parents):
                      (node.module or '') + '.' + alias.name if not node.level else '!relative')
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             bind(scope, node.id, '!local')
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bind(scope, node.name, '!exception')
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bind(scope, node.name, '!local')
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -104,6 +112,12 @@ def dict_targets(tree):
                     if isinstance(target, ast.Name):
                         tables[target.id] = value
     return tables
+
+
+def call_argument(node, position, keyword):
+    if len(node.args) > position:
+        return node.args[position]
+    return next((item.value for item in node.keywords if item.arg == keyword), None)
 
 
 def scan(name, tree, modules, package, hook_routes):
@@ -153,18 +167,21 @@ def scan(name, tree, modules, package, hook_routes):
                 unresolved.append({**site(node), "reason": "ambiguous loader binding"})
                 continue
             callee = next(iter(callees)) if len(callees) == 1 else ""
-            if name == "rds_verify" and isinstance(node.func, ast.Name) and node.func.id == "ProofRule" and len(node.args) >= 3:
-                module = node.args[2]
+            if name == "rds_verify" and isinstance(node.func, ast.Name) and node.func.id == "ProofRule":
+                module = call_argument(node, 2, "module")
                 if isinstance(module, ast.Constant) and isinstance(module.value, str):
                     emit(node, module.value, "declared_plugin_candidate")
+                else:
+                    unresolved.append({**site(node), "reason": "runtime plugin declaration"})
             elif callee == "rds_project_hooks.provider":
-                key = node.args[0].value if node.args and isinstance(node.args[0], ast.Constant) else None
+                arg = call_argument(node, 0, "name")
+                key = arg.value if isinstance(arg, ast.Constant) else None
                 if isinstance(key, str) and key in hook_routes:
                     emit(node, hook_routes[key], "provider_callback")
                 else:
                     unresolved.append({**site(node), "reason": "runtime provider selection"})
             elif callee in LOADERS:
-                arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "name"), None)
+                arg = call_argument(node, 0, "name")
                 level = next((k.value for k in node.keywords if k.arg == "level"),
                              node.args[4] if len(node.args) > 4 else ast.Constant(value=0))
                 if callee.endswith("__import__") and not (isinstance(level, ast.Constant) and type(level.value) is int and level.value == 0):

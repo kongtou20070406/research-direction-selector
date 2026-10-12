@@ -74,6 +74,50 @@ class ImportGraphTests(unittest.TestCase):
         (root / 'scripts/rds_project.py').write_text("from importlib import import_module as load\nload=other\nload('rds_quick')", encoding='utf-8')
         self.assertEqual(graph.inventory(root)["unresolved"][0]["reason"], "ambiguous loader binding")
 
+    def test_definition_expressions_use_outer_scope(self):
+        definitions = [
+            "def f(x=load('rds_quick')):\n load = None",
+            "def f(*, x=load('rds_quick')):\n load = None",
+            "def f(x: load('rds_quick')):\n load = None",
+            "def f() -> load('rds_quick'):\n load = None",
+            "@load('rds_quick')\ndef f():\n load = None",
+            "async def f(x=load('rds_quick')):\n load = None",
+            "f = lambda load=load('rds_quick'): load",
+            "class C(load('rds_quick')):\n load = None",
+            "class C(metaclass=load('rds_quick')):\n load = None",
+            "@load('rds_quick')\nclass C:\n load = None",
+        ]
+        for definition in definitions:
+            with self.subTest(definition=definition):
+                root = self.fixture({"rds_project.py": "from importlib import import_module as load\n" + definition,
+                                     "rds_quick.py": ""})
+                report = graph.inventory(root)
+                self.assertEqual([(e['target'], e['kind']) for e in report['edges']],
+                                 [('rds_quick', 'dynamic_literal')])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_exception_target_does_not_inherit_loader_binding(self):
+        root = self.fixture({"rds_project.py": "from importlib import import_module as load\ntry:\n pass\nexcept Exception as load:\n load('rds_quick')",
+                             "rds_quick.py": ""})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
+
+    def test_keyword_provider_matches_positional_edge(self):
+        root = self.fixture({"rds_project.py": "from rds_project_hooks import provider\nprovider(name='advisor')",
+                             "rds_project_hooks.py": "_modules={'advisor':'rds_owned_advisor'}",
+                             "rds_owned_advisor.py": ""})
+        callbacks = [e for e in graph.inventory(root)['edges'] if e['kind'] == 'provider_callback']
+        self.assertEqual([e['target'] for e in callbacks], ['rds_owned_advisor'])
+
+    def test_keyword_proof_rule_records_target_or_unknown(self):
+        root = self.fixture({"rds_verify.py": "ProofRule(name='x', kinds=('k',), module='rds_quick')\nProofRule(name='x', kinds=('k',), module=unknown)",
+                             "rds_quick.py": ""})
+        report = graph.inventory(root)
+        self.assertEqual([(e['target'], e['kind']) for e in report['edges']],
+                         [('rds_quick', 'declared_plugin_candidate')])
+        self.assertEqual(report['unresolved'][0]['reason'], 'runtime plugin declaration')
+
     def test_import_level_is_not_mistaken_for_absolute_import(self):
         root = self.fixture({"rds_project.py": "__import__('rds_quick', level=1)\n__import__('rds_quick', globals(), locals(), [], 1)\n__import__('rds_quick', level=unknown)\n__import__('rds_quick', level=0)",
                              "rds_quick.py": ""})
