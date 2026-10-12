@@ -23,6 +23,24 @@ def run_cli(root, *argv):
 
 
 class CLIErrorTagTests(unittest.TestCase):
+    def test_observation_classification_cannot_be_reached_by_spelling(self):
+        # Section 6.3: commands and aliases are normalized first, so no accepted
+        # spelling of an observation command can drift into the logged path,
+        # and no writing command can be classified as observation by accident.
+        observation = (['--version'], ['--help'], ['-h'], ['--root', '.', '--version'],
+                       ['status'], ['status', '--brief'], ['status', '--digest'],
+                       ['--root', '.', 'status'], ['stat'])
+        for argv in observation:
+            with self.subTest(argv=argv):
+                self.assertTrue(rds_cli.observation_argv(argv), argv)
+        logged = (['--root'], ['status', '--json'], ['status', '--days', '2'],
+                  ['usage', '--days', '2'], ['formal', 'rules'], ['advise', '--help'],
+                  ['project', 'discover'],
+                  [], ['--version', '--help'], ['status', '--brief', '--json'])
+        for argv in logged:
+            with self.subTest(argv=argv):
+                self.assertFalse(rds_cli.observation_argv(argv), argv)
+
     def test_gate_rejection_keeps_reject_tag_and_exit_code(self):
         with tempfile.TemporaryDirectory() as raw:
             result = run_cli(Path(raw), "status", "--brief")
@@ -30,6 +48,48 @@ class CLIErrorTagTests(unittest.TestCase):
             self.assertIn("[RDS-REJECT] RDS is not initialized", result.stderr)
             self.assertNotIn("[RDS-ERROR]", result.stderr)
             self.assertFalse((Path(raw) / ".rds").exists())
+
+    def test_unique_observation_option_prefixes_match_the_real_parser(self):
+        for option in ('--version', '--help'):
+            for length in range(3, len(option) + 1):
+                argv = [option[:length]]
+                with self.subTest(argv=argv):
+                    with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                        rds_cli.parser().parse_args(argv)
+                    self.assertEqual(caught.exception.code, 0)
+                    self.assertTrue(rds_cli.observation_argv(argv), argv)
+        for option in ('--brief', '--digest'):
+            for length in range(3, len(option) + 1):
+                argv = ['--roo', '.', 'stat', option[:length]]
+                with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
+                    parsed = rds_cli.parser().parse_args(argv)
+                    self.assertEqual(parsed.command, 'status')
+                    self.assertTrue(parsed.brief)
+                    self.assertTrue(rds_cli.observation_argv(argv), argv)
+
+    def test_invalid_prefixes_and_non_observation_help_stay_logged(self):
+        for argv in (['--versx'], ['--ver=bad'], ['--ver', '--help'],
+                     ['status', '--brieful'], ['status', '--b=true'],
+                     ['status', '--h'], ['project', 'status', '--b'],
+                     ['project', 'discov'], ['s', '--b']):
+            with self.subTest(argv=argv):
+                self.assertFalse(rds_cli.observation_argv(argv), argv)
+
+    def test_an_ambiguous_option_prefix_uses_the_logged_dispatcher(self):
+        entry = rds_cli.parser()
+        commands = next(a for a in entry._actions if isinstance(a, rds_cli.argparse._SubParsersAction))
+        commands.choices['status'].add_argument('--budget')
+        argv = ['status', '--b']
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            entry.parse_args(argv)
+        self.assertEqual(caught.exception.code, 2)
+        with mock.patch.object(rds_cli, 'parser', return_value=entry), \
+                mock.patch.object(sys, 'argv', ['rds_cli.py', *argv]), \
+                mock.patch('rds_usage.run_logged', return_value=17) as logged:
+            self.assertFalse(rds_cli.observation_argv(argv))
+            self.assertEqual(rds_cli.main(), 17)
+            logged.assert_called_once()
+            self.assertEqual(logged.call_args.args[1], argv)
 
     def test_malformed_user_specs_stay_rejections(self):
         # Unvalidated user JSON reaches _main as KeyError/TypeError; the caller must repair it.

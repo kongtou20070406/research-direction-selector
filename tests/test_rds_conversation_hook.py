@@ -48,12 +48,31 @@ class ConversationHookTests(unittest.TestCase):
         self.assertTrue(output["additionalContext"].isascii())
         return output["additionalContext"]
 
-    def test_session_start_only_announces_availability_for_both_hosts(self):
-        for host in ("codex", "claude"):
-            text = self.context({"hook_event_name": "SessionStart"}, host=host)
-            self.assertEqual(text.splitlines()[0], "RDS | plugin: available")
-            self.assertIn("plugin_available != skill_loaded != cli_invoked", text)
-            self.assertNotIn("cli_invoked=false", text)
+    def test_session_start_injects_no_model_context_on_any_host(self):
+        # Availability text was model context the operator cannot see and did not
+        # request. Until the session gate can answer first (phase R), inject none.
+        for host in ("codex", "claude", "omp"):
+            with self.subTest(host=host):
+                output = self.run_hook({"hook_event_name": "SessionStart"}, host=host)
+                self.assertNotIn("plugin: available", json.dumps(output or {}))
+                self.assertNotIn("hookSpecificOutput", json.dumps(output or {}))
+
+    def test_session_start_shows_the_operator_state_only_where_verified(self):
+        # Claude Code renders top-level systemMessage on SessionStart to the
+        # person; Codex documents the same field as a UI warning on that event.
+        # OMP has no verified operator surface yet and must stay silent.
+        for host in ("claude", "codex"):
+            with self.subTest(host=host):
+                output = self.run_hook({"hook_event_name": "SessionStart"}, host=host)
+                # Exactly one field: Codex fails a hook run that returns
+                # unsupported fields, so no continue/stopReason/suppressOutput.
+                self.assertEqual(set(output), {"systemMessage"})
+                self.assertEqual(output["systemMessage"], hook.OPERATOR_STATUS)
+                self.assertIn("not enabled", output["systemMessage"])
+                self.assertLessEqual(len(output["systemMessage"]), 160)
+                self.assertTrue(output["systemMessage"].isascii())
+        with self.subTest(host="omp"):
+            self.assertIsNone(self.run_hook({"hook_event_name": "SessionStart"}, host="omp"))
 
     def test_direct_absolute_and_relative_calls_use_exact_entry(self):
         for command in (f'python -B "{CLI}" advise',
@@ -65,6 +84,17 @@ class ConversationHookTests(unittest.TestCase):
                 self.assertIn(": pending", text)
                 self.assertNotIn("private", text)
                 self.assertNotIn(str(ROOT), text)
+
+    def test_session_start_message_limits_its_claim_to_hook_context(self):
+        for host in ('claude', 'codex'):
+            with self.subTest(host=host):
+                message = self.run_hook({'hook_event_name': 'SessionStart'}, host=host)['systemMessage']
+                self.assertIn('hook context not injected', message)
+                self.assertNotIn('no RDS context injected', message)
+                # This hook has no trusted evidence about host Skill loading.
+                self.assertNotIn('skill', message.lower())
+                self.assertNotIn('not loaded', message.lower())
+                self.assertNotIn('unloaded', message.lower())
 
     def test_tool_workdir_overrides_session_cwd(self):
         payload = self.payload(tool_name="exec_command", cwd=str(self.root),

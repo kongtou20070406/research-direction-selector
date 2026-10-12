@@ -17,6 +17,15 @@ TOOLS = {"Bash", "bash", "PowerShell", "exec_command", "functions.exec_command",
 COMMANDS = frozenset("init hypothesis gate plan run data decide status project checkpoint artifacts formal meta history advise advancement branch usage exec reject guard hypergraph math rsi host-hook".split())
 ROOT_OPTIONS = {"--root", "--workspace", "--project-root", "-w", "-d", "--dir"}
 
+# Operator-visible status. Two hosts have a verified person-facing channel for
+# it: Claude Code renders top-level systemMessage to the user, and Codex
+# documents the same field as "surfaced as a warning in the UI or event stream"
+# for SessionStart (docs/host-plugins.md carries the observation date and URL).
+# OMP has no verified equivalent and stays silent. Until phase R implements the
+# session switch there is no enable path in this checkout, so the truthful
+# session state is "not enabled".
+OPERATOR_STATUS = "RDS | session not enabled (default off); hook context not injected"
+
 
 def literal_argv(command):
     """Parse only plain words or whole quoted words, preserving Windows slashes.
@@ -138,15 +147,24 @@ def _result_status(payload):
 
 
 def respond(payload, host):
-    """Return event-specific additionalContext, never permissions or UI warnings."""
+    """Return event-specific additionalContext, never permissions or UI warnings.
+
+    Session start deliberately contributes nothing. An unconditional banner is
+    model context the operator cannot see and did not request, so it is removed
+    until the session gate (phase R) can answer before any injection.
+    """
     if host not in {"claude", "codex", "omp"} or not isinstance(payload, dict):
         return None
     event = payload.get("hook_event_name")
     if event == "SessionStart":
-        if host == "omp":
+        # Claude Code and Codex only. OMP has no verified operator-visible
+        # channel, so it gets nothing rather than a guess. This return stays a
+        # bare top-level object: Codex marks a PreToolUse hook run as failed
+        # when it returns unsupported fields, and this module never emits
+        # permissions or model context for a session-start event.
+        if host not in {"claude", "codex"}:
             return None
-        context = ("RDS | plugin: available\n"
-                   "plugin_available != skill_loaded != cli_invoked; display_once(current_event_only);")
+        return {"systemMessage": OPERATOR_STATUS}
     elif event in {"PreToolUse", "PostToolUse"} or event == "PostToolUseFailure" and host == "claude":
         label = invocation(payload)
         if label is None:

@@ -2069,6 +2069,49 @@ def _main():
     return 0
 
 
+# Section 6.3: a closed set of invocations that answer "what is here?" rather
+# than doing work. They must not create a usage record, a directory or a
+# database, so "is RDS on?" stays answerable without changing state. Anything
+# outside this set keeps the ordinary logged path.
+STATUS_READ_FLAGS = frozenset({"--brief", "--digest"})
+
+
+def observation_argv(argv):
+    """Return True only for side-effect-free inspection invocations.
+
+    Classification runs after the same pure normalization the parser uses, so
+    aliases, macros and unique prefixes cannot reach a logged branch by
+    spelling. Malformed input is not observation: it keeps the existing
+    logged path and its existing error reporting.
+    """
+    try:
+        entry = parser()
+        normalized = entry.normalize_args(argv, quiet=True)
+    except (ValueError, SystemExit):
+        return False
+    tokens = list(normalized)
+    if tokens[:1] == ["--root"]:
+        # Normalization moves every root spelling to this one leading pair.
+        tokens = tokens[2:]
+    def option_name(current, token):
+        if token in current._option_string_actions or not token.startswith('--'):
+            return token
+        # Reuse argparse's unique-prefix rules without executing help/version
+        # actions. Explicit values and ambiguous options stay on the logged path.
+        matches = current._get_option_tuples(token)
+        if len(matches) == 1 and matches[0][-1] is None:
+            return matches[0][1]
+        return token
+
+    if len(tokens) == 1 and option_name(entry, tokens[0]) in {"--version", "--help", "-h"}:
+        return True
+    if tokens[:1] != ["status"]:
+        return False
+    commands = next(a for a in entry._actions if isinstance(a, argparse._SubParsersAction))
+    status = commands.choices['status']
+    return {option_name(status, token) for token in tokens[1:]} <= STATUS_READ_FLAGS
+
+
 def main():
     from rds_usage import run_logged
     def usage_root():
@@ -2086,6 +2129,11 @@ def main():
             except argparse.ArgumentError as exc:
                 raise ValueError(str(exc)) from exc
         return Path(root).resolve()
+    if observation_argv(sys.argv[1:]):
+        # Section 6.3: inspecting RDS must not create a usage record, a
+        # directory or a database. Classification happens before run_logged, so
+        # a question about state cannot itself change state.
+        return _main()
     return run_logged(_main, sys.argv[1:], VERSION, root=usage_root)
 
 

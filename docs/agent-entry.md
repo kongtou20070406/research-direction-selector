@@ -5,7 +5,9 @@ Programmatic completion supplies file hashes, protocol identities, timestamps, r
 In the examples below, `scripts/`, `references/` and `examples/` refer to resources beside the installed `SKILL.md`. Resolve the CLI path there, including in a plugin, and always pass `--root <user-project>` explicitly; user input paths and `--ledger` identify the user's project records. Do not initialize `.rds/` in the Skill installation or plugin cache.
 
 Before every experiment, the Agent runs `project discover` from the requested
-root. Discovery is read-only and checks that directory and its ancestors. Rebind
+root. Discovery checks that directory and its ancestors without starting execution.
+It uses the ordinary usage log and can create SQLite WAL sidecars while reading
+an existing project, so it is not a zero-write session observation. Rebind
 subsequent calls to the returned `project_root`, inspect its existing work and
 remaining budget, and add the experiment as another run in the same project.
 Do not make a new ledger for each experiment. A deliberately independent nested
