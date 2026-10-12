@@ -95,6 +95,10 @@ def lexical_resolver(tree, parents):
             bind(scope, node.id, '!local')
         elif isinstance(node, ast.ExceptHandler) and node.name:
             bind(scope, node.name, '!exception')
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            bind(scope, node.name, '!pattern')
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bind(scope, node.rest, '!pattern')
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bind(scope, node.name, '!local')
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):

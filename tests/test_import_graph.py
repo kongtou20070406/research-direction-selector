@@ -103,6 +103,17 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(report['edges'], [])
         self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
 
+    def test_match_pattern_captures_shadow_loader_aliases(self):
+        for pattern in ('{"loader": load}', '[*load]', '{**load}'):
+            with self.subTest(pattern=pattern):
+                root = self.fixture({'rds_project.py':
+                    "from importlib import import_module as load\n"
+                    "match value:\n case " + pattern + ":\n  load('rds_quick')",
+                    'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
+
     def test_class_body_rebinding_keeps_outer_loader_uncertainty(self):
         for body in ("value = load('rds_quick'); load = None",
                      "load = None; value = load('rds_quick')",
