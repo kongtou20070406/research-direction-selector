@@ -2,6 +2,7 @@
 import ast
 import hashlib
 import inspect
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -16,18 +17,28 @@ import rds_quick_ledger as ledger
 
 # Generated from the original functions in 65d45a5, with empty type_params removed.
 OLD_AST = {
-    "_policy_route": "ec63cf6cf9cf7bb9f7daf148bff7162601e6a5acb3a765586515c3f8ba160e8f",
-    "_charge_ledger": "422fd6d632ee74ec41f9ec2897f11575e4d7e8b8015384bdc03207e03e120e63",
-    "_checkpoint_name": "ab5859663a2246e0722e5498b974d449a3dcb6bee523f3f169f22ce6e9ce75c0",
-    "_validate_recorded_choice": "f9a8bfea2ba3fcddab3661493731f3f736f9cd775d49306861e63550c57d65bf",
-    "_pending_quick_choices": "5b4b88f88ed03951e19882e0e2c9ae32a645194a4b81cf24727d6195876a5896",
-    "_publish_quick_request": "9a86d52d9e844c01bcbdc85cb41dcc06055fefb580720ab662429a0c2528cbc7",
-    "_pending_partial_child": "d29bc90c9ec7915393ead8cabe2f2a5b30c38271aaed5c1e17d425a96daeceab",
-    "_is_unmaterialized_allowance": "8b343b827acfb76b4ab759186e42bd046279cb06b7a11261c58330dead81747c",
-    "_prospective_completion": "de3b3204ca36f0011a97032095d565c41380b7bd6678c368b0af994d325dcb83",
-    "_complete_prospective": "46d1382e6458f630fac4bca33e2342597246c152bc34079b50f713a94892bdc6",
-    "_recover_prospective": "dc652da89a40280252b59dfc9a82b21d3db42140773b19e3a466beba37e4497d"
+    "_policy_route": "216d5ff5ab887b967a2bab687186366799d77480e56ba91d39eb5105cf0b5797",
+    "_charge_ledger": "4d882fdd8aba3d00751894e5bc1b21f6875e2ed804cbdb776e7cd080dfb63efd",
+    "_checkpoint_name": "8acef498db59fbc1d3153d3429f1fe2aa27c10fac61d9194e3372c3e45d5b7d3",
+    "_validate_recorded_choice": "16e17b54b7463d6cc6e01fea37367608197946b7a463edd131a01821a33c414f",
+    "_pending_quick_choices": "313a028e5aeafc7163091ed2f107195dc46180440d4416cbc795c77604fd3ca3",
+    "_publish_quick_request": "69ea4b3a3bfd415112ae30d8f46f77961b2a7922cff10e09a1cf44908955d46e",
+    "_pending_partial_child": "46834f45ce7e59707df5d037b768d6117071d41e6d931325492026e8e3ffdf26",
+    "_is_unmaterialized_allowance": "f68b0cdb0e93cc7d20584dbe72fafe31a2c6f70403855d266dfe726e209206a6",
+    "_prospective_completion": "4cc98679e905a7a8b8fe9f40fc2220df0f82c2407da62c24ecc057e7fa88d8f8",
+    "_complete_prospective": "37c4003f44c62eb691f6216cbef28ddd27ea242574ed6a781e07bf9f45dd83e4",
+    "_recover_prospective": "297038ee002edbac878468e678aba42221639a8d20f9b0f13d22bf09b2d589ab"
 }
+
+
+def frozen_ast(node):
+    # ast.dump omits empty optional fields on newer supported interpreters.
+    if isinstance(node, ast.AST):
+        return [type(node).__name__, [[key, frozen_ast(value)]
+                for key, value in ast.iter_fields(node) if key != 'type_params' or value]]
+    if isinstance(node, list):
+        return [frozen_ast(value) for value in node]
+    return node
 
 
 class QuickLedgerServiceTests(unittest.TestCase):
@@ -37,10 +48,7 @@ class QuickLedgerServiceTests(unittest.TestCase):
             function = getattr(ledger, name)
             self.assertIs(getattr(quick, name), function)
             node = ast.parse(inspect.getsource(function)).body[0]
-            for child in ast.walk(node):
-                if hasattr(child, 'type_params'):
-                    del child.type_params
-            self.assertEqual(hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest(), expected, name)
+            self.assertEqual(hashlib.sha256(json.dumps(frozen_ast(node), ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest(), expected, name)
 
     def test_new_service_does_not_import_upper_layers(self):
         tree = ast.parse(Path(ledger.__file__).read_text(encoding='utf-8'))
