@@ -252,6 +252,7 @@ def scan(name, tree, modules, package, hook_routes):
                 level = next((k.value for k in node.keywords if k.arg == "level"),
                              node.args[4] if len(node.args) > 4 else ast.Constant(value=0))
                 if callee.endswith("__import__") and (any(k.arg is None for k in node.keywords) or
+                        any(isinstance(arg, ast.Starred) for arg in node.args) or
                         not (isinstance(level, ast.Constant) and type(level.value) is int and level.value == 0)):
                     unresolved.append({**site(node), "reason": "relative or unknown import level"})
                     continue
