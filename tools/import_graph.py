@@ -51,7 +51,17 @@ def binding_key(node):
     return f'!store.{node.lineno}:{node.col_offset}'
 
 
-def lexical_resolver(tree, parents):
+def import_base(node, package):
+    base = node.module or ''
+    if not node.level:
+        return base
+    parts = package.split('.') if package else []
+    if node.level > len(parts):
+        return None
+    return '.'.join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
+
+
+def lexical_resolver(tree, parents, package):
     comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
     scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda) + comprehensions
     bindings = {node: {} for node in ast.walk(tree) if isinstance(node, scopes)}
@@ -94,9 +104,10 @@ def lexical_resolver(tree, parents):
                 bind(scope, alias.asname or alias.name.split('.')[0],
                      alias.name if alias.asname else alias.name.split('.')[0], node)
         elif isinstance(node, ast.ImportFrom):
+            base = import_base(node, package)
             for alias in node.names:
                 bind(scope, alias.asname or alias.name,
-                     (node.module or '') + '.' + alias.name if not node.level else '!relative', node)
+                     base + '.' + alias.name if base is not None else '!relative', node)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             if isinstance(parents.get(node), ast.NamedExpr):
                 while isinstance(scope, comprehensions):
@@ -118,18 +129,25 @@ def lexical_resolver(tree, parents):
                 bind(node, arg.arg, '!parameter', arg)
 
     def preceding_binding(scope, node, name):
+        call_ancestors = set(ancestors(node, scope)) | {node}
         loops = {parent for parent in ancestors(node, scope)
-                 if isinstance(parent, (ast.For, ast.AsyncFor, ast.While))}
+                 if isinstance(parent, (ast.For, ast.AsyncFor, ast.While))
+                 and not (isinstance(parent, (ast.For, ast.AsyncFor)) and parent.iter in call_ancestors)}
         if any(bound in (name, '*') and loops.intersection(ancestors(origin, scope))
                for origin, bound, _ in ordered_sites[scope]):
             return None  # A later textual store may have run in a previous iteration.
         value = ('__import__' if name == '__import__' else '!unbound.' + name) if scope is tree else None
-        call_ancestors = set(ancestors(node, scope)) | {node}
         position = lambda item: (item.lineno, item.col_offset)
         for origin, bound, target in sorted(ordered_sites[scope], key=lambda item: position(item[0])):
             if bound not in (name, '*') or position(origin) >= position(node):
                 continue
+            if origin in call_ancestors and isinstance(origin, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue  # Defaults/bases finish before the definition replaces its name.
             if isinstance(origin, ast.Name):
+                loop = next((parent for parent in ancestors(origin, scope)
+                             if isinstance(parent, (ast.For, ast.AsyncFor))), None)
+                if loop is not None and loop.iter in call_ancestors:
+                    continue  # The iterable is evaluated before the first target store.
                 assignment = next((parent for parent in ancestors(origin, scope) if isinstance(
                     parent, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))), None)
                 if assignment is not None and assignment.value in call_ancestors:
@@ -209,12 +227,9 @@ def named_exports(trees, modules):
                 parent = parents.get(parent)
             if parent is not None:
                 continue
-            base = node.module or '' if isinstance(node, ast.ImportFrom) else ''
-            if isinstance(node, ast.ImportFrom) and node.level:
-                parts = modules[name]['package'].split('.') if modules[name]['package'] else []
-                if node.level > len(parts):
-                    continue
-                base = '.'.join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
+            base = import_base(node, modules[name]['package']) if isinstance(node, ast.ImportFrom) else ''
+            if base is None:
+                continue
             for alias in node.names:
                 if alias.name == '*':
                     continue
@@ -247,7 +262,7 @@ def possible_loader_reexport(name, exports):
 def scan(name, tree, modules, package, hook_routes, exports):
     tables = dict_targets(tree, binding_keys=True)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    resolve = lexical_resolver(tree, parents)
+    resolve = lexical_resolver(tree, parents, package)
     edges, unresolved, references = [], [], []
 
     def site(node):
@@ -270,13 +285,10 @@ def scan(name, tree, modules, package, hook_routes, exports):
             for alias in node.names:
                 emit(node, alias.name, "static")
         elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            if node.level:
-                parts = package.split(".") if package else []
-                if node.level > len(parts):
-                    unresolved.append({**site(node), "reason": "relative import outside known package"})
-                    continue
-                base = ".".join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
+            base = import_base(node, package)
+            if base is None:
+                unresolved.append({**site(node), "reason": "relative import outside known package"})
+                continue
             if base != name or node.module or not node.level:
                 emit(node, base, "static")
             for alias in node.names:
