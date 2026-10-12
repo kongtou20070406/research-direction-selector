@@ -370,6 +370,18 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual([u['reason'] for u in report['unresolved']],
                                  ['relative or unknown import level'])
 
+    def test_starred_import_level_is_unknown(self):
+        for call in ("__import__('child', *[globals(), locals(), (), 1])",
+                     "__import__('child', *arguments)",
+                     "__import__('child', *arguments, level=0)"):
+            with self.subTest(call=call):
+                root = self.fixture({'pkg/__init__.py': '', 'pkg/consumer.py': call,
+                                     'pkg/child.py': '', 'child.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']],
+                                 ['relative or unknown import level'])
+
     def test_relative_imports_and_package_members(self):
         root = self.fixture({"pkg/__init__.py": "from . import child", "pkg/child.py": "from .. import invalid",
                              "consumer.py": "from pkg import child"})
