@@ -47,13 +47,21 @@ def qualified(node, resolve):
 
 
 def lexical_resolver(tree, parents):
-    scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+    scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda) + comprehensions
     bindings = {node: {} for node in ast.walk(tree) if isinstance(node, scopes)}
 
     def enclosing(node):
         child, parent = node, parents.get(node)
         while parent is not None:
             if isinstance(parent, scopes):
+                if isinstance(parent, comprehensions):
+                    # Only the first iterable is evaluated in the enclosing scope.
+                    first_iter = parent.generators[0].iter
+                    if node is not first_iter and first_iter not in ancestors(node, parent):
+                        return parent
+                    child, parent = parent, parents.get(parent)
+                    continue
                 body = getattr(parent, 'body', [])
                 inside_body = child is body if isinstance(parent, ast.Lambda) else child in body
                 # Defaults, annotations, decorators and class bases use the outer scope.
@@ -61,6 +69,11 @@ def lexical_resolver(tree, parents):
                     return parent
             child, parent = parent, parents.get(parent)
         return None
+
+    def ancestors(node, stop):
+        while node in parents and node is not stop:
+            node = parents[node]
+            yield node
 
     def bind(scope, name, value):
         bindings[scope].setdefault(name, set()).add(value)
@@ -76,6 +89,9 @@ def lexical_resolver(tree, parents):
                 bind(scope, alias.asname or alias.name,
                      (node.module or '') + '.' + alias.name if not node.level else '!relative')
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if isinstance(parents.get(node), ast.NamedExpr):
+                while isinstance(scope, comprehensions):
+                    scope = enclosing(scope)
             bind(scope, node.id, '!local')
         elif isinstance(node, ast.ExceptHandler) and node.name:
             bind(scope, node.name, '!exception')
@@ -88,14 +104,18 @@ def lexical_resolver(tree, parents):
 
     def at(node, name):
         scope = enclosing(node)
-        first = True
+        first, candidates = True, set()
         while scope is not None:
             # A method does not close over its class namespace.
             if (first or not isinstance(scope, ast.ClassDef)) and name in bindings[scope]:
-                return bindings[scope][name]
+                candidates.update(bindings[scope][name])
+                # Class assignments are ordered, not function-wide lexical locals.
+                # Keep outer alternatives instead of silently losing possible imports.
+                if not isinstance(scope, ast.ClassDef):
+                    return candidates
             first = False
             scope = enclosing(scope)
-        return {name}
+        return candidates | {name}
     return at
 
 

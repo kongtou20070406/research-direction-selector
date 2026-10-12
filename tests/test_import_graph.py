@@ -103,6 +103,48 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(report['edges'], [])
         self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
 
+    def test_class_body_rebinding_keeps_outer_loader_uncertainty(self):
+        for body in ("value = load('rds_quick'); load = None",
+                     "load = None; value = load('rds_quick')",
+                     "if condition:\n  load = None\n value = load('rds_quick')"):
+            with self.subTest(body=body):
+                root = self.fixture({'rds_project.py':
+                    "from importlib import import_module as load\nclass C:\n " + body,
+                    'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
+
+    def test_comprehension_targets_do_not_shadow_enclosing_loaders(self):
+        expressions = ["[x for load in loaders]", "{x for load in loaders}",
+                       "{x: x for load in loaders}", "(x for load in loaders)"]
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                root = self.fixture({'rds_project.py':
+                    "from importlib import import_module as load\ndef f():\n"
+                    " load('rds_quick')\n " + expression, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_comprehension_first_iterable_is_outer_but_body_is_local(self):
+        root = self.fixture({'rds_project.py':
+            "from importlib import import_module as load\n"
+            "[load('rds_quick') for load in load('rds_quick')]",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+        self.assertEqual(report['unresolved'], [])
+
+    def test_comprehension_assignment_expression_binds_enclosing_scope(self):
+        root = self.fixture({'rds_project.py':
+            "from importlib import import_module as load\n"
+            "[(load := other) for x in items]\nload('rds_quick')",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
+
     def test_keyword_provider_matches_positional_edge(self):
         root = self.fixture({"rds_project.py": "from rds_project_hooks import provider\nprovider(name='advisor')",
                              "rds_project_hooks.py": "_modules={'advisor':'rds_owned_advisor'}",

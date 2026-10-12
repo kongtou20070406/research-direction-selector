@@ -173,6 +173,8 @@ are recorded separately and never converted into import edges.
 
 - This is a conservative syntax inventory, not whole-program call analysis.
 - Import aliases respect lexical scopes, with ambiguous rebindings unresolved;
+  comprehension targets stay local (except assignment expressions), while
+  class-body shadowing conservatively retains outer loader alternatives.
   global/nonlocal mutation and arbitrary computed loaders need runtime analysis.
   Conditional edges may never run. Class bodies are not method closure scopes.
 - External dependencies are not nodes in this repository-local graph. Imports
