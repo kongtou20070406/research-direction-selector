@@ -108,6 +108,10 @@ def lexical_resolver(tree, parents, package):
                 bind(scope, alias.asname or alias.name,
                      base + '.' + alias.name if base is not None else '!relative', node)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            declaration = parents.get(node)
+            if (scope in ordered_sites and isinstance(declaration, ast.AnnAssign)
+                    and declaration.target is node and declaration.value is None):
+                continue  # Bare annotations do not assign module/class values.
             if isinstance(parents.get(node), ast.NamedExpr):
                 while isinstance(scope, comprehensions):
                     scope = enclosing(scope)
@@ -151,10 +155,11 @@ def lexical_resolver(tree, parents, package):
                     parent, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))), None)
                 if assignment is not None and assignment.value in call_ancestors:
                     continue  # Only this target's own RHS delays its store.
-            # Only completed direct imports/literal tables establish definite bindings.
+            # Completed module classes also establish declared constructor identities.
             statement = parents[origin] if target in literal_tables else origin
             direct = parents[statement] is scope and (
-                isinstance(statement, (ast.Import, ast.ImportFrom)) or target in literal_tables)
+                isinstance(statement, (ast.Import, ast.ImportFrom)) or target in literal_tables
+                or (scope is tree and isinstance(statement, ast.ClassDef)))
             completed = (statement.end_lineno, statement.end_col_offset) <= position(node)
             value = target if direct and completed and bound == name else None
         return value
@@ -258,9 +263,33 @@ def possible_loader_reexport(name, exports):
     return bool(pending)  # Cycles or the bounded walk never certify a non-loader.
 
 
+def non_executed_annotations(tree, parents):
+    """Python 3.11-3.13 annotation syntax; reflective evaluation is not inferred."""
+    postponed = any(isinstance(node, ast.ImportFrom) and node.module == '__future__'
+                    and any(alias.name == 'annotations' for alias in node.names) for node in tree.body)
+    ignored = set()
+    for node in ast.walk(tree):
+        annotation = None
+        if postponed and isinstance(node, ast.arg):
+            annotation = node.annotation
+        elif postponed and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            annotation = node.returns
+        elif isinstance(node, ast.AnnAssign):
+            scope = parents.get(node)
+            while scope is not None and not isinstance(scope, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                                               ast.AsyncFunctionDef, ast.Lambda)):
+                scope = parents.get(scope)
+            if postponed or not node.simple or isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                annotation = node.annotation
+        if annotation is not None:
+            ignored.update(ast.walk(annotation))
+    return ignored
+
+
 def scan(name, tree, modules, package, hook_routes, exports):
     tables = dict_targets(tree, binding_keys=True)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    annotations = non_executed_annotations(tree, parents)
     resolve = lexical_resolver(tree, parents, package)
     edges, unresolved, references = [], [], []
 
@@ -297,6 +326,8 @@ def scan(name, tree, modules, package, hook_routes, exports):
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in modules:
             references.append({**site(node), "target": node.value})
         elif isinstance(node, ast.Call):
+            if node in annotations:
+                continue
             callees = qualified(node.func, lambda symbol: resolve(node, symbol))
             proof_rules = {"rds_verify_registry.ProofRule", "!module_class.ProofRule"}
             if name == "rds_verify" and callees & proof_rules and len(callees) > 1:

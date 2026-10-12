@@ -186,6 +186,12 @@ are recorded separately and never converted into import edges.
   not definite edges. Alias walks are capped at 64 expansions; cycles and limit
   exhaustion stay UNKNOWN. Relative aliases use the inspected package path.
   Arbitrary computed exports are not resolved.
+- Bare annotations preserve module/class values but still declare function
+  locals. Completed module classes participate in ordered declaration lookup.
+  For Python 3.11-3.13, postponed annotations and non-evaluated local/non-simple
+  variable annotations contribute string references, not executable loader sites.
+  Eager signature annotations, defaults, assigned values and bodies remain scanned.
+  Reflective annotation evaluation (for example, `get_type_hints`) is not modeled.
 - Literal registry candidates require an unambiguous binding to that exact
   module assignment, not just a matching variable name. Local shadowing or
   ambiguous rebinding stays UNKNOWN; these candidates are not runtime values.
