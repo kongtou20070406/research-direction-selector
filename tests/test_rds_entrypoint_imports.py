@@ -12,6 +12,11 @@ from import_graph import inventory
 
 
 class EntrypointImportTests(unittest.TestCase):
+    def test_only_documented_quick_policy_and_execution_edges_remain(self):
+        report = inventory(ROOT)
+        callers = {edge['source'] for edge in report['upward'] if edge['target'] == 'rds_quick'}
+        self.assertLessEqual(callers, {'rds_owned_advisor', 'rds_owned_history', 'rds_tools'})
+
     def test_no_lower_layer_cli_dependency(self):
         report = inventory(ROOT)
         self.assertEqual([], [edge for edge in report['upward']
