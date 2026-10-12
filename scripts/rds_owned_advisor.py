@@ -753,6 +753,17 @@ def review(store, persist=True):
             except (ValueError, KeyError, TypeError, OSError) as exc:
                 result.update(status='COLLECTION_FAILED', selected_run=None, selected_manifest=None)
                 result['warnings'].append({'kind': 'DOMAIN_CONFIRMATION_INTEGRITY', 'error': str(exc)})
+        from rds_advisor_search import _planning_partition
+        admitted_ids = {ready[r['candidate']]['id'] for r in active + eligible}
+        # Ordinary goal truth does not close affirmative or bound completion gaps.
+        open_obligations = _planning_partition(
+            [], selection.get('goal'), selection.get('dependency_review'))['open_predicates']
+        if result['status'] != 'REVIEWED' or (
+                selection.get('goal', {}).get('status') == 'TRUE' and not open_obligations):
+            admitted_ids.clear()
+        result['planning'] = _planning_partition(
+            [c for c in selection.get('candidates', []) if c['id'] in admitted_ids],
+            selection.get('goal'), selection.get('dependency_review'))
     from rds_global_planning import build as shadow_plan
     result['shadow_plan'] = shadow_plan(state, result, admitted_runs=[r['manifest']['id'] for r in active + eligible] if policy else [])
     if persist:

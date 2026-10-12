@@ -4,6 +4,8 @@
 
 我们的目的是让 AI 更好地辅助人进行科研，RDS 是选择的实现形式。我们关注研究者与 AI 如何共同澄清问题、选择有用的下一步、理解证据，并保留目标与决定历史。贡献应让这个闭环更易用、可审阅或可评估。[愿景与验收标准](docs/rds-purpose.zh-CN.md)说明希望获得的科研收益，确定性的程序检查为它提供支撑。不碰内核也能帮上忙。
 
+第一次做改动？[上手指南](docs/onboarding.zh-CN.md)带着你从头走完一次文档修正，从 clone 检出到看 CI 结果。本指南是改动如何被审查的参考，不是第一次上手的教程。
+
 ## 参与方式
 
 参与方向与第一项小贡献见[加入 RDS](docs/RECRUITING.zh-CN.md)。
@@ -14,7 +16,7 @@
 | 自己的科研工作流 | 开一个 issue，说明你的 Agent 在哪里弄丢了运行记录、预算、目标或被否掉的想法，并附上你的设置 | [新建 issue](https://github.com/kongtou20070406/research-direction-selector/issues/new/choose) |
 | 一个下午 | 一个让不用 RDS 的 Agent 得出错误结论的基准任务，附评分器 | [贡献基准任务](#贡献基准任务) |
 | 一个 bug | 复现步骤；能修的话，附上聚焦的修复 | [先说明问题](#先说明问题) |
-| 一个功能想法 | 先开 issue，设计达成一致后再提 PR | [路线计划](docs/roadmap.md)、[5.9 规划](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
+| 一个功能想法 | 先开 issue，设计达成一致后再提 PR | [路线计划](docs/roadmap.md)、[规划](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
 
 准备检出只需要 Git 和 Python 3.11+：
 
@@ -132,6 +134,11 @@ git diff --check
 ```
 
 确认新增测试能被 [CI](.github/workflows/test.yml)发现；当前 CI 在 Windows／Ubuntu 与 Python 3.11／3.13 上执行单元测试和历史回放。报告实际命令与结果，包括跳过项及不可用依赖。标题、描述、支持承诺和限制应随最终 diff 更新。合成输入和历史回放不是端到端科研分数。
+
+CI 对 pull request 执行完整的必需矩阵，并在推送到 `main` 后再次验证。
+没有 pull request 的功能分支推送不会触发这套工作流。开发时运行受影响检查，
+集成后验收完整候选版本。保留原始失败证据；旧提交通过或单独文档分支通过，
+都不能代替后续合并发行版本的验收。
 
 ## 公开记录与许可证
 

@@ -26,6 +26,16 @@ def leaves(parser, prefix=()):
 
 
 class SkillRouteTests(unittest.TestCase):
+    def test_advisor_activation_is_nested_under_existing_quick_condition(self):
+        text = (ROOT / 'SKILL.md').read_text(encoding='utf-8')
+        condition = '        IF reusing an existing QUICK project that now needs owned Advisor:\n'
+        self.assertIn(condition, text)
+        block = text.split(condition, 1)[1].split('    BEFORE ', 1)[0]
+        self.assertIn('            PREVIEW Advisor activation', block)
+        self.assertIn('            KEEP genesis contract', block)
+        self.assertIn('            NEVER replace the frozen contract', block)
+        self.assertNotIn('        PREVIEW Advisor activation', text.replace(block, ''))
+
     def test_every_public_leaf_is_documented_and_reachable(self):
         actual = set(leaves(rds_cli.parser()))
         text = (ROOT / "docs/command-map.md").read_text(encoding="utf-8")

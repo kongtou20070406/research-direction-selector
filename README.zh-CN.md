@@ -118,7 +118,7 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 闭环为 **研究目标 → 假说与候选路线 → Advisor 审阅或选择 → 受约束执行 → 证据 → 继续、修订问题或停止**。已授权修订沿用同一研究状态与资源核算；新提案不会重置已花费预算，也不能自行验证自身。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
-最新稳定发布版为 [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0)。开发 checkout 的版本标识为 `5.9.0-rc.2`，尚待发布。范围见[预览说明](docs/releases/5.9.0-rc.2-preview.md)，科研能力主张的验证方案见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
+最新稳定发布版为 [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0)。开发 checkout 的版本标识为 `6.0.0-rc.1`，开启新的大版本世代，尚待发布。范围见[预览说明](docs/releases/6.0.0-rc.1-preview.md)，科研能力主张的验证方案见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
 ---
 

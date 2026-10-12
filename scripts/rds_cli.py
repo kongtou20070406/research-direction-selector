@@ -27,12 +27,12 @@ from rds_formal_kernel import bounded
 from rds_mutation import mutation
 import rds_core as _core
 
-VERSION = "5.9.0-rc.2"
+VERSION = "6.0.0-rc.1"
 # Reading an explicitly supported ledger does not grant execution admission;
 # the contract digest and engine binding are checked at their existing boundaries.
 READABLE_STATE_VERSIONS = frozenset({
     VERSION, "5.1.0", "5.2.0", "5.3.0", "5.4.0", "5.5.0-rc.1", "5.5.0-rc.2",
-    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1",
+    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1", "5.9.0-rc.2",
 })
 RESOURCES = {"runtime_ms", "runs"}
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",
@@ -142,7 +142,8 @@ def engine_id():
                    "methods": digest((here / "rds_methods.py").read_bytes()),
                    "direction_search": digest((here / "rds_advisor_search.py").read_bytes()),
                    "direction_advisor": digest((here / "rds_advisor.py").read_bytes()),
-                   "usage": digest((here / "rds_usage.py").read_bytes()),
+                    "usage": digest((here / "rds_usage.py").read_bytes()),
+                    "workspace": digest((here / "rds_workspace.py").read_bytes()),
                    "guard": digest((here / "rds_guard.py").read_bytes()),
                    "probe": digest((here / "rds_probe.py").read_bytes()),
                    "formal_kernel": digest((here / "rds_formal_kernel.py").read_bytes()),
@@ -207,6 +208,8 @@ class RDSState:
         if not readonly:
             from rds_campaign import enforce
             enforce(self.root, kind='reference')
+            from rds_workspace import check_reference_admission
+            check_reference_admission(self.root)
         if create:
             require(not (self.directory / "contract.json").exists(),
                     "Legacy v5 JSON state found; preserve it and initialize a new root")
@@ -282,11 +285,15 @@ class RDSState:
             db.execute("BEGIN IMMEDIATE")
             state = self.read_state(db)
             yield db, state
-            if state:
-                self.invariants(state)
-                db.execute("INSERT INTO state VALUES (1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
-                           (canonical(state),))
-            db.commit()
+            from rds_mutation import mutation
+            from rds_workspace import check_reference_admission
+            with mutation():
+                check_reference_admission(self.root)
+                if state:
+                    self.invariants(state)
+                    db.execute("INSERT INTO state VALUES (1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+                               (canonical(state),))
+                db.commit()
         except BaseException:
             db.rollback()
             raise
@@ -896,7 +903,8 @@ def cmd_meta(args, rds):
         return result
     elif args.action == "rollback-rule":
         from rds_meta import rollback_rule
-        return rollback_rule(args.record, graph_path=args.graph, dry_run=args.dry_run)
+        return rollback_rule(args.record, graph_path=args.graph, dry_run=args.dry_run,
+                             record_dir=rds.directory / "rsi")
     elif args.action == "reflect":
         if _has_project_contract(args.root):
             from rds_project import ProjectStore
@@ -1189,6 +1197,8 @@ def cmd_project(args):
                     'next_move': 'Instruction is retained; read project steering using the received revision.'}
         return result
     if args.action == "init":
+        from rds_workspace import check_admission
+        check_admission(store.root, supersedes=args.supersedes, separate_project=args.separate_project is not None)
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
             require(args.mode != 'quick', 'A recipe creates a FULL project with program-owned Advisor')
@@ -1654,6 +1664,13 @@ def parser():
     for child in hook_actions.choices.values():
         child.add_argument("--json", action="store_true")
 
+    workspace = commands.add_parser("workspace", help="Bind this workspace to one canonical project ledger (#282); identity, not authority")
+    workspace_actions = workspace.add_subparsers(dest="action", required=True)
+    workspace_actions.add_parser("bind", help="Bind once to the existing ledger; idempotent recovery on re-run")
+    workspace_actions.add_parser("coverage")
+    for child in workspace_actions.choices.values():
+        child.add_argument("--json", action="store_true")
+
     checkpoints = commands.add_parser("checkpoint", help="Record decisions and recover against live project state")
     cp_actions = checkpoints.add_subparsers(dest="action", required=True)
     for action in ("save", "restore"):
@@ -1971,6 +1988,12 @@ def _main():
                 result = coverage(args.root)
             else:
                 result = validate_request(args.root, load_spec(args.request))
+        elif args.command == "workspace":
+            from rds_workspace import bind as bind_workspace, coverage as workspace_coverage
+            if args.action == "bind":
+                result = bind_workspace(args.root)
+            else:
+                result = workspace_coverage(args.root)
         elif args.command == "checkpoint":
             result = cmd_checkpoint(args, rds)
         elif args.command == "artifacts":
@@ -2012,7 +2035,7 @@ def _main():
         if args.command == 'rsi' and args.action == 'discover':
             compact = False  # Discovery is already bounded and must expose the requested signatures.
         if compact:
-            from rds_quick import brief
+            from rds_quick import brief, compact_brief_planning, serialize_brief
             summary = brief(args.root, result, VERSION)
             if workflow is not None:
                 # Full commands remain in the saved report/discovery response;
@@ -2025,7 +2048,8 @@ def _main():
                                                       'variability', 'plan_id', 'execution_started', 'total_budget')})
                 summary['wall_seconds'] = {k: result[k]['wall_seconds'] for k in ('baseline', 'candidate')}
                 summary['reasons'] = result['reasons']
-            print(json.dumps(summary, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            compact_brief_planning(summary)
+            print(serialize_brief(summary))
         else:
             # Hashed receipts/events keep their exact body; the mode banner is
             # separate. Operational un-hashed responses can carry discovery data.
@@ -2039,6 +2063,8 @@ def _main():
                                               or result.get('status') == 'CONFLICT'):
             return 2
         if args.command == 'host-hook' and result.get('status') == 'HOST_GUARD_MISSING':
+            return 2
+        if args.command == 'workspace' and args.action == 'coverage' and result.get('status') == 'MISMATCH':
             return 2
         if args.command == 'rsi' and args.action == 'validate':
             return {'LOCAL_CASES_PASSED': 0, 'FAILED': 1, 'UNKNOWN': 2}[result['status']]
@@ -2069,6 +2095,49 @@ def _main():
     return 0
 
 
+# Section 6.3: a closed set of invocations that answer "what is here?" rather
+# than doing work. They must not create a usage record, a directory or a
+# database, so "is RDS on?" stays answerable without changing state. Anything
+# outside this set keeps the ordinary logged path.
+STATUS_READ_FLAGS = frozenset({"--brief", "--digest"})
+
+
+def observation_argv(argv):
+    """Return True only for side-effect-free inspection invocations.
+
+    Classification runs after the same pure normalization the parser uses, so
+    aliases, macros and unique prefixes cannot reach a logged branch by
+    spelling. Malformed input is not observation: it keeps the existing
+    logged path and its existing error reporting.
+    """
+    try:
+        entry = parser()
+        normalized = entry.normalize_args(argv, quiet=True)
+    except (ValueError, SystemExit):
+        return False
+    tokens = list(normalized)
+    if tokens[:1] == ["--root"]:
+        # Normalization moves every root spelling to this one leading pair.
+        tokens = tokens[2:]
+    def option_name(current, token):
+        if token in current._option_string_actions or not token.startswith('--'):
+            return token
+        # Reuse argparse's unique-prefix rules without executing help/version
+        # actions. Explicit values and ambiguous options stay on the logged path.
+        matches = current._get_option_tuples(token)
+        if len(matches) == 1 and matches[0][-1] is None:
+            return matches[0][1]
+        return token
+
+    if len(tokens) == 1 and option_name(entry, tokens[0]) in {"--version", "--help", "-h"}:
+        return True
+    if tokens[:1] != ["status"]:
+        return False
+    commands = next(a for a in entry._actions if isinstance(a, argparse._SubParsersAction))
+    status = commands.choices['status']
+    return {option_name(status, token) for token in tokens[1:]} <= STATUS_READ_FLAGS
+
+
 def main():
     from rds_usage import run_logged
     def usage_root():
@@ -2086,6 +2155,11 @@ def main():
             except argparse.ArgumentError as exc:
                 raise ValueError(str(exc)) from exc
         return Path(root).resolve()
+    if observation_argv(sys.argv[1:]):
+        # Section 6.3: inspecting RDS must not create a usage record, a
+        # directory or a database. Classification happens before run_logged, so
+        # a question about state cannot itself change state.
+        return _main()
     return run_logged(_main, sys.argv[1:], VERSION, root=usage_root)
 
 

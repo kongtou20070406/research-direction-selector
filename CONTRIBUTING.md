@@ -4,6 +4,8 @@
 
 Our purpose is to help AI better assist people in scientific research; RDS is our chosen implementation form. We ask how researchers and AI can clarify questions, choose useful next steps and interpret evidence while retaining the goal and decision history. Contributions should make that loop easier to use, inspect or evaluate. The [vision and acceptance criteria](docs/rds-purpose.md) explain the intended research benefit; deterministic program checks support it. You can help without touching the kernel.
 
+Making your first change? The [onboarding guide](docs/onboarding.md) walks through one documentation fix end to end, from cloning the checkout to reading the continuous-integration result. This guide is the reference for how changes are reviewed, not a first-run tutorial.
+
 ## Ways to contribute
 
 For areas to join and a small first contribution, see [Join RDS](docs/RECRUITING.md).
@@ -14,7 +16,7 @@ For areas to join and a small first contribution, see [Join RDS](docs/RECRUITING
 | A research workflow | An issue describing where your agent lost track of runs, budgets, goals or rejected ideas, with the setup you used | [New issue](https://github.com/kongtou20070406/research-direction-selector/issues/new/choose) |
 | An afternoon | A benchmark task where an unaided agent reaches a wrong conclusion, with a grader | [Contribute a benchmark task](#contribute-a-benchmark-task) |
 | A bug | A reproduction and, if you can, a focused fix | [Start with the problem](#start-with-the-problem) |
-| A feature idea | An issue first; a PR after the design is agreed | [Roadmap](docs/roadmap.md), [5.9 planning](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
+| A feature idea | An issue first; a PR after the design is agreed | [Roadmap](docs/roadmap.md), [planning](https://github.com/kongtou20070406/research-direction-selector/issues/166) |
 
 To set up a checkout, you need only Git and Python 3.11+:
 
@@ -132,6 +134,13 @@ git diff --check
 ```
 
 Confirm new tests are discoverable by [CI](.github/workflows/test.yml), which runs the unit suite and historical replay on Windows/Ubuntu with Python 3.11/3.13. Report actual commands and outcomes, including skips or unavailable dependencies. Align the title, description, support promises and limits with the final diff. Synthetic fixtures and historical replays are not end-to-end scientific scores.
+
+CI runs the complete required matrix for pull requests and again after a push to
+`main`. A feature-branch push without a pull request does not trigger that
+workflow. Keep local checks focused while developing, then evaluate the complete
+candidate after integration. Preserve the original failure evidence; neither a
+passing earlier revision nor a documentation-only branch establishes acceptance
+of a later combined release.
 
 ## Public records and licensing
 

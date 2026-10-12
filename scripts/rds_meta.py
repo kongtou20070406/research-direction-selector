@@ -217,7 +217,27 @@ def save_judgment_graph(path, data):
     _atomic_bytes(path, content.encode("utf-8"))
 
 
+@contextmanager
+def _workspace_publication(path):
+    from rds_mutation import mutation
+    from rds_workspace import check_admission
+    path = Path(path).absolute()
+    metadata = next((parent for parent in (path, *path.parents)
+                     if os.path.normcase(parent.name) == '.rds'), None)
+    if metadata is None:
+        yield
+    else:
+        with mutation():
+            check_admission(metadata.parent)
+            yield
+
+
 def _atomic_bytes(path, content):
+    with _workspace_publication(path):
+        _publish_bytes(path, content)
+
+
+def _publish_bytes(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
@@ -261,6 +281,13 @@ def _write_record(directory, record, path=None):
 
 @contextmanager
 def _graph_lock(directory):
+    # Only publication holds the workspace gate; CPU replay stays outside it.
+    with _workspace_publication(directory), _adoption_lock(directory):
+        yield
+
+
+@contextmanager
+def _adoption_lock(directory):
     directory.mkdir(parents=True, exist_ok=True)
     lock = directory / "adoption.lock"
     try:
@@ -370,7 +397,7 @@ def rollback_rule(record_path, graph_path=None, dry_run=False, *, record_dir=Non
               "restored_raw_sha256": digest(original), "adoption_record": str(Path(record_path).resolve())}
     if not dry_run:
         directory = _records_dir(path, record_dir)
-        with _graph_lock(directory):
+        with _workspace_publication(record_path), _graph_lock(directory):
             current = path.read_bytes()
             require(digest(current) == record["after_raw_sha256"], "Graph changed before rollback")
             rollback = {"status": "PREPARED_ROLLBACK", "adoption_record": result["adoption_record"],

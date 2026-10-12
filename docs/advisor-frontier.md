@@ -39,7 +39,7 @@ python benchmark/advisor-frontier/run.py
 
 回复的 `proposal.theory_bridge` 只必需 `candidate_model/mapping/source`；当前模型、原目标和已有前提可复用，补充条件按需声明。`kind` 可省略，默认 `unspecified`；四种常见关系只是示例，也允许其他短标签，不强迫分类或排名。明确声明 `approximation` 时仍须填 `domain/error_bound`。候选必须实际进入当前模型到原目标的提案路径；不能附一个孤立新概念，借旧路径声称已拓宽。理论映射与解释/预测边分开，不自动合成包含层级。
 
-可选 `goal.reformulation.signals` 为相关理论工具的查询标签，如 `trajectory_degradation/local_global_gap`。程序只在可用的改写 gap 上附最多三张[预载工具](theory-reformulation.md#按需查预载工具)摘要卡；它是 TAG_MATCH_ONLY，前提尚未检查，不自动分配 GPU 或执行。`as_of` 早于工具目录可用日期时不使用该目录，保持历史证据边界。
+可选 `goal.reformulation.signals` 为相关理论工具的查询标签，如 `trajectory_degradation/local_global_gap`。程序只在可用的改写 gap 上附最多三张[预载工具](theory-reformulation.md#按需查预载工具与可运行算子脚手架)摘要卡；它是 TAG_MATCH_ONLY，前提尚未检查，不自动分配 GPU 或执行。`as_of` 早于工具目录可用日期时不使用该目录，保持历史证据边界。
 
 经验检查保留不同预测；`test.kind=proof_check` 声明 `test.outcomes=["verified","counterexample","unresolved"]`，已核验/反例分别对应正负后续决定，未解决保持停止条件，不强制编造一个 rival 理论。定义完整仍只是 `NEEDS_EVIDENCE`：适用性 UNKNOWN、新关系 PROPOSED、执行未授权。无关的 Lean PASS 不会让理论路线进入可执行候选池。详细字段、反例与边界见[理论改写](theory-reformulation.md)。
 

@@ -4,7 +4,7 @@ Markers contain identity pointers only. They neither copy research state nor
 protect against direct SQL, backup rollback, or same-user removal of markers.
 SQLite access here is deliberately raw to avoid recursion through store guards.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from collections import deque
 import os
 from pathlib import Path
@@ -85,10 +85,23 @@ def _read(path):
 
 @contextmanager
 def _database(project, *, write=False):
+    from rds_mutation import mutation
+    # Match store writers: acquire mutation before SQLite, through close.
+    with (mutation() if write else nullcontext()):
+        with _open_database(project, write=write) as db:
+            yield db
+
+
+@contextmanager
+def _open_database(project, *, write=False):
     project = Path(project).resolve()
     path = project / '.rds' / 'project.sqlite3'
     require(path.is_file() and path.resolve().is_relative_to(project), 'Original campaign project ledger is missing')
-    db = sqlite3.connect(path.as_uri() + ('?mode=rw' if write else '?mode=ro'), uri=True, timeout=10)
+    if write:
+        from rds_workspace import connect
+        db = connect(project, path.as_uri() + '?mode=rw', uri=True, timeout=10)
+    else:
+        db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=10)
     db.row_factory = sqlite3.Row
     try:
         if not write:
@@ -324,7 +337,7 @@ def _retained_job(root):
                 'Retained job requires an original run and verified terminal receipt')
 
 
-def _guard_quiescent(root, db, contract, *, workspace=None):
+def _guard_quiescent(root, db, contract, *, workspace=None, parent_db=None):
     """Require the native QUICK guard's original immutable tail, not PASS."""
     from rds_guard import read
     bindings = [entry for entry in contract['bindings']
@@ -339,7 +352,7 @@ def _guard_quiescent(root, db, contract, *, workspace=None):
             'Retained QUICK request differs from its original binding')
     guard = request.get('guard')
     if guard is None:
-        _prospective_quiescent(root, db, request, workspace=workspace)
+        _prospective_quiescent(root, db, request, workspace=workspace, parent_db=parent_db)
         return
     require(isinstance(guard, dict) and isinstance(guard.get('path'), str), 'Retained QUICK guard identity is invalid')
     policy = [entry for entry in contract['bindings'] if entry['path'] == guard['path']]
@@ -368,10 +381,10 @@ def _guard_quiescent(root, db, contract, *, workspace=None):
                 and report.get('scientific_support') == 'UNKNOWN'
                 and isinstance(report.get('reason'), str)
                 and 'policy_sha256' not in report), 'Guard report differs from its frozen policy')
-    _prospective_quiescent(root, db, request, report, ref, workspace=workspace)
+    _prospective_quiescent(root, db, request, report, ref, workspace=workspace, parent_db=parent_db)
 
 
-def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *, workspace=None):
+def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *, workspace=None, parent_db=None):
     if request.get('research_context') is None:
         return
     from rds_project import ProjectStore, TERMINAL
@@ -396,7 +409,8 @@ def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *
             and receipt['manifest_sha256'] == runs[0]['manifest_sha256']
             and receipt['process_status'] == runs[0]['status'],
             'Prospective QUICK settlement requires its original terminal receipt')
-    completion = _prospective_completion(root, request, receipt, regression=regression, guard_ref=guard_ref)
+    completion = _prospective_completion(root, request, receipt, regression=regression,
+                                         guard_ref=guard_ref, parent_db=parent_db)
     require(completion is not None and completion['after_checkpoint'] is not None,
             'Campaign binding requires resolved prospective QUICK checkpoint settlement')
 

@@ -4,6 +4,7 @@ import argparse
 from contextlib import closing, redirect_stderr
 from datetime import datetime
 import json
+import hashlib
 import io
 import os
 from pathlib import Path
@@ -330,6 +331,89 @@ class SandboxUsageTests(unittest.TestCase):
         self.assertTrue(all('RDS-USAGE-DEGRADED' not in result.stderr for result in results), results)
         self.assertEqual(self.rows(self.fallback), [('advise', 'help', 0)] * 12)
 
+    def test_observation_touches_no_default_usage_location_even_when_unusable(self):
+        # Plan section 6.6, second row: the default path must be exercised, not
+        # an RDS_USAGE_DB override. Replacing the default database with a
+        # directory makes any open fail loudly, so a silently successful
+        # observation is real proof that nothing tried to read or write it.
+        self.default.mkdir(parents=True)
+        observations = (['--version'], ['--help'], ['status'], ['status', '--brief'],
+                        ['status', '--digest'])
+        for argv in observations:
+            with self.subTest(argv=argv):
+                result = self.cli(*argv)
+                self.assertNotIn('RDS-USAGE-DEGRADED', result.stderr)
+                self.assertFalse(self.fallback.exists())
+                self.assertEqual([p.name for p in self.root.iterdir()], [])
+        # A logged command against the same broken default must still fall back,
+        # otherwise the observations above would prove nothing.
+        control = self.cli('advise', '--help')
+        self.assertEqual(control.returncode, 0, control.stderr)
+        self.assertEqual(self.rows(self.fallback), [('advise', 'help', 0)])
+
+    def test_initialized_wal_discovery_is_logged_but_observations_do_not_write(self):
+        prepared = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'examples/project-runner/prepare.py'),
+             '--root', str(self.root)], cwd=self.root, capture_output=True,
+            text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        initialized = self.cli('--root', str(self.root), 'project', 'init', '--mode', 'quick',
+                               '--contract', str(self.root / 'contract.json'))
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        ledger = self.root / '.rds/project.sqlite3'
+        with closing(sqlite3.connect(ledger.as_uri() + '?mode=ro', uri=True)) as db:
+            self.assertEqual(db.execute('PRAGMA journal_mode').fetchone()[0], 'wal')
+            before_ledger = list(db.iterdump())
+        self.assertEqual(self.rows(self.default), [('project', 'command', 0)])
+        for argv in (['project', 'discover'], ['proj', 'discov']):
+            with self.subTest(argv=argv):
+                result = self.cli('--root', str(self.root), *argv)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report['status'], 'EXISTING_PROJECT')
+                self.assertEqual(Path(report['project_root']), self.root.resolve())
+                self.assertEqual(report['workflow']['mode'], 'QUICK')
+                self.assertFalse(report['execution_started'])
+        self.assertEqual(self.rows(self.default), [('project', 'command', 0)] * 3)
+        with closing(sqlite3.connect(ledger.as_uri() + '?mode=ro', uri=True)) as db:
+            self.assertEqual(list(db.iterdump()), before_ledger)
+
+        def snapshot():
+            return {str(p.relative_to(self.folder)): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
+                    if p.is_file() else None for p in self.folder.rglob('*')}
+
+        before = snapshot()
+        # A project-only root rejects L3 status, but must still not write usage.
+        for argv in (['status'], ['status', '--brief'], ['status', '--b'],
+                     ['stat', '--di'], ['--ver'], ['--h']):
+            with self.subTest(argv=argv):
+                result = self.cli('--root', str(self.root), *argv)
+                self.assertEqual(result.returncode, 1 if argv[0] in {'status', 'stat'} else 0,
+                                 result.stderr)
+                self.assertNotIn('RDS-USAGE-DEGRADED', result.stderr)
+                self.assertEqual(snapshot(), before)
+        observed = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_session.py'),
+                                   'observe', '--json'], cwd=self.root, capture_output=True,
+                                  text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(observed.returncode, 0, observed.stderr)
+        report = json.loads(observed.stdout)
+        self.assertFalse(report['wrote'])
+        self.assertEqual(report['skill_load'], 'UNKNOWN')
+        self.assertEqual(report['skill_auto_application'], 'UNKNOWN_NOT_PREVENTED')
+        self.assertEqual(snapshot(), before)
+
+    def test_invalid_cli_prefixes_preserve_errors_and_usage_records(self):
+        for argv in (['--versx'], ['--ver=bad'], ['status', '--brieful'],
+                     ['status', '--b=true'], ['s', '--b']):
+            with self.subTest(argv=argv):
+                before = len(self.rows(self.default)) if self.default.exists() else 0
+                result = self.cli('--root', str(self.root), *argv)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('[RDS-HINT]', result.stderr)
+                rows = self.rows(self.default)
+                self.assertEqual(len(rows), before + 1)
+                self.assertEqual(rows[-1][1:], ('command', 2))
+
 
 class UsageTests(unittest.TestCase):
     def setUp(self):
@@ -349,12 +433,12 @@ class UsageTests(unittest.TestCase):
                        self.folder, self.path)
 
     def test_cli_fixture_preserves_both_real_logging_waits(self):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0)
         began = time.monotonic()
         with dual_sqlite_wait(self.folder, self.path) as probe:
             with patch.dict(os.environ, probe["environment"]):
-                result = self.cli("--version")
+                result = self.cli("formal", "rules")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, warmup.stdout)
         self.assertEqual(len(probe["intervals"]), 2)
@@ -362,7 +446,7 @@ class UsageTests(unittest.TestCase):
         self.assertGreater(time.monotonic() - began, 15)
         report = usage.summarize(days=1)
         self.assertEqual(report["total_calls"], 2)
-        self.assertEqual(report["modes"], {"version": 2})
+        self.assertEqual(report["modes"], {"command": 2})
         self.assertEqual(report["daily"][0]["successful"], 2)
         self.assertEqual(report["daily"][0]["unfinished"], 0)
         self.assertTrue(all(row["exit_code"] == 0 for row in ledger_snapshot(self.path)["calls"]))
@@ -472,10 +556,10 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(sum(r["unfinished"] for r in report["daily"]), 0)
 
     def test_concurrent_cli_processes_retain_all_calls(self):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0, count_diagnostics(self.path, [warmup]))
         with ThreadPoolExecutor(max_workers=8) as workers:
-            results = list(workers.map(lambda _: self.cli("--version"), range(12)))
+            results = list(workers.map(lambda _: self.cli("formal", "rules"), range(12)))
         children = [warmup, *results]
         self.assertTrue(all(result.returncode == 0 for result in results), count_diagnostics(self.path, children))
         try:
@@ -485,7 +569,7 @@ class UsageTests(unittest.TestCase):
             raise
         evidence = count_diagnostics(self.path, children, result)
         self.assertEqual(result["total_calls"], 13, evidence)
-        self.assertEqual(result["modes"], {"version": 13}, evidence)
+        self.assertEqual(result["modes"], {"command": 13}, evidence)
         self.assertEqual(result["daily"][0]["successful"], 13, evidence)
         self.assertEqual(result["daily"][0]["unfinished"], 0, evidence)
         self.assertTrue(all(row["exit_code"] == 0 for row in ledger_snapshot(self.path)["calls"]), evidence)
@@ -493,7 +577,7 @@ class UsageTests(unittest.TestCase):
     def test_first_concurrent_invocations_retain_all_calls(self):
         self.assertFalse(self.path.exists())
         with ThreadPoolExecutor(max_workers=8) as workers:
-            results = list(workers.map(lambda _: self.cli("--version"), range(12)))
+            results = list(workers.map(lambda _: self.cli("formal", "rules"), range(12)))
         self.assertTrue(all(r.returncode == 0 for r in results), count_diagnostics(self.path, results))
         try:
             report = usage.summarize(days=1)
@@ -525,7 +609,7 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(report["daily"][0]["successful"], 1)
 
     def test_partial_existing_schema_preserves_rows_and_journal_mode(self):
-        self.assertEqual(self.cli("--version").returncode, 0)
+        self.assertEqual(self.cli("formal", "rules").returncode, 0)
         with closing(sqlite3.connect(self.path)) as db:
             journal = db.execute("PRAGMA journal_mode").fetchone()[0]
             db.execute("DROP INDEX calls_day")
@@ -549,7 +633,7 @@ class UsageTests(unittest.TestCase):
             completed, gate = {}, threading.Lock()
 
             def invoke(index):
-                child = self.cli("--version")
+                child = self.cli("formal", "rules")
                 with gate:
                     completed[index] = child
                 return child
@@ -578,14 +662,14 @@ class UsageTests(unittest.TestCase):
     def test_slow_schema_trace_preserves_real_busy_and_cli_result(self):
         # An external real writer is deliberately untraced: retain the exact
         # failing statement/PID, but never guess its holder from absent data.
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0)
         before = ledger_snapshot(self.path)
         with slow_schema_commits(self.folder, self.path) as probe:
             with closing(sqlite3.connect(self.path, isolation_level=None)) as writer:
                 writer.execute("BEGIN IMMEDIATE")
                 with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
-                    child = self.cli("--version")
+                    child = self.cli("formal", "rules")
             phases = phase_diagnostics(probe["work"], self.path,
                                        expected_pids=[child.fixture_timing["pid"]])
         evidence = count_diagnostics(self.path, [child]) + " phases=" + json.dumps(phases)
@@ -608,7 +692,7 @@ class UsageTests(unittest.TestCase):
         with cold_commit_handoff(self.folder, self.path) as probe:
             with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    pending = pool.submit(self.cli, "--version")
+                    pending = pool.submit(self.cli, "formal", "rules")
                     try:
                         wait_marker(probe["work"] / "handoff-ready")
                         with closing(sqlite3.connect(self.path, isolation_level=None)) as writer:
@@ -637,13 +721,13 @@ class UsageTests(unittest.TestCase):
         self.assertTrue(all(event["deadline"] is not None for event in commits), evidence)
 
     def caller_commit_control(self, *, expire):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0, warmup.stderr)
         before = ledger_snapshot(self.path)
         with caller_commit_reader(self.folder, self.path, expire=expire) as probe:
             with patch.dict(os.environ, {**os.environ, **probe["environment"]}):
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    pending = pool.submit(self.cli, "--version")
+                    pending = pool.submit(self.cli, "formal", "rules")
                     try:
                         wait_marker(probe["work"] / "caller-ready")
                         with closing(sqlite3.connect(self.path, isolation_level=None)) as reader:
@@ -800,12 +884,12 @@ class UsageTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=1) as warmup_pool:
                 warmup_future = warmup_pool.submit(
                     subprocess.run,
-                    [sys.executable, "-B", str(ROOT / "scripts/rds_cli.py"), "--version"],
+                    [sys.executable, "-B", str(ROOT / "scripts/rds_cli.py"), "formal", "rules"],
                     cwd=self.folder, env=environment, capture_output=True, text=True, timeout=60)
                 try:
                     wait_marker(probe["work"] / "ready")
                     with ThreadPoolExecutor(max_workers=8) as workers:
-                        results = list(workers.map(lambda _: self.cli("--version"), range(12)))
+                        results = list(workers.map(lambda _: self.cli("formal", "rules"), range(12)))
                     paused = json.loads((probe["work"] / "ready").read_text())
                 finally:
                     (probe["work"] / "release").touch()
@@ -821,14 +905,14 @@ class UsageTests(unittest.TestCase):
         self.assertFalse(paused["in_transaction"])
 
     def test_persistent_start_lock_reports_loss_but_preserves_real_cli_result(self):
-        warmup = self.cli("--version")
+        warmup = self.cli("formal", "rules")
         self.assertEqual(warmup.returncode, 0, warmup.stderr)
         before = ledger_snapshot(self.path)
         with closing(sqlite3.connect(self.path)) as blocker:
             blocker.execute("BEGIN IMMEDIATE")
             with ThreadPoolExecutor(max_workers=1) as pool:
                 # Keep the real writer until the child reaches the existing bounded storage failure.
-                result = pool.submit(self.cli, "--version").result(timeout=45)
+                result = pool.submit(self.cli, "formal", "rules").result(timeout=45)
             blocker.rollback()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, warmup.stdout)
@@ -847,7 +931,7 @@ class UsageTests(unittest.TestCase):
         self.assertIn("[RDS-USAGE-DEGRADED] start", str(incomplete.exception))
         self.assertIn('"returncode": 0', str(incomplete.exception))
         self.assertIn('"day":', str(incomplete.exception))
-        restored = self.cli("--version")
+        restored = self.cli("formal", "rules")
         self.assertEqual(restored.returncode, 0, restored.stderr)
         self.assertEqual(restored.stderr, "")
         report = usage.summarize(days=2)

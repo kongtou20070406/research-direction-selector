@@ -93,7 +93,9 @@ python -B scripts/rds_cli.py --root <working-directory> project discover
 ```
 
 For an unbound workspace, discovery inspects that directory and its ancestors without creating a research
-ledger. Reuse the returned `project_root` and `next_action`. It does not scan
+ledger. It still uses ordinary CLI usage logging and can create SQLite WAL
+sidecars while reading an existing project; it is not a zero-write session
+observation. Reuse the returned `project_root` and `next_action`. It does not scan
 siblings or infer that two unrelated research topics are identical. Nested new
 projects are refused by the public entry points unless initialization explicitly
 supplies `--separate-project "<independent research scope>"`; that declaration is
