@@ -31,6 +31,7 @@ from copy import deepcopy
 import hashlib
 import heapq
 import json
+import os
 import sqlite3
 from pathlib import Path
 from rds_hypergraph_blockers import missing_families
@@ -333,8 +334,7 @@ def _supported_closure(nodes, edges, grounded_receipts=frozenset()):
     return closure, derivations, conflicts, receipt_block
 
 
-def _goal_relevance(edges, goals):
-    """Reverse reachability through supported and proposed rules only."""
+def _python_goal_relevance(edges, goals):
     incoming = {}
     for edge in edges:
         if edge["status"] != "CONTRADICTED":
@@ -349,6 +349,81 @@ def _goal_relevance(edges, goals):
                     relevant_nodes.add(tail)
                     pending.append(tail)
     return relevant_nodes, relevant_edges
+
+
+def _native_goal_relevance(edges, goals):
+    try:
+        from rds_bus_adapter import TopologyGraph, NODE_CLAIM, NODE_GOAL, EDGE_AND_DEDUCTION
+    except ImportError:
+        try:
+            from scripts.rds_bus_adapter import TopologyGraph, NODE_CLAIM, NODE_GOAL, EDGE_AND_DEDUCTION
+        except ImportError:
+            return None
+
+    non_contra = [e for e in edges if e.get("status") != "CONTRADICTED"]
+    if len(non_contra) > 16384:
+        return None
+
+    node_names = set(goals)
+    for edge in non_contra:
+        head = edge.get("conclusion")
+        if head is not None:
+            node_names.add(head)
+        for p in edge.get("premises", ()):
+            node_names.add(p)
+
+    if len(node_names) > 4096:
+        return None
+
+    cost = 128 * len(node_names)
+    for edge in non_contra:
+        premises = edge.get("premises", ())
+        if len(premises) > 4096:
+            return None
+        cost += 128 + 16 * len(premises)
+    if cost > 8 * 1024 * 1024:
+        return None
+
+    sorted_nodes = sorted(node_names)
+    id_to_int = {name: i for i, name in enumerate(sorted_nodes)}
+    goal_set = set(goals)
+
+    with TopologyGraph(use_native=True) as graph:
+        if not graph.native:
+            return None
+
+        for name in sorted_nodes:
+            kind = NODE_GOAL if name in goal_set else NODE_CLAIM
+            h = hashlib.sha256(name.encode("utf-8")).digest()
+            graph.add_node(kind, h)
+
+        for edge in non_contra:
+            srcs = [id_to_int[p] for p in edge.get("premises", ())]
+            tgt = id_to_int[edge["conclusion"]]
+            graph.add_edge(EDGE_AND_DEDUCTION, srcs, tgt)
+
+        relevant_nodes = set(goals)
+        for g in goals:
+            if g in id_to_int:
+                for dep in graph.backward_dependencies(id_to_int[g]):
+                    relevant_nodes.add(sorted_nodes[dep])
+
+    relevant_edges = {edge["id"] for edge in non_contra if edge["conclusion"] in relevant_nodes}
+    return relevant_nodes, relevant_edges
+
+
+def _goal_relevance(edges, goals):
+    """Reverse reachability through supported and proposed rules only."""
+    try:
+        native_res = _native_goal_relevance(edges, goals)
+        if native_res is not None:
+            return native_res
+    except Exception:
+        if os.environ.get("RDS_REQUIRE_BUS") == "1":
+            raise
+    if os.environ.get("RDS_REQUIRE_BUS") == "1":
+        raise RuntimeError("rds_bus native goal relevance was unavailable or exceeded its bounds")
+    return _python_goal_relevance(edges, goals)
 
 
 def record_topology(spec, *, source_base=None):

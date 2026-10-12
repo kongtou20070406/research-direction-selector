@@ -12,6 +12,8 @@ import re
 import sys
 
 from rds_verify_types import MAX_CERTIFICATE_BYTES, SEMANTICS, bounded_json, canonical, digest, rational, require
+from rds_verify_registry import (get_verifier, registered_kinds, registered_verifiers,
+                                 registry_id, reserve_builtin_routes)
 from rds_affine_toolchain import ASSURANCE as AFFINE_CHAIN_ASSURANCE
 from rds_affine_toolchain import COMPOSITION_KIND as AFFINE_COMPOSITION_KIND
 from rds_affine_toolchain import COMPOSITION_RULE as AFFINE_COMPOSITION_RULE
@@ -108,9 +110,48 @@ REGISTRY = RuleRegistry((
               support_files=("rds_operators.py", "rds_lean_verify.py")),
 ))
 
+reserve_builtin_routes([*REGISTRY.by_name.values(),
+                        ProofRule("logic.and_intro", ("all",), "")],
+                       [rule.name for rule in REGISTRY.by_name.values()] + ["logic.and_intro"],
+                       assurances=(BOUNDED_PROOF_ASSURANCE, AFFINE_CHAIN_ASSURANCE,
+                                   "LEAN_KERNEL_CHECKED"))
+
 
 def _bounded_json(value):
     bounded_json(value, max_nodes=MAX_NODES, max_depth=MAX_DEPTH)
+
+
+class _RegisteredRule:
+    """Adapt a VerifierSpec to the existing atomic proof envelope."""
+
+    def __init__(self, verifier):
+        self.verifier = verifier
+        self.name = verifier.name
+
+    def generate(self, statement, *, max_work_units=None):
+        require(max_work_units is None,
+                "Explicit budgets are unavailable for registered verifiers")
+        return self.verifier.verify(self.verifier.read_spec(statement))
+
+    def check(self, statement, certificate):
+        return (isinstance(certificate, dict) and
+                certificate.get("assurance") == self.verifier.assurance_level and
+                certificate.get("assurance") != "LEAN_KERNEL_CHECKED" and
+                self.verifier.check_certificate(self.verifier.read_spec(statement), certificate))
+
+
+def _dispatch_rule(statement, requested=None):
+    """Prefer registered implementations; only absent routes use legacy rules."""
+    kind = statement.get("kind")
+    try:
+        verifier = get_verifier(kind)
+    except ValueError:
+        if isinstance(kind, str) and kind in registered_kinds():
+            raise
+        return REGISTRY.rule(statement, requested)
+    require(requested is None or requested == verifier.name,
+            "Rule does not prove this statement kind")
+    return _RegisteredRule(verifier)
 
 
 def verifier_id():
@@ -118,17 +159,32 @@ def verifier_id():
     here = Path(__file__).resolve().parent
     names = {rule.module + ".py" for rule in REGISTRY.by_name.values()}
     names.update(name for rule in REGISTRY.by_name.values() for name in rule.support_files)
-    names.update({"rds_verify.py", "rds_verify_types.py", "rds_formal_kernel.py", "rds_probe.py"})
+    names.update({"rds_verify.py", "rds_verify_registry.py", "rds_verify_types.py",
+                  "rds_formal_kernel.py", "rds_probe.py"})
+    registered_sources = {}
+    for verifier in registered_verifiers():
+        module = sys.modules[type(verifier).__module__]
+        registered_sources[verifier.name] = digest(Path(module.__file__).read_bytes())
     return digest({"sources": {name: digest((here / name).read_bytes()) for name in sorted(names)},
+                   "registry": registry_id(), "registered_sources": registered_sources,
                    "python": sys.version,
                    "rules": [(r.name, r.kinds, r.version) for r in REGISTRY.by_name.values()]})
 
 
 def rules():
-    return [{"name": rule.name, "statement_kinds": list(rule.kinds), "version": rule.version,
-             "support_files": list(rule.support_files)}
-            for rule in REGISTRY.by_name.values()] + [
-                {"name": "logic.and_intro", "statement_kinds": ["all"], "version": "1"}]
+    legacy = [{"name": rule.name, "statement_kinds": list(rule.kinds), "version": rule.version,
+               "support_files": list(rule.support_files), "implementation": rule.module + ".py",
+               "route": "builtin"}
+              for rule in REGISTRY.by_name.values()]
+    registered = [{"name": verifier.name, "statement_kinds": sorted(verifier.kinds),
+                   "version": verifier.version, "semantics": verifier.semantics,
+                   "assurance_level": verifier.assurance_level,
+                   "support_files": [],
+                   "implementation": Path(sys.modules[type(verifier).__module__].__file__).name,
+                   "route": "registered"} for verifier in registered_verifiers()]
+    return legacy + registered + [{"name": "logic.and_intro", "statement_kinds": ["all"],
+                                   "version": "1", "support_files": [],
+                                   "implementation": None, "route": "builtin"}]
 
 
 def _name(value):
@@ -559,7 +615,7 @@ def plan(spec, *, max_work_units=None):
 
 
 def _atomic(statement, requested=None, *, max_work_units=None):
-    rule = REGISTRY.rule(statement, requested)
+    rule = _dispatch_rule(statement, requested)
     if max_work_units is None:
         result = rule.generate(statement)
     else:
@@ -639,7 +695,7 @@ def verify(spec, *, max_work_units=None):
 
 def _check_atomic(statement, proof, requested=None):
     require(isinstance(proof, dict) and set(proof) == {"rule", "certificate"}, "Invalid atomic proof")
-    rule = REGISTRY.rule(statement, requested)
+    rule = _dispatch_rule(statement, requested)
     require(proof["rule"] == rule.name and rule.check(statement, proof["certificate"]), "Invalid domain certificate")
     verdict = proof["certificate"]["verdict"]
     require(verdict in {"PASS", "FAIL"}, "Certificate has no checked verdict")

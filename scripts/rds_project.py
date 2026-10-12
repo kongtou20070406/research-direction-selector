@@ -25,6 +25,7 @@ import time
 import uuid
 
 from rds_mutation import mutation
+from rds_project_hooks import provider as lifecycle_provider
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -388,8 +389,7 @@ class ProjectStore:
         """Read original evidence before taking the execution write lock."""
         if "advisor_policy" not in contract:
             return None
-        from rds_owned_advisor import prepare_admission
-        return prepare_admission(self, spec)
+        return lifecycle_provider("advisor").prepare_admission(self, spec)
 
     def _advisor_prepare_run(self, run_id, *, allow_observation=False):
         with self._db(True) as db:
@@ -406,8 +406,7 @@ class ProjectStore:
         if "advisor_policy" not in self._contract(db):
             return
         require(token is not None, "Advisor admission is missing; collect and select the current route first")
-        from rds_owned_advisor import check_admission
-        check_admission(self, db, spec, token)
+        lifecycle_provider("advisor").check_admission(self, db, spec, token)
 
     def _advisor_finished(self, contract):
         """Collection is post-commit; never mutate the owned receipt or repeat a run."""
@@ -421,8 +420,7 @@ class ProjectStore:
                 self.last_advisor_review = retained
                 self.last_advisor_review_reused = True
                 return
-            from rds_owned_advisor import after_finish
-            self.last_advisor_review = after_finish(self)
+            self.last_advisor_review = lifecycle_provider("advisor").after_finish(self)
         except Exception as exc:
             # Even an unexpected collector failure leaves the receipt and settled
             # budget intact. A later review/recovery retries collection only.
@@ -954,8 +952,7 @@ class ProjectStore:
             require(isinstance(unit, str) and unit and len(unit) <= 64, "Invalid resource name")
             number(cap, f"budget.{unit}")
         if "advisor_policy" in contract:
-            from rds_owned_advisor import validate_policy
-            validate_policy(self, contract)
+            lifecycle_provider("advisor").validate_policy(self, contract)
             # Owned routes register their frozen manifests, so each named protocol must pass registration now.
             for route in contract["advisor_policy"]["routes"]:
                 path = route["manifest"]["protocol"]["path"]
@@ -1758,8 +1755,7 @@ class ProjectStore:
             receipt = self._receipt(old) if old else None
         if receipt is not None:
             self._advisor_finished(contract)
-            from rds_quick import _recover_prospective
-            _recover_prospective(self, contract, receipt)
+            lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
             return receipt
         if run["attempt_id"] is None:
             return {**run, "recovery": "Unstarted reservation; no process to restart"}
@@ -1769,8 +1765,7 @@ class ProjectStore:
             return {**run, "recovery": "Process may still be active; no rerun or termination"}
         receipt = self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
                               ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
-        from rds_quick import _recover_prospective
-        _recover_prospective(self, contract, receipt)
+        lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
         return receipt
 
     def snapshot(self, check_bindings=False, *, _dialogue=False):
@@ -1803,12 +1798,11 @@ class ProjectStore:
             if _dialogue:
                 # Optional view inputs share this original read; ordinary
                 # snapshots do not collect owned history or report context.
-                from rds_owned_advisor import _state
                 row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
                                  "ORDER BY id DESC LIMIT 1").fetchone()
                 context = {'instruction': steering, 'report_event': dict(row) if row else None}
                 try:
-                    context['state'] = _state(self, db)
+                    context['state'] = lifecycle_provider("advisor")._state(self, db)
                 except (ValueError, KeyError, TypeError, OSError, UnicodeError, sqlite3.Error) as exc:
                     # Optional display cannot impose owned-history bounds on
                     # the ordinary plan. Preserve this read's original facts.

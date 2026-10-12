@@ -10,11 +10,13 @@ import hashlib
 import math
 from pathlib import Path
 import sqlite3
+import sys
 import time
 
 from rds_artifacts import ArtifactFact
 from rds_source_documents import MissingPointer, SourceDocument, strict_json
 from rds_project import canonical, digest, number, require
+from rds_project_hooks import register as register_project_hooks
 
 OWNED_PREFIX = 'owned:'
 ASSURANCE = 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
@@ -832,3 +834,6 @@ def after_finish(store):
         except (ValueError, OSError, sqlite3.Error):
             result['failure_event_persisted'] = False
         return result
+
+
+register_project_hooks("advisor", sys.modules[__name__])
