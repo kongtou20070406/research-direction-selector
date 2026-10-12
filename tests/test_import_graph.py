@@ -80,6 +80,33 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual(report['edges'], [])
                 self.assertEqual([u['reason'] for u in report['unresolved']], ['ambiguous loader binding'])
 
+    def test_builtin_import_before_later_module_binding_is_an_edge(self):
+        for suffix in ("__import__ = other", "def __import__():\n pass",
+                       "from helper import __import__"):
+            with self.subTest(suffix=suffix):
+                source = "__import__('rds_quick')\n" + suffix
+                report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_rebound_global_builtin_keeps_uncertainty_not_a_definite_edge(self):
+        for source in (
+            "def run():\n __import__('rds_quick')\n__import__ = other",
+            "for item in items:\n __import__('rds_quick')\n __import__ = other",
+            "if condition:\n __import__ = other\n__import__('rds_quick')",
+        ):
+            with self.subTest(source=source):
+                report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']], ['ambiguous loader binding'])
+
+    def test_function_local_builtin_shadow_does_not_fall_back_to_builtin(self):
+        root = self.fixture({'rds_project.py':
+            "def run():\n __import__('rds_quick')\n __import__ = other", 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(report['unresolved'], [])
+
     def test_shadowed_registry_does_not_emit_module_table_candidates(self):
         for body in (
             "def run(name):\n modules = {'x': 'external'}\n return load(modules[name])",
