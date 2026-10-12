@@ -16,6 +16,7 @@ import time
 from rds_artifacts import ArtifactFact
 from rds_source_documents import MissingPointer, SourceDocument, strict_json
 from rds_project_values import canonical, digest, number, require
+import rds_admission_values as admission_values
 from rds_project_hooks import register as register_project_hooks
 
 OWNED_PREFIX = 'owned:'
@@ -217,40 +218,17 @@ def _state(store, db):
 
 def _fingerprint(state):
     """Bind admission state, excluding only a running worker's elapsed telemetry."""
-    projected = {**state, 'runs': [
-        {k: v for k, v in run.items() if k != 'observed_wall_seconds'}
-        if run['status'] == 'RUNNING' else run for run in state['runs']]}
-    return digest(projected)
+    return admission_values.fingerprint(state)
 
 
 def _telemetry(state):
-    now = time.time()
-    return {'snapshot_at': now, 'checked_at': now, 'running': [
-        {'run_id': run['id'], 'attempt_id': run['attempt_id'],
-         'lower_bound_seconds': run['observed_wall_seconds'],
-         'latest_seconds': run['observed_wall_seconds']}
-        for run in state['runs'] if run['status'] == 'RUNNING']}
+    return admission_values.telemetry(state, time.time())
 
 
 def _reconcile(state, fingerprint, telemetry, reason):
     """Accept monotonic elapsed updates only; caller owns the coherent read/lock."""
-    require(_fingerprint(state) == fingerprint, reason)
-    require(isinstance(telemetry, dict) and isinstance(telemetry.get('running'), list),
-            'Owned admission telemetry is missing or malformed')
-    active = {run['id']: run for run in state['runs'] if run['status'] == 'RUNNING'}
-    require(len(telemetry['running']) == len(active), 'Owned admission telemetry coverage differs')
-    seen = set()
-    for window in telemetry['running']:
-        require(isinstance(window, dict) and window.get('run_id') in active
-                and window['run_id'] not in seen, 'Owned admission telemetry identity differs')
-        seen.add(window['run_id'])
-        run = active[window['run_id']]
-        require(window.get('attempt_id') == run['attempt_id'], 'Owned admission telemetry attempt differs')
-        lower = number(window.get('lower_bound_seconds'), 'telemetry lower bound')
-        latest = number(window.get('latest_seconds'), 'telemetry latest bound')
-        require(lower <= latest <= run['observed_wall_seconds'],
-                'Owned running telemetry regressed; inspect retained state')
-        window['latest_seconds'] = run['observed_wall_seconds']
+    admission_values.reconcile(state, fingerprint, telemetry, reason)
+    # Keep the old clock seam and read time only after all samples succeed.
     telemetry['checked_at'] = time.time()
 
 
@@ -795,16 +773,13 @@ def prepare_admission(store, spec):
 
 def check_admission(store, db, spec, token):
     """No nested write connection: called under the caller's BEGIN IMMEDIATE."""
-    require(isinstance(token, dict) and token.get('selected_run') == spec.get('id')
-            and token.get('analysis_coverage', {}).get('full') is True
-            and token.get('manifest_sha256') == digest(spec), 'Owned admission manifest binding mismatch')
+    admission_values.check_manifest(spec, token)
     _reconcile(_state(store, db), token['fingerprint'], token.get('telemetry'),
                'Owned state changed after Advisor selection; retry admission')
     snapshot = db.execute('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
-    require(snapshot is not None and snapshot['sha256'] == token['snapshot_sha256'],
-            'Owned dependency snapshot changed after Advisor selection; retry admission')
+    admission_values.check_snapshot_identity(snapshot, token)
     saved = strict_json(snapshot['body'])
-    require(digest(saved) == snapshot['sha256'], 'Owned dependency snapshot integrity failure')
+    admission_values.check_snapshot_digest(saved, snapshot)
     from rds_math import blob
     blob(store.root, saved['map'])  # Hash-bound CAS read, no nested ledger connection.
     for item in token['evidence_files']:
