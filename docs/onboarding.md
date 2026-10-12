@@ -80,9 +80,19 @@ git clone https://github.com/kongtou20070406/research-direction-selector.git
 
 In bash the same idea is `export HTTPS_PROXY=http://127.0.0.1:7890`. Replace the port with your own proxy's port.
 
-## 3. Look around without risk
+### 2.4 Before your first RDS CLI command
 
-Run these from inside the checkout. They are read-only views: none of them creates a project or starts work.
+**Read this before running the commands in section 3.** CLI usage logging is separate from initializing a research ledger, the project's durable record of decisions, runs and remaining budget. `project discover` does not initialize that ledger or start work, but its CLI invocation is logged in a usage database.
+
+On checkouts that include the [zero-write observation change (#315)](https://github.com/kongtou20070406/research-direction-selector/pull/315), `--version`, `--help` and `status` do not write usage records, directories or databases. Older checkouts count these invocations too. **`project discover` remains logged in both cases.**
+
+The usage database defaults to `%LOCALAPPDATA%\ResearchDirectionSelector\cli-usage.sqlite3` on Windows, or `~/.local/state/ResearchDirectionSelector/cli-usage.sqlite3` when `LOCALAPPDATA` is unset. `RDS_USAGE_DB` redirects logging to the path you specify. If the default location is not writable and `RDS_USAGE_DB` is unset, logging falls back to `<requested root>/.rds/usage/cli-usage.sqlite3`, which can create `.rds/` even during discovery. To keep logging outside the directory you inspect, set `RDS_USAGE_DB` to a known writable path outside it before running the CLI.
+
+Usage counts or a `.rds/usage/` directory alone do not mean a research project has been initialized. If you need to inspect the prior filesystem or usage state, do so before running the CLI. `python -B scripts/rds_cli.py usage` prints the recorded daily counts and is itself counted.
+
+## 3. Look around without starting work
+
+Run these from inside the checkout. None initializes a research ledger or starts work; usage logging follows the notice above.
 
 ```powershell
 python -B scripts/rds_cli.py --version
@@ -139,14 +149,6 @@ Expected output, truncated here for length. The real output is one JSON object o
 
 `project_root` is `null` because nothing was found, and `execution_started` is `false`.
 
-### 3.1 Read-only, but not side-effect free
-
-**Read this before you use the three commands above to check whether RDS is switched on.**
-
-Each of `--version`, `status` and `project discover` only reads the ledger — the project's durable record of decisions, runs and remaining budget — and does not create a project, but it leaves one invocation count in the usage database. Therefore **you cannot currently use these commands to verify "RDS is off"** — this version has no side-effect-free self-check command. To confirm by hand, inspect whether `.rds/` exists and whether the usage database contains entries.
-
-The usage database lives at `%LOCALAPPDATA%\ResearchDirectionSelector\cli-usage.sqlite3` on Windows, and at `~/.local/state/ResearchDirectionSelector/cli-usage.sqlite3` elsewhere, unless the `RDS_USAGE_DB` environment variable redirects it. `python -B scripts/rds_cli.py usage` prints the recorded daily counts, and that call is counted too, so expect the counters to be non-zero after you have run the commands in this section.
-
 ## 4. Run your first real command
 
 Pick a directory that is not the checkout, and that you do not mind having RDS look at. Create it if it does not exist:
@@ -175,7 +177,7 @@ Expected output is the same JSON object as in the previous section, with `"reque
   "search_scope": "REQUESTED_ROOT_AND_ANCESTORS",
 ```
 
-Two things about that output are the point of this step. First, RDS is **not enabled by default**: nothing is switched on for you, and no optional capability is enabled automatically. Second, discovery **does not create a ledger**: after the command your directory is still empty, and no `.rds/` directory has appeared anywhere. Check that yourself with `Get-ChildItem -Force` in PowerShell or `ls -a` in bash.
+Two things about that output are the point of this step. First, RDS is **not enabled by default**: nothing is switched on for you, and no optional capability is enabled automatically. Second, discovery **does not initialize a research ledger**. If your directory was empty and usage logging succeeds outside it, it remains empty. If logging falls back to `<requested root>/.rds/usage/cli-usage.sqlite3`, `.rds/` can appear with CLI usage records, without initializing a research ledger or starting work. Inspect the requested directory with `Get-ChildItem -Force` in PowerShell or `ls -a` in bash; `.rds/` alone is not proof of project initialization.
 
 This step is observation, not authorization. It told you what exists; it did not start any work. Creating a project is a second, deliberate step you have not been asked to take.
 
@@ -353,7 +355,7 @@ If a job fails on a test you never touched, say so in the pull request rather th
 
 These eight appear in the commands and output above. Each is one sentence here; [terminology.md](terminology.md) has the full list.
 
-- **project** — a directory RDS has been told to keep records for, identified by a `.rds/` directory inside it, created deliberately and never automatically.
+- **project** — a directory RDS has been explicitly told to keep research records for in a ledger under `.rds/`; a `.rds/usage/` directory alone is only CLI logging, not project initialization.
 - **ledger** — the durable record of a project's goal, decisions, runs and remaining budget, which is what `project discover` looks for and what `status` reports on.
 - **budget** — the resource allowance a project declared before work started, which executions are checked against so spending cannot quietly exceed it.
 - **receipt** — the engine-produced record of one execution: what was bound, what ran, what status it reported, and which files it wrote.

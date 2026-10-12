@@ -80,9 +80,19 @@ git clone https://github.com/kongtou20070406/research-direction-selector.git
 
 在 bash 中同样的写法是 `export HTTPS_PROXY=http://127.0.0.1:7890`。把端口换成你自己代理的端口。
 
-## 3. 零风险观察
+### 2.4 首次运行 RDS CLI 前
 
-在 checkout 里运行以下命令。它们是只读视图：都不会建立项目，也不会启动任何工作。
+**先读这一段，再运行第 3 节的命令。** CLI 的 usage 日志与研究账本初始化是两回事；研究账本才是项目对决定、运行与剩余预算的持久记录。`project discover` 不初始化研究账本，也不启动工作，但这次 CLI 调用会记录到 usage 库。
+
+包含[零写入观察改动（#315）](https://github.com/kongtou20070406/research-direction-selector/pull/315)的 checkout 中，`--version`、`--help` 和 `status` 不写 usage 记录、不创建目录或数据库；尚未包含该改动的旧 checkout 也会统计这些调用。**两种情况下，`project discover` 都仍会记录 usage。**
+
+Windows 上 usage 库默认位于 `%LOCALAPPDATA%\ResearchDirectionSelector\cli-usage.sqlite3`；未设置 `LOCALAPPDATA` 时，默认位于 `~/.local/state/ResearchDirectionSelector/cli-usage.sqlite3`。`RDS_USAGE_DB` 可以把日志重定向到你指定的路径。如果默认位置不可写且未设置 `RDS_USAGE_DB`，日志会回退到 `<requested root>/.rds/usage/cli-usage.sqlite3`，因此即使只是发现项目，也可能创建 `.rds/`。如果希望日志不写入被查询的目录，先把 `RDS_USAGE_DB` 设为该目录之外一个已知可写的路径，再运行 CLI。
+
+usage 计数或单独的 `.rds/usage/` 目录都不代表研究项目已初始化。如果要检查运行前的文件系统或 usage 状态，请在运行 CLI 前检查。`python -B scripts/rds_cli.py usage` 会打印按天记录的调用数，而这次调用本身也会被计数。
+
+## 3. 观察，不启动工作
+
+在 checkout 里运行以下命令。它们都不初始化研究账本、不启动工作；usage 日志的写入行为见上方提示。
 
 ```powershell
 python -B scripts/rds_cli.py --version
@@ -139,14 +149,6 @@ python -B scripts/rds_cli.py project discover
 
 `project_root` 是 `null`，因为什么都没找到；`execution_started` 是 `false`。
 
-### 3.1 只读，但不是无副作用
-
-**在你用上面三条命令检查「RDS 是不是开着」之前，先读这一段。**
-
-`--version`、`status`、`project discover` 都只读账本——也就是项目对决定、运行与剩余预算的持久记录——不会建立项目，但它会在 usage 库里留一条调用计数。因此**当前你无法用这些命令验证「RDS 是不是关着的」**——本版本还没有无副作用的自查命令。要人工确认，只能直接检查 `.rds/` 是否存在、以及 usage 库里有没有条目。
-
-usage 库在 Windows 上位于 `%LOCALAPPDATA%\ResearchDirectionSelector\cli-usage.sqlite3`，在其他系统上位于 `~/.local/state/ResearchDirectionSelector/cli-usage.sqlite3`，除非被 `RDS_USAGE_DB` 环境变量重定向。`python -B scripts/rds_cli.py usage` 会打印按天记录的调用数，而这一次调用同样会被计数，所以跑完本节命令后计数不为零是正常的。
-
 ## 4. 第一条真命令
 
 挑一个不是 checkout、并且你不介意 RDS 去看一眼的目录。不存在就创建它：
@@ -175,7 +177,7 @@ python -B scripts/rds_cli.py --root ~/rds-first-look project discover
   "search_scope": "REQUESTED_ROOT_AND_ANCESTORS",
 ```
 
-这段输出里有两件事正是这一步的重点。第一，RDS **默认不启用**：没有任何东西替你打开，也没有任何可选能力被自动启用。第二，发现过程**不自动建账**：命令跑完后你的目录仍然是空的，也没有任何地方冒出一个 `.rds/` 目录。自己确认一下：PowerShell 用 `Get-ChildItem -Force`，bash 用 `ls -a`。
+这段输出里有两件事正是这一步的重点。第一，RDS **默认不启用**：没有任何东西替你打开，也没有任何可选能力被自动启用。第二，发现过程**不初始化研究账本**。如果目录原本为空，且 usage 日志成功写在该目录之外，它会保持为空。如果日志回退到 `<requested root>/.rds/usage/cli-usage.sqlite3`，就可能出现包含 CLI usage 记录的 `.rds/`，但仍未初始化研究账本，也未启动工作。检查请求查询的目录：PowerShell 用 `Get-ChildItem -Force`，bash 用 `ls -a`；不能仅凭 `.rds/` 存在就认定项目已初始化。
 
 这一步是观察，不是授权。它告诉你现在有什么，没有启动任何工作。建立项目是你还没有被要求做的、第二个需要显式决定的步骤。
 
@@ -353,7 +355,7 @@ CI 通过意味着程序检查通过了。它不意味着你的改动在科学�
 
 下面八个词会出现在前面的命令与输出里。每个只给一句话；全量列表见 [terminology.zh-CN.md](terminology.zh-CN.md)。
 
-- **项目（project）** —— 一个被 RDS 记录了研究档案的目录，由其中的 `.rds/` 目录标识；它是显式建立的，从不自动创建。
+- **项目（project）** —— 一个经显式决定、由 RDS 在 `.rds/` 下的账本中记录研究档案的目录；单独的 `.rds/usage/` 只是 CLI 日志，不代表项目初始化。
 - **账本（ledger）** —— 项目目标、决定、运行与剩余预算的持久记录，也就是 `project discover` 要找、`status` 要报告的那个东西。
 - **预算（budget）** —— 项目在开工前声明的资源额度，执行要对照它检查，以免开销悄悄超支。
 - **收据（receipt）** —— 程序为一次执行生成的记录：绑定了什么、跑了什么、报告了什么状态、写了哪些文件。
