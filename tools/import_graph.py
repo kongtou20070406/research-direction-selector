@@ -61,6 +61,15 @@ def import_base(node, package):
     return '.'.join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
 
 
+def local_name(name, modules):
+    """The inventory is rooted below scripts/, unless scripts is a local package."""
+    if name.startswith('scripts.') and 'scripts' not in modules:
+        parts = name.removeprefix('scripts.').split('.')
+        if any('.'.join(parts[:length]) in modules for length in range(1, len(parts) + 1)):
+            return '.'.join(parts)
+    return name
+
+
 def lexical_resolver(tree, parents, package):
     comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
     scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda) + comprehensions
@@ -245,7 +254,7 @@ def named_exports(trees, modules):
                 target = base + '.' + alias.name if isinstance(node, ast.ImportFrom) else (
                     alias.name if alias.asname else alias.name.split('.')[0])
                 bound = alias.asname or (alias.name if isinstance(node, ast.ImportFrom) else alias.name.split('.')[0])
-                exports.setdefault(name + '.' + bound, set()).add(target)
+                exports.setdefault(name + '.' + bound, set()).add(local_name(target, modules))
     return exports
 
 
@@ -297,6 +306,7 @@ def scan(name, tree, modules, package, hook_routes, exports):
     annotations = non_executed_annotations(tree, parents)
     resolve = lexical_resolver(tree, parents, package)
     edges, unresolved, references = [], [], []
+    emitted = {}
 
     def site(node):
         scopes, current = [], node
@@ -307,10 +317,25 @@ def scan(name, tree, modules, package, hook_routes, exports):
         return {"source": name, "line": node.lineno, "scope": ".".join(reversed(scopes)),
                 "expression": ast.unparse(node)}
 
+    def record(node, target, kind):
+        kinds = emitted.setdefault((node, target), set())
+        if kind not in kinds:
+            edges.append({**site(node), 'target': target, 'kind': kind})
+            kinds.add(kind)
+
     def emit(node, target, kind):
+        original = target
+        target = local_name(target, modules)
+        parts = target.split('.')
+        for length in range(1, len(parts)):
+            prefix = '.'.join(parts[:length])
+            if (prefix != name and prefix in modules
+                    and modules[prefix]['path'].endswith('/__init__.py')
+                    and (node, prefix) not in emitted):
+                record(node, prefix, kind)
         if target in modules:
-            edges.append({**site(node), "target": target, "kind": kind})
-        elif target.split(".")[0] in modules:
+            record(node, target, kind)
+        elif target.split(".")[0] in modules or (original.startswith('scripts.') and 'scripts' not in modules):
             unresolved.append({**site(node), "reason": "local dotted target not found", "target": target})
 
     for node in ast.walk(tree):
@@ -326,14 +351,17 @@ def scan(name, tree, modules, package, hook_routes, exports):
                 emit(node, base, "static")
             for alias in node.names:
                 member = base + "." + alias.name
-                if member in modules:
+                if (local_name(member, modules) in modules
+                        or (base == 'scripts' and 'scripts' not in modules and alias.name != '*')):
                     emit(node, member, "static")
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in modules:
-            references.append({**site(node), "target": node.value})
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and local_name(node.value, modules) in modules):
+            references.append({**site(node), "target": local_name(node.value, modules)})
         elif isinstance(node, ast.Call):
             if node in annotations:
                 continue
-            callees = qualified(node.func, lambda symbol: resolve(node, symbol))
+            callees = {local_name(callee, modules) for callee in
+                       qualified(node.func, lambda symbol: resolve(node, symbol))}
             proof_rules = {"rds_verify_registry.ProofRule", "!module_class.ProofRule"}
             if name == "rds_verify" and callees & proof_rules and len(callees) > 1:
                 unresolved.append({**site(node), "reason": "ambiguous plugin binding"})
@@ -387,7 +415,7 @@ def scan(name, tree, modules, package, hook_routes, exports):
                         ):
                             for member in sorted(set(members)):
                                 target = arg.value + '.' + member
-                                if target in modules:
+                                if local_name(target, modules) in modules:
                                     emit(node, target, 'dynamic_fromlist_candidate')
                         else:
                             unresolved.append({**site(node), 'reason': 'runtime import fromlist'})
