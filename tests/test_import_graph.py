@@ -57,6 +57,72 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(callback[0]["target"], "rds_owned_advisor")
         self.assertTrue(any(u["reason"] == "runtime provider selection" for u in report["unresolved"]))
 
+    def test_module_loader_uses_preceding_import_not_later_rebinding(self):
+        for source in (
+            "from importlib import import_module as load\nload('rds_quick')\nload = None",
+            "import importlib as load\nload.import_module('rds_quick')\nload = None",
+            "from importlib import import_module as load\nfor item in items:\n load('rds_quick')\nload = None",
+        ):
+            with self.subTest(source=source):
+                report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_module_loader_deferred_or_loop_rebinding_stays_unknown(self):
+        for body in (
+            "def run():\n load('rds_quick')\nload = None",
+            "for item in items:\n load('rds_quick')\n load = None",
+            "while condition:\n load('rds_quick')\n load = None",
+        ):
+            with self.subTest(body=body):
+                source = "from importlib import import_module as load\n" + body
+                report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']], ['ambiguous loader binding'])
+
+    def test_shadowed_registry_does_not_emit_module_table_candidates(self):
+        for body in (
+            "def run(name):\n modules = {'x': 'external'}\n return load(modules[name])",
+            "def run(modules, name):\n return load(modules[name])",
+            "class C:\n modules = {'x': 'external'}\n value = load(modules[name])",
+            "def run(name):\n return load(modules[name])\nmodules = other",
+            "modules = other\nload(modules[name])",
+        ):
+            with self.subTest(body=body):
+                source = "from importlib import import_module as load\nmodules = {'x': 'rds_quick'}\n" + body
+                report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['candidates'] for u in report['unresolved']], [[]])
+
+    def test_unshadowed_registry_still_emits_candidates(self):
+        for body in ("load(modules[name])", "def run(name):\n return load(modules[name])",
+                     "class C:\n value = load(modules[name])"):
+            with self.subTest(body=body):
+                source = "from importlib import import_module as load\nmodules = {'x': 'rds_quick'}\n" + body
+                report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                self.assertEqual([(e['target'], e['kind']) for e in report['edges']],
+                                 [('rds_quick', 'dynamic_registry_candidate')])
+                self.assertEqual(report['unresolved'][0]['candidates'], ['rds_quick'])
+
+    def test_registry_uses_assignment_identity_not_last_same_spelled_table(self):
+        root = self.fixture({'rds_project.py':
+            "from importlib import import_module as load\nmodules = {'x': 'rds_quick'}\n"
+            "load(modules[name])\nmodules = {'x': 'rds_owned_advisor'}\nload(modules[name])",
+            'rds_quick.py': '', 'rds_owned_advisor.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual([e['target'] for e in report['edges']], ['rds_quick', 'rds_owned_advisor'])
+        self.assertEqual([u['candidates'] for u in report['unresolved']],
+                         [['rds_quick'], ['rds_owned_advisor']])
+
+    def test_deferred_registry_multiple_bindings_remain_unknown(self):
+        root = self.fixture({'rds_project.py':
+            "from importlib import import_module as load\nmodules = {'x': 'rds_quick'}\n"
+            "def run(name):\n return load(modules[name])\nmodules = {'x': 'external'}",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(report['unresolved'][0]['candidates'], [])
+
     def test_aliases_in_unrelated_scopes_do_not_leak(self):
         sources = [
             "from importlib import import_module as load\nload('rds_quick')\ndef f():\n from json import loads as load",

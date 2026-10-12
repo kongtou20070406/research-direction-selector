@@ -46,11 +46,16 @@ def qualified(node, resolve):
     return {ast.unparse(node)}
 
 
+def binding_key(node):
+    return f'!store.{node.lineno}:{node.col_offset}'
+
+
 def lexical_resolver(tree, parents):
     comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
     scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda) + comprehensions
     bindings = {node: {} for node in ast.walk(tree) if isinstance(node, scopes)}
-    class_sites = {node: [] for node in bindings if isinstance(node, ast.ClassDef)}
+    ordered_sites = {node: [] for node in bindings if isinstance(node, (ast.Module, ast.ClassDef))}
+    literal_tables = dict_targets(tree, binding_keys=True)
 
     def enclosing(node):
         child, parent = node, parents.get(node)
@@ -78,8 +83,8 @@ def lexical_resolver(tree, parents):
 
     def bind(scope, name, value, origin):
         bindings[scope].setdefault(name, set()).add(value)
-        if scope in class_sites:
-            class_sites[scope].append((origin, name, value))
+        if scope in ordered_sites:
+            ordered_sites[scope].append((origin, name, value))
 
     for node in ast.walk(tree):
         scope = enclosing(node)
@@ -95,7 +100,7 @@ def lexical_resolver(tree, parents):
             if isinstance(parents.get(node), ast.NamedExpr):
                 while isinstance(scope, comprehensions):
                     scope = enclosing(scope)
-            bind(scope, node.id, '!local', node)
+            bind(scope, node.id, binding_key(node), node)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             bind(scope, node.name, '!exception', node)
         elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
@@ -111,21 +116,22 @@ def lexical_resolver(tree, parents):
             for arg in args + [a for a in (node.args.vararg, node.args.kwarg) if a]:
                 bind(node, arg.arg, '!parameter', arg)
 
-    def preceding_class_import(scope, node, name):
+    def preceding_binding(scope, node, name):
         loops = {parent for parent in ancestors(node, scope)
                  if isinstance(parent, (ast.For, ast.AsyncFor, ast.While))}
         if any(bound in (name, '*') and loops.intersection(ancestors(origin, scope))
-               for origin, bound, _ in class_sites[scope]):
+               for origin, bound, _ in ordered_sites[scope]):
             return None  # A later textual store may have run in a previous iteration.
         value = None
         position = lambda item: (item.lineno, item.col_offset)
-        for origin, bound, target in sorted(class_sites[scope], key=lambda item: position(item[0])):
+        for origin, bound, target in sorted(ordered_sites[scope], key=lambda item: position(item[0])):
             if bound not in (name, '*') or position(origin) >= position(node):
                 continue
-            # Only an unconditional completed import establishes a definite binding.
-            # Intervening stores/deletes/conditional imports keep the old UNKNOWN path.
-            direct = parents[origin] is scope and isinstance(origin, (ast.Import, ast.ImportFrom))
-            completed = (origin.end_lineno, origin.end_col_offset) <= position(node)
+            # Only completed direct imports/literal tables establish definite bindings.
+            statement = parents[origin] if target in literal_tables else origin
+            direct = parents[statement] is scope and (
+                isinstance(statement, (ast.Import, ast.ImportFrom)) or target in literal_tables)
+            completed = (statement.end_lineno, statement.end_col_offset) <= position(node)
             value = target if direct and completed and bound == name else None
         return value
 
@@ -135,8 +141,9 @@ def lexical_resolver(tree, parents):
         while scope is not None:
             # A method does not close over its class namespace.
             if first or not isinstance(scope, ast.ClassDef):
-                if isinstance(scope, ast.ClassDef):
-                    imported = preceding_class_import(scope, node, name)
+                # Deferred function bodies must not resolve globals at definition time.
+                if isinstance(scope, ast.ClassDef) or (first and scope is tree):
+                    imported = preceding_binding(scope, node, name)
                     if imported is not None:
                         return {imported}
                 wildcards = bindings[scope].get('*', set())
@@ -157,7 +164,7 @@ def lexical_resolver(tree, parents):
     return at
 
 
-def dict_targets(tree):
+def dict_targets(tree, *, binding_keys=False):
     tables = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
@@ -168,7 +175,7 @@ def dict_targets(tree):
             if all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
-                        tables[target.id] = value
+                        tables[binding_key(target) if binding_keys else target.id] = value
     return tables
 
 
@@ -179,7 +186,7 @@ def call_argument(node, position, keyword):
 
 
 def scan(name, tree, modules, package, hook_routes):
-    tables = dict_targets(tree)
+    tables = dict_targets(tree, binding_keys=True)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     resolve = lexical_resolver(tree, parents)
     edges, unresolved, references = [], [], []
@@ -259,7 +266,11 @@ def scan(name, tree, modules, package, hook_routes):
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and not arg.value.startswith("."):
                     emit(node, arg.value, "dynamic_literal")
                 else:
-                    table = tables.get(arg.value.id, {}) if isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name) else {}
+                    table = {}
+                    if isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name):
+                        bound = resolve(node, arg.value.id)
+                        if len(bound) == 1:
+                            table = tables.get(next(iter(bound)), {})
                     for target in sorted(set(table.values())):
                         emit(node, target, "dynamic_registry_candidate")
                     unresolved.append({**site(node), "reason": "runtime import expression",
