@@ -158,6 +158,67 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual(report['edges'], [])
                 self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
 
+    def test_preceding_class_import_is_a_definite_loader(self):
+        for body in (
+            "from importlib import import_module as load; value = load('rds_quick')",
+            "import importlib as loader; value = loader.import_module('rds_quick')",
+            "from importlib import import_module as load\n value = load('rds_quick')\n load = None",
+            "if condition:\n  load = None\n from importlib import import_module as load\n value = load('rds_quick')",
+        ):
+            with self.subTest(body=body):
+                root = self.fixture({'rds_project.py': "class C:\n " + body,
+                                     'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_class_import_with_intervening_mutation_remains_unknown(self):
+        for mutation in ("if condition:\n  load = other", "del load", "load = other",
+                         "from helper import *"):
+            with self.subTest(mutation=mutation):
+                root = self.fixture({'rds_project.py':
+                    "class C:\n from importlib import import_module as load\n " + mutation +
+                    "\n value = load('rds_quick')", 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
+
+    def test_class_loop_rebinding_remains_unknown(self):
+        root = self.fixture({'rds_project.py':
+            "class C:\n from importlib import import_module as load\n"
+            " for item in items:\n  load('rds_quick')\n  load = other\n",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
+
+    def test_class_loader_does_not_leak_into_method_scope(self):
+        root = self.fixture({'rds_project.py':
+            "class C:\n from importlib import import_module as load\n"
+            " def method(self):\n  load('rds_quick')\n", 'rds_quick.py': ''})
+        self.assertEqual(graph.inventory(root)['edges'], [])
+
+    def test_literal_run_module_targets_are_edges(self):
+        for call in ("runpy.run_module('rds_quick')",
+                     "runpy.run_module(mod_name='rds_quick')",
+                     "run(mod_name='rds_quick')"):
+            with self.subTest(call=call):
+                root = self.fixture({'rds_project.py':
+                    "import runpy\nfrom runpy import run_module as run\n" + call,
+                    'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([(e['target'], e['kind']) for e in report['edges']],
+                                 [('rds_quick', 'dynamic_literal')])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_computed_run_module_and_file_targets_remain_unknown(self):
+        root = self.fixture({'rds_project.py':
+            "import runpy\nrunpy.run_module(name)\nrunpy.run_module(**options)\n"
+            "runpy.run_path('rds_quick.py')", 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(len(report['unresolved']), 3)
+
     def test_comprehension_targets_do_not_shadow_enclosing_loaders(self):
         expressions = ["[x for load in loaders]", "{x for load in loaders}",
                        "{x: x for load in loaders}", "(x for load in loaders)"]
