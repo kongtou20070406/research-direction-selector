@@ -123,11 +123,17 @@ def lexical_resolver(tree, parents):
         if any(bound in (name, '*') and loops.intersection(ancestors(origin, scope))
                for origin, bound, _ in ordered_sites[scope]):
             return None  # A later textual store may have run in a previous iteration.
-        value = '__import__' if scope is tree and name == '__import__' else None
+        value = ('__import__' if name == '__import__' else '!unbound.' + name) if scope is tree else None
+        call_ancestors = set(ancestors(node, scope)) | {node}
         position = lambda item: (item.lineno, item.col_offset)
         for origin, bound, target in sorted(ordered_sites[scope], key=lambda item: position(item[0])):
             if bound not in (name, '*') or position(origin) >= position(node):
                 continue
+            if isinstance(origin, ast.Name):
+                assignment = next((parent for parent in ancestors(origin, scope) if isinstance(
+                    parent, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))), None)
+                if assignment is not None and assignment.value in call_ancestors:
+                    continue  # Only this target's own RHS delays its store.
             # Only completed direct imports/literal tables establish definite bindings.
             statement = parents[origin] if target in literal_tables else origin
             direct = parents[statement] is scope and (
@@ -190,7 +196,55 @@ def call_argument(node, position, keyword):
     return next((item.value for item in node.keywords if item.arg == keyword), None)
 
 
-def scan(name, tree, modules, package, hook_routes):
+def named_exports(trees, modules):
+    """Possible module-level import aliases, not verified runtime exports."""
+    exports = {}
+    for name, tree in trees.items():
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            parent = parents.get(node)
+            while parent is not None and not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                parent = parents.get(parent)
+            if parent is not None:
+                continue
+            base = node.module or '' if isinstance(node, ast.ImportFrom) else ''
+            if isinstance(node, ast.ImportFrom) and node.level:
+                parts = modules[name]['package'].split('.') if modules[name]['package'] else []
+                if node.level > len(parts):
+                    continue
+                base = '.'.join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
+            for alias in node.names:
+                if alias.name == '*':
+                    continue
+                target = base + '.' + alias.name if isinstance(node, ast.ImportFrom) else (
+                    alias.name if alias.asname else alias.name.split('.')[0])
+                bound = alias.asname or (alias.name if isinstance(node, ast.ImportFrom) else alias.name.split('.')[0])
+                exports.setdefault(name + '.' + bound, set()).add(target)
+    return exports
+
+
+def possible_loader_reexport(name, exports):
+    pending, steps = [(name, frozenset())], 0
+    known = LOADERS | OPAQUE_LOADERS | {'rds_project_hooks.provider'}
+    while pending and steps < 64:
+        current, trail = pending.pop()
+        steps += 1
+        if current in known or current in trail:
+            return True
+        parts = current.split('.')
+        for length in range(len(parts), 0, -1):
+            prefix = '.'.join(parts[:length])
+            if prefix in exports:
+                suffix = current[len(prefix):]
+                pending.extend((target + suffix, trail | {current}) for target in sorted(exports[prefix])
+                               if target + suffix != current)
+                break
+    return bool(pending)  # Cycles or the bounded walk never certify a non-loader.
+
+
+def scan(name, tree, modules, package, hook_routes, exports):
     tables = dict_targets(tree, binding_keys=True)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     resolve = lexical_resolver(tree, parents)
@@ -237,13 +291,16 @@ def scan(name, tree, modules, package, hook_routes):
             if name == "rds_verify" and callees & proof_rules and len(callees) > 1:
                 unresolved.append({**site(node), "reason": "ambiguous plugin binding"})
                 continue
-            if name == "rds_verify" and "ProofRule" in callees:
+            if name == "rds_verify" and callees & {"ProofRule", "!unbound.ProofRule"}:
                 unresolved.append({**site(node), "reason": "unresolved plugin binding"})
                 continue
             known = LOADERS | OPAQUE_LOADERS | {"rds_project_hooks.provider"}
             if len(callees) > 1 and (callees & known or
                                     any(c == '!wildcard' or c.startswith('!wildcard.') for c in callees)):
                 unresolved.append({**site(node), "reason": "ambiguous loader binding"})
+                continue
+            if any(callee not in known and possible_loader_reexport(callee, exports) for callee in callees):
+                unresolved.append({**site(node), 'reason': 'local loader re-export'})
                 continue
             callee = next(iter(callees)) if len(callees) == 1 else ""
             if name == "rds_verify" and callee in proof_rules:
@@ -270,6 +327,23 @@ def scan(name, tree, modules, package, hook_routes):
                     continue
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and not arg.value.startswith("."):
                     emit(node, arg.value, "dynamic_literal")
+                    if callee.endswith('__import__'):
+                        expression = call_argument(node, 3, 'fromlist')
+                        try:
+                            members = ast.literal_eval(expression) if expression is not None else None
+                        except (ValueError, TypeError):
+                            members = False
+                        if members is None:
+                            pass
+                        elif isinstance(members, (tuple, list)) and all(
+                            isinstance(member, str) and member != '*' for member in members
+                        ):
+                            for member in sorted(set(members)):
+                                target = arg.value + '.' + member
+                                if target in modules:
+                                    emit(node, target, 'dynamic_fromlist_candidate')
+                        else:
+                            unresolved.append({**site(node), 'reason': 'runtime import fromlist'})
                 else:
                     table = {}
                     if isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name):
@@ -334,9 +408,10 @@ def inventory(root):
     if not modules:
         raise ValueError("no Python sources found under scripts/")
     hooks = dict_targets(trees["rds_project_hooks"]).get("_modules", {}) if "rds_project_hooks" in trees else {}
+    exports = named_exports(trees, modules)
     edges, unresolved, references = [], [], []
     for name, tree in trees.items():
-        e, u, r = scan(name, tree, modules, modules[name]["package"], hooks)
+        e, u, r = scan(name, tree, modules, modules[name]["package"], hooks, exports)
         edges.extend(e)
         unresolved.extend(u)
         references.extend(r)

@@ -68,6 +68,72 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
                 self.assertEqual(report['unresolved'], [])
 
+    def test_immediate_calls_do_not_use_future_module_imports(self):
+        for source in (
+            "load('rds_quick')\nfrom importlib import import_module as load",
+            "importlib.import_module('rds_quick')\nimport importlib",
+            "runpy.run_module('rds_quick')\nimport runpy",
+            "def f(value=load('rds_quick')):\n pass\nfrom importlib import import_module as load",
+        ):
+            with self.subTest(source=source):
+                report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_deferred_calls_may_use_later_module_imports(self):
+        root = self.fixture({'rds_project.py':
+            "def run():\n load('rds_quick')\nfrom importlib import import_module as load", 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+        self.assertEqual(report['unresolved'], [])
+
+    def test_named_loader_reexports_are_explicitly_unknown(self):
+        for helper, consumer in (
+            ('from importlib import import_module', "from helper import import_module\nimport_module('rds_quick')"),
+            ('from importlib import import_module as load', "from helper import load as f\nf('rds_quick')"),
+            ('import importlib as loader', "from helper import loader\nloader.import_module('rds_quick')"),
+            ('from runpy import run_module', "import helper\nhelper.run_module('rds_quick')"),
+        ):
+            with self.subTest(helper=helper, consumer=consumer):
+                root = self.fixture({'helper.py': helper, 'consumer.py': consumer, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertFalse([e for e in report['edges'] if e['target'] == 'rds_quick'])
+                self.assertEqual([(u['source'], u['reason']) for u in report['unresolved']],
+                                 [('consumer', 'local loader re-export')])
+
+    def test_relative_transitive_loader_reexport_is_unknown(self):
+        root = self.fixture({'pkg/__init__.py': '', 'pkg/leaf.py': 'from importlib import import_module as f',
+            'pkg/bridge.py': 'from .leaf import f as load',
+            'consumer.py': "from pkg.bridge import load\nload('rds_quick')", 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual([u['reason'] for u in report['unresolved']], ['local loader re-export'])
+
+    def test_reexported_loader_shadow_or_nonmodule_import_does_not_leak(self):
+        for helper, consumer in (
+            ('from importlib import import_module as load', "from helper import load\ndef run(load):\n load('rds_quick')"),
+            ('def setup():\n from importlib import import_module as load', "from helper import load\nload('rds_quick')"),
+            ('class C:\n from importlib import import_module as load', "from helper import load\nload('rds_quick')"),
+            ('from json import loads as load', "from helper import load\nload('rds_quick')"),
+        ):
+            with self.subTest(helper=helper, consumer=consumer):
+                root = self.fixture({'helper.py': helper, 'consumer.py': consumer, 'rds_quick.py': ''})
+                self.assertEqual(graph.inventory(root)['unresolved'], [])
+
+    def test_loader_reexport_cycle_stops_with_unknown(self):
+        root = self.fixture({'a.py': 'from b import load', 'b.py': 'from a import load',
+                             'consumer.py': "from a import load\nload('rds_quick')", 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual([u['reason'] for u in report['unresolved']], ['local loader re-export'])
+
+    def test_loader_reexport_walk_limit_is_unknown_not_a_nonloader(self):
+        exports = {f'm{i}.load': {f'm{i + 1}.load'} for i in range(80)}
+        self.assertTrue(graph.possible_loader_reexport('m0.load', exports))
+        self.assertFalse(graph.possible_loader_reexport('m80.load', exports))
+
+    def test_namespace_expanding_reexport_cycle_has_a_bounded_walk(self):
+        exports = {'a.load': {'b.load.extra'}, 'b.load': {'a.load'}}
+        self.assertTrue(graph.possible_loader_reexport('a.load', exports))
+
     def test_module_loader_deferred_or_loop_rebinding_stays_unknown(self):
         for body in (
             "def run():\n load('rds_quick')\nload = None",
@@ -106,6 +172,33 @@ class ImportGraphTests(unittest.TestCase):
         report = graph.inventory(root)
         self.assertEqual(report['edges'], [])
         self.assertEqual(report['unresolved'], [])
+
+    def test_assignment_rhs_uses_binding_before_target_store(self):
+        for statement in ("load = load('rds_quick')", "load: object = load('rds_quick')",
+                          "(load := load('rds_quick'))", "load, other = load('rds_quick')"):
+            for scope in ('', 'class C:\n '):
+                with self.subTest(statement=statement, scope=scope):
+                    indent = ' ' if scope else ''
+                    source = scope + "from importlib import import_module as load\n" + indent + statement
+                    report = graph.inventory(self.fixture({'rds_project.py': source, 'rds_quick.py': ''}))
+                    self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                    self.assertEqual(report['unresolved'], [])
+
+    def test_assignment_rhs_in_rebinding_loop_remains_unknown(self):
+        root = self.fixture({'rds_project.py':
+            "from importlib import import_module as load\nfor item in items:\n load = load('rds_quick')",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual([u['reason'] for u in report['unresolved']], ['ambiguous loader binding'])
+
+    def test_completed_nested_rhs_store_is_not_delayed_with_outer_assignment(self):
+        root = self.fixture({'rds_project.py':
+            "from importlib import import_module as load\nload = ((load := other), load('rds_quick'))",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual([u['reason'] for u in report['unresolved']], ['ambiguous loader binding'])
 
     def test_shadowed_registry_does_not_emit_module_table_candidates(self):
         for body in (
@@ -474,6 +567,38 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual(report['edges'], [])
                 self.assertEqual([u['reason'] for u in report['unresolved']],
                                  ['relative or unknown import level'])
+
+    def test_import_fromlist_retains_local_member_cycle_candidates(self):
+        for call in ("__import__('pkg', fromlist=['child'])",
+                     "__import__('pkg', globals(), locals(), ('child',))",
+                     "__import__(name='pkg', fromlist=['child', 'child', 'attribute'])"):
+            with self.subTest(call=call):
+                root = self.fixture({'consumer.py': call, 'pkg/__init__.py': '',
+                                     'pkg/child.py': 'import consumer'})
+                report = graph.inventory(root)
+                self.assertEqual([(e['target'], e['kind']) for e in report['edges']
+                                  if e['source'] == 'consumer'],
+                                 [('pkg', 'dynamic_literal'), ('pkg.child', 'dynamic_fromlist_candidate')])
+                self.assertEqual(report['cycles'], [['consumer', 'pkg.child']])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_computed_or_star_fromlist_keeps_base_edge_and_unknown(self):
+        for value in ("names", "['*']", "[name]", "[1]", "'child'"):
+            with self.subTest(value=value):
+                root = self.fixture({'consumer.py': "__import__('pkg', fromlist=" + value + ")",
+                                     'pkg/__init__.py': '', 'pkg/child.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([(e['source'], e['target']) for e in report['edges']], [('consumer', 'pkg')])
+                self.assertEqual([u['reason'] for u in report['unresolved']], ['runtime import fromlist'])
+
+    def test_empty_fromlist_does_not_invent_member_dependencies(self):
+        for value in ("[]", "()", "None"):
+            with self.subTest(value=value):
+                root = self.fixture({'consumer.py': "__import__('pkg', fromlist=" + value + ")",
+                                     'pkg/__init__.py': '', 'pkg/child.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['pkg'])
+                self.assertEqual(report['unresolved'], [])
 
     def test_relative_imports_and_package_members(self):
         root = self.fixture({"pkg/__init__.py": "from . import child", "pkg/child.py": "from .. import invalid",

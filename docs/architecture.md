@@ -323,6 +323,10 @@ are recorded separately and never converted into import edges.
   class-body shadowing conservatively retains outer loader alternatives.
   global/nonlocal mutation and arbitrary computed loaders need runtime analysis.
   Conditional edges may never run. Class bodies are not method closure scopes.
+- Immediate module calls do not borrow a loader's first import from later code.
+  Named loader re-exports through local module imports are explicitly UNKNOWN,
+  not definite edges. Alias walks are capped at 64 expansions; cycles and limit
+  exhaustion stay UNKNOWN. Arbitrary computed exports are not resolved.
 - Literal registry candidates require an unambiguous binding to that exact
   module assignment, not just a matching variable name. Local shadowing or
   ambiguous rebinding stays UNKNOWN; these candidates are not runtime values.
@@ -330,6 +334,8 @@ are recorded separately and never converted into import edges.
   in generated code, plugins or launched programs need separate inventories.
 - Relative static package imports are resolved against the source tree; dynamic
   relative imports and opaque file loaders stay unresolved.
+- Literal `__import__` fromlist members matching local modules are candidates;
+  computed lists and wildcard exports stay unresolved alongside the base edge.
 - Literal `runpy.run_module` names are dynamic edges; computed names and
   `runpy.run_path` file execution stay unresolved. No inspected code is executed.
 - A returned graph with unresolved sites is usable inventory, not a PASS for
