@@ -11,20 +11,21 @@ import sys
 GROUPS = {
     "L0": "bounded_io mutation",
     "L1": "project project_hooks campaign workspace costs checkpoints math method_revision "
+          "project_read_port contract_read artifacts owned_history source_documents probe "
+          "tool_applicability project_lifecycle "
           "steering tools tool_compare tool_workbench tool_application tool_calls owned_tools "
           "tms_store proof_cache rsi_confirmation postcommit_confirmation blind_runner "
           "verify verify_registry builtin_verifiers formal_kernel lean_verify scalar_verify "
           "matrix_verify dynamics_verify nn_verify tensor_verify scale_verify statistical_verify "
           "disk_cover_verify rational_voronoi_verify affine_toolchain theory_progression "
           "continuous_confirmation polynomial_confirmation domain_confirmation advancement guard",
-    "L2": "project_read_port contract_read artifacts owned_history hypergraph hypergraph_blockers "
-          "hypergraph_input hypergraph_archive bus_adapter accelerator trajectory context_compact "
-          "source_documents compress probe dynamics_probe discrimination tool_applicability",
+    "L2": "hypergraph hypergraph_blockers hypergraph_input bus_adapter accelerator trajectory "
+          "context_compact compress dynamics_probe discrimination",
     "L3": "advisor advisor_coverage advisor_search advisor_workset owned_advisor autonomy "
           "continuation experiments feasibility frontier frontier_proposals global_planning graph_ranker "
           "jump jump_search math_router meta methods operators resources result_tools rsi "
           "adversary search_allocation search_neighborhood structure theory_tools",
-    "L4": "cli quick project_worker autonomy_worker project_assembly project_lifecycle "
+    "L4": "cli quick project_worker autonomy_worker project_assembly hypergraph_archive "
           "broker_hook host_broker host_hook conversation_hook dashboard dialogue "
           "hypergraph_readable hypergraph_view obelisk session capabilities model_export "
           "outputs research_note usage wheel",
