@@ -1,4 +1,5 @@
 """Inventory fixtures must not execute imports or hide unresolved dependencies."""
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -95,6 +96,15 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(report['edges'], [])
         self.assertEqual([(u['scope'], u['reason']) for u in report['unresolved']],
                          [('g', 'ambiguous loader binding')])
+
+    def test_wildcard_reexported_loader_is_explicitly_unknown(self):
+        root = self.fixture({'helper.py': 'from importlib import import_module',
+                             'consumer.py': "from helper import *\nimport_module('rds_quick')",
+                             'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertFalse([e for e in report['edges'] if e['kind'] == 'dynamic_literal'])
+        self.assertEqual([(u['source'], u['reason']) for u in report['unresolved']],
+                         [('consumer', 'ambiguous loader binding')])
 
     def test_definition_expressions_use_outer_scope(self):
         definitions = [
@@ -193,6 +203,39 @@ class ImportGraphTests(unittest.TestCase):
                          [('rds_quick', 'declared_plugin_candidate')])
         self.assertEqual(report['unresolved'][0]['reason'], 'runtime plugin declaration')
 
+    def test_module_local_proof_rule_class_declarations_and_shadowing(self):
+        root = self.fixture({'rds_verify.py':
+            "from dataclasses import dataclass\n"
+            "from rds_verify_registry import get_verifier\n"
+            "@dataclass(frozen=True)\nclass ProofRule:\n"
+            " name: str\n kinds: tuple\n module: str\n"
+            " version: str = '1'\n support_files: tuple = ()\n"
+            "class RuleRegistry:\n def __init__(self, rules):\n  self.rules = rules\n"
+            "REGISTRY = RuleRegistry((ProofRule('x', ('k',), 'rds_quick'),\n"
+            " ProofRule(name='y', kinds=('j',), module='rds_quick')))\n"
+            "def f(ProofRule):\n ProofRule('x', ('k',), 'rds_quick')\n"
+            "def g():\n ProofRule('x', ('k',), 'rds_quick')\n ProofRule = other\n"
+            "def h():\n from other import ProofRule\n ProofRule('x', ('k',), 'rds_quick')\n"
+            "class Nested:\n class ProofRule:\n  pass\n"
+            " value = ProofRule('x', ('k',), 'rds_quick')\n",
+            'rds_verify_registry.py': '', 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        declarations = [e for e in report['edges'] if e['kind'] == 'declared_plugin_candidate']
+        self.assertEqual([(e['target'], e['scope']) for e in declarations],
+                         [('rds_quick', ''), ('rds_quick', '')])
+        self.assertFalse([u for u in report['unresolved'] if u['scope'] in ('f', 'g', 'h')])
+        self.assertEqual([(u['scope'], u['reason']) for u in report['unresolved']],
+                         [('Nested', 'ambiguous plugin binding')])
+
+    def test_module_local_proof_rule_rebinding_is_unknown(self):
+        root = self.fixture({'rds_verify.py':
+            "class ProofRule:\n pass\nProofRule = other\n"
+            "ProofRule('x', ('k',), 'rds_quick')", 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual([u['reason'] for u in report['unresolved']],
+                         ['ambiguous plugin binding'])
+
     def test_proof_rule_shadowing_does_not_declare_plugins(self):
         for definition in (
                 "def f(ProofRule):\n ProofRule('x', ('k',), 'rds_quick')",
@@ -244,6 +287,17 @@ class ImportGraphTests(unittest.TestCase):
         report = graph.inventory(root)
         self.assertEqual(len(report["unresolved"]), 3)
         self.assertEqual(len(report["edges"]), 1)
+
+    def test_unpacking_import_level_is_unknown(self):
+        for call in ("__import__('child', globals(), locals(), (), **{'level': 1})",
+                     "__import__('child', **options)",
+                     "__import__('child', level=0, **options)"):
+            with self.subTest(call=call):
+                root = self.fixture({'consumer.py': call, 'child.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']],
+                                 ['relative or unknown import level'])
 
     def test_relative_imports_and_package_members(self):
         root = self.fixture({"pkg/__init__.py": "from . import child", "pkg/child.py": "from .. import invalid",
@@ -301,6 +355,20 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(report["schema_version"], 1)
         self.assertEqual(len(report["source_sha256"]), 64)
         self.assertEqual(json.loads(json.dumps(report)), report)
+
+    def test_real_proof_rule_inventory_retains_every_declaration(self):
+        tree = ast.parse((ROOT / 'scripts/rds_verify.py').read_bytes())
+        registry = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == 'REGISTRY' for t in node.targets))
+        declarations = [node for node in ast.walk(registry) if isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name) and node.func.id == 'ProofRule']
+        expected = sorted((node.lineno, graph.call_argument(node, 2, 'module').value)
+                          for node in declarations)
+        self.assertEqual(len(expected), 18)
+        report = graph.inventory(ROOT)
+        actual = sorted((e['line'], e['target']) for e in report['edges']
+                        if e['source'] == 'rds_verify' and e['kind'] == 'declared_plugin_candidate')
+        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":

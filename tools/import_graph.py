@@ -100,7 +100,9 @@ def lexical_resolver(tree, parents):
         elif isinstance(node, ast.MatchMapping) and node.rest:
             bind(scope, node.rest, '!pattern')
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bind(scope, node.name, '!local')
+            # Keep module class constructors distinct from shadowing local names.
+            value = '!module_class.' + node.name if isinstance(node, ast.ClassDef) and scope is tree else '!local'
+            bind(scope, node.name, value)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
             for arg in args + [a for a in (node.args.vararg, node.args.kwarg) if a]:
@@ -193,19 +195,20 @@ def scan(name, tree, modules, package, hook_routes):
             references.append({**site(node), "target": node.value})
         elif isinstance(node, ast.Call):
             callees = qualified(node.func, lambda symbol: resolve(node, symbol))
-            proof_rule = "rds_verify_registry.ProofRule"
-            if name == "rds_verify" and proof_rule in callees and len(callees) > 1:
+            proof_rules = {"rds_verify_registry.ProofRule", "!module_class.ProofRule"}
+            if name == "rds_verify" and callees & proof_rules and len(callees) > 1:
                 unresolved.append({**site(node), "reason": "ambiguous plugin binding"})
                 continue
             if name == "rds_verify" and "ProofRule" in callees:
                 unresolved.append({**site(node), "reason": "unresolved plugin binding"})
                 continue
             known = LOADERS | OPAQUE_LOADERS | {"rds_project_hooks.provider"}
-            if len(callees) > 1 and callees & known:
+            if len(callees) > 1 and (callees & known or
+                                    any(c == '!wildcard' or c.startswith('!wildcard.') for c in callees)):
                 unresolved.append({**site(node), "reason": "ambiguous loader binding"})
                 continue
             callee = next(iter(callees)) if len(callees) == 1 else ""
-            if name == "rds_verify" and callee == proof_rule:
+            if name == "rds_verify" and callee in proof_rules:
                 module = call_argument(node, 2, "module")
                 if isinstance(module, ast.Constant) and isinstance(module.value, str):
                     emit(node, module.value, "declared_plugin_candidate")
@@ -222,7 +225,8 @@ def scan(name, tree, modules, package, hook_routes):
                 arg = call_argument(node, 0, "name")
                 level = next((k.value for k in node.keywords if k.arg == "level"),
                              node.args[4] if len(node.args) > 4 else ast.Constant(value=0))
-                if callee.endswith("__import__") and not (isinstance(level, ast.Constant) and type(level.value) is int and level.value == 0):
+                if callee.endswith("__import__") and (any(k.arg is None for k in node.keywords) or
+                        not (isinstance(level, ast.Constant) and type(level.value) is int and level.value == 0)):
                     unresolved.append({**site(node), "reason": "relative or unknown import level"})
                     continue
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and not arg.value.startswith("."):
