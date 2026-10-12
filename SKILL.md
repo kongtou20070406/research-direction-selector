@@ -103,9 +103,10 @@ ON applicable research request:
         FREEZE actual objective, permitted routes, result readers and budget; retain serious alternatives
             AND their distinguishing observations in advisor_policy; a prose plan is not a recipe
         FULL owns collection/selection; optional autonomy, confirmation and tools need their own declarations
-        PREVIEW Advisor activation and apply only reviewed policy at the expected snapshot
-        KEEP genesis contract, old runs/receipts/checkpoints and cumulative budget in the same ledger
-        NEVER replace the frozen contract or infer extra execution authority from activation
+        IF reusing an existing QUICK project that now needs owned Advisor:
+            PREVIEW Advisor activation and apply only reviewed policy at the expected snapshot
+            KEEP genesis contract, old runs/receipts/checkpoints and cumulative budget in the same ledger
+            NEVER replace the frozen contract or infer extra execution authority from activation
     BEFORE any direction selection in FULL or QUICK:
         REQUIRE analysis_coverage.full FOR all declared active direction graphs and current saved TMS
         READ coverage hashes/counts/reasons; incomplete computation blocks selection
