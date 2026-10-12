@@ -24,7 +24,7 @@ ROOT_OPTIONS = {"--root", "--workspace", "--project-root", "-w", "-d", "--dir"}
 # OMP has no verified equivalent and stays silent. Until phase R implements the
 # session switch there is no enable path in this checkout, so the truthful
 # session state is "not enabled".
-OPERATOR_STATUS = "RDS | session not enabled (default off); no RDS context injected"
+OPERATOR_STATUS = "RDS | session not enabled (default off); hook context not injected"
 
 
 def literal_argv(command):

@@ -2092,8 +2092,6 @@ def observation_argv(argv):
         tokens = tokens[2:]
     if tokens in (["--version"], ["--help"], ["-h"]):
         return True
-    if tokens == ["project", "discover"]:
-        return True
     return tokens[:1] == ["status"] and set(tokens[1:]) <= STATUS_READ_FLAGS
 
 

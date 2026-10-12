@@ -337,7 +337,7 @@ class SandboxUsageTests(unittest.TestCase):
         # observation is real proof that nothing tried to read or write it.
         self.default.mkdir(parents=True)
         observations = (['--version'], ['--help'], ['status'], ['status', '--brief'],
-                        ['status', '--digest'], ['project', 'discover'])
+                        ['status', '--digest'])
         for argv in observations:
             with self.subTest(argv=argv):
                 result = self.cli(*argv)

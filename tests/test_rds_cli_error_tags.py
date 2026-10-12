@@ -29,12 +29,13 @@ class CLIErrorTagTests(unittest.TestCase):
         # and no writing command can be classified as observation by accident.
         observation = (['--version'], ['--help'], ['-h'], ['--root', '.', '--version'],
                        ['status'], ['status', '--brief'], ['status', '--digest'],
-                       ['--root', '.', 'status'], ['stat'], ['project', 'discover'])
+                       ['--root', '.', 'status'], ['stat'])
         for argv in observation:
             with self.subTest(argv=argv):
                 self.assertTrue(rds_cli.observation_argv(argv), argv)
         logged = (['--root'], ['status', '--json'], ['status', '--days', '2'],
                   ['usage', '--days', '2'], ['formal', 'rules'], ['advise', '--help'],
+                  ['project', 'discover'],
                   [], ['--version', '--help'], ['status', '--brief', '--json'])
         for argv in logged:
             with self.subTest(argv=argv):
