@@ -143,11 +143,14 @@ def lexical_resolver(tree, parents, package):
     def preceding_binding(scope, node, name):
         call_ancestors = set(ancestors(node, scope)) | {node}
         loops = {parent for parent in ancestors(node, scope)
-                 if isinstance(parent, (ast.For, ast.AsyncFor, ast.While))
-                 and not (isinstance(parent, (ast.For, ast.AsyncFor)) and parent.iter in call_ancestors)}
+                 if isinstance(parent, (ast.For, ast.AsyncFor, ast.While) + comprehensions)
+                 and not (isinstance(parent, (ast.For, ast.AsyncFor)) and parent.iter in call_ancestors)
+                 and not (isinstance(parent, comprehensions)
+                          and parent.generators[0].iter in call_ancestors)}
         if any(bound in (name, '*') and loops.intersection(ancestors(origin, scope))
                for origin, bound, _ in ordered_sites[scope]):
-            return None  # A later textual store may have run in a previous iteration.
+            # Filters precede results; later stores can also run in an earlier iteration.
+            return None
         value = ('__import__' if name == '__import__' else '!unbound.' + name) if scope is tree else None
         position = lambda item: (item.lineno, item.col_offset)
         for origin, bound, target in sorted(ordered_sites[scope], key=lambda item: position(item[0])):
@@ -158,6 +161,10 @@ def lexical_resolver(tree, parents, package):
             if isinstance(origin, ast.ExceptHandler) and origin.type in call_ancestors:
                 continue  # Matching the exception type precedes binding its alias.
             if isinstance(origin, ast.Name):
+                if any(isinstance(parent, comprehensions)
+                       and parent.generators[0].iter in call_ancestors
+                       for parent in ancestors(origin, scope)):
+                    continue  # The first iterable precedes comprehension-body stores.
                 loop = next((parent for parent in ancestors(origin, scope)
                              if isinstance(parent, (ast.For, ast.AsyncFor))), None)
                 if loop is not None and loop.iter in call_ancestors:
