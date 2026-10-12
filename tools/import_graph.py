@@ -111,12 +111,19 @@ def lexical_resolver(tree, parents):
         first, candidates = True, set()
         while scope is not None:
             # A method does not close over its class namespace.
-            if (first or not isinstance(scope, ast.ClassDef)) and name in bindings[scope]:
-                candidates.update(bindings[scope][name])
-                # Class assignments are ordered, not function-wide lexical locals.
-                # Keep outer alternatives instead of silently losing possible imports.
-                if not isinstance(scope, ast.ClassDef):
-                    return candidates
+            if first or not isinstance(scope, ast.ClassDef):
+                wildcards = bindings[scope].get('*', set())
+                if wildcards:
+                    # Exports and competing star imports are not statically known.
+                    candidates.update(value[:-1] + name if value.endswith('.*') else value
+                                      for value in wildcards)
+                    candidates.add('!wildcard')
+                if name in bindings[scope]:
+                    candidates.update(bindings[scope][name])
+                    # Class assignments are ordered, not function-wide lexical locals.
+                    # Keep outer alternatives instead of silently losing possible imports.
+                    if not isinstance(scope, ast.ClassDef):
+                        return candidates
             first = False
             scope = enclosing(scope)
         return candidates | {name}
@@ -186,12 +193,19 @@ def scan(name, tree, modules, package, hook_routes):
             references.append({**site(node), "target": node.value})
         elif isinstance(node, ast.Call):
             callees = qualified(node.func, lambda symbol: resolve(node, symbol))
+            proof_rule = "rds_verify_registry.ProofRule"
+            if name == "rds_verify" and proof_rule in callees and len(callees) > 1:
+                unresolved.append({**site(node), "reason": "ambiguous plugin binding"})
+                continue
+            if name == "rds_verify" and "ProofRule" in callees:
+                unresolved.append({**site(node), "reason": "unresolved plugin binding"})
+                continue
             known = LOADERS | OPAQUE_LOADERS | {"rds_project_hooks.provider"}
             if len(callees) > 1 and callees & known:
                 unresolved.append({**site(node), "reason": "ambiguous loader binding"})
                 continue
             callee = next(iter(callees)) if len(callees) == 1 else ""
-            if name == "rds_verify" and isinstance(node.func, ast.Name) and node.func.id == "ProofRule":
+            if name == "rds_verify" and callee == proof_rule:
                 module = call_argument(node, 2, "module")
                 if isinstance(module, ast.Constant) and isinstance(module.value, str):
                     emit(node, module.value, "declared_plugin_candidate")

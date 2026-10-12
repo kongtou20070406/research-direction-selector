@@ -74,6 +74,28 @@ class ImportGraphTests(unittest.TestCase):
         (root / 'scripts/rds_project.py').write_text("from importlib import import_module as load\nload=other\nload('rds_quick')", encoding='utf-8')
         self.assertEqual(graph.inventory(root)["unresolved"][0]["reason"], "ambiguous loader binding")
 
+    def test_wildcard_import_module_remains_unresolved(self):
+        for imports in ("from importlib import *\n",
+                        "from importlib import *\nfrom other import *\n",
+                        "from importlib import import_module\nfrom other import *\n"):
+            with self.subTest(imports=imports):
+                root = self.fixture({'rds_project.py': imports + "import_module('rds_quick')",
+                                     'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']],
+                                 ['ambiguous loader binding'])
+
+    def test_wildcard_loader_respects_function_shadowing(self):
+        root = self.fixture({'rds_project.py':
+            "from importlib import *\ndef f(import_module):\n import_module('rds_quick')\n"
+            "def g():\n import_module('rds_quick')",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual([(u['scope'], u['reason']) for u in report['unresolved']],
+                         [('g', 'ambiguous loader binding')])
+
     def test_definition_expressions_use_outer_scope(self):
         definitions = [
             "def f(x=load('rds_quick')):\n load = None",
@@ -164,12 +186,57 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual([e['target'] for e in callbacks], ['rds_owned_advisor'])
 
     def test_keyword_proof_rule_records_target_or_unknown(self):
-        root = self.fixture({"rds_verify.py": "ProofRule(name='x', kinds=('k',), module='rds_quick')\nProofRule(name='x', kinds=('k',), module=unknown)",
+        root = self.fixture({"rds_verify.py": "from rds_verify_registry import ProofRule\nProofRule(name='x', kinds=('k',), module='rds_quick')\nProofRule(name='x', kinds=('k',), module=unknown)",
                              "rds_quick.py": ""})
         report = graph.inventory(root)
         self.assertEqual([(e['target'], e['kind']) for e in report['edges']],
                          [('rds_quick', 'declared_plugin_candidate')])
         self.assertEqual(report['unresolved'][0]['reason'], 'runtime plugin declaration')
+
+    def test_proof_rule_shadowing_does_not_declare_plugins(self):
+        for definition in (
+                "def f(ProofRule):\n ProofRule('x', ('k',), 'rds_quick')",
+                "def f():\n ProofRule('x', ('k',), 'rds_quick')\n ProofRule = other",
+                "def f():\n from other import ProofRule\n ProofRule('x', ('k',), 'rds_quick')"):
+            with self.subTest(definition=definition):
+                root = self.fixture({'rds_verify.py':
+                    "from rds_verify_registry import ProofRule\n" + definition,
+                    'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_proof_rule_alias_and_qualified_bindings_declare_plugins(self):
+        for source in (
+                "from rds_verify_registry import ProofRule as Rule\nRule('x', ('k',), 'rds_quick')",
+                "import rds_verify_registry as registry\nregistry.ProofRule('x', ('k',), 'rds_quick')",
+                "from rds_verify_registry import ProofRule\ndef f(ProofRule=ProofRule('x', ('k',), 'rds_quick')):\n pass"):
+            with self.subTest(source=source):
+                root = self.fixture({'rds_verify.py': source, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([(e['target'], e['kind']) for e in report['edges']],
+                                 [('rds_quick', 'declared_plugin_candidate')])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_ambiguous_proof_rule_binding_remains_unresolved(self):
+        for source in (
+                "from rds_verify_registry import ProofRule\nProofRule = other\nProofRule('x', ('k',), 'rds_quick')",
+                "from rds_verify_registry import *\nProofRule('x', ('k',), 'rds_quick')",
+                "from rds_verify_registry import ProofRule\nclass C:\n ProofRule = other\n value = ProofRule('x', ('k',), 'rds_quick')"):
+            with self.subTest(source=source):
+                root = self.fixture({'rds_verify.py': source, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']],
+                                 ['ambiguous plugin binding'])
+
+    def test_unbound_proof_rule_is_unknown_not_declared(self):
+        root = self.fixture({'rds_verify.py': "ProofRule('x', ('k',), 'rds_quick')",
+                             'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual([u['reason'] for u in report['unresolved']],
+                         ['unresolved plugin binding'])
 
     def test_import_level_is_not_mistaken_for_absolute_import(self):
         root = self.fixture({"rds_project.py": "__import__('rds_quick', level=1)\n__import__('rds_quick', globals(), locals(), [], 1)\n__import__('rds_quick', level=unknown)\n__import__('rds_quick', level=0)",
@@ -195,7 +262,7 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(len(report["module_string_references"]), 1)
 
     def test_declared_builtin_targets_do_not_hide_dynamic_uncertainty(self):
-        root = self.fixture({"rds_verify.py": "import importlib\nProofRule('rule', ('kind',), 'rds_lean_verify')\nimportlib.import_module(rule.module)",
+        root = self.fixture({"rds_verify.py": "import importlib\nfrom rds_verify_registry import ProofRule\nProofRule('rule', ('kind',), 'rds_lean_verify')\nimportlib.import_module(rule.module)",
                              "rds_lean_verify.py": ""})
         report = graph.inventory(root)
         self.assertEqual(report["edges"][0]["kind"], "declared_plugin_candidate")
