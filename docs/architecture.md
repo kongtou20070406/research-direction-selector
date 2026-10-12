@@ -204,6 +204,11 @@ are recorded separately and never converted into import edges.
   function bodies keep deferred lookup. Exception matching precedes its alias.
   Definition defaults/bases and the first loop iterable precede their own name
   bindings; repeated loop-body mutations remain conservative UNKNOWN.
+  Comprehension filters run before their result expressions, independent of
+  textual position. A loader name mutated within that comprehension remains
+  UNKNOWN (including conditional mutations and repeated iterations); its first
+  iterable still uses the preceding outer binding. Unrelated mutations do not
+  invalidate a known loader. This is not a proof of which branch ran.
   Named loader re-exports through local module imports are explicitly UNKNOWN,
   not definite edges. Alias walks are capped at 64 expansions; cycles and limit
   exhaustion stay UNKNOWN. Relative aliases use the inspected package path.
