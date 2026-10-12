@@ -793,6 +793,80 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(len(report["unresolved"]), 1)
         self.assertTrue(report["unclassified_edges"])
 
+    def test_source_root_qualified_targets_use_inventory_names(self):
+        for code in ('import scripts.rds_quick', 'from scripts.rds_quick import choice',
+                     'from scripts import rds_quick', "__import__('scripts.rds_quick')",
+                     "__import__('scripts', fromlist=['rds_quick'])",
+                     "from importlib import import_module\nimport_module('scripts.rds_quick')"):
+            with self.subTest(code=code):
+                report = graph.inventory(self.fixture({'consumer.py': code, 'rds_quick.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_missing_root_module_is_not_promoted_to_stdlib_loader(self):
+        report = graph.inventory(self.fixture({'consumer.py':
+            "import scripts.importlib\nscripts.importlib.import_module('rds_quick')", 'rds_quick.py': ''}))
+        self.assertEqual(report['edges'], [])
+        self.assertEqual([u['reason'] for u in report['unresolved']], ['local dotted target not found'])
+
+    def test_missing_source_root_member_remains_unknown(self):
+        for member in ('missing_mod', 'importlib'):
+            with self.subTest(member=member):
+                source = f'from scripts import {member}\n'
+                if member == 'importlib':
+                    source += "importlib.import_module('rds_quick')"
+                report = graph.inventory(self.fixture({'consumer.py': source, 'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']], ['local dotted target not found'])
+
+    def test_source_root_qualified_loader_reexport_stays_unknown(self):
+        report = graph.inventory(self.fixture({
+            'consumer.py': "from scripts.helper import load\nload('rds_quick')",
+            'helper.py': 'from importlib import import_module as load', 'rds_quick.py': ''}))
+        self.assertEqual([e['target'] for e in report['edges']], ['helper'])
+        self.assertEqual([u['reason'] for u in report['unresolved']], ['local loader re-export'])
+
+    def test_local_scripts_package_is_not_stripped(self):
+        report = graph.inventory(self.fixture({'consumer.py': 'import scripts.child',
+            'scripts/__init__.py': '', 'scripts/child.py': '', 'child.py': ''}))
+        self.assertEqual([e['target'] for e in report['edges']], ['scripts', 'scripts.child'])
+
+    def test_dotted_imports_include_local_package_initializers(self):
+        for code in ('import pkg.child', 'from pkg.child import value',
+                     "__import__('pkg.child')", 'from scripts.pkg.child import value'):
+            with self.subTest(code=code):
+                report = graph.inventory(self.fixture({'consumer.py': code,
+                    'pkg/__init__.py': 'import consumer', 'pkg/child.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges'] if e['source'] == 'consumer'],
+                                 ['pkg', 'pkg.child'])
+                self.assertEqual(report['cycles'], [['consumer', 'pkg']])
+
+    def test_nested_package_prefixes_are_not_duplicated(self):
+        report = graph.inventory(self.fixture({'consumer.py': 'from pkg.sub import child',
+            'pkg/__init__.py': '', 'pkg/sub/__init__.py': '', 'pkg/sub/child.py': ''}))
+        self.assertEqual([e['target'] for e in report['edges']], ['pkg', 'pkg.sub', 'pkg.sub.child'])
+
+    def test_namespace_prefix_does_not_invent_initializer(self):
+        report = graph.inventory(self.fixture({'consumer.py': 'import pkg.child', 'pkg/child.py': ''}))
+        self.assertEqual([e['target'] for e in report['edges']], ['pkg.child'])
+
+    def test_missing_dotted_child_keeps_initializer_and_unknown(self):
+        report = graph.inventory(self.fixture({'consumer.py': 'import scripts.pkg.missing',
+                                              'pkg/__init__.py': ''}))
+        self.assertEqual([e['target'] for e in report['edges']], ['pkg'])
+        self.assertEqual([u['reason'] for u in report['unresolved']], ['local dotted target not found'])
+
+    def test_real_source_root_fallback_is_a_site(self):
+        source = 'rds_hypergraph'
+        tree = ast.parse((ROOT / 'scripts' / (source + '.py')).read_bytes())
+        expected = {(node.lineno, node.module.removeprefix('scripts.')) for node in ast.walk(tree)
+                    if isinstance(node, ast.ImportFrom) and node.module == 'scripts.rds_bus_adapter'}
+        self.assertTrue(expected)
+        report = graph.inventory(ROOT)
+        actual = {(e['line'], e['target']) for e in report['edges']
+                  if e['source'] == source and e['kind'] == 'static'}
+        self.assertTrue(expected <= actual)
+
     def test_relative_package_member_does_not_create_self_cycle(self):
         root = self.fixture({'pkg/__init__.py': 'from . import child', 'pkg/child.py': ''})
         report = graph.inventory(root)
