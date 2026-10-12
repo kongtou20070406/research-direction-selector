@@ -1,8 +1,10 @@
 """Tool filesystem publication requires fresh workspace admission."""
+from contextlib import closing
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -65,21 +67,35 @@ class ToolWorkspaceAdmissionTests(unittest.TestCase):
                 tools.command(args)
         self.assertFalse((self.root / 'exported.py').exists())
 
-    def test_qualification_rechecks_before_publishing_preparation_inputs(self):
+    def test_ancestor_bind_refuses_active_native_tool_tail_and_preserves_ledgers(self):
         self.cases.write_text('[{"args":[0,3],"expected":true}]', encoding='utf-8')
         begin = tools._begin_preparation
         frozen = {}
+        parent_before = []
 
         def bind_after_preparation(store, request):
             result = begin(store, request)
-            workspace.bind(self.parent)
+            self.assertIsNone(tools.get(self.root, request['validation_id']))
+            parent_before.append(self.f.dump(ProjectStore(self.parent)))
+            # Pin real read-only WAL readers before freezing all file bytes.
+            for path in self.root.rglob('*.sqlite3'):
+                reader = self.enterContext(closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)))
+                reader.execute('BEGIN')
+                reader.execute('SELECT name FROM sqlite_master').fetchall()
+            # The real intent makes ancestor binding refuse before publication.
             frozen.update({str(path.relative_to(self.root)): path.read_bytes()
                            for path in self.root.rglob('*') if path.is_file()})
+            workspace.bind(self.parent)
             return result
 
-        with patch.object(tools, '_begin_preparation', side_effect=bind_after_preparation):
-            with self.assertRaises(ValueError):
+        with patch.object(tools, '_begin_preparation', side_effect=bind_after_preparation) as preparation, \
+                patch.object(tools, 'execute', wraps=tools.execute) as launch:
+            with self.assertRaisesRegex(ValueError, 'active descendant.*resolved tool preparation'):
                 tools.validate(self.root, 'compare-v1', self.cases)
+        self.assertEqual(preparation.call_count, 1)
+        launch.assert_not_called()
+        self.assertTrue(frozen)
+        self.assertEqual(parent_before, [self.f.dump(ProjectStore(self.parent))])
         self.assertEqual({str(path.relative_to(self.root)): path.read_bytes()
                           for path in self.root.rglob('*') if path.is_file()}, frozen)
 
