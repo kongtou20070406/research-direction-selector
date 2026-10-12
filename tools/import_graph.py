@@ -123,10 +123,16 @@ def lexical_resolver(tree, parents):
                for origin, bound, _ in ordered_sites[scope]):
             return None  # A later textual store may have run in a previous iteration.
         value = '__import__' if scope is tree and name == '__import__' else None
+        call_ancestors = set(ancestors(node, scope)) | {node}
         position = lambda item: (item.lineno, item.col_offset)
         for origin, bound, target in sorted(ordered_sites[scope], key=lambda item: position(item[0])):
             if bound not in (name, '*') or position(origin) >= position(node):
                 continue
+            if isinstance(origin, ast.Name):
+                assignment = next((parent for parent in ancestors(origin, scope) if isinstance(
+                    parent, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))), None)
+                if assignment is not None and assignment.value in call_ancestors:
+                    continue  # Only this target's own RHS delays its store.
             # Only completed direct imports/literal tables establish definite bindings.
             statement = parents[origin] if target in literal_tables else origin
             direct = parents[statement] is scope and (
@@ -269,6 +275,23 @@ def scan(name, tree, modules, package, hook_routes):
                     continue
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and not arg.value.startswith("."):
                     emit(node, arg.value, "dynamic_literal")
+                    if callee.endswith('__import__'):
+                        expression = call_argument(node, 3, 'fromlist')
+                        try:
+                            members = ast.literal_eval(expression) if expression is not None else None
+                        except (ValueError, TypeError):
+                            members = False
+                        if members is None:
+                            pass
+                        elif isinstance(members, (tuple, list)) and all(
+                            isinstance(member, str) and member != '*' for member in members
+                        ):
+                            for member in sorted(set(members)):
+                                target = arg.value + '.' + member
+                                if target in modules:
+                                    emit(node, target, 'dynamic_fromlist_candidate')
+                        else:
+                            unresolved.append({**site(node), 'reason': 'runtime import fromlist'})
                 else:
                     table = {}
                     if isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name):

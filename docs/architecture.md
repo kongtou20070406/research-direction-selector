@@ -186,6 +186,8 @@ are recorded separately and never converted into import edges.
   in generated code, plugins or launched programs need separate inventories.
 - Relative static package imports are resolved against the source tree; dynamic
   relative imports and opaque file loaders stay unresolved.
+- Literal `__import__` fromlist members matching local modules are candidates;
+  computed lists and wildcard exports stay unresolved alongside the base edge.
 - Literal `runpy.run_module` names are dynamic edges; computed names and
   `runpy.run_path` file execution stay unresolved. No inspected code is executed.
 - A returned graph with unresolved sites is usable inventory, not a PASS for
