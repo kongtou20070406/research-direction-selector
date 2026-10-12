@@ -141,7 +141,7 @@ def _matching_identity(pointer, event):
 
 def _quick_request(path):
     from rds_bounded_io import read_regular_bytes
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     raw = read_regular_bytes(path, MAX_QUICK_REQUEST_BYTES, label='QUICK identity request')
     request = strict_json(raw.decode('utf-8'))
     require(isinstance(request, dict), 'QUICK identity request must be an object')
@@ -260,7 +260,7 @@ def _bounded_bind_ledger_sha(path, deadline):
 def _check_descendant_tails(workspace_root, owner, db, tables, deadline):
     """Use original producer receipts, including ledgers not yet initialized."""
     from rds_campaign import MAX_BYTES, MAX_EVENTS, _preparation_finished
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     import stat
 
     if 'events' in tables:
@@ -370,7 +370,7 @@ def _refuse_active_descendants(root):
                 _check_bind_deadline(deadline)
                 if wheel_state and directory.parent.parent != root:
                     from rds_bounded_io import read_regular_bytes
-                    from rds_cli import strict_json
+                    from rds_reference_values import strict_json
                     require(stat.S_ISREG(metadata.st_mode),
                             'Descendant wheel state must be a regular file')
                     require(path.stat().st_nlink == 1,
@@ -409,7 +409,7 @@ def _refuse_active_descendants(root):
                         if os.path.normcase(entry.name) == 'state.sqlite3':
                             if 'state' not in tables:
                                 continue
-                            from rds_cli import RDSState
+                            from rds_state import RDSState
                             state = RDSState.read_state(db)
                             active = any(plan['run_status'] in {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
                                          for plan in state.get('plans', {}).values())

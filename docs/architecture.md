@@ -3,6 +3,37 @@
 This is a source inventory, not a claim that the layered bus is finished.
 No runtime module, ledger, admission rule, or recovery path is changed by B0.
 
+## B1a: reference state no longer lives in the CLI
+
+`rds_state` (L1) owns the existing `RDSState` implementation; its SQLite schema,
+transaction boundaries, campaign/workspace checks and budget invariants are
+unchanged. `rds_reference_values` (SHARED) owns the original strict JSON parser,
+byte-or-JSON digest and reference-version/resource constants. It depends only on
+the standard library and `rds_core`, not the CLI or ProjectStore.
+
+The CLI re-exports the old public names. Its small `digest` compatibility wrapper
+still uses the CLI `canonical` seam. The build-version literal is retained for
+packaging, with a test requiring equality to the shared version. Engine identity
+now includes both extracted files: old data stays readable, but changed code
+does not reuse an old execution identity.
+
+Seven lower consumers now import these services directly: `rds_adversary`,
+`rds_campaign`, `rds_math`, `rds_project_lifecycle`, `rds_tools`,
+`rds_tool_compare` and `rds_workspace`. There are no remaining confirmed
+L0-L3 import/provider edges to `rds_cli`. CLI strings used as subprocess entry
+points or diagnostic suggestions are not in-process upward imports.
+
+| Measured stage | Upward pairs | Largest cyclic SCC | Mutual pairs |
+|---|---:|---:|---:|
+| Original B0 labels | 66 | 52 | 54 |
+| B0.5 responsibility labels | 51 | 52 | 54 |
+| B1a reference state/value extraction | 44 | 45 | 50 |
+
+B1a has 121 modules and 454 combined dependency pairs. This is extraction,
+not a claim that the whole graph becomes smaller: new downward service edges
+replace old entry-point edges. QUICK dependencies remain for the next cut.
+No business schema or event changes, data migration, or accounting reset.
+
 ## Reproduce
 
 ```sh

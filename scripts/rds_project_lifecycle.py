@@ -64,7 +64,7 @@ def discover(root):
             # A native reference ledger is a legitimate local scope, but not
             # an external-execution project contract. Verify it before looking
             # farther up; damaged data must not disappear behind an ancestor.
-            from rds_cli import RDSState
+            from rds_state import RDSState
             with RDSState(candidate).snapshot() as (reference_db, reference_state):
                 if reference_state:
                     RDSState.invariants(reference_state)
