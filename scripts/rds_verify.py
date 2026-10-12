@@ -12,8 +12,9 @@ import re
 import sys
 
 from rds_verify_types import MAX_CERTIFICATE_BYTES, SEMANTICS, bounded_json, canonical, digest, rational, require
-from rds_verify_registry import (get_verifier, registered_kinds, registered_verifiers,
-                                 registry_id, reserve_builtin_routes)
+from rds_verify_registry import (get_verifier, registered_verifiers, registry_id,
+                                 _install_builtin_verifiers, is_builtin, extension_assurance_allowed)
+from rds_builtin_verifiers import BuiltinVerifier, ConjunctionVerifier
 from rds_affine_toolchain import ASSURANCE as AFFINE_CHAIN_ASSURANCE
 from rds_affine_toolchain import COMPOSITION_KIND as AFFINE_COMPOSITION_KIND
 from rds_affine_toolchain import COMPOSITION_RULE as AFFINE_COMPOSITION_RULE
@@ -60,10 +61,10 @@ class ProofRule:
 
 
 class RuleRegistry:
-    """Application-owned whitelist; declarations cannot register executable code.
+    """Compatibility view of explicit ProofRule declarations.
 
-    New domain rules implement verify/check_certificate and are registered by
-    trusted Python code. Their source files participate in the verifier hash.
+    Construction does not install routes. The composition root installs its
+    builtin view into the unified registry; replacement views cannot reroute it.
     """
     def __init__(self, rules):
         self.by_name, self.by_kind = {}, {}
@@ -110,11 +111,9 @@ REGISTRY = RuleRegistry((
               support_files=("rds_operators.py", "rds_lean_verify.py")),
 ))
 
-reserve_builtin_routes([*REGISTRY.by_name.values(),
-                        ProofRule("logic.and_intro", ("all",), "")],
-                       [rule.name for rule in REGISTRY.by_name.values()] + ["logic.and_intro"],
-                       assurances=(BOUNDED_PROOF_ASSURANCE, AFFINE_CHAIN_ASSURANCE,
-                                   "LEAN_KERNEL_CHECKED"))
+_install_builtin_verifiers(
+    [*(BuiltinVerifier(rule) for rule in REGISTRY.by_name.values()), ConjunctionVerifier()],
+    assurances=(BOUNDED_PROOF_ASSURANCE, AFFINE_CHAIN_ASSURANCE, "LEAN_KERNEL_CHECKED"))
 
 
 def _bounded_json(value):
@@ -127,28 +126,57 @@ class _RegisteredRule:
     def __init__(self, verifier):
         self.verifier = verifier
         self.name = verifier.name
+        self.module = verifier.module if is_builtin(verifier) else None
 
     def generate(self, statement, *, max_work_units=None):
+        if is_builtin(self.verifier):
+            if max_work_units is None:
+                return self.verifier.verify(statement)
+            return self.verifier.verify(statement, max_work_units=max_work_units)
         require(max_work_units is None,
                 "Explicit budgets are unavailable for registered verifiers")
         return self.verifier.verify(self.verifier.read_spec(statement))
 
     def check(self, statement, certificate):
-        return (isinstance(certificate, dict) and
+        if is_builtin(self.verifier):
+            return self.verifier.check_certificate(statement, certificate)
+        if not (isinstance(certificate, dict) and
                 certificate.get("assurance") == self.verifier.assurance_level and
-                certificate.get("assurance") != "LEAN_KERNEL_CHECKED" and
-                self.verifier.check_certificate(self.verifier.read_spec(statement), certificate))
+                extension_assurance_allowed(self.verifier.assurance_level)):
+            return False
+        # A checker cannot relabel the caller's evidence after the assurance gate.
+        candidate = deepcopy(certificate)
+        checked = self.verifier.check_certificate(
+            self.verifier.read_spec(deepcopy(statement)), candidate)
+        return (checked and candidate == certificate and
+                certificate.get("assurance") == self.verifier.assurance_level and
+                extension_assurance_allowed(self.verifier.assurance_level))
+
+    def canonical_statement(self, statement):
+        if is_builtin(self.verifier):
+            return self.verifier.canonical_statement(statement)
+        return self.verifier.read_spec(statement)
+
+    def checked_assurance(self, certificate):
+        if is_builtin(self.verifier):
+            return self.verifier.checked_assurance(certificate)
+        require(extension_assurance_allowed(self.verifier.assurance_level),
+                "Extension cannot report reserved assurance")
+        return self.verifier.assurance_level
+
+    def compose(self, statement, outcomes):
+        require(is_builtin(self.verifier), "Composition requires a builtin verifier")
+        return self.verifier.compose(statement, outcomes)
+
+    def replay_composition(self, statement, certificate, outcomes):
+        require(is_builtin(self.verifier), "Composition requires a builtin verifier")
+        return self.verifier.replay_composition(statement, certificate, outcomes)
 
 
 def _dispatch_rule(statement, requested=None):
-    """Prefer registered implementations; only absent routes use legacy rules."""
+    """Resolve all builtin and extension routes through the same registry."""
     kind = statement.get("kind")
-    try:
-        verifier = get_verifier(kind)
-    except ValueError:
-        if isinstance(kind, str) and kind in registered_kinds():
-            raise
-        return REGISTRY.rule(statement, requested)
+    verifier = get_verifier(kind)
     require(requested is None or requested == verifier.name,
             "Rule does not prove this statement kind")
     return _RegisteredRule(verifier)
@@ -159,32 +187,40 @@ def verifier_id():
     here = Path(__file__).resolve().parent
     names = {rule.module + ".py" for rule in REGISTRY.by_name.values()}
     names.update(name for rule in REGISTRY.by_name.values() for name in rule.support_files)
-    names.update({"rds_verify.py", "rds_verify_registry.py", "rds_verify_types.py",
-                  "rds_formal_kernel.py", "rds_probe.py"})
+    names.update({"rds_verify.py", "rds_verify_registry.py", "rds_builtin_verifiers.py", "rds_verify_types.py",
+                  "rds_formal_kernel.py", "rds_probe.py", "rds_core.py"})
     registered_sources = {}
+    implementations = []
     for verifier in registered_verifiers():
         module = sys.modules[type(verifier).__module__]
         registered_sources[verifier.name] = digest(Path(module.__file__).read_bytes())
+        if is_builtin(verifier):
+            names.add(verifier.module + ".py")
+            names.update(verifier.support_files)
+            implementations.append((verifier.name, verifier.module, verifier.support_files))
     return digest({"sources": {name: digest((here / name).read_bytes()) for name in sorted(names)},
                    "registry": registry_id(), "registered_sources": registered_sources,
+                   "implementations": implementations,
                    "python": sys.version,
                    "rules": [(r.name, r.kinds, r.version) for r in REGISTRY.by_name.values()]})
 
 
 def rules():
-    legacy = [{"name": rule.name, "statement_kinds": list(rule.kinds), "version": rule.version,
-               "support_files": list(rule.support_files), "implementation": rule.module + ".py",
-               "route": "builtin"}
-              for rule in REGISTRY.by_name.values()]
-    registered = [{"name": verifier.name, "statement_kinds": sorted(verifier.kinds),
+    """Describe installed routes and explicitly supplied, uninstalled legacy declarations."""
+    installed = registered_verifiers()
+    installed_names = {verifier.name for verifier in installed}
+    declarations = [{"name": rule.name, "statement_kinds": list(rule.kinds),
+                     "version": rule.version, "support_files": list(rule.support_files),
+                     "implementation": rule.module + ".py", "route": "uninstalled"}
+                    for rule in REGISTRY.by_name.values() if rule.name not in installed_names]
+    return declarations + [{"name": verifier.name, "statement_kinds": sorted(verifier.kinds),
                    "version": verifier.version, "semantics": verifier.semantics,
                    "assurance_level": verifier.assurance_level,
-                   "support_files": [],
-                   "implementation": Path(sys.modules[type(verifier).__module__].__file__).name,
-                   "route": "registered"} for verifier in registered_verifiers()]
-    return legacy + registered + [{"name": "logic.and_intro", "statement_kinds": ["all"],
-                                   "version": "1", "support_files": [],
-                                   "implementation": None, "route": "builtin"}]
+                   "support_files": list(verifier.support_files) if is_builtin(verifier) else [],
+                   "implementation": verifier.module + ".py" if is_builtin(verifier) else
+                       Path(sys.modules[type(verifier).__module__].__file__).name,
+                   "route": "builtin" if is_builtin(verifier) else "registered"}
+            for verifier in installed]
 
 
 def _name(value):
@@ -335,7 +371,7 @@ def _prepare_proof_plan(plan):
                 "Proof-plan dependencies must be unique and cannot include the step itself")
         statement = _resolve_plan_value(item["statement"], by_name)
         require(isinstance(statement, dict), "Proof-plan step must resolve to a statement")
-        rule = REGISTRY.rule(statement)
+        rule = _dispatch_rule(statement)
         step = {"name": name, "required_assurance": assurance,
                 "statement": statement, "rule": rule, "dependencies": dependencies,
                 "canonical_statement": rule.canonical_statement(statement),
@@ -596,7 +632,7 @@ def _affine_plan_rule(spec, max_work_units):
     require(isinstance(spec, dict), "Specification must be an object")
     require(spec.get("kind") != "theorem_module",
             "Proof-plan inspection and explicit budgets do not support theorem_module")
-    rule = REGISTRY.rule(spec)
+    rule = _dispatch_rule(spec)
     require(rule.name == AFFINE_CHAIN_RULE,
             "Proof-plan inspection and explicit budgets require direct affine_fixed_point_synthesis")
     return rule
@@ -654,10 +690,8 @@ def verify(spec, *, max_work_units=None):
             for name in order:
                 declaration = declarations[name]
                 if declaration["premises"]:
-                    statuses = [outcomes[ref]["status"] for ref in declaration["premises"]]
-                    status = "FAIL" if "FAIL" in statuses else "UNKNOWN" if "UNKNOWN" in statuses else "PASS"
-                    answer = {"status": status, "proof": {"rule": "logic.and_intro",
-                              "premises": declaration["premises"], "verdict": status}}
+                    rule = _dispatch_rule(declaration["statement"], declaration["rule"])
+                    answer = rule.compose(declaration["statement"], outcomes)
                 else:
                     try:
                         answer = _atomic(declaration["statement"], declaration["rule"])
@@ -726,11 +760,8 @@ def _replay(spec, certificate):
         for name in order:
             declaration, item = declarations[name], claims[name]
             if declaration["premises"]:
-                require(isinstance(item, dict) and set(item) == {"rule", "premises", "verdict"}, "Invalid conjunction proof")
-                require(item["rule"] == "logic.and_intro" and item["premises"] == declaration["premises"],
-                        "Conjunction changes the theorem dependencies")
-                verdict = "FAIL" if any(outcomes[ref]["status"] == "FAIL" for ref in declaration["premises"]) else "PASS"
-                require(item["verdict"] == verdict, "Conjunction verdict does not follow from its premises")
+                rule = _dispatch_rule(declaration["statement"], declaration["rule"])
+                verdict = rule.replay_composition(declaration["statement"], item, outcomes)
             else:
                 verdict = _check_atomic(declaration["statement"], item, declaration["rule"])
             outcomes[name] = {"status": verdict}
@@ -872,7 +903,7 @@ class LeanFormalEngine:
                 method = tactic if explicit_rational else "rule"
                 if applies and method not in tried:
                     if explicit_rational:
-                        rule = REGISTRY.rule(spec)
+                        rule = _dispatch_rule(spec)
                         adapter = importlib.import_module(rule.module)
                         answer = (adapter.verify_rational(spec) if tactic == "rational" else
                                   adapter.verify(spec, allow_fallback=False))

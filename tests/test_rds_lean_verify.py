@@ -12,6 +12,9 @@ import rds_lean_verify as lean
 
 
 SPEC = {"schema": 1, "kind": "lean_obligation", "relation": "lt", "left": "1/2", "right": "3/4"}
+VECTOR_SPEC = {"schema": 1, "kind": "lean_vector_obligation", "relations": [
+    {"relation": "lt", "left": "1/2", "right": "3/4"},
+]}
 VERSION = "Lean (version 4.33.1, x86_64-w64-windows-gnu, commit abc, Release)\n"
 FINGERPRINT = "a" * 64
 
@@ -35,6 +38,26 @@ class LeanAdapterTests(unittest.TestCase):
                      lean.AXIOM_AUDIT + "\nwarning: unrecognized event"):
             with self.subTest(text=text), self.native(stdout=text):
                 self.assertEqual(lean.verify(SPEC)["status"], "UNKNOWN")
+
+    def test_native_scalar_and_vector_outer_semantics_match_certificate(self):
+        checked = {"lean_version": VERSION.strip(), "lean_executable_sha256": FINGERPRINT,
+                   "stdout": lean.AXIOM_AUDIT + "\n"}
+        for spec, expected in ((SPEC, lean.SEMANTICS), (VECTOR_SPEC, lean.VECTOR_SEMANTICS)):
+            with self.subTest(kind=spec["kind"]), mock.patch.object(
+                    lean, "_native_check", return_value=checked):
+                result = lean.verify(spec, allow_fallback=False)
+            self.assertEqual(result["status"], "PASS")
+            self.assertEqual(result["certificate"]["semantics"], expected)
+            self.assertEqual(result["semantics"], result["certificate"]["semantics"])
+
+    def test_no_native_lean_without_fallback_is_unknown_without_assurance(self):
+        with mock.patch.object(lean, "_native_check", side_effect=lean.NoNativeLean("not installed")), \
+                mock.patch.object(lean, "_fallback_certificate", side_effect=AssertionError("No fallback")):
+            result = lean.verify(VECTOR_SPEC, allow_fallback=False)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["assurance"], "NONE")
+        self.assertEqual(result["backend"], lean.BACKEND)
+        self.assertIsNone(result["certificate"])
 
     def test_only_native_lean_four_version(self):
         for version in ("Lean (version 3.51.1)", "not lean", "Lean (version 4.33.1)\nextra"):
@@ -129,6 +152,13 @@ class NativeLeanTests(unittest.TestCase):
                 result = lean.verify(spec)
                 self.assertEqual(result["status"], "PASS", result)
                 self.assertTrue(lean.check_certificate(spec, result["certificate"]))
+
+    def test_real_vector_proof_metadata_and_kernel_replay(self):
+        result = lean.verify(VECTOR_SPEC, allow_fallback=False)
+        self.assertEqual(result["status"], "PASS", result)
+        self.assertEqual(result["semantics"], lean.VECTOR_SEMANTICS)
+        self.assertEqual(result["semantics"], result["certificate"]["semantics"])
+        self.assertTrue(lean.check_certificate(VECTOR_SPEC, result["certificate"]))
 
     def test_false_statement_is_unknown_not_a_scientific_refutation(self):
         result = lean.verify({**SPEC, "left": "1", "right": "0"})

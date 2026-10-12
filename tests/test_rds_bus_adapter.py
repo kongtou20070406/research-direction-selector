@@ -253,6 +253,10 @@ class _BlockingGraphLib:
     def rds_graph_add_node(self, handle, kind, digest, truth):
         return 0
 
+    def rds_graph_add_edge(self, handle, kind, sources, length, target):
+        self.log.append("add_edge")
+        return 0
+
     def rds_graph_set_truth(self, handle, node_id, truth):
         self.log.append("truth")
         return 0
@@ -305,6 +309,70 @@ class _BlockingBusLib:
 
 
 class LifecycleContract(unittest.TestCase):
+    def test_blocked_edge_iterator_does_not_hold_graph_handle(self):
+        for use_native in (*_modes(self), "fake"):
+            with self.subTest(use_native=use_native):
+                fake = None
+                if use_native == "fake":
+                    fake = _BlockingGraphLib()
+                    with mock.patch.object(bus, "_select_native", return_value=fake):
+                        graph = bus.TopologyGraph(use_native=None)
+                else:
+                    graph = bus.TopologyGraph(use_native=use_native)
+                graph.add_node(bus.NODE_PREMISE, bytes(32))
+                entered = threading.Event()
+                release = threading.Event()
+                closed = threading.Event()
+                errors = []
+
+                def sources():
+                    entered.set()
+                    if not release.wait(5):
+                        raise AssertionError("iterator was not released")
+                    yield 0
+
+                def add():
+                    try:
+                        graph.add_edge(bus.EDGE_AND_DEDUCTION, sources(), 0)
+                    except Exception as exc:
+                        errors.append(exc)
+
+                worker = threading.Thread(target=add)
+                closer = threading.Thread(target=lambda: (graph.close(), closed.set()))
+                try:
+                    worker.start()
+                    self.assertTrue(entered.wait(5), "edge iterator never blocked")
+                    closer.start()
+                    self.assertTrue(closed.wait(2), "close waited for caller iterator")
+                    self.assertEqual(graph._edge_count, 0)
+                finally:
+                    release.set()
+                    worker.join(5)
+                    if closer.ident is not None:
+                        closer.join(5)
+                    graph.close()
+                self.assertFalse(worker.is_alive(), "edge worker leaked")
+                self.assertFalse(closer.is_alive(), "close worker leaked")
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], RuntimeError)
+                self.assertIn("closed", str(errors[0]))
+                self.assertEqual(graph._edge_count, 0)
+                if fake is not None:
+                    self.assertEqual(fake.log, ["destroy"], "FFI add overlapped or followed destroy")
+                    self.assertEqual(fake.destroyed, 1)
+
+    def test_closed_graph_does_not_touch_edge_iterator(self):
+        class ForbiddenIterator:
+            def __iter__(self):
+                raise AssertionError("closed graph consumed an iterator")
+
+        for use_native in _modes(self):
+            with self.subTest(use_native=use_native):
+                graph = bus.TopologyGraph(use_native=use_native)
+                graph.close()
+                with self.assertRaisesRegex(RuntimeError, "closed"):
+                    graph.add_edge(bus.EDGE_AND_DEDUCTION, ForbiddenIterator(), 0)
+
     def test_graph_query_blocks_clear_and_close(self):
         fake = _BlockingGraphLib()
         with mock.patch.object(bus, "_select_native", return_value=fake):

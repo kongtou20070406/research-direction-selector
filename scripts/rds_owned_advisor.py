@@ -15,7 +15,7 @@ import time
 
 from rds_artifacts import ArtifactFact
 from rds_source_documents import MissingPointer, SourceDocument, strict_json
-from rds_project import canonical, digest, number, require
+from rds_project_values import canonical, digest, number, require
 from rds_project_hooks import register as register_project_hooks
 
 OWNED_PREFIX = 'owned:'

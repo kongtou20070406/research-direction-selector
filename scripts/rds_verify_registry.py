@@ -91,6 +91,7 @@ def _validate(spec_class):
 
 _REGISTRY = {}
 _BY_NAME = {}
+_BUILTINS = {}
 _BUILTIN_KINDS = frozenset()
 _BUILTIN_NAMES = frozenset()
 _RESERVED_ASSURANCES = frozenset({"LEAN_KERNEL_CHECKED"})
@@ -103,9 +104,51 @@ def reserve_builtin_routes(routes, names, assurances=()):
     route_names = frozenset(names)
     _require(not (_REGISTRY.keys() & kinds), "Built-in verifier kind already registered")
     _require(not (_BY_NAME.keys() & route_names), "Built-in verifier name already registered")
-    _BUILTIN_KINDS = kinds
-    _BUILTIN_NAMES = route_names
+    reserved = _RESERVED_ASSURANCES | frozenset(assurances)
+    _require(all(v.assurance_level not in reserved for v in _BY_NAME.values()),
+             "Existing verifier declares reserved assurance")
+    _BUILTIN_KINDS = _BUILTIN_KINDS | kinds
+    _BUILTIN_NAMES = _BUILTIN_NAMES | route_names
     _RESERVED_ASSURANCES = _RESERVED_ASSURANCES | frozenset(assurances)
+
+
+def _install_builtin_verifiers(verifiers, assurances=()):
+    """Composition-root-only installation; validate the entire batch first.
+
+    Python registration is trusted code, not a sandbox. Ordinary extensions use
+    register_verifier, which cannot grant builtin provenance.
+    """
+    verifiers = tuple(verifiers)
+    names, kinds = set(), set()
+    for verifier in verifiers:
+        # Adapters carry per-instance declarations for an explicit route table.
+        _require(isinstance(verifier, VerifierSpec), "Builtin must implement VerifierSpec")
+        name = verifier.name
+        _require(isinstance(name, str) and KIND_PATTERN.fullmatch(name), "Invalid builtin name")
+        _require(isinstance(verifier.kinds, (set, frozenset)) and verifier.kinds and
+                 all(isinstance(k, str) and KIND_PATTERN.fullmatch(k) for k in verifier.kinds),
+                 "Invalid builtin kinds")
+        _require(name not in names and not (kinds & verifier.kinds), "Ambiguous builtin route")
+        _require(all(callable(getattr(verifier, method, None)) for method in METHODS),
+                 "Incomplete builtin verifier")
+        names.add(name)
+        kinds.update(verifier.kinds)
+    reserve_builtin_routes(verifiers, names, assurances)
+    for verifier in verifiers:
+        _BY_NAME[verifier.name] = verifier
+        _BUILTINS[verifier.name] = verifier
+        for kind in verifier.kinds:
+            _REGISTRY[kind] = verifier
+
+
+def is_builtin(verifier):
+    """Provenance belongs to the installed instance, never a plugin attribute."""
+    return _BUILTINS.get(verifier.name) is verifier
+
+
+def extension_assurance_allowed(assurance):
+    return (isinstance(assurance, str) and ASSURANCE_PATTERN.fullmatch(assurance) is not None
+            and assurance not in _RESERVED_ASSURANCES)
 
 
 def register_verifier(spec_class):
@@ -127,6 +170,8 @@ def register_verifier(spec_class):
         verifier = spec_class()
     except TypeError as exc:
         raise ValueError("Verifier must be constructible without arguments: " + str(exc)) from None
+    _require(extension_assurance_allowed(verifier.assurance_level),
+             "Verifier cannot declare reserved or invalid assurance")
     verifier.name = name
     _BY_NAME[name] = verifier
     for kind in kinds:
@@ -145,6 +190,7 @@ def get_verifier(kind):
 def unregister_verifier(kind):
     """Remove the verifier owning one kind and every kind it owns."""
     verifier = get_verifier(kind)
+    _require(not is_builtin(verifier), "Cannot unregister a built-in verifier")
     for owned in [key for key, value in _REGISTRY.items() if value is verifier]:
         del _REGISTRY[owned]
     for name in [key for key, value in _BY_NAME.items() if value is verifier]:
@@ -172,4 +218,9 @@ def describe():
 
 def registry_id():
     """Bind a digest to the registered declarations in stable name order."""
-    return object_digest({"verifiers": describe()})
+    return object_digest({"verifiers": describe(),
+                          "reserved": {"kinds": sorted(_BUILTIN_KINDS),
+                                       "names": sorted(_BUILTIN_NAMES),
+                                       "assurances": sorted(_RESERVED_ASSURANCES)},
+                          "routes": [(kind, verifier.name, is_builtin(verifier))
+                                     for kind, verifier in sorted(_REGISTRY.items())]})

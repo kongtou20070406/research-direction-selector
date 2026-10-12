@@ -31,6 +31,8 @@ class RegistryIsolatedTest(unittest.TestCase):
     def setUp(self):
         snapshot = (dict(registry._REGISTRY), dict(registry._BY_NAME))
         self.addCleanup(self._restore, snapshot)
+        registry._REGISTRY.clear()
+        registry._BY_NAME.clear()
 
     def _restore(self, snapshot):
         registry._REGISTRY.clear()

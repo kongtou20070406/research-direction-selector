@@ -250,7 +250,10 @@ class TopologyGraph:
         with self._lock:
             self._ensure_open()
             _int_in(target, 0, self._node_count - 1, "target")
-            ids = _bounded_sources(sources, MAX_EDGE_SOURCES, "edge source")
+        ids = _bounded_sources(sources, MAX_EDGE_SOURCES, "edge source")
+        with self._lock:
+            self._ensure_open()
+            _int_in(target, 0, self._node_count - 1, "target")
             for source in ids:
                 _int_in(source, 0, self._node_count - 1, "source")
             if self._edge_count >= self._max_edges:
