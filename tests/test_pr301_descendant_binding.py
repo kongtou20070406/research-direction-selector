@@ -27,13 +27,14 @@ class DescendantBindingTests(unittest.TestCase):
         self.addCleanup(self.helper.tearDown)
         self.root, self.store = self.helper.root, self.helper.store
 
-    def child(self, name='nested/deep'):
+    def child(self, name='nested/deep', contract=None):
         root = self.root / name
         root.mkdir(parents=True)
-        for binding in self.helper.contract['bindings']:
+        c = contract if contract is not None else self.helper.contract
+        for binding in c['bindings']:
             shutil.copyfile(self.root / binding['path'], root / binding['path'])
         store = ProjectStore(root)
-        store.initialize(deepcopy(self.helper.contract))
+        store.initialize(deepcopy(c))
         return store
 
     def dump(self, store):
@@ -280,6 +281,60 @@ class DescendantBindingTests(unittest.TestCase):
                                 creationflags=subprocess.CREATE_NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.addCleanup(os.rmdir, link)
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_unresolved_tool_preparation_blocks_binding_until_validation_published(self):
+        child = self.child()
+        token = 'a' * 32
+        req = {'token': token, 'validation_id': 'validation:' + token}
+        with child._db() as db:
+            db.execute('INSERT INTO events(body) VALUES (?)',
+                       (canonical({'kind': 'TOOL_PREPARATION_STARTED', 'request': req}),))
+        before = self.dump(self.store), self.dump(child)
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), self.dump(child)), before)
+        with child._db() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS research_records(id TEXT PRIMARY KEY,sha256 TEXT NOT NULL,body TEXT NOT NULL)")
+            db.execute("INSERT INTO research_records(id,sha256,body) VALUES (?,?,?)",
+                       ('validation:' + token, 'b' * 64, canonical({'kind': 'tool-validation', 'status': 'LOCAL_CASES_PASSED'})))
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_unfinished_owned_advisor_review_blocks_binding_until_settled(self):
+        child = self.child('owned-child')
+        contract = deepcopy(self.helper.contract)
+        contract['advisor_policy'] = {'enabled': True}
+        with child._db() as db:
+            db.execute('DROP TRIGGER IF EXISTS contract_no_update')
+            db.execute('UPDATE contract SET body=? WHERE id=1', (canonical(contract),))
+            db.execute('INSERT INTO receipts(run_id,sha256,body) VALUES (?,?,?)',
+                       ('r1', 'c' * 64, canonical({'run_id': 'r1', 'status': 'SUCCEEDED'})))
+            db.execute('INSERT INTO events(body) VALUES (?)',
+                       (canonical({'kind': 'ATTEMPT_FINISHED', 'run_id': 'r1', 'sha256': 'c' * 64}),))
+        before = self.dump(self.store), self.dump(child)
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), self.dump(child)), before)
+        with child._db() as db:
+            db.execute('INSERT INTO events(body) VALUES (?)',
+                       (canonical({'kind': 'OWNED_ADVISOR_REVIEW', 'status': 'REVIEWED'}),))
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_uncheckpointed_prospective_quick_blocks_binding_until_settled(self):
+        child = self.child('prospective-child')
+        req_file = child.root / 'rds-exec-request.json'
+        req_file.write_text(json.dumps({'research_context': {'ledger': str(self.store.path)}}), encoding='utf-8')
+        with child._db() as db:
+            db.execute('INSERT INTO receipts(run_id,sha256,body) VALUES (?,?,?)',
+                       ('r1', 'd' * 64, canonical({'run_id': 'r1', 'status': 'SUCCEEDED'})))
+        before = self.dump(self.store), self.dump(child)
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), self.dump(child)), before)
+        with self.store._db() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS checkpoints(id TEXT PRIMARY KEY,sha TEXT NOT NULL,body TEXT NOT NULL)')
+            db.execute('INSERT INTO checkpoints(id,sha,body) VALUES (?,?,?)',
+                       ('exec-after-' + child.root.name, 'e' * 64, '{}'))
         self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
 
 

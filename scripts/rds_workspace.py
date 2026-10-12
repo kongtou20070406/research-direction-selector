@@ -392,6 +392,59 @@ def _refuse_active_descendants(root):
                                     "WHERE json_extract(p.body,'$.kind')='AUTONOMY_MODEL_PROCESSED' "
                                     "AND json_extract(p.body,'$.run_id')=json_extract(r.body,'$.run_id')) "
                                     "LIMIT 1").fetchone()
+                            if not active and 'events' in tables:
+                                # Tool preparation started but validation not yet published
+                                # mirrors rds_campaign._preparation_finished requirements:
+                                if 'research_records' not in tables:
+                                    active = db.execute(
+                                        "SELECT 1 FROM events p WHERE json_extract(p.body,'$.kind')='TOOL_PREPARATION_STARTED' LIMIT 1").fetchone()
+                                else:
+                                    active = db.execute(
+                                        "SELECT 1 FROM events p WHERE json_extract(p.body,'$.kind')='TOOL_PREPARATION_STARTED' "
+                                        "AND NOT EXISTS (SELECT 1 FROM research_records r "
+                                        "WHERE r.id=json_extract(p.body,'$.request.validation_id') "
+                                        "AND json_extract(r.body,'$.kind')='tool-validation') LIMIT 1").fetchone()
+                            if not active and 'contract' in tables and 'receipts' in tables and 'events' in tables:
+                                # An owned-Advisor descendant interrupted before post-receipt review
+                                # requires OWNED_ADVISOR_REVIEW postdating ATTEMPT_FINISHED:
+                                active = db.execute(
+                                    "SELECT 1 FROM contract c "
+                                    "WHERE c.id=1 AND json_extract(c.body,'$.advisor_policy') IS NOT NULL "
+                                    "AND EXISTS (SELECT 1 FROM receipts) "
+                                    "AND (NOT EXISTS (SELECT 1 FROM events f WHERE json_extract(f.body,'$.kind')='ATTEMPT_FINISHED') "
+                                    "     OR NOT EXISTS (SELECT 1 FROM events r "
+                                    "                    WHERE json_extract(r.body,'$.kind')='OWNED_ADVISOR_REVIEW' "
+                                    "                    AND r.id > (SELECT COALESCE(MAX(f.id), 0) FROM events f WHERE json_extract(f.body,'$.kind')='ATTEMPT_FINISHED')))"
+                                    "LIMIT 1").fetchone()
+                            if not active and 'receipts' in tables:
+                                # A prospective QUICK descendant with terminal receipts must settle
+                                # its after-checkpoint into the parent ledger before ancestor binding:
+                                req_file = directory.parent / 'rds-exec-request.json'
+                                if req_file.is_file() and db.execute('SELECT 1 FROM receipts LIMIT 1').fetchone():
+                                    try:
+                                        with req_file.open('r', encoding='utf-8') as f:
+                                            req_data = json.load(f)
+                                        res_ctx = req_data.get('research_context') if isinstance(req_data, dict) else None
+                                        if isinstance(res_ctx, dict) and isinstance(res_ctx.get('ledger'), str):
+                                            parent_ledger = Path(res_ctx['ledger'])
+                                            if parent_ledger.is_file():
+                                                try:
+                                                    parent_db = sqlite3.connect(parent_ledger.as_uri() + '?mode=ro', uri=True, timeout=0.5)
+                                                    try:
+                                                        parent_db.execute('PRAGMA query_only=ON')
+                                                        chk_name = 'exec-after-' + directory.parent.name
+                                                        chk_tbl = parent_db.execute(
+                                                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone()
+                                                        has_chk = chk_tbl and parent_db.execute(
+                                                            "SELECT 1 FROM checkpoints WHERE id=?", (chk_name,)).fetchone()
+                                                        if not has_chk:
+                                                            active = True
+                                                    finally:
+                                                        parent_db.close()
+                                                except (sqlite3.Error, OSError):
+                                                    active = True
+                                    except (OSError, json.JSONDecodeError):
+                                        pass
                         _check_bind_deadline(deadline)
                         require(not active,
                                 f'Cannot bind workspace with an active descendant: {directory.parent}; '
