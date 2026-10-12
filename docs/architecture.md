@@ -42,7 +42,7 @@ python -B -m unittest discover -s tests -p test_import_graph.py -v
 ```
 
 The stdlib-only tool parses `scripts/**/*.py` without importing those modules.
-It emits versioned JSON to stdout, including every local edge site, source hash,
+It emits versioned JSON to stdout, including recognized local edge sites, source hash,
 responsibility label, unresolved loader, SCC, and mutual pair. Keep generated
 reports outside tracked source. A failed parse or empty tree exits 2, not success.
 
@@ -51,7 +51,7 @@ reports outside tracked source. A failed parse or empty tree exits 2, not succes
 - Inspected source commit: `64daa9d0607bbad7ed37817740a225e6625d48fb`.
 - Source-set SHA-256: `3e7e4b5b9bef00a16d1c9b84a2a99d7ad0c232b3394ef7f0cf6a2f7bdf6d7bdb`.
 - 119 Python modules; 431 distinct static local edges.
-- 445 combined local edges at 703 sites, including declared dynamic targets and provider calls.
+- 445 combined local edges at 704 sites, including declared dynamic targets and provider calls.
 - 54 mutual pairs, 3 cyclic SCCs, 66 classified upward pairs.
 - 8 unresolved dynamic sites; 0 unclassified edge sites in this snapshot.
 
@@ -259,6 +259,13 @@ are recorded separately and never converted into import edges.
   in generated code, plugins or launched programs need separate inventories.
 - Relative static package imports are resolved against the source tree; dynamic
   relative imports and opaque file loaders stay unresolved.
+- Source-root-qualified `scripts.<local module>` imports map to the same names
+  as direct imports, including the native graph fallback. An inspected local
+  `scripts` package is not stripped, and missing root modules cannot become
+  stdlib loader identities. Dotted imports include existing package initializer
+  dependencies; namespace packages do not invent files. Prefixes are deduplicated
+  per syntax site and do not introduce implicit self-imports. Runtime `sys.path`
+  manipulation and module-cache replacement remain outside this static model.
 - Literal `__import__` fromlist members matching local modules are candidates;
   computed lists and wildcard exports stay unresolved alongside the base edge.
 - Literal `runpy.run_module` names are dynamic edges; computed names and
