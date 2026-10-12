@@ -109,6 +109,10 @@ def lexical_resolver(tree, parents, package):
                 bind(scope, alias.asname or alias.name,
                      base + '.' + alias.name if base is not None else '!relative', node)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            declaration = parents.get(node)
+            if (scope in ordered_sites and isinstance(declaration, ast.AnnAssign)
+                    and declaration.target is node and declaration.value is None):
+                continue  # Bare annotations do not assign module/class values.
             if isinstance(parents.get(node), ast.NamedExpr):
                 while isinstance(scope, comprehensions):
                     scope = enclosing(scope)
@@ -143,6 +147,8 @@ def lexical_resolver(tree, parents, package):
                 continue
             if origin in call_ancestors and isinstance(origin, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue  # Defaults/bases finish before the definition replaces its name.
+            if isinstance(origin, ast.ExceptHandler) and origin.type in call_ancestors:
+                continue  # Matching the exception type precedes binding its alias.
             if isinstance(origin, ast.Name):
                 loop = next((parent for parent in ancestors(origin, scope)
                              if isinstance(parent, (ast.For, ast.AsyncFor))), None)
@@ -152,25 +158,26 @@ def lexical_resolver(tree, parents, package):
                     parent, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))), None)
                 if assignment is not None and assignment.value in call_ancestors:
                     continue  # Only this target's own RHS delays its store.
-            # Only completed direct imports/literal tables establish definite bindings.
+            # Completed module classes also establish declared constructor identities.
             statement = parents[origin] if target in literal_tables else origin
             direct = parents[statement] is scope and (
-                isinstance(statement, (ast.Import, ast.ImportFrom)) or target in literal_tables)
+                isinstance(statement, (ast.Import, ast.ImportFrom)) or target in literal_tables
+                or (scope is tree and isinstance(statement, ast.ClassDef)))
             completed = (statement.end_lineno, statement.end_col_offset) <= position(node)
             value = target if direct and completed and bound == name else None
         return value
 
     def at(node, name):
         scope = enclosing(node)
-        first, candidates = True, set()
+        first, immediate, candidates = True, True, set()
         while scope is not None:
             # A method does not close over its class namespace.
             if first or not isinstance(scope, ast.ClassDef):
                 # Deferred function bodies must not resolve globals at definition time.
-                if isinstance(scope, ast.ClassDef) or (first and scope is tree):
+                if isinstance(scope, ast.ClassDef) or (immediate and scope is tree):
                     imported = preceding_binding(scope, node, name)
                     if imported is not None:
-                        return {imported}
+                        return candidates | {imported}
                 wildcards = bindings[scope].get('*', set())
                 if wildcards:
                     # Exports and competing star imports are not statically known.
@@ -187,6 +194,8 @@ def lexical_resolver(tree, parents, package):
                     # Keep outer alternatives instead of silently losing possible imports.
                     if not isinstance(scope, ast.ClassDef):
                         return candidates
+            if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.GeneratorExp)):
+                immediate = False
             first = False
             scope = enclosing(scope)
         return candidates | {name}
@@ -259,9 +268,33 @@ def possible_loader_reexport(name, exports):
     return bool(pending)  # Cycles or the bounded walk never certify a non-loader.
 
 
+def non_executed_annotations(tree, parents):
+    """Python 3.11-3.13 annotation syntax; reflective evaluation is not inferred."""
+    postponed = any(isinstance(node, ast.ImportFrom) and node.module == '__future__'
+                    and any(alias.name == 'annotations' for alias in node.names) for node in tree.body)
+    ignored = set()
+    for node in ast.walk(tree):
+        annotation = None
+        if postponed and isinstance(node, ast.arg):
+            annotation = node.annotation
+        elif postponed and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            annotation = node.returns
+        elif isinstance(node, ast.AnnAssign):
+            scope = parents.get(node)
+            while scope is not None and not isinstance(scope, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                                               ast.AsyncFunctionDef, ast.Lambda)):
+                scope = parents.get(scope)
+            if postponed or isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                annotation = node.annotation
+        if annotation is not None:
+            ignored.update(ast.walk(annotation))
+    return ignored
+
+
 def scan(name, tree, modules, package, hook_routes, exports):
     tables = dict_targets(tree, binding_keys=True)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    annotations = non_executed_annotations(tree, parents)
     resolve = lexical_resolver(tree, parents, package)
     edges, unresolved, references = [], [], []
 
@@ -298,6 +331,8 @@ def scan(name, tree, modules, package, hook_routes, exports):
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in modules:
             references.append({**site(node), "target": node.value})
         elif isinstance(node, ast.Call):
+            if node in annotations:
+                continue
             callees = qualified(node.func, lambda symbol: resolve(node, symbol))
             proof_rules = {"rds_verify_registry.ProofRule", "!module_class.ProofRule"}
             if name == "rds_verify" and callees & proof_rules and len(callees) > 1:
