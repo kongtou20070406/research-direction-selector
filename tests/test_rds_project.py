@@ -1,4 +1,5 @@
 import concurrent.futures
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from rds_project import ProjectStore, _Job, canonical, digest, file_sha
+from rds_project import ProjectStore, _Job, _WindowsPopen, canonical, digest, file_sha
 
 
 SCRIPT = '''import json, pathlib, sys, time
@@ -111,21 +112,270 @@ class ProjectTests(unittest.TestCase):
                     self.assertEqual((self.root / f'.rds/project-artifacts/{run_id}/stdout.bin').stat().st_size, 0)
                 self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
 
-    def test_native_resume_negative_status_is_rejected_without_record_mutation(self):
+    def test_public_resume_error_or_unexpected_count_cannot_pass(self):
         before = self.store.snapshot()
-        handles = []
-        def reject(handle):
-            handles.append(handle)
-            return -1073741790  # STATUS_ACCESS_DENIED, a failing signed NTSTATUS.
-        job = object.__new__(_Job)
-        job.handle = 456
-        job.process = SimpleNamespace(_handle=123)
-        with patch('rds_project.os', SimpleNamespace(name='nt')), \
-             patch('rds_project.ctypes.WinDLL', return_value=SimpleNamespace(NtResumeProcess=reject), create=True):
-            with self.assertRaisesRegex(OSError, 'NTSTATUS 0xc0000022'):
-                job.resume()
-        self.assertEqual(handles, [123])
+        for count in (0xffffffff, 0, 2):
+            with self.subTest(count=count):
+                resumed, closed = [], []
+                def reject(handle):
+                    resumed.append(handle)
+                    return count
+                job = object.__new__(_Job)
+                job.handle, job.thread_handle = 456, 789
+                job.api = SimpleNamespace(ResumeThread=reject, CloseHandle=closed.append)
+                with patch('rds_project.os', SimpleNamespace(name='nt')), \
+                     patch('rds_project.ctypes.get_last_error', return_value=5, create=True), \
+                     patch('rds_project.ctypes.WinError', side_effect=lambda code: OSError('ResumeThread denied'), create=True):
+                    with self.assertRaises((OSError, ValueError)):
+                        job.resume()
+                self.assertEqual(resumed, [789])
+                self.assertEqual(closed, [])
+                self.assertEqual(job.thread_handle, 789)
         self.assertEqual(self.store.snapshot(), before)
+
+    def test_pid_persistence_failure_kills_child_and_settles_original_attempt_once(self):
+        original_job, original_save = _Job, self.store._save
+        for run_id, after_write in (('r1', False), ('r2', True)):
+            with self.subTest(after_write=after_write):
+                children, fired = [], []
+                def capture(process):
+                    children.append(process)
+                    return original_job(process)
+                def fail_save(db, run):
+                    if run['id'] == run_id and run.get('pid') is not None and not fired:
+                        fired.append(run['attempt_id'])
+                        if after_write:
+                            original_save(db, run)
+                        raise sqlite3.OperationalError('fixture PID persistence failure')
+                    original_save(db, run)
+                with patch('rds_project._Job', side_effect=capture), \
+                     patch.object(self.store, '_save', side_effect=fail_save):
+                    receipt = self.run_spec(self.spec(rid=run_id, mode='timeout'))
+                state = self.store.snapshot()
+                self.assertEqual(receipt['run_status'], 'FAILED')
+                self.assertEqual(len(children), 1)
+                self.assertIsNotNone(children[0].poll())
+                self.assertIsNone(receipt['pid'])
+                self.assertEqual(fired, [receipt['attempt_id']])
+                self.assertFalse((self.root / f'outputs/{run_id}.json').exists())
+                if os.name == 'nt':
+                    self.assertEqual((self.root / f'.rds/project-artifacts/{run_id}/stdout.bin').stat().st_size, 0)
+                self.assertGreater(receipt['resources']['wall_seconds']['measured'], 0)
+                self.assertTrue(receipt['resources']['cpu_seconds']['unknown'])
+                self.assertEqual(receipt['resources']['cpu_seconds']['charged_estimate'], 1)
+                self.assertTrue(all(b['reserved'] == 0 for b in state['budget'].values()))
+                self.assertEqual(self.store.recover(run_id)['sha256'], receipt['sha256'])
+                self.assertEqual(self.store.snapshot(), state)
+        self.assertEqual(len(self.store.snapshot()['receipts']), 2)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows public process API failure handling')
+    def test_atomic_attribute_create_and_public_resume_failures_never_run_child(self):
+        for phase, run_id in (('job_list', 'r1'), ('create', 'r2'), ('resume', 'r3')):
+            with self.subTest(phase=phase):
+                jobs, created = [], []
+                def prepare(_):
+                    job = _Job(None)
+                    jobs.append(job)
+                    if phase == 'job_list':
+                        def rejected_attribute(*args):
+                            ctypes.set_last_error(87)
+                            return 0
+                        job.api.UpdateProcThreadAttribute = rejected_attribute
+                    if phase in ('job_list', 'create'):
+                        def rejected_create(*args):
+                            created.append(True)
+                            ctypes.set_last_error(5)
+                            return 0
+                        job.api.CreateProcessW = rejected_create
+                    if phase == 'resume':
+                        def rejected_resume(handle):
+                            ctypes.set_last_error(5)
+                            return 0xffffffff
+                        job.api.ResumeThread = rejected_resume
+                    return job
+                with patch.object(_WindowsPopen, '_job_type', side_effect=prepare):
+                    receipt = self.run_spec(self.spec(rid=run_id))
+                self.assertEqual(receipt['run_status'], 'FAILED', receipt)
+                self.assertFalse((self.root / f'outputs/{run_id}.json').exists())
+                self.assertEqual((self.root / f'.rds/project-artifacts/{run_id}/stdout.bin').stat().st_size, 0)
+                self.assertEqual(len(created), 1 if phase == 'create' else 0)
+                self.assertEqual(len(jobs), 1)
+                self.assertIsNone(jobs[0].handle)
+                self.assertIsNone(jobs[0].thread_handle)
+                if phase == 'resume':
+                    self.assertIsNotNone(jobs[0].process.poll())
+                self.assertTrue(all(b['reserved'] == 0 for b in self.store.snapshot()['budget'].values()))
+                self.assertTrue(receipt['resources']['cpu_seconds']['unknown'])
+                self.assertEqual(receipt['resources']['cpu_seconds']['charged_estimate'], 1)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows atomic Job creation')
+    def test_hard_controller_exit_before_pid_persistence_kills_suspended_child(self):
+        from ctypes import wintypes
+        self.store.register(self.spec(mode='timeout'))
+        marker = self.root / 'atomic-child.json'
+        controller_code = '''import ctypes, json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import rds_project
+def exit_before_adoption(process):
+    from ctypes import wintypes
+    job = process._owned_job
+    job.api.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+    inside = wintypes.BOOL()
+    assert job.api.IsProcessInJob(int(process._handle), job.handle, ctypes.byref(inside)) and inside.value
+    marker = Path(sys.argv[3])
+    temporary = marker.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'pid': process.pid, 'thread': bool(job.thread_handle)}))
+    temporary.replace(marker)
+    assert sys.stdin.buffer.read(1) == b'x'
+    os._exit(71)
+rds_project._Job = exit_before_adoption
+rds_project.ProjectStore(sys.argv[2]).execute('r1')
+'''
+        controller = subprocess.Popen([sys.executable, '-B', '-c', controller_code,
+                                       str(Path(__file__).resolve().parents[1] / 'scripts'),
+                                       str(self.root), str(marker)], stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        api = ctypes.WinDLL('kernel32', use_last_error=True)
+        api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        api.OpenProcess.restype = wintypes.HANDLE
+        api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        api.WaitForSingleObject.restype = wintypes.DWORD
+        api.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        api.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = None
+        try:
+            deadline = time.monotonic() + 15
+            while not marker.exists():
+                self.assertIsNone(controller.poll(), 'Controller exited before atomic creation')
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            child = json.loads(marker.read_text())
+            self.assertTrue(child['thread'])
+            handle = api.OpenProcess(0x100001, False, child['pid'])
+            self.assertTrue(handle)
+            self.assertEqual(api.WaitForSingleObject(handle, 0), 258)
+            before = self.store.snapshot()
+            self.assertIsNone(before['runs'][0]['pid'])
+            self.assertEqual(before['runs'][0]['status'], 'RUNNING')
+            stdout, stderr = controller.communicate(b'x', timeout=10)
+            self.assertEqual(controller.returncode, 71, (stdout, stderr))
+            self.assertEqual(api.WaitForSingleObject(handle, 5000), 0, 'Suspended orphan survived controller death')
+            self.assertEqual((self.root / '.rds/project-artifacts/r1/stdout.bin').stat().st_size, 0)
+            self.assertFalse((self.root / 'outputs/r1.json').exists())
+            receipt = self.store.recover('r1')
+            self.assertEqual(receipt['run_status'], 'INTERRUPTED')
+            self.assertEqual(receipt['attempt_id'], before['runs'][0]['attempt_id'])
+            self.assertTrue(receipt['resources']['wall_seconds']['unknown'])
+            self.assertEqual(receipt['assessment'], {'task_gain': 'UNKNOWN', 'mechanism': 'UNKNOWN'})
+            self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+        finally:
+            if controller.poll() is None:
+                controller.kill()
+                controller.communicate(timeout=5)
+            if handle:
+                if api.WaitForSingleObject(handle, 0) == 258:
+                    api.TerminateProcess(handle, 91)
+                    api.WaitForSingleObject(handle, 5000)
+                api.CloseHandle(handle)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows atomic Job streams')
+    def test_atomic_launch_preserves_argv_environment_cwd_and_standard_streams(self):
+        cwd = self.root / 'cwd \u4e2d'
+        cwd.mkdir()
+        arguments = ['a b', 'x"y', 'C:\\path with space\\end\\', '', '\u4e2d']
+        code = ('import json,os,sys; print(json.dumps([sys.argv[1:],os.environ["RDS_TEST_ENV"],'
+                'os.getcwd(),sys.stdin.read()])); print("separate stderr",file=sys.stderr)')
+        with (self.root / 'io.stdout').open('wb') as out, (self.root / 'io.stderr').open('wb') as err:
+            process = _WindowsPopen([sys.executable, '-B', '-c', code, *arguments], cwd=cwd,
+                                    env={**os.environ, 'RDS_TEST_ENV': 'space \u4e2d'}, stdin=subprocess.DEVNULL,
+                                    stdout=out, stderr=err, creationflags=0x4 | subprocess.CREATE_NO_WINDOW)
+            job = _Job(process)
+            try:
+                self.assertIsNone(process.poll())
+                self.assertEqual((self.root / 'io.stdout').stat().st_size, 0)
+                job.resume()
+                self.assertIsNone(job.thread_handle)
+                self.assertEqual(process.wait(timeout=10), 0)
+            finally:
+                job.stop()
+                job.close()
+                process.wait(timeout=5)
+        argv, environment, directory, stdin = json.loads((self.root / 'io.stdout').read_text())
+        self.assertEqual(argv, arguments)
+        self.assertEqual(environment, 'space \u4e2d')
+        self.assertEqual(Path(directory), cwd)
+        self.assertEqual(stdin, '')
+        self.assertEqual((self.root / 'io.stderr').read_text().strip(), 'separate stderr')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job descendant isolation')
+    def test_atomic_job_close_kills_child_and_grandchild_but_not_unrelated_process(self):
+        from ctypes import wintypes
+        # Every generation remains in the job; none inherit the controller's job handle.
+        grandchild = 'import time; time.sleep(30)'
+        child = ('import subprocess,sys,time; from pathlib import Path; '
+                 f'p=subprocess.Popen([sys.executable,"-B","-c",{grandchild!r}]); '
+                 'Path("grandchild.tmp").write_text(str(p.pid)); '
+                 'Path("grandchild.tmp").replace("grandchild.pid"); time.sleep(30)')
+        parent = ('import subprocess,sys,time; from pathlib import Path; '
+                  f'p=subprocess.Popen([sys.executable,"-B","-c",{child!r}]); '
+                  'Path("child.tmp").write_text(str(p.pid)); '
+                  'Path("child.tmp").replace("child.pid"); time.sleep(30)')
+        unrelated = subprocess.Popen([sys.executable, '-B', '-c', grandchild])
+        process = job = None
+        handles = []
+        api = ctypes.WinDLL('kernel32', use_last_error=True)
+        api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        api.OpenProcess.restype = wintypes.HANDLE
+        api.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+        api.GetCurrentProcess.restype = wintypes.HANDLE
+        api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        api.WaitForSingleObject.restype = wintypes.DWORD
+        api.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        api.CloseHandle.argtypes = [wintypes.HANDLE]
+        try:
+            with (self.root / 'tree.stdout').open('wb') as out, (self.root / 'tree.stderr').open('wb') as err:
+                process = _WindowsPopen([sys.executable, '-B', '-c', parent], cwd=self.root,
+                                        stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                        creationflags=0x4 | subprocess.CREATE_NO_WINDOW)
+                job = _Job(process)
+                for handle in (api.GetCurrentProcess(), int(unrelated._handle)):
+                    inside = wintypes.BOOL()
+                    self.assertTrue(api.IsProcessInJob(handle, job.handle, ctypes.byref(inside)))
+                    self.assertFalse(inside.value)
+                job.resume()
+                deadline = time.monotonic() + 10
+                for name in ('child.pid', 'grandchild.pid'):
+                    path = self.root / name
+                    while not path.exists():
+                        self.assertIsNone(process.poll())
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.01)
+                    handle = api.OpenProcess(0x101001, False, int(path.read_text()))
+                    self.assertTrue(handle)
+                    handles.append(handle)
+                    inside = wintypes.BOOL()
+                    self.assertTrue(api.IsProcessInJob(handle, job.handle, ctypes.byref(inside)))
+                    self.assertTrue(inside.value)
+                self.assertIsNone(process.poll())
+                job.close()
+                # Kill-on-close can use exit code zero; actual death is required.
+                process.wait(timeout=5)
+                for handle in handles:
+                    self.assertEqual(api.WaitForSingleObject(handle, 5000), 0)
+                self.assertIsNone(unrelated.poll())
+        finally:
+            if job is not None:
+                job.stop()
+                job.close()
+            if process is not None:
+                process.wait(timeout=5)
+            for handle in handles:
+                if api.WaitForSingleObject(handle, 0) == 258:
+                    api.TerminateProcess(handle, 91)
+                api.CloseHandle(handle)
+            unrelated.kill()
+            unrelated.wait(timeout=5)
 
     def test_job_setup_cannot_resume_after_original_worker_timeout(self):
         real_job, resumes = _Job, []

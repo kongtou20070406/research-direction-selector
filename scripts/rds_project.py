@@ -183,8 +183,14 @@ def _alive(pid):
 class _Job:
     """Own the launched process tree, without enumerating unrelated processes."""
     def __init__(self, process):
+        owned = getattr(process, '_owned_job', None)
+        if owned is not None:
+            # Keep one handle owner across Popen return, adoption and cleanup.
+            self.__dict__ = owned.__dict__
+            return
         self.process = process
         self.handle = None
+        self.thread_handle = None
         if os.name != "nt":
             return
         from ctypes import wintypes
@@ -205,6 +211,8 @@ class _Job:
         self.api.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         self.api.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         self.api.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.api.ResumeThread.argtypes = [wintypes.HANDLE]
+        self.api.ResumeThread.restype = wintypes.DWORD
         handle = self.api.CreateJobObjectW(None, None)
         limits = Extended()
         limits.basic.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -212,7 +220,9 @@ class _Job:
             if handle:
                 self.api.CloseHandle(handle)
             raise OSError("Cannot establish project process job")
-        if not self.api.AssignProcessToJobObject(handle, int(process._handle)):
+        # Legacy callers can own an already running watchdog process. Worker
+        # creation uses a precreated job and never takes this assignment path.
+        if process is not None and not self.api.AssignProcessToJobObject(handle, int(process._handle)):
             self.api.CloseHandle(handle)
             raise OSError("Cannot bind owned process to project job")
         self.handle = handle
@@ -221,29 +231,146 @@ class _Job:
         if os.name != "nt":
             return
         require(self.handle is not None, "Cannot resume a process without its owned job")
-        # Popen closes the primary thread handle. Resume via the retained process
-        # handle only after the suspended child belongs to our kill-on-close job.
-        from ctypes import wintypes
-        api = ctypes.WinDLL("ntdll")
-        api.NtResumeProcess.argtypes = [wintypes.HANDLE]
-        api.NtResumeProcess.restype = wintypes.LONG
-        status = api.NtResumeProcess(int(self.process._handle))
-        if status < 0:
-            raise OSError(f"Cannot resume owned project process: NTSTATUS {status & 0xffffffff:#x}")
+        require(self.thread_handle is not None, "Cannot resume without the original suspended thread")
+        previous = self.api.ResumeThread(self.thread_handle)
+        if previous == 0xffffffff:
+            raise ctypes.WinError(ctypes.get_last_error())
+        require(previous == 1, f"Unexpected owned thread suspend count: {previous}")
+        self.api.CloseHandle(self.thread_handle)
+        self.thread_handle = None
 
     def stop(self):
         if self.handle:
             self.api.TerminateJobObject(self.handle, 1)
-        elif self.process.poll() is None:
+        elif self.process is not None and self.process.poll() is None:
             if os.name == "nt":
                 self.process.kill()
             else:
                 os.killpg(self.process.pid, signal.SIGKILL)
 
     def close(self):
+        if self.thread_handle is not None:
+            self.api.CloseHandle(self.thread_handle)
+            self.thread_handle = None
         if self.handle:
             self.api.CloseHandle(self.handle)
             self.handle = None
+
+
+class _WindowsPopen(subprocess.Popen):
+    """Runner-only CreateProcessW adapter; atomically own a suspended worker.
+
+    CPython exposes only HANDLE_LIST and closes the primary thread handle. Reuse
+    its stream setup/waiting, but retain the thread and pass JOB_LIST ourselves.
+    """
+    _job_type = _Job
+
+    def __init__(self, *args, **kwargs):
+        self._owned_job = self._job_type(None)
+        try:
+            super().__init__(*args, **kwargs)
+        except BaseException:
+            try:
+                self._owned_job.stop()
+            finally:
+                self._owned_job.close()
+            raise
+
+    def _execute_child(self, args, executable, preexec_fn, close_fds, pass_fds,
+                       cwd, env, startupinfo, creationflags, shell,
+                       p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite, *unused):
+        from ctypes import wintypes
+        require(not shell and executable is None and startupinfo is None and close_fds
+                and not pass_fds and preexec_fn is None, "Unsupported owned Windows launch options")
+        require(creationflags & 0x4 and not creationflags & 0x01000000,
+                "Owned Windows launch requires suspension without breakaway")
+
+        class Startup(ctypes.Structure):
+            _fields_ = [('cb', wintypes.DWORD), ('reserved', wintypes.LPWSTR),
+                        ('desktop', wintypes.LPWSTR), ('title', wintypes.LPWSTR),
+                        ('x', wintypes.DWORD), ('y', wintypes.DWORD),
+                        ('x_size', wintypes.DWORD), ('y_size', wintypes.DWORD),
+                        ('x_count', wintypes.DWORD), ('y_count', wintypes.DWORD),
+                        ('fill', wintypes.DWORD), ('flags', wintypes.DWORD),
+                        ('show', wintypes.WORD), ('reserved_size', wintypes.WORD),
+                        ('reserved_bytes', ctypes.c_void_p), ('stdin', wintypes.HANDLE),
+                        ('stdout', wintypes.HANDLE), ('stderr', wintypes.HANDLE)]
+
+        class StartupEx(ctypes.Structure):
+            _fields_ = [('startup', Startup), ('attributes', ctypes.c_void_p)]
+
+        class Information(ctypes.Structure):
+            _fields_ = [('process', wintypes.HANDLE), ('thread', wintypes.HANDLE),
+                        ('pid', wintypes.DWORD), ('tid', wintypes.DWORD)]
+
+        api = self._owned_job.api
+        api.InitializeProcThreadAttributeList.argtypes = [ctypes.c_void_p, wintypes.DWORD,
+                                                         wintypes.DWORD, ctypes.POINTER(ctypes.c_size_t)]
+        api.UpdateProcThreadAttribute.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_size_t,
+                                                 ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
+        api.DeleteProcThreadAttributeList.argtypes = [ctypes.c_void_p]
+        api.CreateProcessW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p,
+                                      wintypes.BOOL, wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR,
+                                      ctypes.POINTER(StartupEx), ctypes.POINTER(Information)]
+        size = ctypes.c_size_t()
+        attributes = None
+        initialized = False
+        info = Information()
+        try:
+            command = subprocess.list2cmdline(args)
+            directory = os.fsdecode(cwd) if cwd is not None else None
+            require('\0' not in command and (directory is None or '\0' not in directory),
+                    "Embedded null in owned Windows command or directory")
+            environment = None
+            if env is not None:
+                entries = []
+                for key, value in env.items():
+                    key, value = os.fsdecode(key), os.fsdecode(value)
+                    require(key and '\0' not in key + value and '=' not in key[1:],
+                            "Invalid owned Windows environment")
+                    entries.append(key + '=' + value)
+                environment = ctypes.create_unicode_buffer('\0'.join(sorted(entries, key=str.upper)) + '\0\0')
+            sys.audit('subprocess.Popen', None, command, directory, env)
+            sys.audit('_winapi.CreateProcess', None, command, directory)
+            if api.InitializeProcThreadAttributeList(None, 2, 0, ctypes.byref(size)) \
+                    or ctypes.get_last_error() != 122 or not size.value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            attributes = ctypes.create_string_buffer(size.value)
+            if not api.InitializeProcThreadAttributeList(attributes, 2, 0, ctypes.byref(size)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            initialized = True
+            jobs = (wintypes.HANDLE * 1)(self._owned_job.handle)
+            streams = self._filter_handle_list([int(p2cread), int(c2pwrite), int(errwrite)])
+            require(streams and -1 not in streams, "Owned Windows worker requires all standard streams")
+            handles = (wintypes.HANDLE * len(streams))(*streams)
+            # Only stdio is inherited. In particular, the job handle must stay
+            # exclusively in the controller so its death kills every descendant.
+            for attribute, values in ((0x2000d, jobs), (0x20002, handles)):
+                if not api.UpdateProcThreadAttribute(attributes, 0, attribute, values,
+                                                     ctypes.sizeof(values), None, None):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            startup = StartupEx()
+            startup.startup.cb = ctypes.sizeof(startup)
+            startup.startup.flags = subprocess.STARTF_USESTDHANDLES
+            startup.startup.stdin, startup.startup.stdout, startup.startup.stderr = p2cread, c2pwrite, errwrite
+            startup.attributes = ctypes.addressof(attributes)
+            if not api.CreateProcessW(None, ctypes.create_unicode_buffer(command), None, None, True,
+                                      creationflags | 0x80000 | 0x400, environment, directory,
+                                      ctypes.byref(startup), ctypes.byref(info)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            self._owned_job.thread_handle, info.thread = info.thread, None
+            self._handle, info.process = subprocess.Handle(info.process), None
+            self._child_created = True
+            self.pid = info.pid
+            self._owned_job.process = self
+        finally:
+            if info.thread:
+                api.CloseHandle(info.thread)
+            if info.process:
+                api.CloseHandle(info.process)
+            if initialized:
+                api.DeleteProcThreadAttributeList(attributes)
+            self._close_pipe_fds(p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite)
 
 
 class ProjectStore:
@@ -1408,8 +1535,8 @@ class ProjectStore:
         samples = [(start, sum(stream_bytes))]
         try:
             with (work / "stdout.bin").open("xb") as out, (work / "stderr.bin").open("xb") as err:
-                # CREATE_SUSPENDED closes the exit/descendant race before Job
-                # assignment. A failed bind or resume remains a failed attempt.
+                # JOB_LIST owns the child atomically at creation; suspension
+                # keeps execution behind PID persistence and original deadlines.
                 flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | 0x4 if os.name == "nt" else 0
                 argv = [run["executor"], *run["manifest"]["argv"][1:]]
                 advisor_token = self._advisor_prepare_run(run_id)
@@ -1447,7 +1574,8 @@ class ProjectStore:
                             if key.casefold() in startup_variables:
                                 del environment[key]
                         worker_options['env'] = environment
-                    process = subprocess.Popen(argv, cwd=self.root, shell=False, stdin=subprocess.DEVNULL,
+                    launch = _WindowsPopen if os.name == "nt" else subprocess.Popen
+                    process = launch(argv, cwd=self.root, shell=False, stdin=subprocess.DEVNULL,
                                                stdout=out, stderr=err, creationflags=flags,
                                                start_new_session=os.name != "nt", **worker_options)
                     started = True
@@ -1521,6 +1649,8 @@ class ProjectStore:
         finally:
             if job:
                 job.close()
+            if isinstance(process, _WindowsPopen):
+                process._owned_job.close()
         return self._finish(run_id, attempt_id, status, exit_code, time.monotonic() - attempt_start,
                             started, errors, before, timeout, stop_reason=stop_reason)
 
