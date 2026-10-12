@@ -217,6 +217,20 @@ class _Job:
             raise OSError("Cannot bind owned process to project job")
         self.handle = handle
 
+    def resume(self):
+        if os.name != "nt":
+            return
+        require(self.handle is not None, "Cannot resume a process without its owned job")
+        # Popen closes the primary thread handle. Resume via the retained process
+        # handle only after the suspended child belongs to our kill-on-close job.
+        from ctypes import wintypes
+        api = ctypes.WinDLL("ntdll")
+        api.NtResumeProcess.argtypes = [wintypes.HANDLE]
+        api.NtResumeProcess.restype = wintypes.LONG
+        status = api.NtResumeProcess(int(self.process._handle))
+        if status < 0:
+            raise OSError(f"Cannot resume owned project process: NTSTATUS {status & 0xffffffff:#x}")
+
     def stop(self):
         if self.handle:
             self.api.TerminateJobObject(self.handle, 1)
@@ -1325,7 +1339,9 @@ class ProjectStore:
         samples = [(start, sum(stream_bytes))]
         try:
             with (work / "stdout.bin").open("xb") as out, (work / "stderr.bin").open("xb") as err:
-                flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+                # CREATE_SUSPENDED closes the exit/descendant race before Job
+                # assignment. A failed bind or resume remains a failed attempt.
+                flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | 0x4 if os.name == "nt" else 0
                 argv = [run["executor"], *run["manifest"]["argv"][1:]]
                 advisor_token = self._advisor_prepare_run(run_id)
                 with self._db() as db:
@@ -1369,6 +1385,16 @@ class ProjectStore:
                     job = _Job(process)
                     current["pid"] = process.pid
                     self._save(db, current)
+                # Binding/persisting a suspended child consumes the original
+                # allowance too; never resume it after a frozen time boundary.
+                if time.monotonic() - start >= run["manifest"]["timeout_seconds"]:
+                    timeout = True
+                    job.stop()
+                elif policy_deadline is not None and time.monotonic() >= policy_deadline:
+                    stop_reason = "CAMPAIGN_DEADLINE"
+                    job.stop()
+                else:
+                    job.resume()
                 while process.poll() is None:
                     elapsed = time.monotonic() - start
                     with self._db(settlement=(run_id, attempt_id)) as db:
