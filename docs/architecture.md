@@ -15,7 +15,7 @@ It emits versioned JSON to stdout, including recognized local edge sites, source
 responsibility label, unresolved loader, SCC, and mutual pair. Keep generated
 reports outside tracked source. A failed parse or empty tree exits 2, not success.
 
-## Snapshot
+## Original B0 Snapshot
 
 - Inspected source commit: `64daa9d0607bbad7ed37817740a225e6625d48fb`.
 - Source-set SHA-256: `3e7e4b5b9bef00a16d1c9b84a2a99d7ad0c232b3394ef7f0cf6a2f7bdf6d7bdb`.
@@ -27,6 +27,41 @@ reports outside tracked source. A failed parse or empty tree exits 2, not succes
 Do not compare these counts with the old 106-module / 50-pair inventory as if
 they used the same source or graph definition. A mutual pair is not an SCC.
 
+## B0.5 Responsibility Audit
+
+Only `GROUPS` labels and this document change in this step. All 119 runtime
+source hashes, 445 dependency pairs, 704 sites and unresolved targets are
+identical to B0. Being widely imported is not itself a reason to lower a module;
+the functions below establish its actual responsibility.
+
+| Module | Before -> after | Reason in current code |
+|---|---|---|
+| `rds_artifacts` | L2 -> L1 | `ingest_manifest` bounds and verifies original artifacts; `ArtifactFact` carries importer provenance used by kernel checks, not research planning. |
+| `rds_contract_read` | L2 -> L1 | `effective_contract` and `contract_history` validate ledger/CAS lineage, including activation transitions. This is the kernel's contract reader. |
+| `rds_project_read_port` | L2 -> L1 | `ProjectReadPort` borrows a SQLite transaction and issues capped SELECTs for raw ledger fields; it is not yet a research-state service. |
+| `rds_owned_history` | L2 -> L1 | `capture_choice` / `capture_completion` append checkpoints in the caller's transaction; this mixed module is not merely a read projection. |
+| `rds_source_documents` | L2 -> L1 | `SourceDocument` parses and validates operational receipt/result fields shared by artifact admission; no research strategy or graph assembly. Kept with the L1 cost contract it consumes, not marked as a dependency-free leaf. |
+| `rds_probe` | L2 -> L1 | `execute`, `formal_probe` and certificate checks form the bounded reference runner/verifier, not an Advisor suggestion. |
+| `rds_tool_applicability` | L2 -> L1 | `validate_bindings` and `inspect` check exact-task qualification, original assets and retained receipts. Its Advisor callback is still an upward violation. |
+| `rds_project_lifecycle` | L4 -> L1 | `initialize` and `enable_advisor` implement same-ledger policy activation, locks and event writes. Formatting helpers do not make this a CLI-only entrypoint. |
+| `rds_hypergraph_archive` | L2 -> L4 | `build_archive_display` / `render_archive_html` build display-only archive relations; the module explicitly excludes inference and imports the UI renderer. It is not the research hypergraph projection. |
+
+L2 retains `rds_hypergraph`, `rds_discrimination` and graph adapters: they derive
+research relationships or observations. Their mixed I/O and upward calls remain
+visible; relabelling them merely to reduce a count would conceal real work.
+Likewise CLI/QUICK stay L4 until their reusable state/helpers are extracted.
+
+| Metric | B0 labels | B0.5 labels | Runtime change |
+|---|---:|---:|---|
+| Upward module pairs | 66 | 51 | None: 17 false classifications removed, 2 newly exposed |
+| Largest cyclic SCC | 52 | 52 | None |
+| Mutual dependency pairs | 54 | 54 | None |
+
+The newly exposed violations are `rds_project_lifecycle -> rds_cli` and
+`rds_project_lifecycle -> rds_owned_advisor`. The first needs state/helper
+extraction; the latter is a real policy-validation callback, not a label fix.
+No dependency is removed and no runtime behavior, schema or event changes.
+
 ## Responsibility labels
 
 Labels in `tools/import_graph.py:GROUPS` make the current mixed files auditable.
@@ -37,8 +72,8 @@ domain policy. `rds_cli` still contains lower-level helpers and `RDSState`.
 | Label | Current inventory responsibility |
 |---|---|
 | L0 | Platform I/O primitives and cross-process mutation locking |
-| L1 | Ledger, admission, settlement, CAS/receipts and certificate kernels |
-| L2 | Read-side, evidence import, graph/projection and diagnostic data |
+| L1 | Ledger reads/writes, admission, settlement, evidence/receipt checks and certificate kernels |
+| L2 | Derived research relationships, state projections and diagnostic data |
 | L3 | Advisor, proposals, search, predictions and research policies |
 | L4 | CLI/QUICK/worker, presentation and existing assembly entrypoints |
 | SHARED | Leaf value/decoding/arithmetic contracts; no platform ownership |
@@ -52,7 +87,7 @@ There is no unified application composition root yet. Existing
 `rds_verify` assembles verifier adapters. These are not interchangeable with
 a bus that owns all entrypoints, persistence and recovery.
 
-## All classified upward module pairs
+## All Classified Upward Pairs After B0.5
 
 Each row lists every observed site for that pair. A static import inside a
 function or conditional remains an edge; moving it there does not remove it.
@@ -61,7 +96,6 @@ The JSON `kind` distinguishes syntax, dynamic candidates and provider callbacks.
 | From | To | Source lines |
 |---|---|---|
 | `rds_adversary` (L3) | `rds_cli` (L4) | [125](../scripts/rds_adversary.py#L125) |
-| `rds_advisor` (L3) | `rds_project_lifecycle` (L4) | [508](../scripts/rds_advisor.py#L508), [516](../scripts/rds_advisor.py#L516) |
 | `rds_advisor_search` (L3) | `rds_capabilities` (L4) | [763](../scripts/rds_advisor_search.py#L763) |
 | `rds_advisor_workset` (L3) | `rds_quick` (L4) | [10](../scripts/rds_advisor_workset.py#L10) |
 | `rds_autonomy` (L3) | `rds_autonomy_worker` (L4) | [78](../scripts/rds_autonomy.py#L78) |
@@ -71,57 +105,43 @@ The JSON `kind` distinguishes syntax, dynamic candidates and provider callbacks.
 | `rds_campaign` (L1) | `rds_hypergraph` (L2) | [497](../scripts/rds_campaign.py#L497) |
 | `rds_campaign` (L1) | `rds_owned_advisor` (L3) | [419](../scripts/rds_campaign.py#L419), [462](../scripts/rds_campaign.py#L462) |
 | `rds_campaign` (L1) | `rds_quick` (L4) | [391](../scripts/rds_campaign.py#L391) |
-| `rds_campaign` (L1) | `rds_source_documents` (L2) | [18](../scripts/rds_campaign.py#L18) |
 | `rds_checkpoints` (L1) | `rds_advisor` (L3) | [41](../scripts/rds_checkpoints.py#L41), [77](../scripts/rds_checkpoints.py#L77) |
-| `rds_checkpoints` (L1) | `rds_artifacts` (L2) | [50](../scripts/rds_checkpoints.py#L50), [68](../scripts/rds_checkpoints.py#L68) |
-| `rds_checkpoints` (L1) | `rds_owned_history` (L2) | [104](../scripts/rds_checkpoints.py#L104), [118](../scripts/rds_checkpoints.py#L118), [143](../scripts/rds_checkpoints.py#L143) |
 | `rds_discrimination` (L2) | `rds_advisor_search` (L3) | [13](../scripts/rds_discrimination.py#L13) |
-| `rds_domain_confirmation` (L1) | `rds_artifacts` (L2) | [12](../scripts/rds_domain_confirmation.py#L12) |
 | `rds_domain_confirmation` (L1) | `rds_owned_advisor` (L3) | [180](../scripts/rds_domain_confirmation.py#L180) |
 | `rds_guard` (L1) | `rds_advisor` (L3) | [66](../scripts/rds_guard.py#L66), [144](../scripts/rds_guard.py#L144) |
-| `rds_guard` (L1) | `rds_artifacts` (L2) | [31](../scripts/rds_guard.py#L31), [126](../scripts/rds_guard.py#L126) |
-| `rds_hypergraph_archive` (L2) | `rds_hypergraph_view` (L4) | [239](../scripts/rds_hypergraph_archive.py#L239), [250](../scripts/rds_hypergraph_archive.py#L250), [357](../scripts/rds_hypergraph_archive.py#L357), [433](../scripts/rds_hypergraph_archive.py#L433), [533](../scripts/rds_hypergraph_archive.py#L533) |
 | `rds_jump` (L3) | `rds_quick` (L4) | [84](../scripts/rds_jump.py#L84) |
 | `rds_math` (L1) | `rds_cli` (L4) | [30](../scripts/rds_math.py#L30) |
 | `rds_math` (L1) | `rds_quick` (L4) | [12](../scripts/rds_math.py#L12) |
 | `rds_method_revision` (L1) | `rds_autonomy` (L3) | [69](../scripts/rds_method_revision.py#L69) |
-| `rds_method_revision` (L1) | `rds_contract_read` (L2) | [18](../scripts/rds_method_revision.py#L18) |
 | `rds_method_revision` (L1) | `rds_owned_advisor` (L3) | [106](../scripts/rds_method_revision.py#L106) |
 | `rds_owned_advisor` (L3) | `rds_quick` (L4) | [507](../scripts/rds_owned_advisor.py#L507) |
-| `rds_owned_history` (L2) | `rds_quick` (L4) | [96](../scripts/rds_owned_history.py#L96) |
-| `rds_owned_tools` (L1) | `rds_artifacts` (L2) | [26](../scripts/rds_owned_tools.py#L26), [153](../scripts/rds_owned_tools.py#L153) |
+| `rds_owned_history` (L1) | `rds_quick` (L4) | [96](../scripts/rds_owned_history.py#L96) |
 | `rds_owned_tools` (L1) | `rds_owned_advisor` (L3) | [154](../scripts/rds_owned_tools.py#L154) |
-| `rds_owned_tools` (L1) | `rds_tool_applicability` (L2) | [114](../scripts/rds_owned_tools.py#L114) |
-| `rds_postcommit_confirmation` (L1) | `rds_artifacts` (L2) | [12](../scripts/rds_postcommit_confirmation.py#L12) |
 | `rds_postcommit_confirmation` (L1) | `rds_quick` (L4) | [140](../scripts/rds_postcommit_confirmation.py#L140) |
 | `rds_project` (L1) | `rds_advisor_search` (L3) | [543](../scripts/rds_project.py#L543) |
 | `rds_project` (L1) | `rds_autonomy` (L3) | [492](../scripts/rds_project.py#L492), [1189](../scripts/rds_project.py#L1189) |
-| `rds_project` (L1) | `rds_contract_read` (L2) | [31](../scripts/rds_project.py#L31) |
 | `rds_project` (L1) | `rds_feasibility` (L3) | [495](../scripts/rds_project.py#L495), [1171](../scripts/rds_project.py#L1171) |
 | `rds_project` (L1) | `rds_owned_advisor` (L3) | [395](../scripts/rds_project.py#L395), [412](../scripts/rds_project.py#L412), [426](../scripts/rds_project.py#L426), [957](../scripts/rds_project.py#L957), [1712](../scripts/rds_project.py#L1712) |
-| `rds_project` (L1) | `rds_owned_history` (L2) | [1230](../scripts/rds_project.py#L1230), [1650](../scripts/rds_project.py#L1650) |
 | `rds_project` (L1) | `rds_quick` (L4) | [1665](../scripts/rds_project.py#L1665), [1675](../scripts/rds_project.py#L1675) |
 | `rds_project_hooks` (L1) | `rds_owned_advisor` (L3) | [20](../scripts/rds_project_hooks.py#L20) |
 | `rds_project_hooks` (L1) | `rds_quick` (L4) | [20](../scripts/rds_project_hooks.py#L20) |
+| `rds_project_lifecycle` (L1) | `rds_cli` (L4) | [67](../scripts/rds_project_lifecycle.py#L67) |
+| `rds_project_lifecycle` (L1) | `rds_owned_advisor` (L3) | [194](../scripts/rds_project_lifecycle.py#L194), [352](../scripts/rds_project_lifecycle.py#L352) |
 | `rds_rsi_confirmation` (L1) | `rds_meta` (L3) | [6](../scripts/rds_rsi_confirmation.py#L6) |
-| `rds_scalar_verify` (L1) | `rds_probe` (L2) | [3](../scripts/rds_scalar_verify.py#L3) |
 | `rds_steering` (L1) | `rds_dialogue` (L4) | [254](../scripts/rds_steering.py#L254) |
 | `rds_steering` (L1) | `rds_quick` (L4) | [126](../scripts/rds_steering.py#L126), [260](../scripts/rds_steering.py#L260) |
 | `rds_structure` (L3) | `rds_quick` (L4) | [19](../scripts/rds_structure.py#L19) |
 | `rds_theory_progression` (L1) | `rds_operators` (L3) | [161](../scripts/rds_theory_progression.py#L161), [386](../scripts/rds_theory_progression.py#L386) |
 | `rds_tms_store` (L1) | `rds_hypergraph` (L2) | [10](../scripts/rds_tms_store.py#L10) |
 | `rds_tms_store` (L1) | `rds_quick` (L4) | [13](../scripts/rds_tms_store.py#L13) |
-| `rds_tool_applicability` (L2) | `rds_advisor_search` (L3) | [147](../scripts/rds_tool_applicability.py#L147) |
-| `rds_tool_applicability` (L2) | `rds_owned_advisor` (L3) | [146](../scripts/rds_tool_applicability.py#L146) |
-| `rds_tool_application` (L1) | `rds_artifacts` (L2) | [107](../scripts/rds_tool_application.py#L107) |
-| `rds_tool_calls` (L1) | `rds_artifacts` (L2) | [7](../scripts/rds_tool_calls.py#L7) |
+| `rds_tool_applicability` (L1) | `rds_advisor_search` (L3) | [147](../scripts/rds_tool_applicability.py#L147) |
+| `rds_tool_applicability` (L1) | `rds_owned_advisor` (L3) | [146](../scripts/rds_tool_applicability.py#L146) |
 | `rds_tool_calls` (L1) | `rds_owned_advisor` (L3) | [166](../scripts/rds_tool_calls.py#L166) |
 | `rds_tool_calls` (L1) | `rds_quick` (L4) | [10](../scripts/rds_tool_calls.py#L10) |
 | `rds_tool_compare` (L1) | `rds_cli` (L4) | [50](../scripts/rds_tool_compare.py#L50) |
 | `rds_tool_compare` (L1) | `rds_quick` (L4) | [13](../scripts/rds_tool_compare.py#L13) |
 | `rds_tool_workbench` (L1) | `rds_owned_advisor` (L3) | [121](../scripts/rds_tool_workbench.py#L121) |
 | `rds_tool_workbench` (L1) | `rds_quick` (L4) | [122](../scripts/rds_tool_workbench.py#L122) |
-| `rds_tools` (L1) | `rds_artifacts` (L2) | [167](../scripts/rds_tools.py#L167) |
 | `rds_tools` (L1) | `rds_cli` (L4) | [123](../scripts/rds_tools.py#L123) |
 | `rds_tools` (L1) | `rds_quick` (L4) | [19](../scripts/rds_tools.py#L19) |
 | `rds_workspace` (L1) | `rds_cli` (L4) | [144](../scripts/rds_workspace.py#L144), [263](../scripts/rds_workspace.py#L263), [373](../scripts/rds_workspace.py#L373), [412](../scripts/rds_workspace.py#L412) |
