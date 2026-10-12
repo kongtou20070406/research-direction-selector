@@ -18,7 +18,9 @@ The first 15 upward-pair changes are classification only; B1 removes another
 22 upward pairs through real import changes. The latest graph has 125 modules,
 478 combined pairs, 725 sites, 4 cyclic SCCs, 8 unresolved dynamic sites and no
 unclassified edges. Source-set SHA-256:
-`115c9d1eb4c011304834dd044210a83d9e87af3ecb672abd4680e385f3398ebe`.
+`5cdc3c99224e9a2bd9b78280d5d1273cf68d205694fe1506adf9ad90378cc556`
+(committed LF bytes). The inventory hashes raw bytes: a CRLF checkout has a
+different source fingerprint even if its dependency topology is identical.
 New service modules increase total edge/module counts and join an existing
 kernel SCC; do not interpret extraction as an acyclic architecture.
 
