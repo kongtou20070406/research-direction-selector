@@ -856,16 +856,26 @@ def _specify_capability(move, review, entries, integrity):
     """Whether the applicable capability requirements supersede the existing move kind."""
     capability = {e["obligation"] for e in entries if e["status"] == "APPLICABLE" and e["response"] == "CAPABILITY_REQUIRED"}
     goal = review.get("goal") or {}
+    triple = goal.get("triple_affirmative") or {}
     # A satisfied goal is not blocked; historical warnings cannot make it a capability step.
-    if integrity or not capability or goal.get("status") == TRUE:
+    if integrity or not capability:
+        return False
+    if goal.get("status") == TRUE and (not triple or triple.get("status") == TRUE):
         return False
     unknown = {c["fact"] for c in goal.get("conditions", []) if c["truth"] == UNKNOWN}
+    for name in AFFIRMATIVES:
+        for c in triple.get(name, {}).get("conditions", []):
+            if c.get("affirms") != TRUE:
+                unknown.add(c["fact"])
     # Any UNKNOWN goal predicate must be covered, whichever branch produced the move, so recorded
     # rejections never make superseding easier than the plain goal-evidence step.
     if not unknown <= capability:
         return False
-    return (move["kind"] in CAPABILITY_SUPERSEDES or
-            (move["kind"] == "RESOLVE_PREMISE" and move["reason"] == GOAL_EVIDENCE_REASON and bool(unknown)))
+    is_goal_evidence = (move["kind"] == "RESOLVE_PREMISE" and
+                        (move["reason"] == GOAL_EVIDENCE_REASON or
+                         (bool(triple.get("open")) and move.get("reason", "").startswith("The goal predicates compare TRUE, but ")))
+                        and bool(unknown))
+    return move["kind"] in CAPABILITY_SUPERSEDES or is_goal_evidence
 
 
 def review_obstructions(search, context, *, _read_receipt=None):

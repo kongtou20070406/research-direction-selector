@@ -90,6 +90,25 @@ class AffirmedObstructionTests(unittest.TestCase):
                     self.assertEqual(selection['planning'], before['planning'])
                     self.assertEqual(selection['authorization'], 'UNCHANGED')
 
+    def test_open_affirmative_unsupported_operation_selects_specify_capability(self):
+        for group in ('portable', 'applicable'):
+            with self.subTest(group=group):
+                graph, context = affirmative_check_fixture(group, None)
+                target = group + '_gap'
+                search = reviewed(graph, context)
+                before = deepcopy(search['selection_review'])
+                self.assertEqual(before['goal']['status'], 'TRUE')
+                self.assertEqual(before['goal']['triple_affirmative'][group]['status'], 'UNKNOWN')
+                self.assertEqual(before['next_move']['kind'], 'RESOLVE_PREMISE')
+                context['obstructions'] = [obstruction(target, 'UNSUPPORTED_OPERATION', requirement=REQUIREMENT)]
+                review_obstructions(search, context)
+                selection = search['selection_review']
+                self.assertEqual(selection['obstruction_review'][0]['status'], 'APPLICABLE')
+                self.assertEqual(selection['obstruction_review'][0]['response'], 'CAPABILITY_REQUIRED')
+                self.assertEqual(selection['next_move']['kind'], 'SPECIFY_CAPABILITY')
+                self.assertEqual(selection['next_move']['supersedes'],
+                                 {'kind': before['next_move']['kind'], 'reason': before['next_move']['reason']})
+
     def test_all_predicates_for_a_fact_must_affirm_before_closing_obstruction(self):
         for group in ('portable', 'applicable'):
             for placement in ('same_group', 'other_group', 'goal'):
