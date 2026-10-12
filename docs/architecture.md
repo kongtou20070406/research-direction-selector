@@ -3,6 +3,44 @@
 This is a source inventory, not a claim that the layered bus is finished.
 No runtime module, ledger, admission rule, or recovery path is changed by B0.
 
+## Current B1 extraction result
+
+| Stage | Upward dependency pairs | Largest SCC | Mutual dependency pairs |
+|---|---:|---:|---:|
+| Original B0 | 66 | 52 | 54 |
+| B0.5 labels only | 51 | 52 | 54 |
+| B1a reference state/values | 44 | 45 | 50 |
+| B1b guarded CAS | 34 | 46 | 48 |
+| B1c QUICK allowances/recovery | 30 | 47 | 48 |
+| B1d result recording/output values | **29** | **48** | **48** |
+
+The first 15 upward-pair changes are classification only; B1 removes another
+22 upward pairs through real import changes. The latest graph has 125 modules,
+478 combined pairs, 725 sites, 4 cyclic SCCs, 8 unresolved dynamic sites and no
+unclassified edges. Source-set SHA-256:
+`115c9d1eb4c011304834dd044210a83d9e87af3ecb672abd4680e385f3398ebe`.
+New service modules increase total edge/module counts and join an existing
+kernel SCC; do not interpret extraction as an acyclic architecture.
+
+### Remaining entry-point edges
+
+There are **no confirmed import/provider edges to `rds_cli`**. All remaining
+confirmed edges to `rds_quick`, including same-layer edges, are:
+
+| Caller | Symbols | Why retained in this behavior-preserving cut |
+|---|---|---|
+| `rds_owned_advisor` (L3) | `choice` | Uses scope/coverage, method review, dependency and goal-contribution policy; calling it SHARED/L1 would mislabel L3 behavior. |
+| `rds_owned_history` (L1) | `choice` | `prepare_decision` combines policy selection with history capture. Must separate the selected evidence packet from the kernel checkpoint writer, not move Advisor policy below the kernel. |
+| `rds_tools` (L1) | `execute` | QUICK owns nested source/parent admission closures capturing locks, contracts, prepared review and materialization state. Extracting only the function name leaves the same globals/callback dependency; splitting requires an explicit execution-service boundary and equivalence tests. |
+| `rds_cli` (L4) | `record_choice`, `brief`, `execute`, `reject_route`, `compact_brief_planning`, `serialize_brief` | Same-layer compatibility entry dispatch, not an upward violation. Pure/value and recording names are retained as aliases. |
+
+CLI executable paths, command suggestions and `engine_id` file bindings are
+retained deliberately; they are file/process references, not in-process import
+edges. Dynamically replaced providers and computed plugin modules remain unknown,
+not certified absent. B1 mechanical extraction is implemented; complete central
+policy/execution decoupling is **not** claimed. The next cut needs a lock-external
+decision packet and lock-internal stale/binding checks before execution rewiring.
+
 ## B1a: reference state no longer lives in the CLI
 
 `rds_state` (L1) owns the existing `RDSState` implementation; its SQLite schema,
@@ -75,6 +113,17 @@ The new kernel service is inside the old kernel SCC, so SCC size is reported
 honestly rather than treated as a monotone extraction score. No schemas/events
 change. The recovery/allowance/admission suite covers retained choices, parent
 locks, original receipts, interrupted materialization and no duplicate charging.
+
+## B1d: record publication and pure output helpers
+
+`rds_result_record` (L1) owns the original `brief` function: publish the complete
+CAS record, then read ledger/checkpoint information for its bounded digest.
+`rds_output_values` (SHARED) owns `_brief_move`, `serialize_brief` and
+`compact_brief_planning`; these have standard-library-only imports and perform
+no ledger reads or writes. QUICK re-exports all four unchanged implementations,
+and TMS imports the recording service rather than the entry point. Both new
+files participate in engine identity. No schema/event or presentation contract
+changes are introduced by the extraction.
 
 ## Reproduce
 

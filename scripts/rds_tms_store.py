@@ -11,7 +11,7 @@ from rds_hypergraph import ASSURANCE, _validate, review_hypergraph, audit_source
 from rds_math import MAX_BYTES, blob
 from rds_project import ProjectStore, canonical, digest, require
 from rds_cas import cas_bytes
-from rds_quick import brief
+from rds_result_record import brief
 
 
 class SnapshotConflict(ValueError):
