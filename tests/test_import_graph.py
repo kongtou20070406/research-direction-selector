@@ -192,6 +192,16 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(report['edges'], [])
         self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
 
+    def test_class_non_mutating_loop_keeps_definite_loader(self):
+        for loop in ('for item in items:', 'while condition:'):
+            with self.subTest(loop=loop):
+                root = self.fixture({'rds_project.py':
+                    "class C:\n from importlib import import_module as load\n " + loop +
+                    "\n  load('rds_quick')\n", 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
     def test_class_loader_does_not_leak_into_method_scope(self):
         root = self.fixture({'rds_project.py':
             "class C:\n from importlib import import_module as load\n"
@@ -369,6 +379,18 @@ class ImportGraphTests(unittest.TestCase):
         self.assertIn(("pkg", "pkg.child"), pairs)
         self.assertEqual(len(report["unresolved"]), 1)
         self.assertTrue(report["unclassified_edges"])
+
+    def test_relative_package_member_does_not_create_self_cycle(self):
+        root = self.fixture({'pkg/__init__.py': 'from . import child', 'pkg/child.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual([(e['source'], e['target']) for e in report['edges']], [('pkg', 'pkg.child')])
+        self.assertEqual(report['cycles'], [])
+
+    def test_explicit_self_import_remains_a_cycle(self):
+        root = self.fixture({'pkg/__init__.py': 'from pkg import member'})
+        report = graph.inventory(root)
+        self.assertEqual([(e['source'], e['target']) for e in report['edges']], [('pkg', 'pkg')])
+        self.assertEqual(report['cycles'], [['pkg']])
 
     def test_string_is_reference_not_executed_edge(self):
         root = self.fixture({"rds_project.py": "module='rds_quick'", "rds_quick.py": ""})
