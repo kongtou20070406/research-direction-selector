@@ -7,7 +7,7 @@ import time
 from rds_artifacts import _read, strict_json
 from rds_costs import sha256, summarize_costs
 from rds_project import ProjectStore, canonical, digest, require
-from rds_quick import cas_json
+from rds_cas import cas_json
 
 SCHEMA = 'rds-tool-composition-v1'
 OPS = ('status', 'collect', 'execute_tool', 'costs')

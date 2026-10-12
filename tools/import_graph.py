@@ -10,7 +10,7 @@ import sys
 # Responsibility labels describe the current mixed modules, not compliance.
 GROUPS = {
     "L0": "bounded_io mutation",
-    "L1": "project project_hooks campaign workspace costs checkpoints math method_revision state "
+    "L1": "project project_hooks campaign workspace costs checkpoints math method_revision state cas "
           "project_read_port contract_read artifacts owned_history source_documents probe "
           "tool_applicability project_lifecycle "
           "steering tools tool_compare tool_workbench tool_application tool_calls owned_tools "

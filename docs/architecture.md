@@ -34,6 +34,26 @@ not a claim that the whole graph becomes smaller: new downward service edges
 replace old entry-point edges. QUICK dependencies remain for the next cut.
 No business schema or event changes, data migration, or accounting reset.
 
+## B1b: guarded CAS publication
+
+`rds_cas` (L1) now owns `cas_bytes` and `cas_json`; QUICK re-exports both.
+Thirteen consumers use the kernel service directly. Mutation locking, campaign
+and workspace admission, byte limits, content hashes and existing-file integrity
+checks are preserved. This is a guarded publisher, not an unprivileged SHARED
+helper. It has no CLI/QUICK import, and engine identity covers the new file.
+
+With the same classification, upward pairs are **34**, mutual pairs **48**,
+and the largest SCC **46** (122 modules, 463 combined pairs). The SCC grew by
+one versus B1a because the new CAS module still participates in the existing
+ProjectStore/campaign/workspace component; extraction is not cycle elimination.
+Eight lower modules still reach QUICK: campaign, workspace, project and hooks
+for allowance/recovery; owned_advisor and owned_history for choice validation;
+tools for execution/allowance; tms_store for persisted brief output.
+
+No schema or events change. Tests that inject CAS failures/results must patch
+the new service lookup site; public old function names are retained, but their
+module-global namespace is not a mutable proxy to every consumer.
+
 ## Reproduce
 
 ```sh

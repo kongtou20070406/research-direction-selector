@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 
 from rds_project import ProjectStore, canonical, digest, require
-from rds_quick import cas_bytes
+from rds_cas import cas_bytes
 from rds_mutation import mutation
 
 MAX_BYTES = 8 * 1024 * 1024

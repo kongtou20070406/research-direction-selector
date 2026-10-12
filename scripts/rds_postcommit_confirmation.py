@@ -137,7 +137,7 @@ def bind_run(store, db, contract, run):
     value = contract['advisor_policy']['confirmation']
     if run['id'] != value['confirmation_runs'][0]:
         return
-    from rds_quick import cas_bytes
+    from rds_cas import cas_bytes
     from rds_method_revision import contract_history
     previous = records(store, db, contract)
     if previous:
