@@ -117,17 +117,18 @@ The emitted object is a bare `{"systemMessage": ...}` with exactly one field.
 This matters for Codex: a hook run that returns unsupported fields is marked
 failed, so `continue`, `stopReason` and `suppressOutput` are never added, and no
 model-facing `additionalContext` is produced on this event. The text is the
-same short ASCII line on every host, so a person sees one stable string:
+same short ASCII line on both verified host surfaces:
 
 ```text
-RDS | session not enabled (default off); no RDS context injected
+RDS | session not enabled (default off); hook context not injected
 ```
 
 This is an operator surface, not model context and not a permission decision. An
 enabled-session path does not exist in this checkout yet, so "not enabled" is
 the truthful state rather than a placeholder. A future enablement change must
 keep the field set to one supported key and must not turn this line into a
-claim that RDS was used.
+claim that RDS was used. The context claim applies only to this hook; host Skill
+loading and automatic application remain UNKNOWN and are not prevented here.
 
 ## Using Advisor before a choice
 

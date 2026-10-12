@@ -85,6 +85,17 @@ class ConversationHookTests(unittest.TestCase):
                 self.assertNotIn("private", text)
                 self.assertNotIn(str(ROOT), text)
 
+    def test_session_start_message_limits_its_claim_to_hook_context(self):
+        for host in ('claude', 'codex'):
+            with self.subTest(host=host):
+                message = self.run_hook({'hook_event_name': 'SessionStart'}, host=host)['systemMessage']
+                self.assertIn('hook context not injected', message)
+                self.assertNotIn('no RDS context injected', message)
+                # This hook has no trusted evidence about host Skill loading.
+                self.assertNotIn('skill', message.lower())
+                self.assertNotIn('not loaded', message.lower())
+                self.assertNotIn('unloaded', message.lower())
+
     def test_tool_workdir_overrides_session_cwd(self):
         payload = self.payload(tool_name="exec_command", cwd=str(self.root),
                                tool_input={"cmd": "python scripts/rds_cli.py advise", "workdir": str(ROOT)})

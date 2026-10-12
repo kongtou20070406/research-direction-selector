@@ -4,6 +4,7 @@ import argparse
 from contextlib import closing, redirect_stderr
 from datetime import datetime
 import json
+import hashlib
 import io
 import os
 from pathlib import Path
@@ -349,6 +350,69 @@ class SandboxUsageTests(unittest.TestCase):
         control = self.cli('advise', '--help')
         self.assertEqual(control.returncode, 0, control.stderr)
         self.assertEqual(self.rows(self.fallback), [('advise', 'help', 0)])
+
+    def test_initialized_wal_discovery_is_logged_but_observations_do_not_write(self):
+        prepared = subprocess.run(
+            [sys.executable, '-B', str(ROOT / 'examples/project-runner/prepare.py'),
+             '--root', str(self.root)], cwd=self.root, capture_output=True,
+            text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        initialized = self.cli('--root', str(self.root), 'project', 'init', '--mode', 'quick',
+                               '--contract', str(self.root / 'contract.json'))
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        ledger = self.root / '.rds/project.sqlite3'
+        with closing(sqlite3.connect(ledger.as_uri() + '?mode=ro', uri=True)) as db:
+            self.assertEqual(db.execute('PRAGMA journal_mode').fetchone()[0], 'wal')
+            before_ledger = list(db.iterdump())
+        self.assertEqual(self.rows(self.default), [('project', 'command', 0)])
+        for argv in (['project', 'discover'], ['proj', 'discov']):
+            with self.subTest(argv=argv):
+                result = self.cli('--root', str(self.root), *argv)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report['status'], 'EXISTING_PROJECT')
+                self.assertEqual(Path(report['project_root']), self.root.resolve())
+                self.assertEqual(report['workflow']['mode'], 'QUICK')
+                self.assertFalse(report['execution_started'])
+        self.assertEqual(self.rows(self.default), [('project', 'command', 0)] * 3)
+        with closing(sqlite3.connect(ledger.as_uri() + '?mode=ro', uri=True)) as db:
+            self.assertEqual(list(db.iterdump()), before_ledger)
+
+        def snapshot():
+            return {str(p.relative_to(self.folder)): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
+                    if p.is_file() else None for p in self.folder.rglob('*')}
+
+        before = snapshot()
+        # A project-only root rejects L3 status, but must still not write usage.
+        for argv in (['status'], ['status', '--brief'], ['status', '--b'],
+                     ['stat', '--di'], ['--ver'], ['--h']):
+            with self.subTest(argv=argv):
+                result = self.cli('--root', str(self.root), *argv)
+                self.assertEqual(result.returncode, 1 if argv[0] in {'status', 'stat'} else 0,
+                                 result.stderr)
+                self.assertNotIn('RDS-USAGE-DEGRADED', result.stderr)
+                self.assertEqual(snapshot(), before)
+        observed = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_session.py'),
+                                   'observe', '--json'], cwd=self.root, capture_output=True,
+                                  text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(observed.returncode, 0, observed.stderr)
+        report = json.loads(observed.stdout)
+        self.assertFalse(report['wrote'])
+        self.assertEqual(report['skill_load'], 'UNKNOWN')
+        self.assertEqual(report['skill_auto_application'], 'UNKNOWN_NOT_PREVENTED')
+        self.assertEqual(snapshot(), before)
+
+    def test_invalid_cli_prefixes_preserve_errors_and_usage_records(self):
+        for argv in (['--versx'], ['--ver=bad'], ['status', '--brieful'],
+                     ['status', '--b=true'], ['s', '--b']):
+            with self.subTest(argv=argv):
+                before = len(self.rows(self.default)) if self.default.exists() else 0
+                result = self.cli('--root', str(self.root), *argv)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('[RDS-HINT]', result.stderr)
+                rows = self.rows(self.default)
+                self.assertEqual(len(rows), before + 1)
+                self.assertEqual(rows[-1][1:], ('command', 2))
 
 
 class UsageTests(unittest.TestCase):

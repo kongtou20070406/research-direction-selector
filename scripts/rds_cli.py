@@ -2083,16 +2083,31 @@ def observation_argv(argv):
     logged path and its existing error reporting.
     """
     try:
-        normalized = parser().normalize_args(argv, quiet=True)
+        entry = parser()
+        normalized = entry.normalize_args(argv, quiet=True)
     except (ValueError, SystemExit):
         return False
     tokens = list(normalized)
     if tokens[:1] == ["--root"]:
         # Normalization moves every root spelling to this one leading pair.
         tokens = tokens[2:]
-    if tokens in (["--version"], ["--help"], ["-h"]):
+    def option_name(current, token):
+        if token in current._option_string_actions or not token.startswith('--'):
+            return token
+        # Reuse argparse's unique-prefix rules without executing help/version
+        # actions. Explicit values and ambiguous options stay on the logged path.
+        matches = current._get_option_tuples(token)
+        if len(matches) == 1 and matches[0][-1] is None:
+            return matches[0][1]
+        return token
+
+    if len(tokens) == 1 and option_name(entry, tokens[0]) in {"--version", "--help", "-h"}:
         return True
-    return tokens[:1] == ["status"] and set(tokens[1:]) <= STATUS_READ_FLAGS
+    if tokens[:1] != ["status"]:
+        return False
+    commands = next(a for a in entry._actions if isinstance(a, argparse._SubParsersAction))
+    status = commands.choices['status']
+    return {option_name(status, token) for token in tokens[1:]} <= STATUS_READ_FLAGS
 
 
 def main():
