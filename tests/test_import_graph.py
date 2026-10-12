@@ -87,6 +87,152 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
         self.assertEqual(report['unresolved'], [])
 
+    def test_eager_comprehensions_preserve_module_order(self):
+        expressions = ("[load('rds_quick') for _ in (0,)]",
+                       "{load('rds_quick') for _ in (0,)}",
+                       "{i: load('rds_quick') for i in (0,)}",
+                       "[[load('rds_quick') for _ in (0,)] for _ in (0,)]")
+        for expression in expressions:
+            for wrapper in ('{}', 'class C:\n {}'):
+                statement = wrapper.format(expression)
+                for imported_first in (False, True):
+                    with self.subTest(statement=statement, imported_first=imported_first):
+                        source = statement + '\nfrom importlib import import_module as load'
+                        if imported_first:
+                            source = 'from importlib import import_module as load\n' + statement + '\nload = None'
+                        report = graph.inventory(self.fixture({'consumer.py': source, 'rds_quick.py': ''}))
+                        self.assertEqual([e['target'] for e in report['edges']],
+                                         ['rds_quick'] if imported_first else [])
+                        self.assertEqual(report['unresolved'], [])
+
+    def test_deferred_comprehensions_keep_global_uncertainty(self):
+        for expression in ("(load('rds_quick') for _ in (0,))",
+                           "def f():\n return [load('rds_quick') for _ in (0,)]"):
+            with self.subTest(expression=expression):
+                source = expression + '\nfrom importlib import import_module as load'
+                report = graph.inventory(self.fixture({'consumer.py': source, 'rds_quick.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_exception_type_precedes_its_alias_binding(self):
+        for scope in ('', 'class C:\n'):
+            with self.subTest(scope=scope):
+                code = ("from importlib import import_module as load\ntry:\n pass\n"
+                        "except load('rds_quick').Error as load:\n pass\n")
+                if scope:
+                    code = scope + ''.join(' ' + line + '\n' for line in code.splitlines())
+                report = graph.inventory(self.fixture({'consumer.py': code, 'rds_quick.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_generator_walrus_remains_unknown_without_iteration_analysis(self):
+        for consumption in ('', 'next(g)\n', 'consume(g)\n'):
+            with self.subTest(consumption=consumption):
+                source = ("from importlib import import_module as load\n"
+                          "g = ((load := other) for _ in (0,))\n" + consumption + "load('rds_quick')")
+                report = graph.inventory(self.fixture({'consumer.py': source, 'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']], ['ambiguous loader binding'])
+                self.assertEqual(report['module_string_references'][0]['target'], 'rds_quick')
+
+    def test_bare_annotations_preserve_ordered_loader_bindings(self):
+        for source in (
+            "from importlib import import_module as load\nload: object\nload('rds_quick')",
+            "class C:\n from importlib import import_module as load\n load: object\n load('rds_quick')",
+            "from importlib import import_module as load\nfor x in xs:\n load: object\n load('rds_quick')",
+        ):
+            with self.subTest(source=source):
+                report = graph.inventory(self.fixture({'consumer.py': source, 'rds_quick.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_function_annotation_target_remains_lexically_local(self):
+        root = self.fixture({'consumer.py': 'from importlib import import_module as load\n'
+            + "def f():\n load('rds_quick')\n load: object", 'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(report['unresolved'], [])
+
+    def test_completed_proof_class_precedes_later_rebinding(self):
+        for suffix in ('ProofRule = other', 'class ProofRule:\n pass'):
+            with self.subTest(suffix=suffix):
+                root = self.fixture({'rds_verify.py': "class ProofRule:\n pass\n"
+                    + "ProofRule('x', ('k',), 'rds_quick')\n" + suffix, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([(e['target'], e['kind']) for e in report['edges']],
+                                 [('rds_quick', 'declared_plugin_candidate')])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_postponed_annotations_are_references_not_executable_calls(self):
+        for expression in (
+            "x: load('rds_quick')",
+            "class C:\n x: load('rds_quick')",
+            "def f(x: load('rds_quick')): pass",
+            "def f(*x: load('rds_quick')): pass",
+            "def f(**x: load('rds_quick')): pass",
+            "def f() -> load('rds_quick'): pass",
+        ):
+            with self.subTest(expression=expression):
+                root = self.fixture({'consumer.py': 'from __future__ import annotations\n'
+                    + 'from importlib import import_module as load\n' + expression, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual(report['unresolved'], [])
+                self.assertEqual([r['target'] for r in report['module_string_references']], ['rds_quick'])
+
+    def test_eager_module_class_and_function_signature_annotations_are_calls(self):
+        for expression in ("x: load('rds_quick')", "class C:\n x: load('rds_quick')",
+                           "def f(x: load('rds_quick')) -> load('rds_quick'): pass"):
+            with self.subTest(expression=expression):
+                root = self.fixture({'consumer.py': 'from importlib import import_module as load\n'
+                    + expression, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(len(report['edges']), expression.count("load('rds_quick')"))
+                self.assertEqual(report['unresolved'], [])
+
+    def test_local_variable_annotations_do_not_load(self):
+        for expression in ("def f():\n x: load('rds_quick')",
+                           "def f():\n obj.x: load('rds_quick')", "def f():\n obj[0]: load('rds_quick')"):
+            with self.subTest(expression=expression):
+                root = self.fixture({'consumer.py': 'from importlib import import_module as load\n'
+                    + expression, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual(report['edges'], [])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_non_simple_module_and_class_annotations_are_evaluated(self):
+        for expression in ("obj.x: load('rds_quick')", "obj[0]: load('rds_quick')",
+                           "(x): load('rds_quick')", "class C:\n obj.x: load('rds_quick')"):
+            with self.subTest(expression=expression):
+                root = self.fixture({'consumer.py': 'from importlib import import_module as load\n'
+                    + expression, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_annotation_expectations_match_cpython_runtime(self):
+        # Execute only this trusted micro-example, never an inspected source tree.
+        calls = []
+        env = {'record': lambda label: calls.append(label), 'obj': type('Obj', (), {})(), 'items': [0]}
+        code = "obj.x: record('attribute')\nitems[0]: record('subscript')\n(x): record('parenthesized')\n"
+        code += "def f():\n x: record('local')\n obj.x: record('local-attribute')\nf()"
+        exec(compile(code, '<annotation-oracle>', 'exec', dont_inherit=True), env)
+        self.assertEqual(calls, ['attribute', 'subscript', 'parenthesized'])
+        calls.clear()
+        exec(compile('from __future__ import annotations\n' + code,
+                     '<postponed-annotation-oracle>', 'exec', dont_inherit=True), env)
+        self.assertEqual(calls, [])
+
+    def test_postponed_annotations_keep_defaults_values_and_body_calls(self):
+        root = self.fixture({'consumer.py': 'from __future__ import annotations\n'
+            + 'from importlib import import_module as load\n'
+            + "x: load('rds_cli') = load('rds_quick')\n"
+            + "def f(x: load('rds_cli') = load('rds_quick')):\n load('rds_quick')",
+            'rds_quick.py': '', 'rds_cli.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'] * 3)
+        self.assertEqual(report['unresolved'], [])
+
     def test_definition_name_is_not_bound_in_its_immediate_expressions(self):
         for definition in (
             "def load(x=load('rds_quick')):\n pass",
