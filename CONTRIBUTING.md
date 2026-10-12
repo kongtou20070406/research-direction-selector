@@ -135,6 +135,13 @@ git diff --check
 
 Confirm new tests are discoverable by [CI](.github/workflows/test.yml), which runs the unit suite and historical replay on Windows/Ubuntu with Python 3.11/3.13. Report actual commands and outcomes, including skips or unavailable dependencies. Align the title, description, support promises and limits with the final diff. Synthetic fixtures and historical replays are not end-to-end scientific scores.
 
+CI runs the complete required matrix for pull requests and again after a push to
+`main`. A feature-branch push without a pull request does not trigger that
+workflow. Keep local checks focused while developing, then evaluate the complete
+candidate after integration. Preserve the original failure evidence; neither a
+passing earlier revision nor a documentation-only branch establishes acceptance
+of a later combined release.
+
 ## Public records and licensing
 
 Use minimal public or labelled synthetic fixtures. Real adapter tests should retain the original format and relevant failure behavior; sanitize only what must be private, and disclose the transformation. Do not commit `.rds/`, private sessions/logs/datasets, credentials or tokens. Publish only material you may share, retaining useful source identity or public references.
