@@ -183,6 +183,21 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual(report['edges'], [])
                 self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
 
+    def test_class_loop_rebinding_remains_unknown(self):
+        root = self.fixture({'rds_project.py':
+            "class C:\n from importlib import import_module as load\n"
+            " for item in items:\n  load('rds_quick')\n  load = other\n",
+            'rds_quick.py': ''})
+        report = graph.inventory(root)
+        self.assertEqual(report['edges'], [])
+        self.assertEqual(report['unresolved'][0]['reason'], 'ambiguous loader binding')
+
+    def test_class_loader_does_not_leak_into_method_scope(self):
+        root = self.fixture({'rds_project.py':
+            "class C:\n from importlib import import_module as load\n"
+            " def method(self):\n  load('rds_quick')\n", 'rds_quick.py': ''})
+        self.assertEqual(graph.inventory(root)['edges'], [])
+
     def test_literal_run_module_targets_are_edges(self):
         for call in ("runpy.run_module('rds_quick')",
                      "runpy.run_module(mod_name='rds_quick')",

@@ -112,6 +112,9 @@ def lexical_resolver(tree, parents):
                 bind(node, arg.arg, '!parameter', arg)
 
     def preceding_class_import(scope, node, name):
+        if any(isinstance(parent, (ast.For, ast.AsyncFor, ast.While))
+               for parent in ancestors(node, scope)):
+            return None  # A later textual store may have run in a previous iteration.
         value = None
         position = lambda item: (item.lineno, item.col_offset)
         for origin, bound, target in sorted(class_sites[scope], key=lambda item: position(item[0])):
