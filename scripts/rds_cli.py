@@ -25,6 +25,7 @@ import uuid
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
 from rds_mutation import mutation
+import rds_core as _core
 
 VERSION = "6.0.0-rc.1"
 # Reading an explicitly supported ledger does not grant execution admission;
@@ -39,12 +40,12 @@ SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_g
 
 
 def canonical(value):
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    return _core.canonical(value)
 
 
 def digest(value):
     raw = value if isinstance(value, bytes) else canonical(value).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+    return _core.bytes_digest(raw)
 
 
 def require(ok, message):
@@ -136,6 +137,7 @@ def engine_id():
     here = Path(__file__).resolve().parent
     from rds_verify import verifier_id
     return digest({"cli": digest((here / "rds_cli.py").read_bytes()),
+                   "core": digest((here / "rds_core.py").read_bytes()),
                    "quick": digest((here / "rds_quick.py").read_bytes()),
                    "methods": digest((here / "rds_methods.py").read_bytes()),
                    "direction_search": digest((here / "rds_advisor_search.py").read_bytes()),
