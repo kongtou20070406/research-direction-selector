@@ -180,9 +180,12 @@ are recorded separately and never converted into import edges.
   global/nonlocal mutation and arbitrary computed loaders need runtime analysis.
   Conditional edges may never run. Class bodies are not method closure scopes.
 - Immediate module calls do not borrow a loader's first import from later code.
+  Definition defaults/bases and the first loop iterable precede their own name
+  bindings; repeated loop-body mutations remain conservative UNKNOWN.
   Named loader re-exports through local module imports are explicitly UNKNOWN,
   not definite edges. Alias walks are capped at 64 expansions; cycles and limit
-  exhaustion stay UNKNOWN. Arbitrary computed exports are not resolved.
+  exhaustion stay UNKNOWN. Relative aliases use the inspected package path.
+  Arbitrary computed exports are not resolved.
 - Literal registry candidates require an unambiguous binding to that exact
   module assignment, not just a matching variable name. Local shadowing or
   ambiguous rebinding stays UNKNOWN; these candidates are not runtime values.

@@ -87,6 +87,43 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
         self.assertEqual(report['unresolved'], [])
 
+    def test_definition_name_is_not_bound_in_its_immediate_expressions(self):
+        for definition in (
+            "def load(x=load('rds_quick')):\n pass",
+            "async def load(x=load('rds_quick')):\n pass",
+            "class load(load('rds_quick')):\n pass",
+            "@load('rds_quick')\ndef load():\n pass",
+        ):
+            with self.subTest(definition=definition):
+                root = self.fixture({'consumer.py': 'from importlib import import_module as load\n' + definition,
+                                     'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_for_iterable_is_evaluated_before_target_and_body_bindings(self):
+        for body in ('pass', 'load = None', 'from helper import load'):
+            with self.subTest(body=body):
+                root = self.fixture({'consumer.py': 'from importlib import import_module as load\n'
+                    + "for load in [load('rds_quick')]:\n " + body, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_relative_consumer_loader_reexports_are_unknown(self):
+        for consumer, source in (
+            ('pkg/consumer.py', "from .helper import load\nload('rds_quick')"),
+            ('pkg/nested/consumer.py', "from ..helper import load\nload('rds_quick')"),
+            ('pkg/consumer.py', "from . import helper\nhelper.load('rds_quick')"),
+        ):
+            with self.subTest(consumer=consumer, source=source):
+                root = self.fixture({'pkg/__init__.py': '', 'pkg/nested/__init__.py': '',
+                    'pkg/helper.py': 'from importlib import import_module as load', consumer: source,
+                    'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertFalse([e for e in report['edges'] if e['target'] == 'rds_quick'])
+                self.assertEqual([u['reason'] for u in report['unresolved']], ['local loader re-export'])
+
     def test_named_loader_reexports_are_explicitly_unknown(self):
         for helper, consumer in (
             ('from importlib import import_module', "from helper import import_module\nimport_module('rds_quick')"),
