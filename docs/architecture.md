@@ -154,7 +154,7 @@ they used the same source or graph definition. A mutual pair is not an SCC.
 ## B0.5 Responsibility Audit
 
 Only `GROUPS` labels and this document change in this step. All 119 runtime
-source hashes, 445 dependency pairs, 703 sites and unresolved targets are
+source hashes, 445 dependency pairs, 704 sites and unresolved targets are
 identical to B0. Being widely imported is not itself a reason to lower a module;
 the functions below establish its actual responsibility.
 
@@ -328,6 +328,11 @@ are recorded separately and never converted into import edges.
   function bodies keep deferred lookup. Exception matching precedes its alias.
   Definition defaults/bases and the first loop iterable precede their own name
   bindings; repeated loop-body mutations remain conservative UNKNOWN.
+  Comprehension filters run before their result expressions, independent of
+  textual position. A loader name mutated within that comprehension remains
+  UNKNOWN (including conditional mutations and repeated iterations); its first
+  iterable still uses the preceding outer binding. Unrelated mutations do not
+  invalidate a known loader. This is not a proof of which branch ran.
   Named loader re-exports through local module imports are explicitly UNKNOWN,
   not definite edges. Alias walks are capped at 64 expansions; cycles and limit
   exhaustion stay UNKNOWN. Relative aliases use the inspected package path.
