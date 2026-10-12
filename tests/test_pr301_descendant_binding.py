@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 sys.path.insert(0, str(ROOT / 'tests'))
 import rds_workspace as workspace
-from rds_project import ProjectStore, canonical
+from rds_project import ProjectStore, canonical, file_sha
 import test_rds_project as fixture
 
 
@@ -30,9 +30,18 @@ class DescendantBindingTests(unittest.TestCase):
     def child(self, name='nested/deep', contract=None):
         root = self.root / name
         root.mkdir(parents=True)
-        c = contract if contract is not None else self.helper.contract
+        c = deepcopy(contract if contract is not None else self.helper.contract)
         for binding in c['bindings']:
             shutil.copyfile(self.root / binding['path'], root / binding['path'])
+        if contract is not None:
+            for binding in c['bindings']:
+                if binding['role'] == 'protocol':
+                    protocol_path = root / binding['path']
+                    protocol = json.loads(protocol_path.read_text(encoding='utf-8'))
+                    for role in ('code', 'config', 'data'):
+                        protocol[role + '_sha256'] = ProjectStore._role_sha(c, role)
+                    protocol_path.write_text(json.dumps(protocol), encoding='utf-8')
+                    binding['sha256'] = file_sha(protocol_path)
         store = ProjectStore(root)
         store.initialize(deepcopy(c))
         return store
@@ -283,7 +292,7 @@ class DescendantBindingTests(unittest.TestCase):
         self.addCleanup(os.rmdir, link)
         self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
 
-    def test_unresolved_tool_preparation_blocks_binding_until_validation_published(self):
+    def test_untrusted_tool_preparation_record_cannot_settle_original_validation(self):
         child = self.child()
         token = 'a' * 32
         req = {'token': token, 'validation_id': 'validation:' + token}
@@ -298,9 +307,10 @@ class DescendantBindingTests(unittest.TestCase):
             db.execute("CREATE TABLE IF NOT EXISTS research_records(id TEXT PRIMARY KEY,sha256 TEXT NOT NULL,body TEXT NOT NULL)")
             db.execute("INSERT INTO research_records(id,sha256,body) VALUES (?,?,?)",
                        ('validation:' + token, 'b' * 64, canonical({'kind': 'tool-validation', 'status': 'LOCAL_CASES_PASSED'})))
-        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
 
-    def test_unfinished_owned_advisor_review_blocks_binding_until_settled(self):
+    def test_self_signed_advisor_event_cannot_settle_original_review(self):
         child = self.child('owned-child')
         contract = deepcopy(self.helper.contract)
         contract['advisor_policy'] = {'enabled': True}
@@ -318,27 +328,26 @@ class DescendantBindingTests(unittest.TestCase):
         with child._db() as db:
             db.execute('INSERT INTO events(body) VALUES (?)',
                        (canonical({'kind': 'OWNED_ADVISOR_REVIEW', 'status': 'REVIEWED'}),))
-        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+        with self.assertRaisesRegex(ValueError, 'active descendant'):
+            workspace.bind(self.root)
 
-    def test_uncheckpointed_prospective_quick_blocks_binding_until_settled(self):
+    def test_unrelated_request_filename_does_not_define_prospective_work(self):
         child = self.child('prospective-child')
         req_file = child.root / 'rds-exec-request.json'
         req_file.write_text(json.dumps({'research_context': {'ledger': str(self.store.path)}}), encoding='utf-8')
         with child._db() as db:
             db.execute('INSERT INTO receipts(run_id,sha256,body) VALUES (?,?,?)',
                        ('r1', 'd' * 64, canonical({'run_id': 'r1', 'status': 'SUCCEEDED'})))
-        before = self.dump(self.store), self.dump(child)
-        with self.assertRaisesRegex(ValueError, 'active descendant'):
-            workspace.bind(self.root)
-        self.assertEqual((self.dump(self.store), self.dump(child)), before)
-        with self.store._db() as db:
-            db.execute('CREATE TABLE IF NOT EXISTS checkpoints(id TEXT PRIMARY KEY,sha TEXT NOT NULL,body TEXT NOT NULL)')
-            db.execute('INSERT INTO checkpoints(id,sha,body) VALUES (?,?,?)',
-                       ('exec-after-' + child.root.name, 'e' * 64, '{}'))
+        before = self.dump(child), req_file.read_bytes()
         self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+        self.assertEqual((self.dump(child), req_file.read_bytes()), before)
 
     def terminal_quick_child(self, name):
-        child = self.child(name)
+        source = self.root / 'rds-exec-request.json'
+        source.write_text('{}', encoding='utf-8')
+        contract = deepcopy(self.helper.contract)
+        contract['bindings'].append({'path': source.name, 'role': 'config', 'sha256': file_sha(source)})
+        child = self.child(name, contract)
         with child._db() as db:
             db.execute('INSERT INTO receipts(run_id,sha256,body) VALUES (?,?,?)',
                        ('r1', 'd' * 64, canonical({'run_id': 'r1', 'status': 'SUCCEEDED'})))

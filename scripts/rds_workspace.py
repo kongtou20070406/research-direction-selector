@@ -257,6 +257,79 @@ def _bounded_bind_ledger_sha(path, deadline):
     return hashed.hexdigest()
 
 
+def _check_descendant_tails(workspace_root, owner, db, tables, deadline):
+    """Use original producer receipts, including ledgers not yet initialized."""
+    from rds_campaign import MAX_BYTES, MAX_EVENTS, _preparation_finished
+    from rds_cli import strict_json
+    import stat
+
+    if 'events' in tables:
+        preparations = db.execute(
+            "SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_STARTED' LIMIT ?",
+            (MAX_EVENTS + 1,)).fetchall()
+        require(len(preparations) <= MAX_EVENTS, 'Descendant tool preparation inventory exceeds its bound')
+        for row in preparations:
+            _check_bind_deadline(deadline)
+            require(len(row['body'].encode('utf-8')) <= MAX_BYTES,
+                    'Descendant tool preparation event exceeds its byte bound')
+            event = strict_json(row['body'])
+            request = event.get('request')
+            require(isinstance(request, dict) and isinstance(request.get('job_root'), str),
+                    'Descendant tool preparation identity is invalid')
+            target = (owner / request['job_root']).resolve()
+            require(target.is_relative_to(workspace_root), 'Descendant tool preparation escapes the workspace')
+            _preparation_finished(owner, event, target)
+            _check_bind_deadline(deadline)
+
+    if 'contract' not in tables or db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() is None:
+        return
+    contract = ProjectStore._contract(db)
+    if 'receipts' in tables and contract.get('advisor_policy'):
+        from rds_campaign import _native_tails_quiescent
+        runs = ProjectStore._runs(db)
+        receipts = [ProjectStore._receipt(row) for row in db.execute(
+            'SELECT run_id,sha256,body FROM receipts ORDER BY run_id')]
+        if receipts:
+            _native_tails_quiescent(owner, db, contract, runs, receipts)
+            _check_bind_deadline(deadline)
+
+    bindings = [binding for binding in contract['bindings']
+                if binding['path'] == 'rds-exec-request.json' and binding['role'] == 'config']
+    if not bindings:
+        return
+    require(len(bindings) == 1, 'Descendant QUICK request binding is ambiguous')
+    request_path = owner / bindings[0]['path']
+    metadata = request_path.lstat()
+    require(stat.S_ISREG(metadata.st_mode) and not getattr(metadata, 'st_file_attributes', 0) & 0x400,
+            'Descendant QUICK request must be a regular file without links')
+    _check_bind_deadline(deadline)
+    request = _quick_request(request_path)
+    _check_bind_deadline(deadline)
+    from rds_campaign import _guard_quiescent
+    context = request.get('research_context')
+    if context is None:
+        _guard_quiescent(owner, db, contract, workspace=workspace_root)
+    else:
+        require(isinstance(context, dict) and isinstance(context.get('ledger'), str),
+                'Descendant prospective QUICK parent identity is invalid')
+        parent_root = Path(context['ledger'])
+        require(parent_root.is_absolute() and parent_root.resolve().is_relative_to(workspace_root),
+                'Descendant prospective QUICK parent escapes the workspace')
+        parent_path = ProjectStore(parent_root).path
+        require(parent_path.is_file(), 'Descendant prospective QUICK parent ledger is unavailable')
+        parent = sqlite3.connect(parent_path.as_uri() + '?mode=ro', uri=True,
+                                 timeout=min(0.5, max(0.0, deadline - monotonic())))
+        try:
+            parent.row_factory = sqlite3.Row
+            parent.set_progress_handler(lambda: int(monotonic() >= deadline), 1000)
+            parent.execute('PRAGMA query_only=ON')
+            parent.execute('BEGIN')
+            _guard_quiescent(owner, db, contract, workspace=workspace_root, parent_db=parent)
+        finally:
+            parent.close()
+    _check_bind_deadline(deadline)
+
+
 def _refuse_active_descendants(root):
     """Inspect reservations under the mutation gate, before taking a writer lock."""
     import stat
@@ -328,6 +401,7 @@ def _refuse_active_descendants(root):
                     db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True,
                                          timeout=min(1.0, max(0.0, deadline - monotonic())))
                     try:
+                        db.row_factory = sqlite3.Row
                         db.set_progress_handler(lambda: int(monotonic() >= deadline), 1000)
                         db.execute('PRAGMA query_only=ON')
                         tables = {row[0] for row in db.execute(
@@ -340,6 +414,11 @@ def _refuse_active_descendants(root):
                             active = any(plan['run_status'] in {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
                                          for plan in state.get('plans', {}).values())
                         else:
+                            try:
+                                _check_descendant_tails(root, directory.parent, db, tables, deadline)
+                            except ValueError as exc:
+                                raise ValueError(f'Cannot bind workspace with an active descendant: {directory.parent}; '
+                                                 f'original settlement is incomplete: {exc}') from exc
                             if 'contract' not in tables or 'runs' not in tables:
                                 continue
                             if db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() is None:
@@ -392,68 +471,6 @@ def _refuse_active_descendants(root):
                                     "WHERE json_extract(p.body,'$.kind')='AUTONOMY_MODEL_PROCESSED' "
                                     "AND json_extract(p.body,'$.run_id')=json_extract(r.body,'$.run_id')) "
                                     "LIMIT 1").fetchone()
-                            if not active and 'events' in tables:
-                                # Tool preparation started but validation not yet published
-                                # mirrors rds_campaign._preparation_finished requirements:
-                                if 'research_records' not in tables:
-                                    active = db.execute(
-                                        "SELECT 1 FROM events p WHERE json_extract(p.body,'$.kind')='TOOL_PREPARATION_STARTED' LIMIT 1").fetchone()
-                                else:
-                                    active = db.execute(
-                                        "SELECT 1 FROM events p WHERE json_extract(p.body,'$.kind')='TOOL_PREPARATION_STARTED' "
-                                        "AND NOT EXISTS (SELECT 1 FROM research_records r "
-                                        "WHERE r.id=json_extract(p.body,'$.request.validation_id') "
-                                        "AND json_extract(r.body,'$.kind')='tool-validation') LIMIT 1").fetchone()
-                            if not active and 'contract' in tables and 'receipts' in tables and 'events' in tables:
-                                # An owned-Advisor descendant interrupted before post-receipt review
-                                # requires OWNED_ADVISOR_REVIEW postdating ATTEMPT_FINISHED:
-                                active = db.execute(
-                                    "SELECT 1 FROM contract c "
-                                    "WHERE c.id=1 AND json_extract(c.body,'$.advisor_policy') IS NOT NULL "
-                                    "AND EXISTS (SELECT 1 FROM receipts) "
-                                    "AND (NOT EXISTS (SELECT 1 FROM events f WHERE json_extract(f.body,'$.kind')='ATTEMPT_FINISHED') "
-                                    "     OR NOT EXISTS (SELECT 1 FROM events r "
-                                    "                    WHERE json_extract(r.body,'$.kind')='OWNED_ADVISOR_REVIEW' "
-                                    "                    AND r.id > (SELECT COALESCE(MAX(f.id), 0) FROM events f WHERE json_extract(f.body,'$.kind')='ATTEMPT_FINISHED')))"
-                                    "LIMIT 1").fetchone()
-                            if not active and 'receipts' in tables:
-                                # A prospective QUICK descendant with terminal receipts must settle
-                                # its after-checkpoint into the parent ledger before ancestor binding:
-                                req_file = directory.parent / 'rds-exec-request.json'
-                                if (req_file.exists() or req_file.is_symlink()) and db.execute(
-                                        'SELECT 1 FROM receipts LIMIT 1').fetchone():
-                                    req_metadata = req_file.lstat()
-                                    require(stat.S_ISREG(req_metadata.st_mode)
-                                            and not getattr(req_metadata, 'st_file_attributes', 0) & 0x400,
-                                            'Descendant QUICK request must be an unlinked regular file')
-                                    _check_bind_deadline(deadline)
-                                    req_data = _quick_request(req_file)
-                                    _check_bind_deadline(deadline)
-                                    res_ctx = req_data.get('research_context')
-                                    if res_ctx is not None:
-                                        require(isinstance(res_ctx, dict) and isinstance(res_ctx.get('ledger'), str),
-                                                'Descendant prospective QUICK parent ledger is invalid')
-                                        parent_ledger = Path(res_ctx['ledger'])
-                                        require(parent_ledger.is_absolute() and parent_ledger.is_file(),
-                                                'Descendant prospective QUICK parent ledger is unavailable')
-                                        try:
-                                            parent_db = sqlite3.connect(
-                                                parent_ledger.as_uri() + '?mode=ro', uri=True,
-                                                timeout=min(0.5, max(0.0, deadline - monotonic())))
-                                            try:
-                                                parent_db.set_progress_handler(
-                                                    lambda: int(monotonic() >= deadline), 1000)
-                                                parent_db.execute('PRAGMA query_only=ON')
-                                                chk_name = 'exec-after-' + directory.parent.name
-                                                chk_tbl = parent_db.execute(
-                                                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone()
-                                                has_chk = chk_tbl and parent_db.execute(
-                                                    'SELECT 1 FROM checkpoints WHERE id=?', (chk_name,)).fetchone()
-                                                active = not has_chk
-                                            finally:
-                                                parent_db.close()
-                                        except (sqlite3.Error, OSError):
-                                            active = True
                         _check_bind_deadline(deadline)
                         require(not active,
                                 f'Cannot bind workspace with an active descendant: {directory.parent}; '
