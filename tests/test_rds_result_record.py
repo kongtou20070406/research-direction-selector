@@ -19,11 +19,21 @@ import rds_result_record as records
 
 # Unmodified original definition ASTs from 0b65049; normalize empty type_params.
 OLD_AST = {
-    '_brief_move': '3bdf21d996ebe55c0213c3079b2203414e21ccd6fe3c14b0a3c6987fd57d82ca',
-    'serialize_brief': '875584f19b3d0238c2f638d4394e613f7020bd7792c2b9ad48a381d1d1f3cc04',
-    'compact_brief_planning': '609e4f8ad2649aaf380a98814e1f7e8f35adfe1a519d21fa082a8aa8cae2d3fd',
-    'brief': 'f65fa968e76f89e1c6fed6a3e6396315607320dcd906d63cbc4f5d6c9e8639e5',
+    "_brief_move": "bca2cd6a81d4a3ecaa6ebded6c6a4830b9b7659265bf69256f2bb176b1b23910",
+    "serialize_brief": "d22424877bfea363cd918b7583fb5f133a2f552ba2142b5e8d5d21fa5e11d617",
+    "compact_brief_planning": "cb5b194a09cb588cff1478d600499ce0183370d2494abaca0c2069abf609cec8",
+    "brief": "df56687c1baeb30f47d3429729f3e926b5b15bed9d09c05b584d7d34f2283663"
 }
+
+
+def frozen_ast(node):
+    # ast.dump omits empty optional fields on newer supported interpreters.
+    if isinstance(node, ast.AST):
+        return [type(node).__name__, [[key, frozen_ast(value)]
+                for key, value in ast.iter_fields(node) if key != 'type_params' or value]]
+    if isinstance(node, list):
+        return [frozen_ast(value) for value in node]
+    return node
 
 
 class ResultRecordTests(unittest.TestCase):
@@ -32,10 +42,7 @@ class ResultRecordTests(unittest.TestCase):
             function = getattr(records if name == 'brief' else values, name)
             self.assertIs(getattr(quick, name), function)
             node = ast.parse(inspect.getsource(function)).body[0]
-            for child in ast.walk(node):
-                if hasattr(child, 'type_params'):
-                    del child.type_params
-            self.assertEqual(hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest(), expected, name)
+            self.assertEqual(hashlib.sha256(json.dumps(frozen_ast(node), ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest(), expected, name)
 
     def test_full_record_is_preserved_and_summary_is_bounded(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, RDS_USAGE_DB=str(Path(folder) / 'usage.db')):
