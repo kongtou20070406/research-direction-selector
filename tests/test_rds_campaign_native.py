@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from threading import Event
 import time
 import unittest
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from rds_cli import RDSState
 from rds_project import ProjectStore, canonical, file_sha
 from rds_quick import cas_bytes
 import rds_owned_history as owned_history
+import rds_project
 from rds_tms_store import save as save_dependencies
 
 
@@ -132,11 +134,20 @@ class CampaignNativeTests(unittest.TestCase):
             future = pool.submit(child.execute, 'r1')
             try:
                 deadline = time.monotonic() + 10
-                while not (self.child / 'process-started').exists() and not future.done():
-                    self.assertLess(time.monotonic(), deadline, 'Real process did not reach its handshake')
+                while True:
+                    with child._db(True) as db:
+                        running = child._run(db, 'r1')
+                    handshake = (self.child / 'process-started').exists()
+                    diagnostic = (f'handshake={handshake}, status={running["status"]}, '
+                                  f'pid={running["pid"]}, attempt_id={running["attempt_id"]}')
+                    self.assertFalse(future.done(), f'Process exited before binding: {diagnostic}')
+                    # Child startup does not synchronize the parent's PID commit.
+                    if handshake and running['pid'] is not None:
+                        break
+                    self.assertLess(time.monotonic(), deadline,
+                                    f'Process handshake/PID publication timed out: {diagnostic}')
                     time.sleep(0.01)
                 self.assertFalse(future.done(), 'Process exited before the binding boundary')
-                running = child.snapshot()['runs'][0]
                 self.assertEqual(running['status'], 'RUNNING')
                 self.assertIsNotNone(running['pid'])
                 self.assertIsNotNone(running['attempt_id'])
@@ -156,6 +167,55 @@ class CampaignNativeTests(unittest.TestCase):
             self.assertEqual(resource['reserved'], 0)
         self.assertGreater(after['budget']['wall_seconds']['spent_measured'], 0)
         self.assertEqual(self.store.snapshot()['budget'], parent_before)
+
+    def test_legacy_binding_running_sibling_waits_for_pid_publication(self):
+        import rds_project
+        parent_paused = Event()
+        publication_observed = Event()
+        job_factory = rds_project._Job
+        snapshot = ProjectStore.snapshot
+        make_sibling = self.sibling
+        observed = []
+
+        def delay_pid_publication(process):
+            job = job_factory(process)
+            # Hold the real parent before PID persistence, without locking readers.
+            parent_paused.set()
+            if not publication_observed.wait(timeout=5):
+                job.stop()
+                job.close()
+                raise AssertionError('Pre-PID RUNNING state was not observed')
+            return job
+
+        def monitored_sibling(*args, **kwargs):
+            child = make_sibling(*args, **kwargs)
+            read_run = child._run
+
+            def observe_run(db, run_id):
+                run = read_run(db, run_id)
+                if (parent_paused.is_set() and not publication_observed.is_set()
+                        and run['status'] == 'RUNNING' and run['pid'] is None):
+                    observed.append(run)
+                    publication_observed.set()
+                return run
+
+            reader = patch.object(child, '_run', side_effect=observe_run)
+            reader.start()
+            self.addCleanup(reader.stop)
+            return child
+
+        with patch('rds_project._Job', side_effect=delay_pid_publication), \
+                patch.object(self, 'sibling', side_effect=monitored_sibling):
+            try:
+                self.test_legacy_binding_running_sibling_settles_without_new_admission()
+            finally:
+                publication_observed.set()
+        self.assertEqual(len(observed), 1)
+        self.assertIsNotNone(observed[0]['attempt_id'])
+        after = snapshot(ProjectStore(self.child))
+        self.assertEqual(after['runs'][0]['attempt_id'], observed[0]['attempt_id'])
+        self.assertEqual(after['receipts'][0]['attempt_id'], observed[0]['attempt_id'])
+        self.assertEqual(after['receipts'][0]['pid'], after['runs'][0]['pid'])
 
     def test_legacy_binding_after_admission_before_claim_settles_failed_without_popen(self):
         child = self.sibling()
@@ -215,11 +275,19 @@ class CampaignNativeTests(unittest.TestCase):
             future = pool.submit(child.execute, 'baseline')
             try:
                 deadline = time.monotonic() + 10
-                while not (self.child / 'owned-process-started').exists() and not future.done():
-                    self.assertLess(time.monotonic(), deadline, 'Owned process did not reach its handshake')
+                while True:
+                    running = child.snapshot()['runs'][0]
+                    handshake = (self.child / 'owned-process-started').exists()
+                    diagnostic = (f'handshake={handshake}, status={running["status"]}, '
+                                  f'pid={running["pid"]}, attempt_id={running["attempt_id"]}')
+                    self.assertFalse(future.done(), f'Owned process exited before binding: {diagnostic}')
+                    # Child startup does not synchronize the parent's PID commit.
+                    if handshake and running['pid'] is not None:
+                        break
+                    self.assertLess(time.monotonic(), deadline,
+                                    f'Owned process handshake/PID publication timed out: {diagnostic}')
                     time.sleep(0.01)
                 self.assertFalse(future.done(), 'Owned process exited before binding')
-                running = child.snapshot()['runs'][0]
                 self.assertEqual(running['status'], 'RUNNING')
                 self.assertIsNotNone(running['pid'])
                 self.publish_legacy_binding()
@@ -252,6 +320,38 @@ class CampaignNativeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'canonical project ledger'):
             child.register(helper.manifests['repair'])
         self.assertEqual(child.snapshot(), state)
+
+    def test_owned_running_binding_waits_for_delayed_pid_publication(self):
+        gap_seen = Event()
+        real_job = rds_project._Job
+
+        def delayed_job(process):
+            job = real_job(process)
+            try:
+                deadline = time.monotonic() + 4
+                while not (self.child / 'owned-process-started').exists():
+                    self.assertIsNone(process.poll(), 'Owned child exited before PID barrier')
+                    self.assertLess(time.monotonic(), deadline,
+                                    'Owned child did not reach the pre-publication PID gap')
+                    time.sleep(0.01)
+                # Read the committed row without snapshot's mutation gate: this
+                # launch already owns that gate until it publishes the PID.
+                child = ProjectStore(self.child)
+                with child._db(True) as db:
+                    running = child._run(db, 'baseline')
+                self.assertEqual(running['status'], 'RUNNING')
+                self.assertIsNone(running['pid'])
+                self.assertIsNone(process.poll(), 'Owned child exited during PID barrier')
+                gap_seen.set()
+                return job
+            except BaseException:
+                job.stop()
+                job.close()
+                raise
+
+        with patch('rds_project._Job', side_effect=delayed_job):
+            self.test_legacy_binding_owned_running_sibling_settles_original_receipt_and_checkpoint()
+        self.assertTrue(gap_seen.is_set(), 'Did not exercise handshake before PID publication')
 
     def test_legacy_binding_orphan_real_cli_recovery_preserves_charge_and_refuses_writers(self):
         child = self.sibling()

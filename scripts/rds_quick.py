@@ -37,6 +37,8 @@ def cas_json(root, value, *, max_bytes=None):
 def cas_bytes(root, raw, suffix='bin'):
     from rds_campaign import enforce
     enforce(root)
+    from rds_workspace import check_admission
+    check_admission(root)
     require(isinstance(raw, bytes) and re.fullmatch(r'[a-z0-9]{1,12}', suffix), 'Invalid CAS bytes or suffix')
     sha = hashlib.sha256(raw).hexdigest()
     directory = Path(root).resolve() / '.rds' / 'cas'
@@ -277,6 +279,8 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
     authority. The child still has its own frozen command and run admission.
     """
     store = ProjectStore(root)
+    from rds_workspace import check_admission
+    check_admission(root)
     with (store._db() if _parent_db is None else nullcontext(_parent_db)) as db:
         if _parent_db is None:
             db.execute('BEGIN IMMEDIATE')
@@ -339,6 +343,7 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                 require(Path(prior['job_root']).is_dir(),
                         'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
                 child = ProjectStore(prior['job_root'])
+                check_admission(child.root)
                 require(child.path.is_file(), 'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
                 from rds_project import load_json
                 stored = load_json(child.root / 'rds-exec-request.json')
@@ -756,6 +761,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 require(intent['request_sha256'] == digest(intent['request']) and
                         intent['request']['job_root'] == (root / '.rds/exec/tool-check').relative_to(parent.root).as_posix(),
                         'Native preparation intent or workspace changed')
+    from rds_workspace import check_admission, read_pointer
+    check_admission(root)
     check_source_root()
     require(root.is_dir(), 'Source root must exist')
     owner = Path(args.ledger).resolve() if review is not None else None
@@ -884,6 +891,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
         request['research_context'] = {'sha256': digest(review[1]), 'candidate': args.choose,
                                        'ledger': str(Path(args.ledger).resolve())}
         request['research_context']['dependency_snapshot_sha256'] = review[1].get('dependency_snapshot_sha256')
+    if owner is not None:
+        check_admission(owner)
     execution_policy, executor_sha256 = None, None
     if owner is not None:
         parent = ProjectStore(owner)
@@ -942,6 +951,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 for scope in (root, getattr(args, 'ledger', None), _native_preparation_root):
                     if scope is not None:
                         require(campaign_binding(scope) is None, 'Bound campaign refuses detached QUICK preparation')
+                for parent_root in parent_contracts:
+                    check_admission(parent_root)
                 for parent_root in sorted(parent_contracts, key=lambda p: os.path.normcase(str(p))):
                     parent = ProjectStore(parent_root)
                     create_anchor = not parent.path.is_file()
@@ -1002,6 +1013,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 guard_ref = json.loads(event['body'])['report'] if event is not None else None
             _complete_prospective(workspace, request, result['receipt'], result.get('regression_review'), guard_ref)
             return result
+        check_admission(workspace)
         state = ProjectStore(workspace).snapshot(check_bindings=True)
         require(not state['binding_check']['errors'], 'Frozen job bindings changed')
         receipt = next((r for r in state['receipts'] if r['run_id'] == args.name), None)
@@ -1137,7 +1149,15 @@ def execute(args, review=None, *, _native_preparation_root=None):
             contract['objective_sha256'] = request['objective_sha256']
         if execution_policy is not None:
             contract['execution_policy'] = deepcopy(execution_policy)
-        store.initialize(contract)
+        bound_owner = (ProjectStore(owner) if owner is not None
+                       and workspace.is_relative_to(owner / '.rds' / 'exec')
+                       and read_pointer(owner) is not None else False)
+        store.initialize(contract, fresh_workspace=bound_owner,
+                         _fresh_workspace_admission=(locked_parents[owner], request) if bound_owner else None)
+        if owner is not None:
+            from rds_workspace import bind as bind_workspace
+            check_admission(owner)
+            bind_workspace(workspace)
         manifest = {'schema': 1, 'id': args.name, 'arm': 'tool', 'control_id': None,
                     'protocol': {'path': 'rds-exec-protocol.json', 'sha256': file_sha(workspace / 'rds-exec-protocol.json')},
                     'argv': frozen_argv, 'outpaths': args.output, 'timeout_seconds': timeout - guard_seconds,
@@ -1199,6 +1219,41 @@ def _brief_move(summary, move):
         summary.pop('next_move_detail', None)
 
 
+def serialize_brief(summary, *, newline=False):
+    """Share CLI JSON formatting and account for print's platform newline."""
+    raw = json.dumps(summary, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+    return raw + os.linesep if newline else raw
+
+
+def compact_brief_planning(summary):
+    """Fit display-only planning around exact locators and deciding observations."""
+    planning = summary.get('planning')
+    if not isinstance(planning, dict):
+        return
+    # Match CLI serialization, including its newline and platform-dependent path.
+    def fits():
+        return len(serialize_brief(summary, newline=True).encode('utf-8')) < 1024
+
+    for key, omitted in (('ready_obligations', 'omitted_ready_obligations'),
+                         ('local_checks', 'local_checks_omitted'),
+                         ('open_predicates', 'open_predicates_omitted')):
+        rows = planning.get(key, [])
+        while rows and not fits():
+            rows.pop()
+            planning[omitted] = planning.get(omitted, 0) + 1
+        if not rows:
+            planning.pop(key, None)
+    if not fits():
+        summary['planning'] = {'scope': planning.get('scope'), 'details_omitted': True}
+        if planning.get('open_predicates_truncated'):
+            summary['planning']['open_predicates_truncated'] = planning['open_predicates_truncated']
+    if not fits():
+        minimal = summary.pop('planning')
+        # Keep the scope/alert only when required fields alone exceed the budget.
+        if not fits():
+            summary['planning'] = minimal
+
+
 def brief(root, value, version, formal=False):
     """Persist full output and expose a bounded, truthful operational digest."""
     ref = cas_json(root, value)
@@ -1206,6 +1261,9 @@ def brief(root, value, version, formal=False):
     for key in ('id', 'name', 'source_sha256', 'module', 'assurance'):
         if key in value:
             summary[key] = value[key]
+    # Wrapped results from project advance carry the Advisor owner under 'advisor';
+    # direct advise results are the owner. Select recommendations from that owner.
+    owner = value.get('advisor') or value
     if 'dependency_map' in value and 'input_review' in value:
         summary['authorization'] = 'UNCHANGED'
         if 'snapshot_sha256' in value:
@@ -1251,12 +1309,13 @@ def brief(root, value, version, formal=False):
             summary['tools'].append(row)
     if 'affected' in value:
         summary['affected_count'] = len(value['affected'])
-    if 'recommendations' in value:
-        summary['gaps'] = sum(len(r.get('frontier', {}).get('gaps', [])) for r in value['recommendations'])
-        summary['candidates'] = [c.get('id') for r in value['recommendations'] for c in r.get('search', {}).get('candidates', [])][:3]
-        selection = next((r['search']['selection_review'] for r in value['recommendations']
+    if 'recommendations' in owner:
+        recommendations = owner['recommendations']
+        summary['gaps'] = sum(len(r.get('frontier', {}).get('gaps', [])) for r in recommendations)
+        summary['candidates'] = [c.get('id') for r in recommendations for c in r.get('search', {}).get('candidates', [])][:3]
+        selection = next((r['search']['selection_review'] for r in recommendations
                           if 'selection_review' in r.get('search', {})), None)
-        flags = [f.get('kind') for r in value['recommendations'] for f in r.get('review', {}).get('flags', [])]
+        flags = [f.get('kind') for r in recommendations for f in r.get('review', {}).get('flags', [])]
         if selection is not None:
             summary['selection_basis'] = selection['basis']
             flags += [f['kind'] for f in selection['flags']]
@@ -1264,6 +1323,40 @@ def brief(root, value, version, formal=False):
                 _brief_move(summary, selection['next_move'])
             if 'goal' in selection:
                 summary['goal_input_status'] = selection['goal']['status']
+            if 'planning' in selection:
+                owner = value.get('advisor') or value
+                planning = (owner.get('planning', selection['planning'])
+                            if owner.get('assurance') == 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
+                            else selection['planning'])
+                checks = [{'candidate': row['candidate'][:64],
+                           **({'candidate_truncated': True} if len(row['candidate']) > 64 else {}),
+                           'target': row['target'][:128],
+                           **({'target_truncated': True} if len(row['target']) > 128 else {}),
+                           **({'goal_target': row['goal_target'][:128],
+                               **({'goal_target_truncated': True} if len(row['goal_target']) > 128 else {})}
+                              if 'goal_target' in row else {})}
+                          for row in planning.get('local_checks', [])[:8]]
+                open_predicates = [name[:128] for name in planning.get('open_predicates', [])[:8]]
+                summary['planning'] = {'scope': planning.get('scope'),
+                                       'local_checks': checks,
+                                       'local_checks_omitted': max(0, len(planning.get('local_checks', [])) - 8),
+                                       'open_predicates': open_predicates,
+                                       'open_predicates_omitted': max(0, len(planning.get('open_predicates', [])) - 8),
+                                       'ready_obligations': list(planning.get('ready_obligations', [])),
+                                       'omitted_ready_obligations': planning.get('omitted_ready_obligations', 0)}
+                projected = summary['planning']
+                truncated = sum(len(name) > 128 for name in planning.get('open_predicates', [])[:8])
+                if truncated:
+                    projected['open_predicates_truncated'] = truncated
+                for key, omitted in (('local_checks', 'local_checks_omitted'),
+                                     ('open_predicates', 'open_predicates_omitted'),
+                                     ('ready_obligations', 'omitted_ready_obligations')):
+                    if not projected[key]:
+                        projected.pop(key)
+                    if not projected[omitted] and key != 'open_predicates':
+                        projected.pop(omitted)
+                if not open_predicates and not projected['open_predicates_omitted']:
+                    projected.pop('open_predicates_omitted')
         advisory_moves = {'GOAL_CONTRIBUTION_UNDECLARED': 'REVIEW_GOAL_LINK',
                           'GOAL_CONTRIBUTION_INVALID': 'REVIEW_GOAL_LINK'}
         relevant = [kind for kind in flags if kind in advisory_moves and advisory_moves[kind] == summary.get('next_move')]

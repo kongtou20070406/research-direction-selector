@@ -542,6 +542,9 @@ def _goal_targets(context):
     decision = context.get("decision", {})
     goals = decision.get("goal_conditions", []) if isinstance(decision, dict) else []
     targets = {g["fact"] for g in goals if isinstance(g, dict) and isinstance(g.get("fact"), str)} if isinstance(goals, list) else set()
+    declared = _affirmation_predicates(decision) if isinstance(decision, dict) else None
+    if declared:
+        targets.update(predicate["fact"] for predicates in declared.values() for predicate in predicates)
     if isinstance(context.get("objective_binding"), dict) and context["objective_binding"]:
         targets.add("completion_standard")
     return targets
@@ -569,7 +572,7 @@ def _goal_contribution(action, context, dependency=None):
                 "reason": "A contribution path must start at action.target, the obligation being checked or measured."}
     if spec["target"] not in targets:
         return {**report, "status": UNKNOWN,
-                "reason": "The contribution target is not an existing goal predicate or bound completion_standard."}
+                "reason": "The contribution target is not a declared goal or affirmative predicate or bound completion_standard."}
     result = {**report, **deepcopy(spec), "status": "DECLARED_PATH",
               "reason": "The supplied text path names an existing goal; it is not an evaluated graph path, proof or verified completion."}
     if dependency is not None:
@@ -583,6 +586,49 @@ def _goal_contribution(action, context, dependency=None):
 
 def _text(value, limit=512):
     return isinstance(value, str) and bool(value.strip()) and len(value) <= limit
+
+
+def _planning_partition(candidates, goal, dependency_review):
+    """Partition the current selection for a planner: which open obligation a ready
+    check targets versus which declared goal predicates stay open. Derived only from
+    the supplied review; a declared local path never closes an open predicate, and
+    no scope, token or truth here is scientific acceptance. Authorization unchanged."""
+    local_checks = [{"candidate": c["id"], "target": c["goal_contribution"]["path"][0],
+                     "goal_target": c["goal_contribution"]["target"]}
+                    for c in candidates
+                    if c.get("goal_contribution", {}).get("status") == "DECLARED_PATH"
+                    and c["goal_contribution"].get("path")
+                    and isinstance(c["goal_contribution"]["path"][0], str)]
+    conditions = (goal or {}).get("conditions", [])
+    open_predicates = [condition["fact"] for condition in conditions
+                       if condition.get("truth") != TRUE and isinstance(condition.get("fact"), str)
+                       and condition["fact"].strip()]
+    triple = (goal or {}).get("triple_affirmative") or {}
+    # Open Triple Affirmative obligations stay visible even when goal predicates
+    # compare TRUE; an undeclared affirmative is an open obligation, not vacuous.
+    for name in ("FOUND", "PORTABLE", "APPLICABLE"):
+        if name in triple.get("open", []):
+            rows = triple.get(name.lower(), {}).get("conditions", [])
+            if rows:
+                open_predicates.extend(row["fact"] for row in rows if row.get("affirms") != TRUE)
+            else:
+                open_predicates.append("affirmation:" + name.lower())
+    completion = (dependency_review or {}).get("goals", {}).get("completion_standard")
+    if (dependency_review or {}).get("completion_standard_bound") is True and completion is not None \
+            and completion.get("status") != "DECLARED_SUPPORTED":
+        open_predicates.append("completion_standard")
+    open_predicates = list(dict.fromkeys(open_predicates))
+    tokens = [row["token"] for row in (dependency_review or {}).get("ready_obligations", [])
+              if isinstance(row, dict) and isinstance(row.get("token"), str) and row["token"].strip()]
+    if any(check["goal_target"] in open_predicates for check in local_checks):
+        scope = "LOCAL"
+    elif open_predicates:
+        scope = "GLOBAL"
+    else:
+        scope = "UNSCOPED"
+    return {"scope": scope, "local_checks": local_checks, "open_predicates": open_predicates,
+            "ready_obligations": tokens[:8], "omitted_ready_obligations": max(0, len(tokens) - 8),
+            "assurance": "INPUT_REPORTED_NOT_SCIENTIFIC_VERIFICATION", "authorization": "UNCHANGED"}
 
 
 def _obstruction_records(context):
@@ -739,6 +785,12 @@ def _obstruction_review(records, context, goal, read_receipt=None):
     truths = {}
     for condition in (goal or {}).get("conditions", []):
         truths.setdefault(condition["fact"], []).append(condition["truth"])
+    # A comparison alone cannot close an affirmative; all predicates for the
+    # obligation must affirm, including repeated facts across affirmative groups.
+    triple = (goal or {}).get("triple_affirmative") or {}
+    for name in ("found",) + AFFIRMATIVES:
+        for condition in triple.get(name, {}).get("conditions", []):
+            truths.setdefault(condition["fact"], []).append(condition["affirms"])
     decision = context.get("decision")
     # The ledger keys loop history by decision.scope; the context-level scope is the documented fallback.
     scope = decision["scope"] if isinstance(decision, dict) and "scope" in decision else context.get("scope")
@@ -804,16 +856,26 @@ def _specify_capability(move, review, entries, integrity):
     """Whether the applicable capability requirements supersede the existing move kind."""
     capability = {e["obligation"] for e in entries if e["status"] == "APPLICABLE" and e["response"] == "CAPABILITY_REQUIRED"}
     goal = review.get("goal") or {}
+    triple = goal.get("triple_affirmative") or {}
     # A satisfied goal is not blocked; historical warnings cannot make it a capability step.
-    if integrity or not capability or goal.get("status") == TRUE:
+    if integrity or not capability:
+        return False
+    if goal.get("status") == TRUE and (not triple or triple.get("status") == TRUE):
         return False
     unknown = {c["fact"] for c in goal.get("conditions", []) if c["truth"] == UNKNOWN}
+    for name in AFFIRMATIVES:
+        for c in triple.get(name, {}).get("conditions", []):
+            if c.get("affirms") != TRUE:
+                unknown.add(c["fact"])
     # Any UNKNOWN goal predicate must be covered, whichever branch produced the move, so recorded
     # rejections never make superseding easier than the plain goal-evidence step.
     if not unknown <= capability:
         return False
-    return (move["kind"] in CAPABILITY_SUPERSEDES or
-            (move["kind"] == "RESOLVE_PREMISE" and move["reason"] == GOAL_EVIDENCE_REASON and bool(unknown)))
+    is_goal_evidence = (move["kind"] == "RESOLVE_PREMISE" and
+                        (move["reason"] == GOAL_EVIDENCE_REASON or
+                         (bool(triple.get("open")) and move.get("reason", "").startswith("The goal predicates compare TRUE, but ")))
+                        and bool(unknown))
+    return move["kind"] in CAPABILITY_SUPERSEDES or is_goal_evidence
 
 
 def review_obstructions(search, context, *, _read_receipt=None):
@@ -1047,6 +1109,9 @@ def review_selection(search, context, *, _dependency=None, audit_receipts=False,
               "assurance": "INPUT_REPORTED_NOT_SCIENTIFIC_VERIFICATION", "authorization": "UNCHANGED"}
     if dependency is not None:
         review["dependency_review"] = dependency
+        # Retain the binding when Owned Advisor repartitions after admission gates.
+        if isinstance(context.get("objective_binding"), dict) and context["objective_binding"]:
+            dependency["completion_standard_bound"] = True
     if "objective_binding" in context:
         review["objective_binding"] = deepcopy(context["objective_binding"])
     decision = context.get("decision")
@@ -1080,6 +1145,8 @@ def review_selection(search, context, *, _dependency=None, audit_receipts=False,
         flags.insert(0, triple_flag)
     if next_move is not None:
         review["next_move"] = next_move
+    review["planning"] = _planning_partition(candidates, review.get("goal"),
+                                             review.get("dependency_review"))
     return review
 
 

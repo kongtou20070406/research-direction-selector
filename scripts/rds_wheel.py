@@ -14,10 +14,13 @@ import math
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import uuid
+
+from rds_mutation import mutation
 
 
 TOKEN = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
@@ -150,7 +153,9 @@ class Wheel:
         require(self.directory.resolve().is_relative_to(self.root), "wheel directory escapes project")
         return path
 
+    @mutation()
     def write(self, relative, value, *, once=False, text=False):
+        self.check_workspace()
         path = self.state_path(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         raw = value if text else canonical(value) + "\n"
@@ -164,7 +169,9 @@ class Wheel:
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
 
+    @mutation()
     def _publish_once(self, path, raw):
+        self.check_workspace()
         # Publish a complete file without replacing an existing identity. The
         # temporary and target are on the same filesystem; process interruption
         # before linking leaves only an unpublished temporary, not a partial target.
@@ -181,7 +188,9 @@ class Wheel:
             if created:
                 temporary.unlink(missing_ok=True)
 
+    @mutation()
     def append(self, relative, raw):
+        self.check_workspace()
         with self.state_path(relative).open("a", encoding="utf-8", newline="\n") as stream:
             stream.write(raw)
             stream.flush()
@@ -196,16 +205,20 @@ class Wheel:
         before = self.state_path(name).read_text(encoding="utf-8")
         return {"path": name, "before": before, "after": after, "append": append}
 
+    @mutation()
     def commit(self, state, effects):
+        self.check_workspace()
         # Persist intended byte changes before applying them. Recovery finishes
         # the same change; it never applies a quota multiplier a second time.
         state["effects"] = effects
         self.write("state.json", state)
         self.finish_commit(state)
 
+    @mutation()
     def finish_commit(self, state):
         if "effects" not in state:
             return
+        self.check_workspace()
         for effect in state["effects"]:
             current = self.state_path(effect["path"]).read_text(encoding="utf-8")
             before, after = effect["before"], effect["after"]
@@ -321,6 +334,7 @@ class Wheel:
             seen.add(manifest["id"])
 
     def initialize(self, project_contract_path):
+        self.check_workspace()
         contract = read_json(project_contract_path)
         setup = self.setup(contract, initialized=False)
         factors = setup.get("factors")
@@ -333,14 +347,16 @@ class Wheel:
         # A stable lock outside the final directory serializes first publication.
         # Never unlink it: concurrent initializers must lock the same inode.
         init_lock = self.path(".rds/wheel-init.lock")
-        init_lock.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with init_lock.open("xb") as stream:
-                stream.write(b"0")
-                stream.flush()
-                os.fsync(stream.fileno())
-        except FileExistsError:
-            pass
+        with mutation():
+            self.check_workspace()
+            init_lock.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with init_lock.open("xb") as stream:
+                    stream.write(b"0")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except FileExistsError:
+                pass
         with self.lock(init_lock) as acquired:
             require(acquired, "wheel initialization is busy")
             require(not self.directory.exists(), "wheel is already initialized")
@@ -362,9 +378,13 @@ class Wheel:
                         "accepted project contract differs", 3)
                 # Same-filesystem rename publishes all initial files at once.
                 # A crash beforehand leaves only an untrusted staging directory.
-                os.rename(staged, final)
+                with mutation():
+                    self.check_workspace()
+                    os.rename(staged, final)
 
+    @mutation()
     def initial_state(self, factors):
+        self.check_workspace()
         self.write("contract.json", self.contract, once=True)
         self.write("factors.txt", "".join(f + "\n" for f in factors), text=True, once=True)
         self.write("dead.txt", "", text=True, once=True)
@@ -527,7 +547,9 @@ class Wheel:
                 and all(run.get(k) is None for k in ("worker_pid", "pid", "started_at", "scheduler")),
                 "pending execution has an attempt or unknown state; inspect original project status", 4)
 
+    @mutation()
     def _restore_pending_manifest(self, relative, manifest):
+        self.check_workspace()
         path = self.state_path(relative)
         if not path.exists():
             self.write(relative, manifest, once=True)
@@ -617,12 +639,20 @@ class Wheel:
         manifest = self.manifest(row["factor"], "screen", budget)
         return self.dispatch(state, manifest, row["factor"], "screen", snapshot, row)
 
+    def check_workspace(self):
+        from rds_workspace import check_admission
+        try:
+            check_admission(self.root)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            raise WheelError(str(exc)) from exc
+
     def tick(self):
         if self.state_path("pause.json").exists():
             return 0
         with self.lock() as acquired:
             if not acquired or self.state_path("pause.json").exists():
                 return 0
+            self.check_workspace()
             snapshot = self.project("status")
             if any(run.get("status") in {"RUNNING", "STARTING", "COLLECTING"} for run in snapshot.get("runs", [])):
                 return 0
@@ -695,6 +725,7 @@ class Wheel:
 
     def proposal_gate(self):
         require(not self.state_path("pause.json").exists(), "wheel is paused")
+        self.check_workspace()
         snapshot = self.project("status")
         self.setup(snapshot.get("contract"))
         state = read_json(self.state_path("state.json"))

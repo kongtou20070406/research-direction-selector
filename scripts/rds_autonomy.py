@@ -500,6 +500,8 @@ def process_result(store, event, receipt):
 
 
 def _claim(store, controller_wall_seconds=None):
+    from rds_workspace import check_admission
+    check_admission(store.root)
     owner = uuid.uuid4().hex
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')

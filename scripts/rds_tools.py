@@ -232,8 +232,10 @@ def _charge_validation(ledger, workspace, token, timeout):
 def _qualification_root(root):
     from rds_campaign import binding, enforce
     enforce(root)
+    from rds_workspace import check_admission
+    check_admission(root)
     require(binding(root) is None,
-            'Bound campaign tool qualification requires an existing approved canonical project route; '
+            'Bound campaign tool qualification requires an existing approved canonical project ledger route; '
             'public validation cannot create another preparation experiment')
 
 
@@ -352,6 +354,8 @@ def _check_validation(root, value, candidate):
 def register(root, name, validation_id=None):
     from rds_campaign import enforce
     enforce(root)
+    from rds_workspace import check_admission
+    check_admission(root)
     name = _name(name)
     candidate = get(root, 'tool:' + name)
     require(candidate is not None, 'Unknown tool candidate')
@@ -403,6 +407,8 @@ def command(args):
             with mutation():
                 from rds_campaign import enforce
                 enforce(args.root)
+                from rds_workspace import check_admission
+                check_admission(args.root)
                 path = ProjectStore(args.root)._path(args.output)
                 require(path.suffix == '.py', 'Export the tool as a project-relative .py module')
                 code = blob(args.root, value['asset'])

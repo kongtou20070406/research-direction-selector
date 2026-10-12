@@ -1,9 +1,12 @@
 """Rebuildable WAL cache; every returned proof is checked outside SQLite."""
 import json
+import os
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 
 import rds_verify as engine
+from rds_mutation import mutation
 from rds_verify_types import MAX_CERTIFICATE_BYTES, canonical, digest
 
 BUSY_TIMEOUT_SECONDS = 0.05
@@ -12,9 +15,12 @@ BUSY_TIMEOUT_SECONDS = 0.05
 class ProofCache:
     def __init__(self, path):
         self.path = Path(path)
+        self.workspace_root = None
         self.ready = False
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if (os.path.normcase(self.path.name) == "proofs.sqlite3"
+                    and os.path.normcase(self.path.parent.name) == ".rds"):
+                self.workspace_root = self.path.parent.parent.resolve()
             if self.path.is_file():
                 db = self._connect(readonly=True)
                 try:
@@ -25,16 +31,31 @@ class ProofCache:
                     db.close()
                 if self.ready:
                     return
-            db = self._connect()
-            try:
-                db.execute("PRAGMA journal_mode=WAL")
-                db.execute("CREATE TABLE IF NOT EXISTS proofs (cache_key TEXT PRIMARY KEY, certificate BLOB NOT NULL)")
-                self.ready = True
-            finally:
-                db.close()
-        except (OSError, sqlite3.Error):
+            with self._write_admission():
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                db = self._connect()
+                try:
+                    db.execute("PRAGMA journal_mode=WAL")
+                    db.execute("CREATE TABLE IF NOT EXISTS proofs (cache_key TEXT PRIMARY KEY, certificate BLOB NOT NULL)")
+                    db.commit()
+                finally:
+                    db.close()
+            self.ready = True
+        except (OSError, sqlite3.Error, ValueError):
             # Cache availability cannot decide a mathematical claim.
             pass
+
+    @contextmanager
+    def _write_admission(self):
+        if self.workspace_root is None:
+            yield
+            return
+        from rds_workspace import check_admission
+        # Only metadata writes own the gate; admission is fresh even for an
+        # instance opened before an ancestor was bound. Keep it through close.
+        with mutation(timeout=BUSY_TIMEOUT_SECONDS):
+            check_admission(self.workspace_root)
+            yield
 
     def _connect(self, readonly=False):
         target = self.path.resolve().as_uri() + "?mode=ro" if readonly else self.path
@@ -71,15 +92,16 @@ class ProofCache:
             raw = canonical(certificate).encode("utf-8")
             if len(raw) > MAX_CERTIFICATE_BYTES:
                 return False
-            db = self._connect()
-            try:
-                db.execute("BEGIN IMMEDIATE")
-                db.execute("INSERT INTO proofs VALUES (?,?) ON CONFLICT(cache_key) "
-                           "DO UPDATE SET certificate=excluded.certificate", (key, raw))
-                db.commit()
-                return True
-            finally:
-                db.close()
+            with self._write_admission():
+                db = self._connect()
+                try:
+                    db.execute("BEGIN IMMEDIATE")
+                    db.execute("INSERT INTO proofs VALUES (?,?) ON CONFLICT(cache_key) "
+                               "DO UPDATE SET certificate=excluded.certificate", (key, raw))
+                    db.commit()
+                finally:
+                    db.close()
+            return True
         except (OSError, sqlite3.Error, ValueError, TypeError, RecursionError):
             return False
 
