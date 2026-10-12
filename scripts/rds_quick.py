@@ -19,6 +19,7 @@ import uuid
 
 from rds_project import ProjectStore, canonical, digest, execution_route, file_sha, number, require
 from rds_mutation import mutation
+from rds_project_hooks import register as register_project_hooks
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_FILES = 128
@@ -1482,3 +1483,6 @@ def brief(root, value, version, formal=False):
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
                 summary['ledger_checkpoints'] = db.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0]
     return summary
+
+
+register_project_hooks("quick", sys.modules[__name__])

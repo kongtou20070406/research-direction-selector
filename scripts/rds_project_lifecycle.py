@@ -16,9 +16,8 @@ import time
 
 from rds_project import ProjectStore, canonical, digest, load_json, require, _shell_argument
 from rds_mutation import mutation
+from rds_contract_read import ACTIVATED, POLICY_FIELDS, activation_transition
 
-ACTIVATED = 'ADVISOR_POLICY_ENABLED'
-POLICY_FIELDS = {'schema', 'context', 'graph', 'routes', 'observations'}
 MAX_RETAINED_JOBS = 128
 MAX_RETAINED_EVENTS = 512
 MAX_RETAINED_RUNS = 4096
@@ -186,14 +185,6 @@ def initialize(store, contract, *, mode=None, supersedes=None, separate_reason=N
     return store.initialize(contract, supersedes=supersedes, scope_declaration=declaration)
 
 
-def activation_transition(old, new):
-    """The only permitted activation delta; also checked while reading lineage."""
-    require('advisor_policy' not in old and set(new) == set(old) | {'advisor_policy'},
-            'Advisor activation must add exactly one policy to a non-owned contract')
-    require(all(new[key] == value for key, value in old.items()),
-            'Advisor activation cannot change the original contract or authority')
-    require(isinstance(new['advisor_policy'], dict) and set(new['advisor_policy']) == POLICY_FIELDS,
-            'Activation accepts basic owned policy only; no new autonomy, confirmation, tools or execution authority')
 
 
 def _state(store, db):

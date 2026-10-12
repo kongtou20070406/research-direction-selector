@@ -25,6 +25,10 @@ import time
 import uuid
 
 from rds_mutation import mutation
+from rds_project_hooks import provider as lifecycle_provider
+import rds_project_records as receipt_records
+from rds_run_records import decode_run_row
+from rds_contract_read import effective_contract
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -388,8 +392,7 @@ class ProjectStore:
         """Read original evidence before taking the execution write lock."""
         if "advisor_policy" not in contract:
             return None
-        from rds_owned_advisor import prepare_admission
-        return prepare_admission(self, spec)
+        return lifecycle_provider("advisor").prepare_admission(self, spec)
 
     def _advisor_prepare_run(self, run_id, *, allow_observation=False):
         with self._db(True) as db:
@@ -406,8 +409,7 @@ class ProjectStore:
         if "advisor_policy" not in self._contract(db):
             return
         require(token is not None, "Advisor admission is missing; collect and select the current route first")
-        from rds_owned_advisor import check_admission
-        check_admission(self, db, spec, token)
+        lifecycle_provider("advisor").check_admission(self, db, spec, token)
 
     def _advisor_finished(self, contract):
         """Collection is post-commit; never mutate the owned receipt or repeat a run."""
@@ -421,8 +423,7 @@ class ProjectStore:
                 self.last_advisor_review = retained
                 self.last_advisor_review_reused = True
                 return
-            from rds_owned_advisor import after_finish
-            self.last_advisor_review = after_finish(self)
+            self.last_advisor_review = lifecycle_provider("advisor").after_finish(self)
         except Exception as exc:
             # Even an unexpected collector failure leaves the receipt and settled
             # budget intact. A later review/recovery retries collection only.
@@ -626,7 +627,6 @@ class ProjectStore:
         # Native research records can share this database before project init.
         require(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone(),
                 UNINITIALIZED)
-        from rds_method_revision import effective_contract
         return effective_contract(db)
 
     def _bindings(self, contract):
@@ -954,8 +954,7 @@ class ProjectStore:
             require(isinstance(unit, str) and unit and len(unit) <= 64, "Invalid resource name")
             number(cap, f"budget.{unit}")
         if "advisor_policy" in contract:
-            from rds_owned_advisor import validate_policy
-            validate_policy(self, contract)
+            lifecycle_provider("advisor").validate_policy(self, contract)
             # Owned routes register their frozen manifests, so each named protocol must pass registration now.
             for route in contract["advisor_policy"]["routes"]:
                 path = route["manifest"]["protocol"]["path"]
@@ -1244,107 +1243,12 @@ class ProjectStore:
 
     @staticmethod
     def _run_row(row):
-        """Validate retained writer values before displaying, dispatching or settling them.
-
-        No schema migration, content repair or new evidence claim. Optional later
-        aliases/policy fields are not required, and hot-loop reads remain keyed by id.
-        """
-        prefix = f"Project run integrity failure: run {row['id']!r} body "
-        suffix = "; inspect retained state"
-
-        def reject(reason):
-            raise RunIntegrityError(prefix + reason + suffix)
-
-        def unique(items):
-            result = {}
-            for key, value in items:
-                if key in result:
-                    reject("repeats a JSON key")
-                result[key] = value
-            return result
-
-        try:
-            run = json.loads(row["body"], object_pairs_hook=unique)
-        except RunIntegrityError:
-            raise
-        except (ValueError, TypeError, RecursionError):
-            reject("is not valid JSON")
-        if not isinstance(run, dict):
-            reject("is not an object")
-        if run.get("id") != row["id"]:
-            reject("names a different run")
-        if not isinstance(run.get("status"), str) or run["status"] not in {"RESERVED", "RUNNING", *TERMINAL} or run["status"] != row["status"]:
-            reject("does not match its recorded status")
-        if not isinstance(run.get("manifest"), dict) or run["manifest"].get("id") != row["id"]:
-            reject("has no matching manifest")
-        try:
-            canonical(run).encode("utf-8")
-            manifest_sha = digest(run["manifest"])
-        except (ValueError, RecursionError):
-            reject("has no canonical encoding")
-        if manifest_sha != run.get("manifest_sha256"):
-            reject("has a Manifest integrity failure")
-        required = {"resource_estimates", "protocol", "executor", "executor_sha256", "attempt_id",
-                    "worker_pid", "pid", "started_at", "finished_at", "observed_wall_seconds", "scheduler"}
-        if not required <= run.keys():
-            reject("is missing execution state")
-        if (not isinstance(run["resource_estimates"], dict)
-                or not isinstance(run["protocol"], dict)
-                or not isinstance(run["executor"], str) or not run["executor"]
-                or not isinstance(run["executor_sha256"], str)
-                or (run["attempt_id"] is not None and not isinstance(run["attempt_id"], str))
-                or (run["scheduler"] is not None and not isinstance(run["scheduler"], dict))):
-            reject("has invalid execution state")
-        for value in [run["observed_wall_seconds"], *run["resource_estimates"].values()]:
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-                reject("has invalid recorded costs")
-            try:
-                finite = math.isfinite(value)
-            except OverflowError:
-                finite = False
-            if not finite:
-                reject("has invalid recorded costs")
-        for key in ("worker_pid", "pid"):
-            if run[key] is not None and (type(run[key]) is not int or run[key] <= 0):
-                reject("has an invalid process identity")
-        return run
+        return decode_run_row(row, RunIntegrityError, canonical, digest, TERMINAL)
 
     @staticmethod
     def _receipt(row):
         """One owned receipt row (run_id, sha256, body); a damaged row is rejected, never repaired (#104)."""
-        prefix = f"Project receipt integrity failure: run {row['run_id']} body "
-        suffix = "; inspect retained state"
-
-        def unique(items):
-            keys = [key for key, _ in items]
-            if len(set(keys)) != len(keys):
-                raise ReceiptIntegrityError(prefix + "repeats a JSON key" + suffix)
-            return dict(items)
-        try:
-            receipt = json.loads(row["body"], object_pairs_hook=unique)
-        except ReceiptIntegrityError:
-            raise
-        except (ValueError, RecursionError):
-            raise ReceiptIntegrityError(prefix + "is not valid JSON" + suffix) from None
-        if not isinstance(receipt, dict):
-            kind = ("null" if receipt is None else "boolean" if isinstance(receipt, bool) else "array"
-                    if isinstance(receipt, list) else "string" if isinstance(receipt, str) else "number")
-            raise ReceiptIntegrityError(prefix + f"is a JSON {kind}, not an object" + suffix)
-        if receipt.get("run_id") != row["run_id"]:
-            raise ReceiptIntegrityError(prefix + "names a different run" + suffix)
-        # The writer stores digest(body without sha256) in both the body and the row; bind the value read.
-        mismatch = ReceiptIntegrityError(prefix + "does not match its recorded sha256" + suffix)
-        if receipt.get("sha256") != row["sha256"]:
-            raise mismatch
-        try:
-            recomputed = digest({key: value for key, value in receipt.items() if key != "sha256"})
-        except (ValueError, RecursionError):
-            # The decoder accepts NaN/Infinity, overflowing floats and lone surrogate escapes; the writer emits none.
-            raise ReceiptIntegrityError(prefix + "has no canonical encoding (e.g. a non-finite number or an unpaired"
-                                        " surrogate)" + suffix) from None
-        if recomputed != row["sha256"]:
-            raise mismatch
-        return receipt
+        return receipt_records.decode_receipt(row, ReceiptIntegrityError, digest)
 
     @staticmethod
     def _save(db, run):
@@ -1758,8 +1662,7 @@ class ProjectStore:
             receipt = self._receipt(old) if old else None
         if receipt is not None:
             self._advisor_finished(contract)
-            from rds_quick import _recover_prospective
-            _recover_prospective(self, contract, receipt)
+            lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
             return receipt
         if run["attempt_id"] is None:
             return {**run, "recovery": "Unstarted reservation; no process to restart"}
@@ -1769,8 +1672,7 @@ class ProjectStore:
             return {**run, "recovery": "Process may still be active; no rerun or termination"}
         receipt = self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
                               ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
-        from rds_quick import _recover_prospective
-        _recover_prospective(self, contract, receipt)
+        lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
         return receipt
 
     def snapshot(self, check_bindings=False, *, _dialogue=False):
@@ -1803,12 +1705,11 @@ class ProjectStore:
             if _dialogue:
                 # Optional view inputs share this original read; ordinary
                 # snapshots do not collect owned history or report context.
-                from rds_owned_advisor import _state
                 row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
                                  "ORDER BY id DESC LIMIT 1").fetchone()
                 context = {'instruction': steering, 'report_event': dict(row) if row else None}
                 try:
-                    context['state'] = _state(self, db)
+                    context['state'] = lifecycle_provider("advisor")._state(self, db)
                 except (ValueError, KeyError, TypeError, OSError, UnicodeError, sqlite3.Error) as exc:
                     # Optional display cannot impose owned-history bounds on
                     # the ordinary plan. Preserve this read's original facts.
