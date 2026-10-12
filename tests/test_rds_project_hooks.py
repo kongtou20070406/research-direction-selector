@@ -21,6 +21,8 @@ assert provider('advisor').prepare_admission
 assert 'rds_owned_advisor' in sys.modules
 assert 'rds_quick' not in sys.modules
 assert provider('quick')._recover_prospective
+assert provider('quick').__name__ == 'rds_quick_ledger'
+assert 'rds_quick' not in sys.modules
 """
         result = subprocess.run([sys.executable, "-B", "-c", code, str(SCRIPTS)],
                                 capture_output=True, text=True, check=False)
@@ -32,7 +34,9 @@ sys.path.insert(0, sys.argv[1])
 import rds_quick
 import rds_owned_advisor
 from rds_project_hooks import provider
-assert provider('quick') is rds_quick
+import rds_quick_ledger
+assert provider('quick') is rds_quick_ledger
+assert provider('quick')._recover_prospective is rds_quick._recover_prospective
 assert provider('advisor') is rds_owned_advisor
 """
         result = subprocess.run([sys.executable, "-B", "-c", code, str(SCRIPTS)],

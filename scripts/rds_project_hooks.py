@@ -4,7 +4,7 @@ from importlib import import_module
 
 
 _providers = {}
-_modules = {"advisor": "rds_owned_advisor", "quick": "rds_quick"}
+_modules = {"advisor": "rds_owned_advisor", "quick": "rds_quick_ledger"}
 
 
 def register(name, provider):

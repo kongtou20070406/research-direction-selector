@@ -111,6 +111,7 @@ def engine_id():
                    "state": digest((here / "rds_state.py").read_bytes()),
                    "quick": digest((here / "rds_quick.py").read_bytes()),
                    "cas": digest((here / "rds_cas.py").read_bytes()),
+                   "quick_ledger": digest((here / "rds_quick_ledger.py").read_bytes()),
                    "methods": digest((here / "rds_methods.py").read_bytes()),
                    "direction_search": digest((here / "rds_advisor_search.py").read_bytes()),
                    "direction_advisor": digest((here / "rds_advisor.py").read_bytes()),

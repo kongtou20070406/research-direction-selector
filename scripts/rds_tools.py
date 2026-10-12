@@ -17,7 +17,8 @@ from types import SimpleNamespace
 from rds_math import blob, get, put, read_bytes, records
 from rds_project import ProjectStore, canonical, digest, file_sha, number, require
 from rds_cas import cas_bytes
-from rds_quick import execute, _charge_ledger
+from rds_quick_ledger import _charge_ledger
+from rds_quick import execute
 from rds_mutation import mutation
 
 BUILTINS = set('abs all any bool dict enumerate filter float frozenset int isinstance len list map max min next range reversed round set sorted str sum tuple zip ArithmeticError AssertionError IndexError KeyError TypeError ValueError ZeroDivisionError RecursionError UnicodeError'.split())
