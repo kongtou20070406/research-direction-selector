@@ -315,7 +315,7 @@ def request_repair(store, report):
     """One request per original blocker; workbench evidence remains immutable."""
     from rds_owned_advisor import _state, _fingerprint
     from rds_tool_workbench import prepare
-    from rds_quick import cas_bytes
+    from rds_cas import cas_bytes
     with store._db(True) as db:
         db.execute('BEGIN')
         state = _state(store, db)
@@ -384,7 +384,7 @@ def request_repair(store, report):
 def process_result(store, event, receipt):
     """Retain exact proposal before applying; resume partial/adopted transitions."""
     from rds_math import blob
-    from rds_quick import cas_bytes
+    from rds_cas import cas_bytes
     from rds_method_revision import apply
     from rds_tool_workbench import prepare
     from rds_owned_advisor import _read_original

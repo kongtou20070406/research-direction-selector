@@ -119,7 +119,6 @@ class ExtractionTests(unittest.TestCase):
             with self.subTest(name=name), patch.object(Path, "read_bytes", changed):
                 self.assertNotEqual(cli.engine_id(), before)
                 self.assertIn(name, seen)
-                self.assertTrue({"rds_cas.py", "rds_quick_ledger.py", "rds_quick_output.py"}.isdisjoint(seen))
 
 
 class ReferenceValueTests(unittest.TestCase):

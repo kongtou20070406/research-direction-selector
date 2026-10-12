@@ -10,7 +10,7 @@ import time
 
 from rds_math import blob, get, put, read_bytes, records
 from rds_project import canonical, digest, file_sha, number, require
-from rds_quick import cas_bytes
+from rds_cas import cas_bytes
 import rds_tools as tools
 
 

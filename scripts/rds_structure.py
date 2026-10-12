@@ -16,7 +16,7 @@ import threading
 import uuid
 
 from rds_project import ProjectStore, canonical, digest, require, TERMINAL, _alive
-from rds_quick import cas_json
+from rds_cas import cas_json
 from rds_tms_store import current, save
 from rds_hypergraph import _validate, review_hypergraph
 from rds_frontier import discover_frontier

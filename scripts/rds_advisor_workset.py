@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from rds_project import digest, canonical, require
-from rds_quick import cas_json
+from rds_cas import cas_json
 
 ITEM_LIMIT = 4
 DETAIL_BYTES = 2048

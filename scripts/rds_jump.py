@@ -81,7 +81,7 @@ def packet(store):
     All predicates are delivered intact or the entire payload requires an original.
     """
     from rds_project import canonical
-    from rds_quick import cas_json
+    from rds_cas import cas_json
     from rds_tms_store import current
     value = {'schema': PACKET_SCHEMA, 'status': 'UNAVAILABLE', 'items': [],
              'omissions': {'items': 0, 'generation_results': False},

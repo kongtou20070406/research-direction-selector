@@ -504,7 +504,8 @@ def _event(store, body):
 def review(store, persist=True):
     """Collect owned evidence, update its TMS subgraph, and propose one route."""
     from rds_tms_store import current, save
-    from rds_quick import cas_json, choice
+    from rds_cas import cas_json
+    from rds_quick import choice
     from rds_advisor import RDSAdvisor
     from rds_advisor_search import evaluate_condition
     with store._db(True) as db:

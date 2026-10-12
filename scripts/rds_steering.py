@@ -123,7 +123,7 @@ def submit(store, request, *, user_directed=False, source=None):
                 'Invalid steering ' + key)
         require(not values or request['kind'] == 'redirect', 'Route lists require redirect')
     identity = digest({'request': request, 'source': source})
-    from rds_quick import cas_json
+    from rds_cas import cas_json
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         contract = store._contract(db)
@@ -257,7 +257,7 @@ def plan(store, intent=None, *, output=None, save_as=None, dialogue=False):
     if save_as is not None:
         require(snap is not None, 'Initialize the project before retaining a plan in its existing checkpoint ledger')
         from rds_checkpoints import save_checkpoint
-        from rds_quick import cas_json
+        from rds_cas import cas_json
         ref = cas_json(store.root, result)
         result['checkpoint'] = save_checkpoint(store.root, save_as, snap, kind='project',
                                                decision={'plan_draft': ref, 'source_kind': 'UNVERIFIED_PLAN_PROPOSAL'})
