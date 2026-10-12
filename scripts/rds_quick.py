@@ -1261,6 +1261,9 @@ def brief(root, value, version, formal=False):
     for key in ('id', 'name', 'source_sha256', 'module', 'assurance'):
         if key in value:
             summary[key] = value[key]
+    # Wrapped results from project advance carry the Advisor owner under 'advisor';
+    # direct advise results are the owner. Select recommendations from that owner.
+    owner = value.get('advisor') or value
     if 'dependency_map' in value and 'input_review' in value:
         summary['authorization'] = 'UNCHANGED'
         if 'snapshot_sha256' in value:
@@ -1306,12 +1309,13 @@ def brief(root, value, version, formal=False):
             summary['tools'].append(row)
     if 'affected' in value:
         summary['affected_count'] = len(value['affected'])
-    if 'recommendations' in value:
-        summary['gaps'] = sum(len(r.get('frontier', {}).get('gaps', [])) for r in value['recommendations'])
-        summary['candidates'] = [c.get('id') for r in value['recommendations'] for c in r.get('search', {}).get('candidates', [])][:3]
-        selection = next((r['search']['selection_review'] for r in value['recommendations']
+    if 'recommendations' in owner:
+        recommendations = owner['recommendations']
+        summary['gaps'] = sum(len(r.get('frontier', {}).get('gaps', [])) for r in recommendations)
+        summary['candidates'] = [c.get('id') for r in recommendations for c in r.get('search', {}).get('candidates', [])][:3]
+        selection = next((r['search']['selection_review'] for r in recommendations
                           if 'selection_review' in r.get('search', {})), None)
-        flags = [f.get('kind') for r in value['recommendations'] for f in r.get('review', {}).get('flags', [])]
+        flags = [f.get('kind') for r in recommendations for f in r.get('review', {}).get('flags', [])]
         if selection is not None:
             summary['selection_basis'] = selection['basis']
             flags += [f['kind'] for f in selection['flags']]
