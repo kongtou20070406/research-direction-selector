@@ -809,6 +809,16 @@ class ImportGraphTests(unittest.TestCase):
         self.assertEqual(report['edges'], [])
         self.assertEqual([u['reason'] for u in report['unresolved']], ['local dotted target not found'])
 
+    def test_missing_source_root_member_remains_unknown(self):
+        for member in ('missing_mod', 'importlib'):
+            with self.subTest(member=member):
+                source = f'from scripts import {member}\n'
+                if member == 'importlib':
+                    source += "importlib.import_module('rds_quick')"
+                report = graph.inventory(self.fixture({'consumer.py': source, 'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']], ['local dotted target not found'])
+
     def test_source_root_qualified_loader_reexport_stays_unknown(self):
         report = graph.inventory(self.fixture({
             'consumer.py': "from scripts.helper import load\nload('rds_quick')",

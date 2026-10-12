@@ -350,7 +350,8 @@ def scan(name, tree, modules, package, hook_routes, exports):
                 emit(node, base, "static")
             for alias in node.names:
                 member = base + "." + alias.name
-                if local_name(member, modules) in modules:
+                if (local_name(member, modules) in modules
+                        or (base == 'scripts' and 'scripts' not in modules and alias.name != '*')):
                     emit(node, member, "static")
         elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
               and local_name(node.value, modules) in modules):
