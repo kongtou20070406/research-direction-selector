@@ -420,31 +420,40 @@ def _refuse_active_descendants(root):
                                 # A prospective QUICK descendant with terminal receipts must settle
                                 # its after-checkpoint into the parent ledger before ancestor binding:
                                 req_file = directory.parent / 'rds-exec-request.json'
-                                if req_file.is_file() and db.execute('SELECT 1 FROM receipts LIMIT 1').fetchone():
-                                    try:
-                                        with req_file.open('r', encoding='utf-8') as f:
-                                            req_data = json.load(f)
-                                        res_ctx = req_data.get('research_context') if isinstance(req_data, dict) else None
-                                        if isinstance(res_ctx, dict) and isinstance(res_ctx.get('ledger'), str):
-                                            parent_ledger = Path(res_ctx['ledger'])
-                                            if parent_ledger.is_file():
-                                                try:
-                                                    parent_db = sqlite3.connect(parent_ledger.as_uri() + '?mode=ro', uri=True, timeout=0.5)
-                                                    try:
-                                                        parent_db.execute('PRAGMA query_only=ON')
-                                                        chk_name = 'exec-after-' + directory.parent.name
-                                                        chk_tbl = parent_db.execute(
-                                                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone()
-                                                        has_chk = chk_tbl and parent_db.execute(
-                                                            "SELECT 1 FROM checkpoints WHERE id=?", (chk_name,)).fetchone()
-                                                        if not has_chk:
-                                                            active = True
-                                                    finally:
-                                                        parent_db.close()
-                                                except (sqlite3.Error, OSError):
-                                                    active = True
-                                    except (OSError, json.JSONDecodeError):
-                                        pass
+                                if (req_file.exists() or req_file.is_symlink()) and db.execute(
+                                        'SELECT 1 FROM receipts LIMIT 1').fetchone():
+                                    req_metadata = req_file.lstat()
+                                    require(stat.S_ISREG(req_metadata.st_mode)
+                                            and not getattr(req_metadata, 'st_file_attributes', 0) & 0x400,
+                                            'Descendant QUICK request must be an unlinked regular file')
+                                    _check_bind_deadline(deadline)
+                                    req_data = _quick_request(req_file)
+                                    _check_bind_deadline(deadline)
+                                    res_ctx = req_data.get('research_context')
+                                    if res_ctx is not None:
+                                        require(isinstance(res_ctx, dict) and isinstance(res_ctx.get('ledger'), str),
+                                                'Descendant prospective QUICK parent ledger is invalid')
+                                        parent_ledger = Path(res_ctx['ledger'])
+                                        require(parent_ledger.is_absolute() and parent_ledger.is_file(),
+                                                'Descendant prospective QUICK parent ledger is unavailable')
+                                        try:
+                                            parent_db = sqlite3.connect(
+                                                parent_ledger.as_uri() + '?mode=ro', uri=True,
+                                                timeout=min(0.5, max(0.0, deadline - monotonic())))
+                                            try:
+                                                parent_db.set_progress_handler(
+                                                    lambda: int(monotonic() >= deadline), 1000)
+                                                parent_db.execute('PRAGMA query_only=ON')
+                                                chk_name = 'exec-after-' + directory.parent.name
+                                                chk_tbl = parent_db.execute(
+                                                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone()
+                                                has_chk = chk_tbl and parent_db.execute(
+                                                    'SELECT 1 FROM checkpoints WHERE id=?', (chk_name,)).fetchone()
+                                                active = not has_chk
+                                            finally:
+                                                parent_db.close()
+                                        except (sqlite3.Error, OSError):
+                                            active = True
                         _check_bind_deadline(deadline)
                         require(not active,
                                 f'Cannot bind workspace with an active descendant: {directory.parent}; '

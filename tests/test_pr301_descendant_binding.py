@@ -337,6 +337,57 @@ class DescendantBindingTests(unittest.TestCase):
                        ('exec-after-' + child.root.name, 'e' * 64, '{}'))
         self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
 
+    def terminal_quick_child(self, name):
+        child = self.child(name)
+        with child._db() as db:
+            db.execute('INSERT INTO receipts(run_id,sha256,body) VALUES (?,?,?)',
+                       ('r1', 'd' * 64, canonical({'run_id': 'r1', 'status': 'SUCCEEDED'})))
+        return child, child.root / 'rds-exec-request.json'
+
+    def test_damaged_descendant_quick_requests_refuse_before_binding(self):
+        child, request = self.terminal_quick_child('damaged-quick')
+        before = self.dump(self.store), self.dump(child)
+        damaged = (b'{"nested":' + b'[' * 5000 + b'0' + b']' * 5000 + b'}',
+                   b'{"nested":' + b'[' * 100 + b'0' + b']' * 100 + b'}',
+                   b'\xff', b'{"a":1,"a":2}', b'{"x":NaN}', b'[]',
+                   b'{"research_context":[]}',
+                   b'{"research_context":{"ledger":"relative.sqlite3"}}')
+        for raw in damaged:
+            with self.subTest(prefix=raw[:32]):
+                request.write_bytes(raw)
+                with self.assertRaises(ValueError):
+                    workspace.bind(self.root)
+                self.assertEqual((self.dump(self.store), self.dump(child)), before)
+                self.assertEqual(request.read_bytes(), raw)
+        request.write_text('{}', encoding='utf-8')
+        self.assertEqual(workspace.bind(self.root)['status'], 'BOUND')
+
+    def test_oversized_descendant_quick_request_refuses_before_binding(self):
+        child, request = self.terminal_quick_child('oversized-quick')
+        request.write_bytes(b'{"pad":"' + b'x' * workspace.MAX_QUICK_REQUEST_BYTES + b'"}')
+        before = self.dump(self.store), self.dump(child)
+        with self.assertRaisesRegex(ValueError, 'byte bound'):
+            workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), self.dump(child)), before)
+
+    def test_descendant_quick_parse_consumes_the_binding_deadline(self):
+        child, request = self.terminal_quick_child('slow-quick')
+        request.write_text('{}', encoding='utf-8')
+        before = self.dump(self.store), self.dump(child)
+        now = [0.0]
+        original = workspace._quick_request
+
+        def slow_request(path):
+            result = original(path)
+            now[0] = workspace.MAX_BIND_PREFLIGHT_SECONDS + 1
+            return result
+
+        with patch.object(workspace, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(workspace, '_quick_request', side_effect=slow_request):
+            with self.assertRaisesRegex(ValueError, 'time budget'):
+                workspace.bind(self.root)
+        self.assertEqual((self.dump(self.store), self.dump(child)), before)
+
 
 if __name__ == '__main__':
     unittest.main()
