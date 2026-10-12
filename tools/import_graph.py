@@ -112,8 +112,10 @@ def lexical_resolver(tree, parents):
                 bind(node, arg.arg, '!parameter', arg)
 
     def preceding_class_import(scope, node, name):
-        if any(isinstance(parent, (ast.For, ast.AsyncFor, ast.While))
-               for parent in ancestors(node, scope)):
+        loops = {parent for parent in ancestors(node, scope)
+                 if isinstance(parent, (ast.For, ast.AsyncFor, ast.While))}
+        if any(bound in (name, '*') and loops.intersection(ancestors(origin, scope))
+               for origin, bound, _ in class_sites[scope]):
             return None  # A later textual store may have run in a previous iteration.
         value = None
         position = lambda item: (item.lineno, item.col_offset)
@@ -209,7 +211,8 @@ def scan(name, tree, modules, package, hook_routes):
                     unresolved.append({**site(node), "reason": "relative import outside known package"})
                     continue
                 base = ".".join(parts[:len(parts) - node.level + 1] + ([base] if base else []))
-            emit(node, base, "static")
+            if base != name or node.module or not node.level:
+                emit(node, base, "static")
             for alias in node.names:
                 member = base + "." + alias.name
                 if member in modules:
