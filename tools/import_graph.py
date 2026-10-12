@@ -279,7 +279,7 @@ def non_executed_annotations(tree, parents):
             while scope is not None and not isinstance(scope, (ast.Module, ast.ClassDef, ast.FunctionDef,
                                                                ast.AsyncFunctionDef, ast.Lambda)):
                 scope = parents.get(scope)
-            if postponed or not node.simple or isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            if postponed or isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 annotation = node.annotation
         if annotation is not None:
             ignored.update(ast.walk(annotation))

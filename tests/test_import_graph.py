@@ -142,15 +142,38 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual(len(report['edges']), expression.count("load('rds_quick')"))
                 self.assertEqual(report['unresolved'], [])
 
-    def test_non_evaluated_variable_annotations_do_not_load(self):
+    def test_local_variable_annotations_do_not_load(self):
         for expression in ("def f():\n x: load('rds_quick')",
-                           "obj.x: load('rds_quick')", "obj[0]: load('rds_quick')"):
+                           "def f():\n obj.x: load('rds_quick')", "def f():\n obj[0]: load('rds_quick')"):
             with self.subTest(expression=expression):
                 root = self.fixture({'consumer.py': 'from importlib import import_module as load\n'
                     + expression, 'rds_quick.py': ''})
                 report = graph.inventory(root)
                 self.assertEqual(report['edges'], [])
                 self.assertEqual(report['unresolved'], [])
+
+    def test_non_simple_module_and_class_annotations_are_evaluated(self):
+        for expression in ("obj.x: load('rds_quick')", "obj[0]: load('rds_quick')",
+                           "(x): load('rds_quick')", "class C:\n obj.x: load('rds_quick')"):
+            with self.subTest(expression=expression):
+                root = self.fixture({'consumer.py': 'from importlib import import_module as load\n'
+                    + expression, 'rds_quick.py': ''})
+                report = graph.inventory(root)
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_annotation_expectations_match_cpython_runtime(self):
+        # Execute only this trusted micro-example, never an inspected source tree.
+        calls = []
+        env = {'record': lambda label: calls.append(label), 'obj': type('Obj', (), {})(), 'items': [0]}
+        code = "obj.x: record('attribute')\nitems[0]: record('subscript')\n(x): record('parenthesized')\n"
+        code += "def f():\n x: record('local')\n obj.x: record('local-attribute')\nf()"
+        exec(compile(code, '<annotation-oracle>', 'exec', dont_inherit=True), env)
+        self.assertEqual(calls, ['attribute', 'subscript', 'parenthesized'])
+        calls.clear()
+        exec(compile('from __future__ import annotations\n' + code,
+                     '<postponed-annotation-oracle>', 'exec', dont_inherit=True), env)
+        self.assertEqual(calls, [])
 
     def test_postponed_annotations_keep_defaults_values_and_body_calls(self):
         root = self.fixture({'consumer.py': 'from __future__ import annotations\n'

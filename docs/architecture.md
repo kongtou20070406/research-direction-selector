@@ -188,8 +188,11 @@ are recorded separately and never converted into import edges.
   Arbitrary computed exports are not resolved.
 - Bare annotations preserve module/class values but still declare function
   locals. Completed module classes participate in ordered declaration lookup.
-  For Python 3.11-3.13, postponed annotations and non-evaluated local/non-simple
-  variable annotations contribute string references, not executable loader sites.
+  For Python 3.11-3.13, postponed annotations and function-local variable
+  annotations contribute string references, not executable loader sites.
+  Without postponement, module/class attribute, subscript and parenthesized-name
+  annotations are evaluated, although their values are not stored in
+  `__annotations__` ([Python reference](https://docs.python.org/3.13/reference/simple_stmts.html#annotated-assignment-statements)).
   Eager signature annotations, defaults, assigned values and bodies remain scanned.
   Reflective annotation evaluation (for example, `get_type_hints`) is not modeled.
 - Literal registry candidates require an unambiguous binding to that exact
