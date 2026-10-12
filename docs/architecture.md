@@ -225,10 +225,14 @@ are recorded separately and never converted into import edges.
 - This is a conservative syntax inventory, not whole-program call analysis.
 - Import aliases respect lexical scopes, with ambiguous rebindings unresolved;
   comprehension targets stay local (except assignment expressions), while
-  preceding unconditional class imports resolve in source order. Other
+  preceding unconditional imports in immediate module/class code resolve in
+  source order. Deferred functions retain conservative global lookup. Other
   class-body shadowing conservatively retains outer loader alternatives.
   global/nonlocal mutation and arbitrary computed loaders need runtime analysis.
   Conditional edges may never run. Class bodies are not method closure scopes.
+- Literal registry candidates require an unambiguous binding to that exact
+  module assignment, not just a matching variable name. Local shadowing or
+  ambiguous rebinding stays UNKNOWN; these candidates are not runtime values.
 - External dependencies are not nodes in this repository-local graph. Imports
   in generated code, plugins or launched programs need separate inventories.
 - Relative static package imports are resolved against the source tree; dynamic
