@@ -122,7 +122,7 @@ def lexical_resolver(tree, parents):
         if any(bound in (name, '*') and loops.intersection(ancestors(origin, scope))
                for origin, bound, _ in ordered_sites[scope]):
             return None  # A later textual store may have run in a previous iteration.
-        value = None
+        value = '__import__' if scope is tree and name == '__import__' else None
         position = lambda item: (item.lineno, item.col_offset)
         for origin, bound, target in sorted(ordered_sites[scope], key=lambda item: position(item[0])):
             if bound not in (name, '*') or position(origin) >= position(node):
@@ -154,6 +154,10 @@ def lexical_resolver(tree, parents):
                     candidates.add('!wildcard')
                 if name in bindings[scope]:
                     candidates.update(bindings[scope][name])
+                    if scope is tree and name == '__import__':
+                        # Before assignment (or after deletion), globals may use
+                        # the builtin; a deferred call has no known execution time.
+                        candidates.add('__import__')
                     # Class assignments are ordered, not function-wide lexical locals.
                     # Keep outer alternatives instead of silently losing possible imports.
                     if not isinstance(scope, ast.ClassDef):
