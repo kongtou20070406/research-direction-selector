@@ -25,7 +25,7 @@ def process_assignment(statement):
             or isinstance(function, ast.Name) and function.id == 'launch')
 
 
-def launch_code():
+def launch_code(*, before_process=()):
     tree = ast.parse(SOURCE.read_text(encoding='utf-8'))
     project_store = next(node for node in tree.body
                          if isinstance(node, ast.ClassDef) and node.name == 'ProjectStore')
@@ -49,7 +49,8 @@ def launch_code():
                  and any(isinstance(target, ast.Name) and target.id == 'flags'
                          for target in node.targets))
     # Execute the actual flag and launcher selection, not a bare-Popen substitute.
-    module = ast.fix_missing_locations(ast.Module(body=[flags, *body[start:end + 1]], type_ignores=[]))
+    module = ast.fix_missing_locations(ast.Module(
+        body=[flags, *body[start:end], *before_process, body[end]], type_ignores=[]))
     return compile(module, str(SOURCE), 'exec')
 
 
@@ -82,6 +83,7 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
             return popen(argv, **options)
 
         argv = [str(Path('bin') / executable), '--noprofile', '--norc', 'worker.sh', 'exact-tail']
+        expected_argv = list(argv)
         namespace = {
             'argv': argv,
             'current': {'autonomy_request': {}} if autonomy else {},
@@ -97,7 +99,7 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
             '__file__': str(SOURCE),
         }
         exec(self.launch, namespace)
-        return captured, argv, parent, before
+        return captured, expected_argv, parent, before
 
     def assert_filtered(self, executable, blocked, autonomy):
         all_startup = {'bash_env', 'bashopts', 'shellopts', 'perl5opt', 'phprc',
@@ -154,6 +156,16 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
                                      {key.casefold() for key in options['env']})
                     self.assertEqual(parent, before)
 
+    def test_argv_rewrite_cannot_mutate_the_expected_launch_snapshot(self):
+        from unittest.mock import patch
+        rewritten = launch_code(before_process=ast.parse("argv.append('unbound-extra')").body)
+        for host in ('nt', 'posix'):
+            for autonomy in (False, True):
+                with self.subTest(host=host, autonomy=autonomy), patch.object(self, 'launch', rewritten):
+                    captured, expected, _, _ = self.observe('bash', autonomy, host)
+                    with self.assertRaisesRegex(AssertionError, 'unbound-extra'):
+                        self.assertEqual(captured['argv'], expected)
+
     def test_native_bash_launch_ignores_late_debugger_and_startup_options(self):
         bash = shutil.which('bash')
         if os.name == 'nt' and bash and 'WindowsApps' in bash:
@@ -185,10 +197,12 @@ class InterpreterEnvironmentLaunchTests(unittest.TestCase):
                                      '_WindowsPopen': _WindowsPopen,
                                      'self': SimpleNamespace(root=root),
                                      'out': out, 'err': err, '__file__': str(SOURCE)}
+                        expected_argv = list(namespace['argv'])
                         exec(self.launch, namespace)
                         process = namespace['process']
                         job = getattr(process, '_owned_job', None)
                         try:
+                            self.assertEqual(namespace['argv'], expected_argv)
                             if os.name == 'nt':
                                 self.assertIsNotNone(job)
                                 self.assertIsNone(process.poll())
