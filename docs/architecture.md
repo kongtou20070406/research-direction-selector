@@ -30,7 +30,7 @@ they used the same source or graph definition. A mutual pair is not an SCC.
 ## B0.5 Responsibility Audit
 
 Only `GROUPS` labels and this document change in this step. All 119 runtime
-source hashes, 445 dependency pairs, 703 sites and unresolved targets are
+source hashes, 445 dependency pairs, 704 sites and unresolved targets are
 identical to B0. Being widely imported is not itself a reason to lower a module;
 the functions below establish its actual responsibility.
 
