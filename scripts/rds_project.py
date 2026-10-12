@@ -28,6 +28,7 @@ from rds_mutation import mutation
 from rds_project_hooks import provider as lifecycle_provider
 import rds_project_records as receipt_records
 from rds_run_records import decode_run_row
+from rds_contract_read import effective_contract
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -626,7 +627,6 @@ class ProjectStore:
         # Native research records can share this database before project init.
         require(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone(),
                 UNINITIALIZED)
-        from rds_method_revision import effective_contract
         return effective_contract(db)
 
     def _bindings(self, contract):
