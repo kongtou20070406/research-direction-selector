@@ -47,7 +47,7 @@ def _observation(root, candidate, validation, plan):
         correctness = 'UNKNOWN'
         result_file = Path(root).resolve() / value['data']['job_root'] / 'outputs' / 'result.json'
         if receipt['run_status'] == 'FAILED' and result_file.is_file():
-            from rds_cli import strict_json
+            from rds_reference_values import strict_json
             report = strict_json(read_bytes(result_file).decode('utf-8-sig'))
             rows = report.get('cases') if isinstance(report, dict) else None
             count = plan['data']['request']['case_count']

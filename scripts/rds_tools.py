@@ -120,7 +120,7 @@ def extract(root, source, entry, name):
 
 
 def _cases(raw):
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     cases = strict_json(raw.decode('utf-8-sig'))
     require(isinstance(cases, list) and 1 <= len(cases) <= 64, 'Supply 1–64 explicit local cases')
     for case in cases:

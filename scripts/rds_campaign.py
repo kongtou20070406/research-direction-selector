@@ -656,7 +656,7 @@ def _ledger_quiescent(root, db, inventory, *, workspace, allow_pending_revision=
 
 
 def _reference_quiescent(root):
-    from rds_cli import RDSState
+    from rds_state import RDSState
     path = root / '.rds' / 'state.sqlite3'
     db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=10)
     try:
