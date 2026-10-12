@@ -505,7 +505,7 @@ def bind(root):
                 continue
             if owner_pointer == pointer and _charged_quick_scope(store.root, owner, owner_pointer):
                 check_admission(owner)
-                from rds_quick import _is_unmaterialized_allowance
+                from rds_quick_ledger import _is_unmaterialized_allowance
                 with _store(owner)._db(True) as parent_db:
                     allowance = parent_db.execute(
                         "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "

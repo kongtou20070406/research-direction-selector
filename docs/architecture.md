@@ -54,6 +54,28 @@ No schema or events change. Tests that inject CAS failures/results must patch
 the new service lookup site; public old function names are retained, but their
 module-global namespace is not a mutable proxy to every consumer.
 
+## B1c: QUICK allowance and recovery service
+
+`rds_quick_ledger` (L1) contains the original eleven allowance/checkpoint/pending
+materialization/completion helpers. Function bodies, signatures and decorators
+are unchanged. Campaign, workspace and tools import their helpers directly.
+The default QUICK lifecycle provider now loads/registers this service, not the
+entry module: ProjectStore recovery no longer imports QUICK or selects a route.
+All old QUICK helper names remain re-exported.
+
+The service still uses the existing parent transaction, original request/CAS
+bindings, cumulative budget and checkpoints. It neither creates another ledger
+nor refunds an allowance during retry. Runtime-injected provider identities
+remain unknown to static analysis; this cut changes the default provider only.
+
+Current measurement: **30 upward pairs, largest SCC 47, 48 mutual pairs**;
+123 modules, 473 combined pairs. Four lower QUICK edges remain: owned_advisor
+and owned_history use `choice`, tools uses `execute`, and tms_store uses `brief`.
+The new kernel service is inside the old kernel SCC, so SCC size is reported
+honestly rather than treated as a monotone extraction score. No schemas/events
+change. The recovery/allowance/admission suite covers retained choices, parent
+locks, original receipts, interrupted materialization and no duplicate charging.
+
 ## Reproduce
 
 ```sh

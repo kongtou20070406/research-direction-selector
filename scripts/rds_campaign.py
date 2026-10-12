@@ -388,7 +388,7 @@ def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *
     if request.get('research_context') is None:
         return
     from rds_project import ProjectStore, TERMINAL
-    from rds_quick import _prospective_completion
+    from rds_quick_ledger import _prospective_completion
     context = request['research_context']
     require(isinstance(context, dict) and isinstance(context.get('ledger'), str),
             'Prospective campaign parent ledger is invalid')
