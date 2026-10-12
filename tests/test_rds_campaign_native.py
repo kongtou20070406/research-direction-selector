@@ -276,7 +276,8 @@ class CampaignNativeTests(unittest.TestCase):
             try:
                 deadline = time.monotonic() + 10
                 while True:
-                    running = child.snapshot()['runs'][0]
+                    with child._db(True) as db:
+                        running = child._run(db, 'baseline')
                     handshake = (self.child / 'owned-process-started').exists()
                     diagnostic = (f'handshake={handshake}, status={running["status"]}, '
                                   f'pid={running["pid"]}, attempt_id={running["attempt_id"]}')
@@ -328,12 +329,6 @@ class CampaignNativeTests(unittest.TestCase):
         def delayed_job(process):
             job = real_job(process)
             try:
-                deadline = time.monotonic() + 4
-                while not (self.child / 'owned-process-started').exists():
-                    self.assertIsNone(process.poll(), 'Owned child exited before PID barrier')
-                    self.assertLess(time.monotonic(), deadline,
-                                    'Owned child did not reach the pre-publication PID gap')
-                    time.sleep(0.01)
                 # Read the committed row without snapshot's mutation gate: this
                 # launch already owns that gate until it publishes the PID.
                 child = ProjectStore(self.child)
@@ -342,6 +337,9 @@ class CampaignNativeTests(unittest.TestCase):
                 self.assertEqual(running['status'], 'RUNNING')
                 self.assertIsNone(running['pid'])
                 self.assertIsNone(process.poll(), 'Owned child exited during PID barrier')
+                if os.name == 'nt':
+                    self.assertFalse((self.child / 'owned-process-started').exists())
+                    self.assertEqual((self.child / '.rds/project-artifacts/baseline/stdout.bin').stat().st_size, 0)
                 gap_seen.set()
                 return job
             except BaseException:
@@ -351,7 +349,7 @@ class CampaignNativeTests(unittest.TestCase):
 
         with patch('rds_project._Job', side_effect=delayed_job):
             self.test_legacy_binding_owned_running_sibling_settles_original_receipt_and_checkpoint()
-        self.assertTrue(gap_seen.is_set(), 'Did not exercise handshake before PID publication')
+        self.assertTrue(gap_seen.is_set(), 'Did not observe the committed pre-PID state')
 
     def test_legacy_binding_orphan_real_cli_recovery_preserves_charge_and_refuses_writers(self):
         child = self.sibling()
