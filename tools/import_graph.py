@@ -33,9 +33,9 @@ GROUPS = {
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}
 LAYERS.update(build_plugins="L4", update_lean_toolchain="L4")
-LOADERS = {"importlib.import_module", "__import__", "builtins.__import__"}
+LOADERS = {"importlib.import_module", "__import__", "builtins.__import__", "runpy.run_module"}
 OPAQUE_LOADERS = {"importlib.util.spec_from_file_location", "importlib.util.module_from_spec",
-                  "importlib.machinery.SourceFileLoader", "runpy.run_path", "runpy.run_module"}
+                  "importlib.machinery.SourceFileLoader", "runpy.run_path"}
 
 
 def qualified(node, resolve):
@@ -50,6 +50,7 @@ def lexical_resolver(tree, parents):
     comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
     scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda) + comprehensions
     bindings = {node: {} for node in ast.walk(tree) if isinstance(node, scopes)}
+    class_sites = {node: [] for node in bindings if isinstance(node, ast.ClassDef)}
 
     def enclosing(node):
         child, parent = node, parents.get(node)
@@ -75,38 +76,53 @@ def lexical_resolver(tree, parents):
             node = parents[node]
             yield node
 
-    def bind(scope, name, value):
+    def bind(scope, name, value, origin):
         bindings[scope].setdefault(name, set()).add(value)
+        if scope in class_sites:
+            class_sites[scope].append((origin, name, value))
 
     for node in ast.walk(tree):
         scope = enclosing(node)
         if isinstance(node, ast.Import):
             for alias in node.names:
                 bind(scope, alias.asname or alias.name.split('.')[0],
-                     alias.name if alias.asname else alias.name.split('.')[0])
+                     alias.name if alias.asname else alias.name.split('.')[0], node)
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 bind(scope, alias.asname or alias.name,
-                     (node.module or '') + '.' + alias.name if not node.level else '!relative')
+                     (node.module or '') + '.' + alias.name if not node.level else '!relative', node)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             if isinstance(parents.get(node), ast.NamedExpr):
                 while isinstance(scope, comprehensions):
                     scope = enclosing(scope)
-            bind(scope, node.id, '!local')
+            bind(scope, node.id, '!local', node)
         elif isinstance(node, ast.ExceptHandler) and node.name:
-            bind(scope, node.name, '!exception')
+            bind(scope, node.name, '!exception', node)
         elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            bind(scope, node.name, '!pattern')
+            bind(scope, node.name, '!pattern', node)
         elif isinstance(node, ast.MatchMapping) and node.rest:
-            bind(scope, node.rest, '!pattern')
+            bind(scope, node.rest, '!pattern', node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             # Keep module class constructors distinct from shadowing local names.
             value = '!module_class.' + node.name if isinstance(node, ast.ClassDef) and scope is tree else '!local'
-            bind(scope, node.name, value)
+            bind(scope, node.name, value, node)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
             for arg in args + [a for a in (node.args.vararg, node.args.kwarg) if a]:
-                bind(node, arg.arg, '!parameter')
+                bind(node, arg.arg, '!parameter', arg)
+
+    def preceding_class_import(scope, node, name):
+        value = None
+        position = lambda item: (item.lineno, item.col_offset)
+        for origin, bound, target in sorted(class_sites[scope], key=lambda item: position(item[0])):
+            if bound not in (name, '*') or position(origin) >= position(node):
+                continue
+            # Only an unconditional completed import establishes a definite binding.
+            # Intervening stores/deletes/conditional imports keep the old UNKNOWN path.
+            direct = parents[origin] is scope and isinstance(origin, (ast.Import, ast.ImportFrom))
+            completed = (origin.end_lineno, origin.end_col_offset) <= position(node)
+            value = target if direct and completed and bound == name else None
+        return value
 
     def at(node, name):
         scope = enclosing(node)
@@ -114,6 +130,10 @@ def lexical_resolver(tree, parents):
         while scope is not None:
             # A method does not close over its class namespace.
             if first or not isinstance(scope, ast.ClassDef):
+                if isinstance(scope, ast.ClassDef):
+                    imported = preceding_class_import(scope, node, name)
+                    if imported is not None:
+                        return {imported}
                 wildcards = bindings[scope].get('*', set())
                 if wildcards:
                     # Exports and competing star imports are not statically known.
@@ -222,7 +242,7 @@ def scan(name, tree, modules, package, hook_routes):
                 else:
                     unresolved.append({**site(node), "reason": "runtime provider selection"})
             elif callee in LOADERS:
-                arg = call_argument(node, 0, "name")
+                arg = call_argument(node, 0, "mod_name" if callee == "runpy.run_module" else "name")
                 level = next((k.value for k in node.keywords if k.arg == "level"),
                              node.args[4] if len(node.args) > 4 else ast.Constant(value=0))
                 if callee.endswith("__import__") and (any(k.arg is None for k in node.keywords) or

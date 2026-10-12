@@ -174,6 +174,7 @@ are recorded separately and never converted into import edges.
 - This is a conservative syntax inventory, not whole-program call analysis.
 - Import aliases respect lexical scopes, with ambiguous rebindings unresolved;
   comprehension targets stay local (except assignment expressions), while
+  preceding unconditional class imports resolve in source order. Other
   class-body shadowing conservatively retains outer loader alternatives.
   global/nonlocal mutation and arbitrary computed loaders need runtime analysis.
   Conditional edges may never run. Class bodies are not method closure scopes.
@@ -181,6 +182,8 @@ are recorded separately and never converted into import edges.
   in generated code, plugins or launched programs need separate inventories.
 - Relative static package imports are resolved against the source tree; dynamic
   relative imports and opaque file loaders stay unresolved.
+- Literal `runpy.run_module` names are dynamic edges; computed names and
+  `runpy.run_path` file execution stay unresolved. No inspected code is executed.
 - A returned graph with unresolved sites is usable inventory, not a PASS for
   dependency direction. Zero discovered edges would not prove zero callbacks.
 - B0 removes **zero** runtime edges. The table is the baseline for subsequent
