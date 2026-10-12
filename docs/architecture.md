@@ -180,12 +180,18 @@ are recorded separately and never converted into import edges.
   global/nonlocal mutation and arbitrary computed loaders need runtime analysis.
   Conditional edges may never run. Class bodies are not method closure scopes.
 - Immediate module calls do not borrow a loader's first import from later code.
+  Eager list/set/dict comprehensions retain this order; generator bodies and
+  function bodies keep deferred lookup. Exception matching precedes its alias.
   Definition defaults/bases and the first loop iterable precede their own name
   bindings; repeated loop-body mutations remain conservative UNKNOWN.
   Named loader re-exports through local module imports are explicitly UNKNOWN,
   not definite edges. Alias walks are capped at 64 expansions; cycles and limit
   exhaustion stay UNKNOWN. Relative aliases use the inspected package path.
   Arbitrary computed exports are not resolved.
+- Generator-expression assignment targets affect an outer name only on iteration.
+  This inventory does not prove whether a generator was consumed; possible loader
+  mutation remains an explicit UNKNOWN site, not a definite rebinding or a claim
+  that no dependency exists. Use runtime evidence to disambiguate these sites.
 - Bare annotations preserve module/class values but still declare function
   locals. Completed module classes participate in ordered declaration lookup.
   For Python 3.11-3.13, postponed annotations and function-local variable

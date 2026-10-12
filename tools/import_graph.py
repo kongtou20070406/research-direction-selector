@@ -146,6 +146,8 @@ def lexical_resolver(tree, parents, package):
                 continue
             if origin in call_ancestors and isinstance(origin, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue  # Defaults/bases finish before the definition replaces its name.
+            if isinstance(origin, ast.ExceptHandler) and origin.type in call_ancestors:
+                continue  # Matching the exception type precedes binding its alias.
             if isinstance(origin, ast.Name):
                 loop = next((parent for parent in ancestors(origin, scope)
                              if isinstance(parent, (ast.For, ast.AsyncFor))), None)
@@ -166,15 +168,15 @@ def lexical_resolver(tree, parents, package):
 
     def at(node, name):
         scope = enclosing(node)
-        first, candidates = True, set()
+        first, immediate, candidates = True, True, set()
         while scope is not None:
             # A method does not close over its class namespace.
             if first or not isinstance(scope, ast.ClassDef):
                 # Deferred function bodies must not resolve globals at definition time.
-                if isinstance(scope, ast.ClassDef) or (first and scope is tree):
+                if isinstance(scope, ast.ClassDef) or (immediate and scope is tree):
                     imported = preceding_binding(scope, node, name)
                     if imported is not None:
-                        return {imported}
+                        return candidates | {imported}
                 wildcards = bindings[scope].get('*', set())
                 if wildcards:
                     # Exports and competing star imports are not statically known.
@@ -191,6 +193,8 @@ def lexical_resolver(tree, parents, package):
                     # Keep outer alternatives instead of silently losing possible imports.
                     if not isinstance(scope, ast.ClassDef):
                         return candidates
+            if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.GeneratorExp)):
+                immediate = False
             first = False
             scope = enclosing(scope)
         return candidates | {name}
