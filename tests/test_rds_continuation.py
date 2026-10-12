@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -532,6 +533,36 @@ class RecipeContinuationTests(unittest.TestCase):
         self.f.setUp()
         self.addCleanup(self.f.doCleanups)
 
+    def drive_with_clock(self, *args, expire_after_register=False):
+        # Keep the actual CLI, workers, deadlines, identities and ledger. Only
+        # the controller clock is synthetic: this is not a host-throughput SLA.
+        wrapper = '''import sys, time
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv.pop(1))
+expire = sys.argv.pop(1) == 'True'
+import rds_autonomy, rds_project, rds_cli
+ticks = [0.]
+rds_autonomy.time = SimpleNamespace(monotonic=lambda: ticks[0], time=time.time)
+if expire:
+    original_register = rds_project.ProjectStore.register
+    def register(self, *args, **kwargs):
+        result = original_register(self, *args, **kwargs)
+        ticks[0] = 8.1
+        return result
+    rds_project.ProjectStore.register = register
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+sys.exit(rds_cli.main())
+'''
+        real_run = subprocess.run
+        def launch(argv, **kwargs):
+            self.assertEqual(argv[:3], [sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py')])
+            return real_run([sys.executable, '-B', '-c', wrapper, str(ROOT / 'scripts'),
+                             str(expire_after_register), *argv[3:]], **kwargs)
+        with patch.object(assembly_fixture.subprocess, 'run', launch):
+            return self.f.call('project', 'drive', '--until-judgment',
+                               '--controller-wall-seconds', '8', *args)
+
     def test_recipe_routes_continue_without_resetting_identity_receipts_or_budget(self):
         initialized = self.f.init()
         before = self.f.store.snapshot()
@@ -551,8 +582,7 @@ class RecipeContinuationTests(unittest.TestCase):
             step_args = ('--max-steps', '1') if len(expected_starts) == 1 else ()
             retained_receipts, retained_attempts = {}, {}
             for _ in range(3):
-                out = self.f.call('project', 'drive', '--until-judgment',
-                                  '--controller-wall-seconds', '8', *step_args)
+                out = self.drive_with_clock(*step_args)
                 live = self.f.store.snapshot()
                 self.assertEqual(live['contract_sha256'], before['contract_sha256'])
                 for receipt in live['receipts']:
@@ -605,6 +635,41 @@ class RecipeContinuationTests(unittest.TestCase):
                                    before['budget']['wall_seconds']['charged_estimate'] + controller_charged)
         self.assertTrue(all(receipt['run_status'] == 'SUCCEEDED' for receipt in state['receipts']))
         self.assertAlmostEqual(state['budget']['wall_seconds']['reserved'], 0)
+
+    def test_controller_expiry_after_registration_retains_and_continues_exact_reservation(self):
+        self.f.init()
+        before = self.f.store.snapshot()
+        out = self.drive_with_clock(expire_after_register=True)
+        stopped = self.f.store.snapshot()
+        self.assertEqual(out['status'], 'HANDOFF_REQUIRED', out)
+        self.assertEqual(out['reason'], 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
+        self.assertEqual(out['controller_wall_seconds'], 8.1)
+        self.assertEqual(out['handoff']['resources'], stopped['budget'])
+        self.assertEqual(out['handoff']['resource_cut'], 'CONTROLLER_RELEASE_TRANSACTION')
+        self.assertEqual(stopped['contract_sha256'], before['contract_sha256'])
+        self.assertEqual(stopped['receipts'], [])
+        self.assertEqual(self.f.starts(), [])
+        self.assertEqual(len(stopped['runs']), 1)
+        reservation = stopped['runs'][0]
+        self.assertEqual(reservation['id'], 'baseline')
+        self.assertEqual(reservation['status'], 'RESERVED')
+        self.assertIsNone(reservation['attempt_id'])
+        self.assertEqual(stopped['budget']['wall_seconds']['reserved'], 5)
+        self.assertEqual(stopped['budget']['wall_seconds']['spent_measured'], 8)
+        self.assertAlmostEqual(stopped['budget']['wall_seconds']['charged_estimate'], .1)
+        continued = self.drive_with_clock()
+        after = self.f.store.snapshot()
+        self.assertEqual(continued['status'], 'JUDGMENT_REQUIRED', continued)
+        self.assertEqual(after['contract_sha256'], before['contract_sha256'])
+        self.assertEqual(self.f.starts(), ['baseline', 'repair'])
+        self.assertEqual([r['run_id'] for r in after['receipts']], ['baseline', 'repair'])
+        self.assertTrue(all(r['run_status'] == 'SUCCEEDED' for r in after['receipts']))
+        self.assertEqual(after['runs'][0]['manifest_sha256'], reservation['manifest_sha256'])
+        self.assertEqual(continued['handoff']['resources'], after['budget'])
+        self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
+        worker_spent = sum(r['resources']['wall_seconds']['measured'] for r in after['receipts'])
+        self.assertAlmostEqual(after['budget']['wall_seconds']['spent_measured'], 8 + worker_spent)
+        self.assertAlmostEqual(after['budget']['wall_seconds']['charged_estimate'], .1)
 
 class ModelContinuationTests(unittest.TestCase):
     def setUp(self):

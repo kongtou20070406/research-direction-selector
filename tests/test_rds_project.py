@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from rds_project import ProjectStore, canonical, digest, file_sha
+from rds_project import ProjectStore, _Job, canonical, digest, file_sha
 
 
 SCRIPT = '''import json, pathlib, sys, time
@@ -69,6 +69,84 @@ class ProjectTests(unittest.TestCase):
     def run_spec(self, spec):
         self.store.register(spec)
         return self.store.execute(spec["id"])
+
+    def test_child_waits_for_job_binding_and_short_run_succeeds(self):
+        real_job = _Job
+        bound = []
+        def delayed_job(process):
+            if os.name == 'nt':
+                # Give an unguarded short child ample time to exit. A suspended
+                # child must neither finish nor access its declared inputs yet.
+                time.sleep(.3)
+                self.assertIsNone(process.poll())
+                self.assertFalse((self.root / 'outputs/r1.json').exists())
+                self.assertEqual((self.root / '.rds/project-artifacts/r1/stdout.bin').stat().st_size, 0)
+            job = real_job(process)
+            bound.append(job)
+            return job
+        with patch('rds_project._Job', side_effect=delayed_job):
+            receipt = self.run_spec(self.spec())
+        self.assertEqual(len(bound), 1)
+        self.assertEqual(receipt['run_status'], 'SUCCEEDED', receipt)
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertFalse(receipt['timeout'])
+        self.assertEqual(receipt['errors'], [])
+        self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+
+    def test_job_binding_or_resume_failure_cannot_run_child(self):
+        for phase, run_id in [('bind', 'r1'), ('resume', 'r2')]:
+            with self.subTest(phase=phase):
+                def rejected_job(process):
+                    raise OSError('fixture bind failure')
+                def rejected_resume(job):
+                    raise OSError('fixture resume failure')
+                target, replacement = ('rds_project._Job', rejected_job) if phase == 'bind' else (
+                    'rds_project._Job.resume', rejected_resume)
+                with patch(target, new=replacement):
+                    receipt = self.run_spec(self.spec(rid=run_id, mode='timeout'))
+                self.assertEqual(receipt['run_status'], 'FAILED', receipt)
+                self.assertTrue(any('fixture ' + phase + ' failure' in e for e in receipt['errors']))
+                self.assertFalse((self.root / f'outputs/{run_id}.json').exists())
+                if os.name == 'nt':
+                    self.assertEqual((self.root / f'.rds/project-artifacts/{run_id}/stdout.bin').stat().st_size, 0)
+                self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+
+    def test_native_resume_negative_status_is_rejected_without_record_mutation(self):
+        before = self.store.snapshot()
+        handles = []
+        def reject(handle):
+            handles.append(handle)
+            return -1073741790  # STATUS_ACCESS_DENIED, a failing signed NTSTATUS.
+        job = object.__new__(_Job)
+        job.handle = 456
+        job.process = SimpleNamespace(_handle=123)
+        with patch('rds_project.os', SimpleNamespace(name='nt')), \
+             patch('rds_project.ctypes.WinDLL', return_value=SimpleNamespace(NtResumeProcess=reject), create=True):
+            with self.assertRaisesRegex(OSError, 'NTSTATUS 0xc0000022'):
+                job.resume()
+        self.assertEqual(handles, [123])
+        self.assertEqual(self.store.snapshot(), before)
+
+    def test_job_setup_cannot_resume_after_original_worker_timeout(self):
+        real_job, resumes = _Job, []
+        def delayed_job(process):
+            job = real_job(process)
+            time.sleep(.2)
+            return job
+        def resume(job):
+            resumes.append(job.process.pid)
+            self.fail('Expired worker must not resume')
+        with patch.object(real_job, 'resume', new=resume), \
+             patch('rds_project._Job', side_effect=delayed_job):
+            receipt = self.run_spec(self.spec(mode='timeout', timeout=.1))
+        self.assertEqual(resumes, [])
+        self.assertEqual(receipt['run_status'], 'FAILED', receipt)
+        self.assertTrue(receipt['timeout'])
+        self.assertIn('Process timeout', receipt['errors'])
+        self.assertFalse((self.root / 'outputs/r1.json').exists())
+        if os.name == 'nt':
+            self.assertEqual((self.root / '.rds/project-artifacts/r1/stdout.bin').stat().st_size, 0)
+        self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
 
     def new_store(self, budget=None, commands=(), policy=None):
         root = self.root / "other-project"
@@ -964,6 +1042,32 @@ time.sleep(30)
 
 
 class StopPolicyAndMaintenanceTests(unittest.TestCase):
+    def test_job_setup_cannot_resume_after_original_campaign_deadline(self):
+        wall, monotonic, ticks = time.time(), time.monotonic(), [0.]
+        real_job, resumes = _Job, []
+        clock = SimpleNamespace(time=lambda: wall + ticks[0],
+                                monotonic=lambda: monotonic + ticks[0], sleep=time.sleep)
+        def delayed_job(process):
+            job = real_job(process)
+            ticks[0] = 5.25
+            return job
+        def resume(job):
+            resumes.append(job.process.pid)
+            self.fail('Expired campaign must not resume')
+        with patch.object(real_job, 'resume', new=resume), \
+             patch('rds_project._Job', side_effect=delayed_job), patch('rds_project.time', clock):
+            self.contract_with(stop_policy={'schema': 1, 'wall_seconds': 5,
+                                            'progress': {'window_seconds': 3600, 'min_bytes': 0}})
+            receipt = self.run_spec(self.spec(timeout=15))
+        self.assertEqual(resumes, [])
+        self.assertEqual(receipt['run_status'], 'FAILED', receipt)
+        self.assertEqual(receipt['stop_reason'], 'CAMPAIGN_DEADLINE')
+        self.assertFalse(receipt['timeout'])
+        self.assertFalse((self.root / 'outputs/r1.json').exists())
+        if os.name == 'nt':
+            self.assertEqual((self.root / '.rds/project-artifacts/r1/stdout.bin').stat().st_size, 0)
+        self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+
     """Stop policy and maintenance allowance; partial output and honest costs."""
 
     def setUp(self):
@@ -1089,13 +1193,12 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
         wall_origin, monotonic_origin = time.time(), time.monotonic()
         elapsed = [0.0]
         fixture_launches = []
-        real_popen = subprocess.Popen
+        real_resume = _Job.resume
 
-        def flush_before_deadline(*args, **kwargs):
-            process = real_popen(*args, **kwargs)
-            output_name = getattr(kwargs.get('stdout'), 'name', None)
-            if output_name is None or Path(output_name).resolve() != expected_stdout:
-                return process
+        def flush_before_deadline(job):
+            real_resume(job)
+            process = job.process
+            output_name = expected_stdout
             fixture_launches.append(process.pid)
             try:
                 output = Path(output_name)
@@ -1108,7 +1211,7 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
                     time.sleep(0.01)
                 self.assertGreater(output.stat().st_size, 0, 'Fixture child exited without stdout')
                 elapsed[0] = 5.25
-                return process
+                return None
             except BaseException:
                 if process.poll() is None:
                     process.kill()
@@ -1117,7 +1220,7 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
 
         with patch('rds_project.time.time', side_effect=lambda: wall_origin + elapsed[0]), \
              patch('rds_project.time.monotonic', side_effect=lambda: monotonic_origin + elapsed[0]), \
-             patch('rds_project.subprocess.Popen', side_effect=flush_before_deadline):
+             patch('rds_project._Job.resume', new=flush_before_deadline):
             store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": 5,
                                                     "progress": {"window_seconds": 3600, "min_bytes": 0}})
             receipt = self.run_spec(self.spec(timeout=15))
@@ -1176,7 +1279,7 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
         (self.root / 'permit-0').touch()
         store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": 30,
                                                 "progress": {"window_seconds": 0.2, "min_bytes": 10}})
-        real_popen = subprocess.Popen
+        real_resume = _Job.resume
         child, steps = [], []
 
         def wait_for_ack(index):
@@ -1186,14 +1289,13 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
                 self.assertLess(time.monotonic(), deadline, 'Synthetic progress child did not acknowledge its write')
                 time.sleep(0.002)
 
-        def spawn(*args, **kwargs):
+        def resume(job):
             # The private diagnostic reproduced premature no-growth with slow launch.
             # Ensure the success fixture supplies first evidence before its first sample.
             time.sleep(0.3)
-            process = real_popen(*args, **kwargs)
-            child.append(process)
+            child.append(job.process)
+            real_resume(job)
             wait_for_ack(0)
-            return process
 
         def advance_stream(interval):
             time.sleep(interval)  # real polling intervals; the run spans a full window
@@ -1207,7 +1309,7 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
 
         clock = SimpleNamespace(monotonic=time.monotonic, time=time.time, sleep=advance_stream)
         try:
-            with patch('rds_project.subprocess.Popen', side_effect=spawn), patch('rds_project.time', clock):
+            with patch('rds_project._Job.resume', new=resume), patch('rds_project.time', clock):
                 receipt = self.run_spec(self.spec(timeout=5))
         finally:
             for process in child:
@@ -1245,21 +1347,21 @@ class StopPolicyAndMaintenanceTests(unittest.TestCase):
                                 'print("x" * 64, flush=True)\nPath("ack-0").touch()\ntime.sleep(30)\n')
         store = self.contract_with(stop_policy={"schema": 1, "wall_seconds": 30,
                                                 "progress": {"window_seconds": 0.2, "min_bytes": 10}})
-        real_popen = subprocess.Popen
+        real_resume = _Job.resume
         child = []
 
-        def spawn(*args, **kwargs):
-            process = real_popen(*args, **kwargs)
+        def resume(job):
+            real_resume(job)
+            process = job.process
             child.append(process)
             deadline = time.monotonic() + 4
             while not (self.root / 'ack-0').is_file():
                 self.assertIsNone(process.poll(), 'Synthetic stalled child exited before its write')
                 self.assertLess(time.monotonic(), deadline, 'Synthetic stalled child did not acknowledge its write')
                 time.sleep(0.002)
-            return process
 
         try:
-            with patch('rds_project.subprocess.Popen', side_effect=spawn):
+            with patch('rds_project._Job.resume', new=resume):
                 receipt = self.run_spec(self.spec(timeout=15))
         finally:
             for process in child:
