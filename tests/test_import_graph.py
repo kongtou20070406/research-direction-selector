@@ -114,6 +114,66 @@ class ImportGraphTests(unittest.TestCase):
                 self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
                 self.assertEqual(report['unresolved'], [])
 
+    def test_comprehension_mutations_do_not_certify_loader_identity(self):
+        expressions = (
+            "[load('rds_quick') for _ in [0] if (load := other)]",
+            "{load('rds_quick') for _ in [0] if (load := other)}",
+            "{load('rds_quick'): 0 for _ in [0] if (load := other)}",
+            "{0: load('rds_quick') for _ in [0] if (load := other)}",
+            "[load('rds_quick') for _ in [0] for x in xs if (load := other)]",
+            "[[load('rds_quick') for x in xs] for _ in [0] if (load := other)]",
+            "[load('rds_quick') for _ in [0, 1] if flag or (load := other)]",
+            "[(load('rds_quick'), (load := other)) for _ in [0, 1]]",
+            "[(load := load('rds_quick')) for _ in [0, 1]]",
+        )
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                report = graph.inventory(self.fixture({'consumer.py':
+                    'from importlib import import_module as load\n' + expression,
+                    'rds_quick.py': ''}))
+                self.assertEqual(report['edges'], [])
+                self.assertEqual([u['reason'] for u in report['unresolved']],
+                                 ['ambiguous loader binding'])
+
+    def test_comprehension_first_iterable_precedes_body_mutation(self):
+        expressions = (
+            "[(load := other) for _ in load('rds_quick')]",
+            "{(load := other) for _ in load('rds_quick')}",
+            "{(load := other): 0 for _ in load('rds_quick')}",
+            "((load := other) for _ in load('rds_quick'))",
+        )
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                report = graph.inventory(self.fixture({'consumer.py':
+                    'from importlib import import_module as load\n' + expression,
+                    'rds_quick.py': ''}))
+                self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+                self.assertEqual(report['unresolved'], [])
+
+    def test_comprehension_unrelated_mutation_keeps_known_loader(self):
+        report = graph.inventory(self.fixture({'consumer.py':
+            "from importlib import import_module as load\n"
+            "[load('rds_quick') for _ in [0] if (other := True)]",
+            'rds_quick.py': ''}))
+        self.assertEqual([e['target'] for e in report['edges']], ['rds_quick'])
+        self.assertEqual(report['unresolved'], [])
+
+    def test_comprehension_order_matches_cpython_runtime(self):
+        calls = []
+        def replacement(name):
+            calls.append(('replacement', name))
+            return 0
+        def initial(name):
+            calls.append(('initial', name))
+            return [0]
+        env = {'load': initial, 'other': replacement}
+        exec("[load('rds_quick') for _ in [0] if (load := other)]", env)
+        self.assertEqual(calls, [('replacement', 'rds_quick')])
+        calls.clear()
+        env['load'] = initial
+        exec("[(load := other) for _ in load('rds_quick')]", env)
+        self.assertEqual(calls, [('initial', 'rds_quick')])
+
     def test_exception_type_precedes_its_alias_binding(self):
         for scope in ('', 'class C:\n'):
             with self.subTest(scope=scope):
