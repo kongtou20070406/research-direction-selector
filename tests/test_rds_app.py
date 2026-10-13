@@ -50,6 +50,29 @@ assert 'rds_owned_advisor' not in sys.modules
                               capture_output=True, text=True, timeout=15)
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    def test_f1_to_f9_packet_advise_and_code_diff_wiring(self):
+        with tempfile.TemporaryDirectory(prefix="rds-app-f9-") as tmp:
+            app = rds_app.create_app(tmp)
+            packet = app.import_packet(
+                project="demo",
+                goal="verify structural diff",
+                texts={"note": "baseline"},
+                candidates={
+                    "cand_a": {
+                        "claim": "treatment improves margin",
+                        "actor": "ai",
+                        "premises": ["text:note"],
+                        "goal": "statement",
+                    }
+                },
+            )
+            proposal = app.advise(packet, language="zh")
+            self.assertEqual(proposal["schema"], "rds-advisor-proposal-v1")
+            diff = app.encode_code_diff("def control(x): return x\n", "def control(x): return x\ndef treatment(x): return x + 1\n")
+            self.assertEqual(diff["schema"], "rds-code-diff-v1")
+            self.assertEqual(diff["ast_delta"]["functions_added"], ["treatment"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

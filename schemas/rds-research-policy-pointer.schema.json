@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RDS research policy CAS pointer",
+  "description": "Pure pointer value. A trusted writer must atomically compare both fields, retain bytes, append adoption history, and pin jobs in the same existing ledger. JSON is never authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generation",
+    "version_sha256"
+  ],
+  "properties": {
+    "generation": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "version_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "version_sha256": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "generation": {
+            "const": 0
+          }
+        }
+      }
+    }
+  ]
+}

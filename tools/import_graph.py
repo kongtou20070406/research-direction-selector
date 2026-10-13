@@ -34,6 +34,20 @@ GROUPS = {
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}
 LAYERS.update(build_plugins="L4", update_lean_toolchain="L4")
+LAYERS.update(
+    rds_research_import="L1",
+    rds_decision_packet="L2",
+    rds_packet_graph="L2",
+    rds_research_advisor="L3",
+    rds_transition="L2",
+    rds_research_policy="L3",
+    rds_offline_contract_values="SHARED",
+    rds_retrieval_contract="L3",
+    rds_predictor_contract="L3",
+    rds_transition_dataset_contract="L2",
+    rds_predictor_worker="L1",
+    rds_code_diff="SHARED",
+)
 LOADERS = {"importlib.import_module", "__import__", "builtins.__import__", "runpy.run_module"}
 OPAQUE_LOADERS = {"importlib.util.spec_from_file_location", "importlib.util.module_from_spec",
                   "importlib.machinery.SourceFileLoader", "runpy.run_path"}

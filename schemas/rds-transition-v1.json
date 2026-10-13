@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bounded retained RDS transition projection",
+  "description": "Hash-bound projection only. Original checkpoint decision and contract-lineage validation remain the caller's responsibility. RECORDED is not scientific verification or authority. Missing state is UNKNOWN; receipt bindings have BINDINGS_ONLY scope. Costs preserve original units, measured/estimated/unknown/lower-bound dimensions without summing or imputing them. No current-state fallback.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "authority", "scientific_support", "checkpoint_validation", "transitions"],
+  "properties": {
+    "schema": {"const": "rds-transition-v1"},
+    "status": {"enum": ["EXPORTED", "UNKNOWN"]},
+    "authority": {"const": "READ_ONLY_PROJECTION"},
+    "scientific_support": {"const": "UNKNOWN"},
+    "checkpoint_validation": {"const": "HASH_AND_OWNED_BINDING_ONLY"},
+    "transitions": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/transition"}}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "sha256", "locator"],
+      "properties": {
+        "kind": {"enum": ["receipt", "checkpoint"]},
+        "id": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "locator": {"type": "string", "pattern": "^($|/)"}
+      }
+    },
+    "cell": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {"status": {"const": "UNKNOWN"}, "reason": {"type": "string", "minLength": 1}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value", "source"],
+          "properties": {
+            "status": {"const": "RECORDED"},
+            "value": {},
+            "source": {"$ref": "#/$defs/source"},
+            "scope": {"enum": ["ORIGINAL_RECEIPT", "RETAINED_CHECKPOINT", "BINDINGS_ONLY", "EXECUTED_COMMAND", "SELECTED_ACTION", "DECISION_TIME", "DECISION_TIME_FIELDS", "RETAINED_FIELDS"]}
+          }
+        }
+      ]
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "attempt_id", "receipt_sha256", "run_status", "scientific_support", "before", "action", "observation", "after", "prior_prediction", "decision", "provenance", "costs"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "run_status": {"enum": ["SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED", "INTERRUPTED"]},
+        "scientific_support": {"const": "UNKNOWN"},
+        "before": {"$ref": "#/$defs/cell"},
+        "action": {"$ref": "#/$defs/cell"},
+        "observation": {"$ref": "#/$defs/cell"},
+        "after": {"$ref": "#/$defs/cell"},
+        "prior_prediction": {"$ref": "#/$defs/cell"},
+        "decision": {"$ref": "#/$defs/cell"},
+        "provenance": {
+          "type": "object", "additionalProperties": false, "required": ["policy", "tool", "model"],
+          "properties": {"policy": {"$ref": "#/$defs/cell"}, "tool": {"$ref": "#/$defs/cell"}, "model": {"$ref": "#/$defs/cell"}}
+        },
+        "costs": {
+          "type": "object", "additionalProperties": false, "required": ["resources", "charged_allocation", "elapsed_ms"],
+          "properties": {"resources": {"$ref": "#/$defs/cell"}, "charged_allocation": {"$ref": "#/$defs/cell"}, "elapsed_ms": {"$ref": "#/$defs/cell"}}
+        }
+      }
+    }
+  }
+}
