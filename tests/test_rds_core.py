@@ -148,10 +148,17 @@ class CoreSemanticsTests(unittest.TestCase):
 
     def test_quick_discovers_shared_leaf(self):
         from rds_quick import _inputs
-        files, raw = _inputs(ROOT, [sys.executable, "scripts/rds_cli.py"], [])
+        # Use the real bounded evaluator, not the now larger-than-QUICK CLI.
+        files, raw = _inputs(ROOT, [sys.executable, "scripts/rds_probe.py"], [])
         path = (SCRIPTS / "rds_core.py").resolve()
         self.assertIn("code", files[path])
         self.assertEqual(raw[path], path.read_bytes())
+
+    def test_whole_cli_overflow_still_requires_explicit_contract(self):
+        from rds_quick import _inputs, MAX_FILES
+        self.assertEqual(MAX_FILES, 128)
+        with self.assertRaisesRegex(ValueError, "exceeds 128 files or 64 MiB"):
+            _inputs(ROOT, [sys.executable, "scripts/rds_cli.py"], [])
 
     def test_relocated_plugin_includes_and_imports_shared_leaf(self):
         import build_plugins
