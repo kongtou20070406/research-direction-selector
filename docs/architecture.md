@@ -453,3 +453,14 @@ This removes a read-only provider callback, not the remaining policy validation
 and post-completion callbacks. QUICK admission and recovery still retain their
 existing boundaries. The module labels are unchanged; only the new native
 autonomy reader is classified L1.
+
+### Native receipt recovery
+
+`ProjectStore.recover` calls the existing `rds_quick_ledger` recovery service
+directly for retained receipts and interrupted attempts, not the optional QUICK
+provider registry. Its frozen request, CAS, guard-report and checkpoint checks
+are unchanged. Repeated recovery retains the same receipt and charged budget;
+the old QUICK helper and provider exports remain available for compatibility.
+This replaces two callback sites with an explicit L1 dependency. It does not
+remove the existing Store/QUICK-ledger cycle or the Advisor completion callback,
+and does not complete composition-root takeover.

@@ -1684,7 +1684,8 @@ class ProjectStore:
             receipt = self._receipt(old) if old else None
         if receipt is not None:
             self._advisor_finished(contract)
-            lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
+            from rds_quick_ledger import _recover_prospective
+            _recover_prospective(self, contract, receipt)
             return receipt
         if run["attempt_id"] is None:
             return {**run, "recovery": "Unstarted reservation; no process to restart"}
@@ -1694,7 +1695,8 @@ class ProjectStore:
             return {**run, "recovery": "Process may still be active; no rerun or termination"}
         receipt = self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
                               ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
-        lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
+        from rds_quick_ledger import _recover_prospective
+        _recover_prospective(self, contract, receipt)
         return receipt
 
     def snapshot(self, check_bindings=False, *, _dialogue=False):
