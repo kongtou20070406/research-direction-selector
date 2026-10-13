@@ -1195,6 +1195,8 @@ class ProjectStore:
                 run['execution_route_sha256'] = execution_route(spec['argv'], bindings, outpaths, self.root,
                     contract.get('objective_sha256'), arm=spec['arm'], executor_sha256=run['executor_sha256'])
             advisor_token = self._advisor_prepare(spec, contract)
+            from rds_postcommit_confirmation import prepare_binding as prepare_confirmation, check_binding as check_confirmation, bind_prepared
+            confirmation_binding = prepare_confirmation(self, contract, run)
             db.execute("BEGIN IMMEDIATE")
             from rds_method_revision import pending_revision
             require(pending_revision(db) is None, 'Resume prepared method revision before registering')
@@ -1203,6 +1205,7 @@ class ProjectStore:
             from rds_steering import check_dispatch
             check_dispatch(db, run_id)
             self._advisor_check(db, spec, advisor_token)
+            check_confirmation(self, db, contract, run, confirmation_binding)
             if 'autonomy' in contract.get('advisor_policy', {}):
                 from rds_autonomy import bind_run
                 bind_run(self, db, contract, run)
@@ -1237,8 +1240,7 @@ class ProjectStore:
                 db.execute("INSERT INTO output_claims VALUES (?,?)", (key, run_id))
             self._campaign_deadline(db, contract, admit=True)
             if 'confirmation' in contract.get('advisor_policy', {}):
-                from rds_postcommit_confirmation import bind_run as bind_confirmation_run
-                bind_confirmation_run(self, db, contract, run)
+                bind_prepared(self, db, contract, run, confirmation_binding)
             for resource, amount in estimates.items():
                 db.execute("UPDATE budget SET reserved=reserved+? WHERE resource=?", (amount, resource))
             if advisor_token is not None:

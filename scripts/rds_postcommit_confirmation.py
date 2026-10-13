@@ -3,6 +3,9 @@
 The existing ledger owns the challenge, attempt and receipt. This is a finite
 CPU check; it makes no hidden-data or distribution-wide generalization claim.
 """
+from dataclasses import dataclass
+from rds_admission_read import PreparedAdmission, StaleAdmission, check_files, check_locked, prepare
+from rds_contract_read import contract_history
 from copy import deepcopy
 import hashlib
 import math
@@ -77,6 +80,99 @@ def bind_run(store, db, contract, run):
         event['sha256'] = digest(event)
         db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
     run['confirmation_challenge'] = deepcopy(event['challenge'])
+
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedConfirmation:
+    schema_version: int
+    run_id: str
+    contract_sha256: str
+    existing: bool
+    event_json: str
+    fence: PreparedAdmission
+
+
+def _applies(contract, run):
+    return enabled(contract) and run['id'] == contract['advisor_policy']['confirmation']['confirmation_runs'][0]
+
+
+def prepare_binding(store, contract, run):
+    if not _applies(contract, run):
+        return None
+    with store._db(True) as db:
+        db.execute('BEGIN')
+        if digest(store._contract(db)) != digest(contract):
+            raise StaleAdmission('Confirmation contract changed during preparation; STALE')
+        value = contract['advisor_policy']['confirmation']
+        previous = records(store, db, contract)
+        receipt, _, weights = _candidate(store, db, contract, value)
+        event = previous[0] if previous else {
+            'kind': EVENT, 'run_id': run['id'], 'candidate_run_id': receipt['run_id'],
+            'candidate_receipt_sha256': receipt['sha256'], 'weights': weights,
+            'genesis_contract_sha256': contract_history(db)[0]['sha256'],
+            'effective_contract_sha256': digest(contract), 'declaration_sha256': digest(value),
+            'manifest_sha256': run['manifest_sha256']}
+        files = []
+        for item in contract['bindings']:
+            path = store._path(item['path'])
+            files.append({'path': str(path.relative_to(store.root)),
+                          'sha256': item['sha256'], 'size': path.stat().st_size})
+        # _observe validates all retained outputs, not only the selected weights.
+        files.extend(item for item in receipt['artifacts'] if item['kind'] == 'project_output')
+        refs = [event['challenge']] if previous else []
+        if 'objective_sha256' in contract:
+            from rds_math import objective
+            goal = objective(store.root)
+            require(goal is not None, 'Confirmation original objective is missing')
+            refs.append(goal['asset'])
+        for ref in refs:
+            path = (store.root / ref['path']).resolve()
+            files.append({'path': str(path.relative_to(store.root)),
+                          'sha256': ref['sha256'], 'size': ref['bytes']})
+        return PreparedConfirmation(1, run['id'], digest(contract), bool(previous),
+                                    canonical(event), prepare(db, store.path, run['manifest'], files, None))
+
+
+def _identity(contract, run, packet):
+    require(type(packet) is PreparedConfirmation and packet.schema_version == 1,
+            'Native confirmation preparation is missing; user JSON is not admission')
+    if packet.contract_sha256 != digest(contract):
+        raise StaleAdmission('Confirmation contract changed after preparation; STALE')
+    require(packet.run_id == run['id'] and packet.fence.manifest_sha256 == run['manifest_sha256']
+            == digest(run['manifest']), 'Confirmation registration binding mismatch')
+
+
+def check_binding(store, db, contract, run, packet):
+    """Call before any registration writes, on the caller's original transaction."""
+    if not _applies(contract, run):
+        require(packet is None, 'Unexpected confirmation preparation')
+        return
+    _identity(contract, run, packet)
+    check_locked(db, store.path, store.root, run['manifest'], packet.fence)
+
+
+def bind_prepared(store, db, contract, run, packet):
+    """Publish only at the original post-admission site, after check_binding.
+
+    The caller has already rechecked the fence before its own budget/output
+    writes. Do not open another read-side policy computation in this function.
+    """
+    if not _applies(contract, run):
+        require(packet is None, 'Unexpected confirmation preparation')
+        return
+    _identity(contract, run, packet)
+    require(db.in_transaction, 'Confirmation publication needs the caller transaction')
+    check_files(store.root, packet.fence.files)
+    event = strict_json(packet.event_json)
+    if not packet.existing:
+        from rds_cas import cas_bytes
+        challenge = {'schema': 1, 'seed': secrets.token_hex(32),
+                     'claim_sha256': contract['advisor_policy']['confirmation']['claim']['sha256']}
+        event['challenge'] = cas_bytes(store.root, canonical(challenge).encode('utf-8'))
+        event['sha256'] = digest(event)
+        db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
+    run['confirmation_challenge'] = event['challenge']
 
 
 def inspect(store, contract, candidate, confirmation, weights, checked):
