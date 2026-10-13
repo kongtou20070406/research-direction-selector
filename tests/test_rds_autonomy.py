@@ -334,7 +334,14 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(self.calls(), ['repair1'])
         response.write_bytes(original)
         recovered = self.cli('project', 'drive', '--max-steps', '4')
-        self.assertEqual(self.calls(), ['repair1'])
+        # A later experiment timeout can legitimately select another repair.
+        # Retain its original result instead of losing the cause to a call-count diff.
+        diagnostics = {'phase': 'RESTORED_ORIGINAL', 'status': recovered.get('status'),
+                       'executed': recovered.get('executed'),
+                       'receipts': [{key: row.get(key) for key in
+                                    ('run_id', 'run_status', 'timeout', 'exit_code', 'errors')}
+                                   for row in self.store.snapshot()['receipts']]}
+        self.assertEqual(self.calls(), ['repair1'], diagnostics)
         self.assertEqual(len(self.events('METHOD_REVISION_ADOPTED')), 1)
         self.assertEqual(self.events(autonomy.PROCESSED)[0]['outcome'], 'ADOPTED')
         self.assertNotEqual(recovered['status'], 'HANDOFF_REQUIRED', recovered)
