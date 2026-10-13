@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from rds_outbox import Outbox
 from rds_project import ProjectStore
 from rds_project_hooks import _modules, provider as lifecycle_provider, register as register_hook
 from rds_project_read_services import ProjectReadServices
@@ -19,6 +20,7 @@ __all__ = [
     "create_app",
     "lifecycle_provider",
     "open_store",
+    "outbox",
     "read_services",
 ]
 
@@ -52,6 +54,11 @@ def read_services(db):
     return ProjectReadServices(db)
 
 
+def outbox(store, db):
+    """Construct the transactional Outbox over a borrowed SQLite connection."""
+    return Outbox(store, db)
+
+
 @dataclass(frozen=True, slots=True)
 class RDSApp:
     """Immutable application composition root for one project workspace."""
@@ -60,6 +67,9 @@ class RDSApp:
 
     def read_services(self, db):
         return ProjectReadServices(db)
+
+    def outbox(self, db):
+        return Outbox(self.store, db)
 
     def provider(self, name: str):
         return lifecycle_provider(name)
