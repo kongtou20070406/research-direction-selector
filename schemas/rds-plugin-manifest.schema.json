@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RDS plugin metadata (not executable configuration)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "name", "version", "input_schema", "output_schema", "resources", "availability"],
+  "properties": {
+    "kind": {"enum": ["verifier", "retrieval", "predictor", "graph"]},
+    "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,79}$"},
+    "version": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "\\S"},
+    "input_schema": {"type": "object"},
+    "output_schema": {"type": "object"},
+    "resources": {"type": "object", "description": "Descriptive only; empty means unspecified, not zero."},
+    "availability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"enum": ["AVAILABLE", "UNAVAILABLE"]},
+        "reason": {"type": "string", "maxLength": 2048}
+      },
+      "if": {"properties": {"status": {"const": "UNAVAILABLE"}}},
+      "then": {"properties": {"reason": {"pattern": "\\S"}}}
+    },
+    "permissions": {
+      "type": "object", "additionalProperties": false,
+      "required": ["write", "execute"],
+      "default": {"write": false, "execute": false},
+      "properties": {"write": {"type": "boolean"}, "execute": {"type": "boolean"}}
+    }
+  },
+  "$comment": "Runtime additionally bounds canonical JSON to 16384 bytes. Schema objects are metadata; original validators remain authoritative. Permissions never confer authority."
+}

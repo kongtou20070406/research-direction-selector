@@ -117,6 +117,7 @@ def engine_id():
                    "result_record": digest((here / "rds_result_record.py").read_bytes()),
                    "admission_read": digest((here / "rds_admission_read.py").read_bytes()),
                    "feasibility_values": digest((here / "rds_feasibility_values.py").read_bytes()),
+                   "plugin_registry": digest((here / "rds_plugin_registry.py").read_bytes()),
                    "project_read_services": digest((here / "rds_project_read_services.py").read_bytes()),
                    "project_read_port": digest((here / "rds_project_read_port.py").read_bytes()),
                    "methods": digest((here / "rds_methods.py").read_bytes()),

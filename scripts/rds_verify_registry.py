@@ -6,7 +6,8 @@ check_certificate. Trusted Python code registers the concrete class with
 ``@register_verifier``; declarative input cannot register executable code, and
 ``get_verifier`` routes one statement kind to its single owning verifier.
 
-This is an L0 leaf module: it imports only the standard library and rds_core.
+This leaf module imports the standard library, rds_core and the data-only plugin
+manifest contract.
 It must not import rds_verify or any domain verifier, so the framework and the
 domain adapters can depend on it without introducing a reverse circular
 dependency. Nothing here searches proofs, reads a project or grants
@@ -216,11 +217,46 @@ def describe():
             for verifier in registered_verifiers()]
 
 
+def _verifier_code_fingerprint(verifier):
+    if is_builtin(verifier):
+        return None
+    parts = []
+    cls = type(verifier)
+    for method_name in METHODS:
+        fn = getattr(cls, method_name, None)
+        co = getattr(fn, "__code__", None)
+        if co is not None:
+            consts = tuple(repr(c) for c in co.co_consts if not hasattr(c, "co_code"))
+            parts.append((method_name, co.co_code.hex(), consts, co.co_names))
+    return parts
+
+
 def registry_id():
     """Bind a digest to the registered declarations in stable name order."""
     return object_digest({"verifiers": describe(),
+                          "code": {v.name: _verifier_code_fingerprint(v)
+                                   for v in registered_verifiers() if not is_builtin(v)},
                           "reserved": {"kinds": sorted(_BUILTIN_KINDS),
                                        "names": sorted(_BUILTIN_NAMES),
                                        "assurances": sorted(_RESERVED_ASSURANCES)},
                           "routes": [(kind, verifier.name, is_builtin(verifier))
                                      for kind, verifier in sorted(_REGISTRY.items())]})
+
+
+def plugin_manifests():
+    """Describe installed verifier adapters; original methods validate payloads.
+
+    AVAILABLE refers to the installed adapter, not optional backend readiness.
+    Resources are unspecified, rather than fabricated as zero costs or limits.
+    This metadata does not participate in proof routing or grant permissions.
+    """
+    return [{
+        "kind": "verifier", "name": verifier.name, "version": verifier.version,
+        "input_schema": {"type": "object", "properties": {
+            "kind": {"enum": sorted(verifier.kinds)}}, "required": ["kind"]},
+        "output_schema": {"type": "object"}, "resources": {},
+        "availability": {"status": "AVAILABLE", "reason":
+                         "Adapter installed; original verifier determines backend availability"},
+        "permissions": {"write": False, "execute": False},
+    } for verifier in registered_verifiers()]
+

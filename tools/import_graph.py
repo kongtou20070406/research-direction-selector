@@ -30,7 +30,7 @@ GROUPS = {
           "hypergraph_readable hypergraph_view obelisk session capabilities model_export "
           "outputs research_note usage wheel",
     "SHARED": "core project_values reference_values output_values admission_values feasibility_values project_records run_records verify_types "
-              "unit_disk_voronoi_core",
+              "plugin_registry unit_disk_voronoi_core",
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}
 LAYERS.update(build_plugins="L4", update_lean_toolchain="L4")
