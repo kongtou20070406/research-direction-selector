@@ -106,6 +106,7 @@ def engine_id():
     here = Path(__file__).resolve().parent
     from rds_verify import verifier_id
     return digest({"cli": digest((here / "rds_cli.py").read_bytes()),
+                   "app": digest((here / "rds_app.py").read_bytes()),
                    "core": digest((here / "rds_core.py").read_bytes()),
                    "reference_values": digest((here / "rds_reference_values.py").read_bytes()),
                    "state": digest((here / "rds_state.py").read_bytes()),
@@ -1002,11 +1003,11 @@ def cmd_project(args):
     if args.action == 'compose-tools':
         from rds_tool_calls import compose
         return compose(args.root, args.request)
-    from rds_project import ProjectStore
+    from rds_app import open_store
     from rds_project_lifecycle import check_root, discover, enable_advisor, initialize
     if args.action == 'discover':
         return discover(args.root)
-    store = ProjectStore(args.root)
+    store = open_store(args.root)
     if args.action == 'bind-workspace':
         from rds_campaign import bind
         return {'status': 'BOUND', 'binding': bind(store, args.workspace_root), 'execution_started': False}
