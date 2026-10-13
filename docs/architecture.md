@@ -45,6 +45,18 @@ decision packet and lock-internal stale/binding checks before execution rewiring
 
 ## B2: production readonly selectors
 
+Checkpoint save and retained-row reads validate recorded decisions through
+`rds_checkpoint_decision` (L1), not through Advisor. The kernel owns the existing
+bounded route normalization, structural checks and rejected-domain CAS witness
+checks. Advisor re-exports the old callable names for compatibility and uses
+the same validation during history review. A recorded choice is still input,
+not scientific verification or execution permission. No checkpoint schema,
+writer admission, ledger or accounting semantics change.
+
+This removes the direct `rds_checkpoints -> rds_advisor` dependency, not all
+upper-layer callbacks. QUICK choice/lifecycle preparation and the guard's
+bounded theory execution still need their separate admission/composition cuts.
+
 Workspace admission now opens its committed identity/progress reads through
 `rds_sqlite.readonly_connection` rather than `ProjectStore._db`. Ancestor
 discovery and paid QUICK scope checks use the same connection boundary; effective
