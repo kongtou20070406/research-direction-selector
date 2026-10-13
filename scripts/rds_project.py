@@ -346,7 +346,13 @@ class _WindowsPopen(subprocess.Popen):
                 raise ctypes.WinError(ctypes.get_last_error())
             initialized = True
             jobs = (wintypes.HANDLE * 1)(self._owned_job.handle)
-            streams = self._filter_handle_list([int(p2cread), int(c2pwrite), int(errwrite)])
+            streams = [int(p2cread), int(c2pwrite), int(errwrite)]
+            require(all(handle > 0 for handle in streams),
+                    "Owned Windows worker requires all standard streams")
+            try:
+                streams = self._filter_handle_list(streams)
+            except OSError as exc:
+                raise ValueError("Invalid owned Windows standard stream handles") from exc
             require(streams and -1 not in streams, "Owned Windows worker requires all standard streams")
             handles = (wintypes.HANDLE * len(streams))(*streams)
             # Only stdio is inherited. In particular, the job handle must stay
