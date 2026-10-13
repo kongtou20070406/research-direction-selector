@@ -111,6 +111,18 @@ class RDSApp:
     def import_packet(self, **kwargs) -> DecisionPacket:
         return import_packet(self.root, **kwargs)
 
+    def inspect_lean_project(self):
+        from rds_lean_catalog import inspect_project
+        return inspect_project(self.root)
+
+    def search_lean_declarations(self, query, **kwargs):
+        from rds_lean_catalog import search_declarations
+        return search_declarations(self.root, query, **kwargs)
+
+    def review_lean_obligation(self, obligation, audit=None):
+        from rds_lean_obligation import review_audit
+        return review_audit(obligation, audit)
+
     def advise(self, packet: DecisionPacket, observations=(), language="zh"):
         return advise_packet(packet, observations=observations, language=language)
 

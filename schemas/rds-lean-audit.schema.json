@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "Untrusted Lean audit input; never a proof certificate",
+  "required": [
+    "schema_version",
+    "obligation_sha256",
+    "source_sha256",
+    "theorem",
+    "declaration_kind",
+    "axioms",
+    "remaining_goals",
+    "errors",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "obligation_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "theorem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "declaration_kind": {
+      "enum": [
+        "theorem",
+        "axiom",
+        "definition",
+        "unknown"
+      ]
+    },
+    "axioms": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "remaining_goals": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "Unproved general Lean obligation; not execution permission",
+  "required": [
+    "schema_version",
+    "kind",
+    "theorem",
+    "informal_statement",
+    "formal_statement",
+    "source_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "kind": {
+      "enum": [
+        "CONJECTURE",
+        "LEMMA",
+        "THEOREM"
+      ]
+    },
+    "theorem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "informal_statement": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "formal_statement": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
