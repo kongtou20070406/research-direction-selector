@@ -1447,19 +1447,49 @@ class ProjectStore:
             return self._finish(run_id, attempt_id, 'FAILED', None, None, None,
                                 ['Campaign changed before launch: ' + str(exc)], only_unstarted=True)
 
+    @contextmanager
+    def _prepared_launch(self, run_id, attempt_id, status):
+        """Yield one writer after unlocked preparation and a current native fence.
+
+        Only the Advisor fence can be refreshed, once. Exceptions after yielding,
+        including maintenance STALE or a launch failure, are never retried.
+        """
+        require(status in ('RESERVED', 'RUNNING'), 'Invalid launch admission phase')
+        with self._db(True) as db:
+            db.execute('BEGIN')
+            initial = self._run(db, run_id)
+            identity = (digest(initial), digest(self._contract(db)))
+        for validation in range(2):
+            advisor_token = self._advisor_prepare_run(run_id)
+            maintenance_packet = self._maintenance_prepare_run(run_id)
+            with self._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                run = self._run(db, run_id)
+                require(run['status'] == status and run['attempt_id'] == attempt_id
+                        and run['pid'] is None, 'Run cannot be started twice')
+                if (digest(run), digest(self._contract(db))) != identity:
+                    raise StaleAdmission('Claim or contract changed; STALE; recover original attempt')
+                if status == 'RESERVED':
+                    self._runs(db)
+                else:
+                    # User stops retain their original refusal/settlement path.
+                    from rds_steering import check_dispatch
+                    check_dispatch(db, run_id)
+                try:
+                    self._advisor_check(db, run['manifest'], advisor_token)
+                except StaleAdmission:
+                    if validation:
+                        raise
+                    continue
+                yield db, run, maintenance_packet
+                return
+
     def _execute_admitted(self, run_id, attempt_id):
         from rds_campaign import enforce
         enforce(self.root)
         attempt_start = time.monotonic()
         admission_error = None
-        advisor_token = self._advisor_prepare_run(run_id)
-        maintenance_packet = self._maintenance_prepare_run(run_id)
-        with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
-            run = self._run(db, run_id)
-            require(run["status"] == "RESERVED" and run["attempt_id"] == attempt_id, "Run cannot be started twice")
-            self._runs(db)
-            self._advisor_check(db, run["manifest"], advisor_token)
+        with self._prepared_launch(run_id, attempt_id, "RESERVED") as (db, run, maintenance_packet):
             try:
                 self._check_prepared_start(db, run, maintenance_packet)
             except ValueError as exc:
@@ -1519,14 +1549,7 @@ class ProjectStore:
                 # keeps execution behind PID persistence and original deadlines.
                 flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | 0x4 if os.name == "nt" else 0
                 argv = [run["executor"], *run["manifest"]["argv"][1:]]
-                advisor_token = self._advisor_prepare_run(run_id)
-                maintenance_packet = self._maintenance_prepare_run(run_id)
-                with self._db() as db:
-                    db.execute("BEGIN IMMEDIATE")
-                    current = self._run(db, run_id)
-                    require(current["status"] == "RUNNING" and current["attempt_id"] == attempt_id
-                            and current["pid"] is None, "Run cannot be started twice")
-                    self._advisor_check(db, current["manifest"], advisor_token)
+                with self._prepared_launch(run_id, attempt_id, "RUNNING") as (db, current, maintenance_packet):
                     self._check_prepared_start(db, current, maintenance_packet)
                     deadline = self._campaign_deadline(db, contract)
                     if deadline is not None:

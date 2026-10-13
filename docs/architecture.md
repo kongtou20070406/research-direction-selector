@@ -507,3 +507,18 @@ The v1 JSON Schema is audit-only, not a loader or execution permission. There
 is no database migration or new event. Other lifecycle/QUICK callbacks and the
 composition-root transition remain unfinished; this is one admission boundary,
 not a complete bus or a claim of autonomous research effectiveness.
+
+### Bounded revalidation of an already claimed attempt
+
+At queued start and final prelaunch, Store freezes the original run and contract
+identity. If a competing review invalidates the native Advisor ledger fence,
+it releases the writer and prepares again, at most once. Both checks still
+cover the entire ledger and bound CAS; changed run/contract identities and a
+second STALE are rejected. Budget and maintenance checks remain mandatory.
+No attempt is replaced, no reservation is reset, and no launched process or
+settlement is retried. Maintenance STALE and exceptions after admission are not
+retry candidates. An explicit pause or withdrawal at final prelaunch follows
+the original failed-without-launch receipt and recovery path.
+
+This is a launch liveness correction, not relaxed admission or composition-root
+completion. It changes no schema, event, import dependency pair or legacy data.
