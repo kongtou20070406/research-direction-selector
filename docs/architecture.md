@@ -45,6 +45,19 @@ decision packet and lock-internal stale/binding checks before execution rewiring
 
 ## B2: production readonly selectors
 
+Workspace admission now opens its committed identity/progress reads through
+`rds_sqlite.readonly_connection` rather than `ProjectStore._db`. Ancestor
+discovery and paid QUICK scope checks use the same connection boundary; effective
+child contracts and owner revision history retain the existing verified readers.
+The platform helper uses `mode=ro`, `query_only` and the original timeout, closes
+on failure, and does not select WAL, migrate, or change the writer connection.
+Pending writer events must not hide a rolled-back committed ledger.
+
+The legacy admission API still returns a `ProjectStore`, and CAS still invokes
+both campaign and workspace guards. This is a read-path extraction, not complete
+Store removal, lock-free publication, or a finished bus. Binding, mutation locks,
+pointer anchoring, original event names and cumulative accounting are unchanged.
+
 `rds_project_read_services` (L1) borrows the original connection and selects
 contract, state, checkpoint-history and controller records without opening a
 second database or committing. Store run/status reads, owned Advisor state,

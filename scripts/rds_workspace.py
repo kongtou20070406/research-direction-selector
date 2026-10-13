@@ -12,11 +12,14 @@ adversarial enforcement (#120); this module enforces supported RDS APIs only.
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
 
 from rds_project import ProjectStore, canonical, digest, file_sha, require
 from rds_mutation import mutation
+from rds_sqlite import readonly_connection
+from rds_project_read_services import ProjectReadServices
 
 SCHEMA = 1
 POINTER_NAME = ".rds-workspace.json"
@@ -113,18 +116,37 @@ def _read_pointer_at(root):
     return pointer
 
 
+def _read_path(root):
+    root = Path(root).resolve()
+    require(root.is_dir(), 'Project root must exist')
+    state = root / '.rds'
+    require(state.resolve().is_relative_to(root), 'State directory escapes project root')
+    return root, state / 'project.sqlite3'
+
+
+@contextmanager
+def _read_db(root):
+    """Preserve committed identity reads even while a writer is pending."""
+    root, path = _read_path(root)
+    if not path.is_file():
+        raise FileNotFoundError('Project contract has not been initialized')
+    require(path.resolve().is_relative_to(root), 'Project database escapes root')
+    with readonly_connection(path) as db:
+        yield db
+
+
 def _initialized(root):
-    store = _store(root)
-    if not store.path.is_file():
+    _, path = _read_path(root)
+    if not path.is_file():
         return False
-    with store._db(True) as db:
+    with _read_db(root) as db:
         return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
                     and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone())
 
 
 def _recorded_quick_contract(db, allowance):
     """Keep paid scope identity across verified owner contract transitions."""
-    from rds_method_revision import contract_history
+    from rds_contract_read import contract_history
     return next((entry['contract'] for entry in contract_history(db)
                  if entry['sha256'] == allowance.get('contract_sha256')), None)
 
@@ -164,8 +186,7 @@ def _charged_quick_scope(child, owner, owner_pointer):
     if not request_path.is_file() or not _initialized(child):
         return False
     request = _quick_request(request_path)
-    parent, child_store = _store(owner), _store(child)
-    with parent._db(True) as db:
+    with _read_db(owner) as db:
         db.execute('BEGIN')
         identity = db.execute(
             "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
@@ -184,8 +205,8 @@ def _charged_quick_scope(child, owner, owner_pointer):
             return False
         allowance = json.loads(rows[0]['body'])
         charged = db.execute("SELECT charged FROM budget WHERE resource='wall_seconds'").fetchone()
-        with child_store._db(True) as child_db:
-            budget = child_store._contract(child_db).get('budget')
+        with _read_db(child) as child_db:
+            budget = ProjectReadServices(child_db).contract().get('budget')
         amount = allowance.get('amount')
         return (isinstance(request, dict) and allowance.get('request_sha256') == digest(request)
                 and _recorded_quick_contract(db, allowance) is not None
@@ -653,7 +674,7 @@ def check_admission(root, supersedes=None, separate_project=False):
     # are append-only, so a rolled-back ledger's event log ends before that
     # anchor and admission is refused until the ledger catches up. The pointer
     # only ever moves forward; a refusal here never rewrites accounting.
-    with store._db(True) as db:
+    with _read_db(store.root) as db:
         max_id = db.execute("SELECT COALESCE(MAX(id),0) FROM events").fetchone()[0]
     anchor = pointer.get("event_id")
     if anchor is not None:
@@ -771,7 +792,7 @@ def connect(root, database, *, _materialization=None, **kwargs):
 
 
 def _recorded_event(store):
-    with store._db(True) as db:
+    with _read_db(store.root) as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
             return None
         row = db.execute(
