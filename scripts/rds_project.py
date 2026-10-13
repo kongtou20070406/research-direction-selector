@@ -25,6 +25,7 @@ import time
 import uuid
 
 from rds_mutation import mutation
+from rds_admission_read import StaleAdmission
 from rds_project_hooks import provider as lifecycle_provider
 import rds_project_records as receipt_records
 from rds_run_records import decode_run_row
@@ -513,7 +514,6 @@ class ProjectStore:
         claims = self._output_claims(db)
         self._campaign_deadline(db, contract)
         if 'maintenance' in run['manifest']:
-            self._maintenance_review(contract, run['manifest']['maintenance'], run['manifest']['argv'])
             _, used = self._maintenance_spend(db)
             require(used <= contract['maintenance_allowance']['wall_seconds'] + 1e-9,
                     'Maintenance wall allowance exhausted before start')
@@ -581,6 +581,54 @@ class ProjectStore:
         return {'objective_binding': context['objective_binding'], 'context_sha256': digest(context),
                 'dependency_map_sha256': dependency['input_sha256'], 'contribution': contribution,
                 'assurance': 'INPUT_REPORTED_GRAPH_PATH_NOT_PROOF'}
+
+    def _maintenance_prepare(self, spec, contract):
+        if 'maintenance' not in spec:
+            return None
+        from rds_maintenance_admission import freeze
+        from rds_math import objective
+        with self._db(True) as db:
+            db.execute('BEGIN')
+            if digest(self._contract(db)) != digest(contract):
+                raise StaleAdmission('Maintenance contract changed during preparation; STALE')
+            review, rejection, files = None, None, []
+            try:
+                review = self._maintenance_review(contract, spec['maintenance'], spec['argv'])
+                ref = contract['maintenance_allowance']['context']
+                files.append({'path': ref['path'], 'sha256': ref['sha256'],
+                              'size': self._path(ref['path']).stat().st_size})
+                goal = objective(self.root)
+                require(goal is not None, 'Maintenance original objective is missing')
+                asset = goal['asset']
+                path = (self.root / asset['path']).resolve()
+                files.append({'path': str(path.relative_to(self.root)),
+                              'sha256': asset['sha256'], 'size': asset['bytes']})
+            except ValueError as exc:
+                if type(exc) is not ValueError:
+                    raise
+                review, rejection, files = None, str(exc), []
+            return freeze(db, self.path, spec, contract, review, rejection, files)
+
+
+    def _maintenance_prepare_run(self, run_id, *, allow_observation=False):
+        with self._db(True) as db:
+            contract = self._contract(db)
+            if 'maintenance_allowance' not in contract:
+                return None
+            run = self._run(db, run_id)
+            if (allow_observation and ('execution_policy' in contract or 'method_evolution' in contract)
+                    and (run['status'] != 'RESERVED' or run['attempt_id'] is not None)):
+                return None
+        return self._maintenance_prepare(run['manifest'], contract)
+
+
+    def _check_prepared_start(self, db, run, maintenance_packet):
+        # Preserve the old integrity-check seam before consuming frozen policy.
+        self._check_start(db, run)
+        if 'maintenance' in run['manifest']:
+            from rds_maintenance_admission import check_review
+            check_review(self, db, self._contract(db), run['manifest'], maintenance_packet)
+
 
     @classmethod
     def _maintenance_spend(cls, db):
@@ -1197,6 +1245,7 @@ class ProjectStore:
             advisor_token = self._advisor_prepare(spec, contract)
             from rds_postcommit_confirmation import prepare_binding as prepare_confirmation, check_binding as check_confirmation, bind_prepared
             confirmation_binding = prepare_confirmation(self, contract, run)
+            maintenance_packet = self._maintenance_prepare(spec, contract)
             db.execute("BEGIN IMMEDIATE")
             from rds_method_revision import pending_revision
             require(pending_revision(db) is None, 'Resume prepared method revision before registering')
@@ -1220,7 +1269,8 @@ class ProjectStore:
             if spec.get("control_id"):
                 require(db.execute("SELECT 1 FROM runs WHERE id=?", (spec["control_id"],)).fetchone() is not None, "Unknown control ID")
             if "maintenance" in spec:
-                run['maintenance_review'] = self._maintenance_review(contract, spec['maintenance'], spec['argv'])
+                from rds_maintenance_admission import check_review
+                run['maintenance_review'] = check_review(self, db, contract, spec, maintenance_packet)
                 uses, used = self._maintenance_spend(db)
                 require(uses < contract['maintenance_allowance']['max_uses'], 'Maintenance allowance is exhausted')
                 cap = contract['maintenance_allowance']['wall_seconds']
@@ -1290,6 +1340,7 @@ class ProjectStore:
         # The caller context may already acquire parent write locks. Prepare
         # before entering it; the original locked checks reject stale data.
         advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
+        maintenance_packet = self._maintenance_prepare_run(run_id, allow_observation=True)
         # Parents must be acquired before this child write transaction. Exit
         # order commits the attempt before releasing the admission context.
         with ExitStack() as context:
@@ -1304,7 +1355,7 @@ class ProjectStore:
                 return self._observe(db, run)
             require(run["status"] == "RESERVED" and run["attempt_id"] is None, "Run already dispatched or started; recover never reruns it")
             self._advisor_check(db, run["manifest"], advisor_token)
-            self._check_start(db, run)
+            self._check_prepared_start(db, run, maintenance_packet)
             if admission_guard is not None:
                 require(admission_guard(db, run) is None, "Admission guard must allow or raise")
             run["attempt_id"] = uuid.uuid4().hex
@@ -1380,7 +1431,7 @@ class ProjectStore:
         try:
             return self._execute_admitted(run_id, attempt_id)
         except ValueError as exc:
-            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)):
+            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError, StaleAdmission)):
                 raise
             from rds_campaign import binding
             bound = binding(self.root)
@@ -1401,6 +1452,7 @@ class ProjectStore:
         attempt_start = time.monotonic()
         admission_error = None
         advisor_token = self._advisor_prepare_run(run_id)
+        maintenance_packet = self._maintenance_prepare_run(run_id)
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
@@ -1408,10 +1460,10 @@ class ProjectStore:
             self._runs(db)
             self._advisor_check(db, run["manifest"], advisor_token)
             try:
-                self._check_start(db, run)
+                self._check_prepared_start(db, run, maintenance_packet)
             except ValueError as exc:
                 # A damaged prior receipt leaves this run RESERVED and unsettled, recoverable once restored.
-                if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)) or (
+                if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError, StaleAdmission)) or (
                         'stop_policy' not in self._contract(db) and 'maintenance' not in run['manifest']):
                     raise
                 admission_error = str(exc)
@@ -1467,13 +1519,14 @@ class ProjectStore:
                 flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | 0x4 if os.name == "nt" else 0
                 argv = [run["executor"], *run["manifest"]["argv"][1:]]
                 advisor_token = self._advisor_prepare_run(run_id)
+                maintenance_packet = self._maintenance_prepare_run(run_id)
                 with self._db() as db:
                     db.execute("BEGIN IMMEDIATE")
                     current = self._run(db, run_id)
                     require(current["status"] == "RUNNING" and current["attempt_id"] == attempt_id
                             and current["pid"] is None, "Run cannot be started twice")
                     self._advisor_check(db, current["manifest"], advisor_token)
-                    self._check_start(db, current)
+                    self._check_prepared_start(db, current, maintenance_packet)
                     deadline = self._campaign_deadline(db, contract)
                     if deadline is not None:
                         policy_deadline = time.monotonic() + max(0.0, deadline - time.time())
@@ -1565,7 +1618,7 @@ class ProjectStore:
                 elif process.poll() is None:
                     process.kill()
                 exit_code = process.wait()
-            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)):
+            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError, StaleAdmission)):
                 # Retain the attempt and unknown costs. Recovery can reconcile it
                 # after the damaged history is restored; this is no FAILED receipt.
                 raise

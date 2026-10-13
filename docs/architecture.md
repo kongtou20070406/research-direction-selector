@@ -468,11 +468,26 @@ and does not complete composition-root takeover.
 
 ### Execute preparation before parent locks
 
-`ProjectStore.execute` prepares the Advisor decision before entering
+`ProjectStore.execute` prepares Advisor and maintenance decisions before entering
 the caller's admission context, which may acquire parent write transactions.
 Parent-before-child lock ordering and locked contract, budget, CAS and native
 STALE checks remain unchanged. Preparation failure does not enter that context;
 a later context refusal or stale state does not launch or settle the reserved
-run. This moves one preparation call, not module dependencies. Maintenance
-review, QUICK's choice/checkpoint callbacks and composition-root takeover still
-need separation.
+run. This moves preparation calls, not module dependencies. QUICK's own
+choice/checkpoint callbacks and composition-root takeover still need separation.
+
+### Frozen maintenance admission
+
+Registration, dispatch, queued start and final prelaunch prepare the original
+maintenance graph/goal review outside database write transactions. The native
+`rds_maintenance_admission` consumes a frozen review or refusal, checks the
+original contract, ledger fingerprint and bound evidence files, and preserves
+the existing budget checks and policy-refusal settlement boundary. STALE keeps
+the original attempt and reservation for recovery, not a fabricated failure
+receipt or automatic relaunch. The old two-argument integrity-check seam remains.
+
+The version-1 JSON Schema describes an audit representation only; there is no
+JSON loader, new execution authority, database migration or new event type.
+The Store still initiates unlocked preparation through its compatibility
+methods. Moving this assembly to the composition root is separate work; this
+slice does not claim to eliminate the Store-to-decision import edge.

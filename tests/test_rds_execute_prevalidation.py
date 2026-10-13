@@ -62,9 +62,11 @@ class ExecutePrevalidationTests(unittest.TestCase):
             order.append('guard')
 
         with patch.object(store, '_advisor_prepare_run',
-                          side_effect=prepare('advisor', store._advisor_prepare_run)):
+                          side_effect=prepare('advisor', store._advisor_prepare_run)), \
+                patch.object(store, '_maintenance_prepare_run',
+                             side_effect=prepare('maintenance', store._maintenance_prepare_run)):
             receipt = store.execute('baseline', admission_context=parent_context, admission_guard=guard)
-        self.assertEqual(order[:4], ['advisor', 'parent-lock', 'guard', 'parent-release'])
+        self.assertEqual(order[:5], ['advisor', 'maintenance', 'parent-lock', 'guard', 'parent-release'])
         self.assertEqual(receipt['run_status'], 'SUCCEEDED')
         self.assertEqual(child.starts(), ['baseline'])
         before = store.snapshot()
@@ -101,10 +103,11 @@ class ExecutePrevalidationTests(unittest.TestCase):
             self.fail('Parent context entered before failed preparation')
             yield
 
-        with patch.object(store, '_advisor_prepare_run', side_effect=ValueError('prepare refused')):
-            with self.assertRaisesRegex(ValueError, 'prepare refused'):
-                store.execute('baseline', admission_context=forbidden_context)
-        self.assertEqual(store.snapshot(), before)
+        for name in ('_advisor_prepare_run', '_maintenance_prepare_run'):
+            with self.subTest(name=name), patch.object(store, name, side_effect=ValueError('prepare refused')):
+                with self.assertRaisesRegex(ValueError, 'prepare refused'):
+                    store.execute('baseline', admission_context=forbidden_context)
+            self.assertEqual(store.snapshot(), before)
 
     def test_context_refusal_preserves_reserved_run_without_start(self):
         child, store = self.fixture()
