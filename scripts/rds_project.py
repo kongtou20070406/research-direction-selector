@@ -1287,11 +1287,13 @@ class ProjectStore:
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
+        # The caller context may already acquire parent write locks. Prepare
+        # before entering it; the original locked checks reject stale data.
+        advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
         # Parents must be acquired before this child write transaction. Exit
         # order commits the attempt before releasing the admission context.
         with ExitStack() as context:
             context.enter_context(admission_context() if admission_context is not None else nullcontext())
-            advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
             db = context.enter_context(self._db())
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)

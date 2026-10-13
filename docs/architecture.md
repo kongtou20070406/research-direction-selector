@@ -465,3 +465,14 @@ the old QUICK helper and provider exports remain available for compatibility.
 This replaces two callback sites with an explicit L1 dependency. It does not
 remove the existing Store/QUICK-ledger cycle or the Advisor completion callback,
 and does not complete composition-root takeover.
+
+### Execute preparation before parent locks
+
+`ProjectStore.execute` prepares the Advisor decision before entering
+the caller's admission context, which may acquire parent write transactions.
+Parent-before-child lock ordering and locked contract, budget, CAS and native
+STALE checks remain unchanged. Preparation failure does not enter that context;
+a later context refusal or stale state does not launch or settle the reserved
+run. This moves one preparation call, not module dependencies. Maintenance
+review, QUICK's choice/checkpoint callbacks and composition-root takeover still
+need separation.
