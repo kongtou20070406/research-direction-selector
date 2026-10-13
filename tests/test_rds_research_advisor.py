@@ -315,11 +315,21 @@ class CostAndDeterminism(unittest.TestCase):
         p = packet()
         rows = [observation(p, 0), observation(p, 1)]
         self.assertEqual(advise(p, rows), advise(p, list(reversed(rows))))
-        code = "import sys; sys.path.insert(0, 'tests'); from test_rds_research_advisor import packet; from rds_research_advisor import advise; from rds_core import canonical; print(canonical(advise(packet())))"
-        outputs = [subprocess.run([sys.executable, "-B", "-c", code], cwd=ROOT,
-                                  env={**os.environ, "PYTHONHASHSEED": seed},
-                                  capture_output=True, timeout=15, check=True).stdout for seed in ("1", "97")]
-        self.assertEqual(outputs[0], outputs[1])
+        code = ("import sys; sys.path.insert(0, 'tests'); "
+                "from test_rds_research_advisor import packet; "
+                "from rds_research_advisor import advise; from rds_core import canonical; "
+                "sys.stdout.buffer.write(canonical(advise(packet())).encode('utf-8'))")
+        expected = canonical(advise(p)).encode('utf-8')
+        for encoding in ("utf-8", "cp1252"):
+            for seed in ("1", "97"):
+                with self.subTest(encoding=encoding, seed=seed):
+                    result = subprocess.run([sys.executable, "-B", "-c", code], cwd=ROOT,
+                                            env={**os.environ, "PYTHONHASHSEED": seed,
+                                                 "PYTHONIOENCODING": encoding},
+                                            capture_output=True, timeout=15)
+                    self.assertEqual(result.returncode, 0,
+                                     result.stderr.decode('utf-8', errors='replace'))
+                    self.assertEqual(result.stdout, expected)
 
     def test_one_to_three_suggestions_and_explicit_truncation(self):
         data = fixture()
