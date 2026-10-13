@@ -14,7 +14,7 @@ import stat
 import tempfile
 import uuid
 
-from rds_project import canonical, digest, require
+from rds_project_values import canonical, digest, require
 from rds_source_documents import strict_json
 from rds_bounded_io import read_regular_bytes
 
@@ -118,7 +118,7 @@ def _open_database(project, *, write=False):
 
 
 def _lineage(db):
-    from rds_method_revision import contract_history
+    from rds_contract_read import contract_history
     try:
         return contract_history(db)
     except sqlite3.Error as exc:

@@ -58,6 +58,13 @@ both campaign and workspace guards. This is a read-path extraction, not complete
 Store removal, lock-free publication, or a finished bus. Binding, mutation locks,
 pointer anchoring, original event names and cumulative accounting are unchanged.
 
+Campaign marker admission also uses leaf JSON/value helpers and the verified
+`rds_contract_read` lineage reader directly. Its unbound and bound read paths do
+not import Store, method-revision writers, Advisor, QUICK or CLI. This does not
+remove Campaign's writer-side Store/revision dependencies: binding and recovery
+retain their original implementations. Damaged genesis and missing identity
+events still refuse admission without repairing or rewriting the ledger.
+
 `rds_project_read_services` (L1) borrows the original connection and selects
 contract, state, checkpoint-history and controller records without opening a
 second database or committing. Store run/status reads, owned Advisor state,
