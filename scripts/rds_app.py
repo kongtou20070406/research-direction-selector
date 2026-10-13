@@ -47,12 +47,14 @@ def bootstrap_hooks(*names: str):
         require(name in _modules, f"Unknown project hook provider: {name}")
         if name == "advisor":
             import rds_owned_advisor as mod
+            register_hook("advisor", mod)
+            bound["advisor"] = lifecycle_provider("advisor")
         elif name == "quick":
             import rds_quick_ledger as mod
+            register_hook("quick", mod)
+            bound["quick"] = lifecycle_provider("quick")
         else:
             raise ValueError(f"Unknown project hook provider: {name}")
-        register_hook(name, mod)
-        bound[name] = lifecycle_provider(name)
     return bound
 
 
@@ -97,7 +99,11 @@ class RDSApp:
         return Outbox(self.store, db)
 
     def provider(self, name: str):
-        return lifecycle_provider(name)
+        if name == "advisor":
+            return lifecycle_provider("advisor")
+        if name == "quick":
+            return lifecycle_provider("quick")
+        raise ValueError(f"Unknown project hook provider: {name}")
 
     def bootstrap_hooks(self, *names: str):
         return bootstrap_hooks(*names)
