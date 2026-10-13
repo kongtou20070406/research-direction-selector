@@ -33,7 +33,11 @@
           "severity": {"enum": ["error", "warning", "information", "warningAsError"]},
           "line": {"type": ["integer", "null"], "minimum": 1},
           "column": {"type": ["integer", "null"], "minimum": 0},
-          "message": {"type": "string", "maxLength": 8192}
+          "message": {"type": "string", "maxLength": 8192},
+          "kind": {"type": ["string", "null"], "maxLength": 256},
+          "file_name": {"type": ["string", "null"], "maxLength": 4096},
+          "end_line": {"type": ["integer", "null"], "minimum": 1},
+          "end_column": {"type": ["integer", "null"], "minimum": 0}
         }
       }
     },
@@ -47,6 +51,11 @@
       "maxItems": 64,
       "items": {"type": "string", "maxLength": 512}
     },
+    "goal_coverage": {"const": "DIAGNOSTIC_MESSAGES_ONLY"},
+    "placeholders": {"type": "array", "maxItems": 512,
+                     "items": {"type": "string", "maxLength": 8192}},
+    "source_attribution": {"const": "UNVERIFIED"},
+    "parse_errors_truncated": {"type": "boolean"},
     "truncated": {"type": "boolean"},
     "proof_status": {"const": "UNKNOWN"},
     "assurance": {"const": "NONE"},

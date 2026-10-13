@@ -32,8 +32,8 @@ def _unique_object(pairs):
 def _bounded_error(errors, message):
     if len(errors) < MAX_PARSE_ERRORS:
         errors.append(message[:512])
-    elif errors[-1] != "additional parse errors omitted (limit 64)":
-        errors[-1] = "additional parse errors omitted (limit 64)"
+        return False
+    return True
 
 
 def _position(value):
@@ -79,28 +79,30 @@ def parse_feedback(source, compiler_output):
         raise TypeError("compiler_output must be bytes or text")
 
     errors = []
+    errors_truncated = False
     diagnostics = []
     unresolved = []
+    placeholders = []
     truncated = len(raw) > MAX_OUTPUT_BYTES
     data = raw[:MAX_OUTPUT_BYTES]
     if truncated:
         # Never parse a JSON object that may have been cut at the byte limit.
         boundary = data.rfind(b"\n")
         data = data[:boundary + 1] if boundary >= 0 else b""
-        _bounded_error(errors, "compiler output exceeded the byte limit; trailing data omitted")
+        errors_truncated |= _bounded_error(errors, "compiler output exceeded the byte limit; trailing data omitted")
 
     lines = data.splitlines()
     if len(lines) > MAX_DIAGNOSTICS:
         lines = lines[:MAX_DIAGNOSTICS]
         truncated = True
-        _bounded_error(errors, "compiler output exceeded the diagnostic count limit")
+        errors_truncated |= _bounded_error(errors, "compiler output exceeded the diagnostic count limit")
 
     for index, raw_line in enumerate(lines, 1):
         if not raw_line.strip():
             continue
         if len(raw_line) > MAX_LINE_BYTES:
             truncated = True
-            _bounded_error(errors, f"line {index}: diagnostic line exceeded the byte limit")
+            errors_truncated |= _bounded_error(errors, f"line {index}: diagnostic line exceeded the byte limit")
             continue
         try:
             line_text = raw_line.decode("utf-8", errors="strict")
@@ -119,19 +121,28 @@ def parse_feedback(source, compiler_output):
             if len(message) > MAX_MESSAGE_CHARS:
                 message = message[:MAX_MESSAGE_CHARS]
                 truncated = True
-                _bounded_error(errors, f"line {index}: diagnostic message clipped")
+                errors_truncated |= _bounded_error(errors, f"line {index}: diagnostic message clipped")
             line, column = _position(item.get("pos"))
+            end_line, end_column = _position(item.get("endPos"))
+            kind, file_name = item.get("kind"), item.get("fileName")
+            for label, value, cap in (("kind", kind, 256), ("fileName", file_name, 4096)):
+                if value is not None and (not isinstance(value, str) or len(value) > cap):
+                    raise ValueError("invalid or oversized diagnostic " + label)
             diagnostic = {"severity": severity, "line": line,
-                          "column": column, "message": message}
+                          "column": column, "message": message, "kind": kind,
+                          "file_name": file_name, "end_line": end_line, "end_column": end_column}
             diagnostics.append(diagnostic)
-            if item.get("kind") == "Tactic.unsolvedGoals":
+            if kind == "Tactic.unsolvedGoals" or (severity == "error" and "\u22a2" in message):
                 unresolved.append(message)
+            if kind == "hasSorry":
+                placeholders.append(message)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError,
                 RecursionError) as exc:
-            _bounded_error(errors, f"line {index}: {str(exc)}")
+            errors_truncated |= _bounded_error(errors, f"line {index}: {str(exc)}")
 
+    truncated |= errors_truncated
     if truncated and not errors:
-        _bounded_error(errors, "compiler output was truncated")
+        errors_truncated |= _bounded_error(errors, "compiler output was truncated")
     if truncated or errors:
         parse_status = "PARTIAL" if diagnostics else "UNKNOWN"
     else:
@@ -143,7 +154,11 @@ def parse_feedback(source, compiler_output):
         "parse_status": parse_status,
         "diagnostics": diagnostics,
         "unresolved_subgoals": unresolved,
+        "goal_coverage": "DIAGNOSTIC_MESSAGES_ONLY",
+        "placeholders": placeholders,
+        "source_attribution": "UNVERIFIED",
         "parse_errors": errors,
+        "parse_errors_truncated": errors_truncated,
         "truncated": truncated,
         "proof_status": "UNKNOWN",
         "assurance": "NONE",

@@ -61,6 +61,13 @@ log was parsed completely, not that compilation or proof succeeded. The log is
 untrusted input: the parser cannot authenticate which process/source produced
 it. Feedback always retains `proof_status: UNKNOWN`, `assurance: NONE` and
 `usable_as_proved_premise: false`; it creates no ledger records.
+`unresolved_subgoals` contains whole diagnostic messages, including goals shown
+in failed tactics; its length is not a goal count or completeness check.
+`goal_coverage: DIAGNOSTIC_MESSAGES_ONLY` makes this limitation explicit.
+`hasSorry` messages also appear in `placeholders`. File names, diagnostic kinds
+and end positions are retained, but `source_attribution: UNVERIFIED` means they
+are not authenticated against the supplied source. Error overflow keeps the
+first 64 errors and sets `parse_errors_truncated`; nothing is silently replaced.
 
 ## Not implemented by this slice
 

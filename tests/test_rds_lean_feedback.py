@@ -31,6 +31,8 @@ class LeanFeedbackTests(unittest.TestCase):
         self.assertEqual(value["diagnostics"], [{
             "severity": "error", "line": 2, "column": 29,
             "message": "unsolved goals\n⊢ True",
+            "kind": "Tactic.unsolvedGoals", "file_name": "fixture.lean",
+            "end_line": 2, "end_column": 31,
         }])
         self.assertEqual(value["unresolved_subgoals"], ["unsolved goals\n⊢ True"])
         self.assertEqual(value["parse_status"], "COMPLETE")
@@ -38,6 +40,43 @@ class LeanFeedbackTests(unittest.TestCase):
         self.assertEqual(value["assurance"], "NONE")
         self.assertFalse(value["permission_granted"])
         self.assertFalse(value["usable_as_proved_premise"])
+
+    def test_sorry_and_anonymous_tactic_goals_are_visible_without_promotion(self):
+        records = [{'severity': 'warning', 'kind': 'hasSorry', 'data': 'declaration uses `sorry`'},
+                   {'severity': 'error', 'kind': '[anonymous]', 'data': 'rfl failed\n\u22a2 1 = 2'}]
+        value = parse_feedback(b'source', '\n'.join(map(json.dumps, records))).to_dict()
+        self.assertEqual(value['placeholders'], ['declaration uses `sorry`'])
+        self.assertEqual(value['unresolved_subgoals'], ['rfl failed\n\u22a2 1 = 2'])
+        self.assertEqual(value['goal_coverage'], 'DIAGNOSTIC_MESSAGES_ONLY')
+        self.assertEqual(value['source_attribution'], 'UNVERIFIED')
+        self.assertFalse(value['usable_as_proved_premise'])
+
+    def test_multiple_goals_keep_shared_context_not_a_goal_count(self):
+        message = 'unsolved goals\ncase left\n\u22a2 True\n\ncase right\n\u22a2 True'
+        value = parse_feedback(b'source', json.dumps({'severity': 'error',
+            'kind': 'Tactic.unsolvedGoals', 'data': message})).to_dict()
+        self.assertEqual(value['unresolved_subgoals'], [message])
+        self.assertEqual(value['goal_coverage'], 'DIAGNOSTIC_MESSAGES_ONLY')
+
+    def test_error_overflow_preserves_first_64_and_reports_omission(self):
+        value = parse_feedback(b'source', b'not json\n' * 65).to_dict()
+        self.assertEqual(len(value['parse_errors']), 64)
+        self.assertTrue(value['parse_errors'][-1].startswith('line 64:'))
+        self.assertTrue(value['parse_errors_truncated'])
+        self.assertTrue(value['truncated'])
+
+    def test_schema_keys_and_fixed_boundaries_match_parser(self):
+        schema = json.loads((Path(__file__).resolve().parents[1] / 'schemas' /
+                             'rds-lean-feedback.schema.json').read_text(encoding='utf-8'))
+        value = parse_feedback(b'source', b'{"severity":"error","data":"message"}').to_dict()
+        self.assertTrue(set(schema['required']) <= set(value))
+        self.assertEqual(set(schema['properties']), set(value))
+        for key, spec in schema['properties'].items():
+            if 'const' in spec:
+                self.assertEqual(value[key], spec['const'])
+        item_schema = schema['properties']['diagnostics']['items']
+        self.assertEqual(set(item_schema['properties']), set(value['diagnostics'][0]))
+        self.assertEqual(item_schema['properties']['column']['minimum'], 0)
 
     def test_warnings_and_errors_are_both_preserved(self):
         source = "theorem t : True := by trivial\n"
