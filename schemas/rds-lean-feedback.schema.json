@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rds.local/schemas/rds-lean-feedback.schema.json",
+  "title": "RDS Lean diagnostic feedback",
+  "description": "Untrusted, source-bound display feedback. Never proof evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_sha256",
+    "parse_status",
+    "diagnostics",
+    "unresolved_subgoals",
+    "parse_errors",
+    "truncated",
+    "proof_status",
+    "assurance",
+    "permission_granted",
+    "usable_as_proved_premise"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "parse_status": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+    "diagnostics": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "line", "column", "message"],
+        "properties": {
+          "severity": {"enum": ["error", "warning", "information", "warningAsError"]},
+          "line": {"type": ["integer", "null"], "minimum": 1},
+          "column": {"type": ["integer", "null"], "minimum": 0},
+          "message": {"type": "string", "maxLength": 8192}
+        }
+      }
+    },
+    "unresolved_subgoals": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {"type": "string", "maxLength": 8192}
+    },
+    "parse_errors": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string", "maxLength": 512}
+    },
+    "truncated": {"type": "boolean"},
+    "proof_status": {"const": "UNKNOWN"},
+    "assurance": {"const": "NONE"},
+    "permission_granted": {"const": false},
+    "usable_as_proved_premise": {"const": false}
+  }
+}

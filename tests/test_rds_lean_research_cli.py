@@ -69,6 +69,29 @@ class LeanResearchEntryTests(unittest.TestCase):
         self.assertEqual(run.returncode, 2, run.stderr)
         self.assertEqual(json.loads(run.stdout)['status'], 'UNKNOWN')
 
+    def test_feedback_displays_subgoals_without_proof_promotion_or_writes(self):
+        source = self.root / 'Draft.lean'
+        source.write_bytes(b'theorem pending : True := by\n')
+        log = self.root / 'diagnostics.jsonl'
+        log.write_text(json.dumps({'severity': 'error', 'kind': 'Tactic.unsolvedGoals',
+                                  'data': 'unsolved goals', 'pos': {'line': 1, 'column': 0}}))
+        before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+        run = self.command('feedback', '--source', str(source), '--diagnostics', str(log))
+        self.assertEqual(run.returncode, 0, run.stderr)
+        result = json.loads(run.stdout)
+        self.assertEqual(result['unresolved_subgoals'], ['unsolved goals'])
+        self.assertEqual(result['proof_status'], 'UNKNOWN')
+        self.assertFalse(result['usable_as_proved_premise'])
+        self.assertEqual({p.name: p.read_bytes() for p in self.root.iterdir()}, before)
+
+    def test_bad_feedback_is_not_complete(self):
+        source, log = self.root / 'Draft.lean', self.root / 'diagnostics.jsonl'
+        source.write_bytes(b'-- draft')
+        log.write_bytes(b'not json')
+        run = self.command('feedback', '--source', str(source), '--diagnostics', str(log))
+        self.assertEqual(run.returncode, 2, run.stderr)
+        self.assertEqual(json.loads(run.stdout)['parse_status'], 'UNKNOWN')
+
     def test_inspection_and_search_do_not_initialize_ledger(self):
         (self.root / 'lean-toolchain').write_text('leanprover/lean4:v4.34.1\n')
         source = self.root / 'Demo.lean'

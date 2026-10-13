@@ -10,6 +10,7 @@ The existing closed-rational Lean verifier is unchanged.
 python -B scripts/rds_lean_research.py --root formal inspect
 python -B scripts/rds_lean_research.py --root formal search threshold
 python -B scripts/rds_lean_research.py --root formal review --obligation obligation.json
+python -B scripts/rds_lean_research.py feedback --source Draft.lean --diagnostics diagnostics.jsonl
 ```
 
 The CLI obtains these services through `rds_app.create_app`. It does not create
@@ -49,6 +50,17 @@ local dependency source directory explicitly to search that library. Reads are
 bounded and detected symlinks/reparse entries are rejected. This is a local
 inspection utility, not a security boundary against concurrent filesystem
 replacement by an adversarial process.
+
+## Diagnostic feedback
+
+The `feedback` command parses saved Lean `--json` diagnostics, including actual
+`Tactic.unsolvedGoals` messages. It binds the supplied source bytes by SHA-256,
+limits diagnostics to 256 KiB and reports truncation/parse errors explicitly.
+Locations retain Lean's line numbers and zero-based columns. Exit 0 means the
+log was parsed completely, not that compilation or proof succeeded. The log is
+untrusted input: the parser cannot authenticate which process/source produced
+it. Feedback always retains `proof_status: UNKNOWN`, `assurance: NONE` and
+`usable_as_proved_premise: false`; it creates no ledger records.
 
 ## Not implemented by this slice
 

@@ -123,6 +123,10 @@ class RDSApp:
         from rds_lean_obligation import review_audit
         return review_audit(obligation, audit)
 
+    def lean_feedback(self, source, compiler_output):
+        from rds_lean_feedback import parse_feedback
+        return parse_feedback(source, compiler_output)
+
     def advise(self, packet: DecisionPacket, observations=(), language="zh"):
         return advise_packet(packet, observations=observations, language=language)
 
