@@ -75,4 +75,3 @@ assert 'rds_owned_advisor' not in sys.modules
 
 if __name__ == "__main__":
     unittest.main()
-

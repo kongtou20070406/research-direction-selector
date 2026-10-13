@@ -119,4 +119,3 @@ def create_app(root, *, hooks=()):
     """Create a composed RDSApp instance for root."""
     store = open_store(root, hooks=hooks)
     return RDSApp(root=store.root, store=store)
-

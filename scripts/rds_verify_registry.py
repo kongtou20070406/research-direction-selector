@@ -259,4 +259,3 @@ def plugin_manifests():
                          "Adapter installed; original verifier determines backend availability"},
         "permissions": {"write": False, "execute": False},
     } for verifier in registered_verifiers()]
-
