@@ -87,7 +87,8 @@ class RuleRegistry:
 
 
 REGISTRY = RuleRegistry((
-    ProofRule("scalar.threshold_separation", ("scalar_threshold",), "rds_scalar_verify"),
+    ProofRule("scalar.threshold_separation", ("scalar_threshold",), "rds_scalar_verify",
+              support_files=("rds_scalar_values.py",)),
     ProofRule("lean.rational_relation", ("lean_obligation", "lean_vector_obligation"), "rds_lean_verify"),
     ProofRule("lean.statistical_obligation", ("statistical_obligation",), "rds_statistical_verify"),
     ProofRule(AFFINE_CHAIN_RULE, (AFFINE_CHAIN_KIND,), "rds_affine_toolchain",

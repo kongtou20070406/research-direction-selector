@@ -25,11 +25,11 @@ GROUPS = {
           "continuation experiments feasibility frontier frontier_proposals global_planning graph_ranker "
           "jump jump_search math_router meta methods operators resources result_tools rsi "
           "adversary search_allocation search_neighborhood structure theory_tools",
-    "L4": "app cli quick project_worker autonomy_worker project_assembly hypergraph_archive "
+    "L4": "app cli quick project_worker autonomy_worker project_assembly hypergraph_archive hypergraph_render "
           "broker_hook host_broker host_hook conversation_hook dashboard dialogue "
           "hypergraph_readable hypergraph_view obelisk session capabilities model_export "
           "outputs research_note usage wheel",
-    "SHARED": "core project_values reference_values output_values admission_values feasibility_values project_records run_records verify_types "
+    "SHARED": "core project_values reference_values output_values admission_values feasibility_values scalar_values project_records run_records verify_types "
               "plugin_registry unit_disk_voronoi_core",
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}
