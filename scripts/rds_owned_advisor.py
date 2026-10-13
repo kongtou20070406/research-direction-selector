@@ -21,7 +21,7 @@ from rds_project_hooks import register as register_project_hooks
 
 OWNED_PREFIX = 'owned:'
 ASSURANCE = 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
-from rds_owned_history import MAX_RUNS
+from rds_admission_values import MAX_RUNS
 MAX_ARTIFACTS = 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 32 * 1024 * 1024

@@ -11,9 +11,9 @@ from rds_source_documents import strict_json
 from rds_checkpoints import MAX_BYTES, _checkpoint_record, append_checkpoint, read_checkpoint
 from rds_method_revision import contract_history
 from rds_project import TERMINAL, ProjectStore, canonical, digest, execution_route, file_sha, require
+from rds_admission_values import MAX_RUNS
 
 MAX_CHECKPOINTS = 512
-MAX_RUNS = 128
 COMPLETION_HEADROOM = 128 * 1024
 
 

@@ -446,7 +446,8 @@ Ordinary snapshots and dialogue failure fallback retain their previous shape.
 `rds_autonomy_read` owns the existing bounded event/CAS/run/receipt checks.
 The controller re-exports its old reader names; Campaign and owned state use
 the native reader rather than importing the controller. The 128-run coverage
-limit is shared with the existing owned-history service. No new schema, event,
+limit is shared through the pure admission values module, so loading Advisor
+does not load the Store-backed history service. No new schema, event,
 permission, budget, execution path or migration is introduced.
 
 This removes a read-only provider callback, not the remaining policy validation

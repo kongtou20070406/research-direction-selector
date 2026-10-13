@@ -5,6 +5,8 @@ Telemetry reconciliation intentionally retains updates preceding a later error.
 """
 from rds_project_values import digest, number, require
 
+MAX_RUNS = 128
+
 
 def fingerprint(state):
     """Bind admission state, excluding only a running worker's elapsed telemetry."""
