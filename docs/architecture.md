@@ -491,3 +491,19 @@ JSON loader, new execution authority, database migration or new event type.
 The Store still initiates unlocked preparation through its compatibility
 methods. Moving this assembly to the composition root is separate work; this
 slice does not claim to eliminate the Store-to-decision import edge.
+
+### Frozen autonomy registration and native launch checks
+
+Registration reads the original autonomy history on a query-only snapshot,
+before taking the writer. `rds_autonomy_admission` carries its existing request
+reference in a frozen native value, then checks the original contract, run,
+manifest, ledger fingerprint, CAS and worker identity under the caller's lock.
+An intervening ledger change is STALE; it does not create a replacement attempt
+or reset the original charge. Launch still checks the frozen worker and provider.
+The kernel no longer imports the autonomy controller to bind or check a run.
+The old controller entrypoints remain thin downward compatibility wrappers.
+
+The v1 JSON Schema is audit-only, not a loader or execution permission. There
+is no database migration or new event. Other lifecycle/QUICK callbacks and the
+composition-root transition remain unfinished; this is one admission boundary,
+not a complete bus or a claim of autonomous research effectiveness.

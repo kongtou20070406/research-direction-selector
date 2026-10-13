@@ -36,6 +36,7 @@ LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in na
 LAYERS.update(build_plugins="L4", update_lean_toolchain="L4")
 LAYERS.update(
     rds_autonomy_read="L1",
+    rds_autonomy_admission="L1",
     rds_lean_catalog="L1",
     rds_lean_obligation="SHARED",
     rds_lean_feedback="SHARED",

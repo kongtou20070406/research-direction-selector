@@ -509,7 +509,7 @@ class ProjectStore:
             from rds_confirmation_read import check_run as check_confirmation_run
             check_confirmation_run(self, db, contract, run)
         if 'autonomy' in contract.get('advisor_policy', {}):
-            from rds_autonomy import check_run
+            from rds_autonomy_admission import check_run
             check_run(self, db, contract, run)
         claims = self._output_claims(db)
         self._campaign_deadline(db, contract)
@@ -1243,6 +1243,8 @@ class ProjectStore:
                 run['execution_route_sha256'] = execution_route(spec['argv'], bindings, outpaths, self.root,
                     contract.get('objective_sha256'), arm=spec['arm'], executor_sha256=run['executor_sha256'])
             advisor_token = self._advisor_prepare(spec, contract)
+            from rds_autonomy_admission import prepare_binding, bind_locked
+            autonomy_binding = prepare_binding(self, contract, run)
             from rds_postcommit_confirmation import prepare_binding as prepare_confirmation, check_binding as check_confirmation, bind_prepared
             confirmation_binding = prepare_confirmation(self, contract, run)
             maintenance_packet = self._maintenance_prepare(spec, contract)
@@ -1256,8 +1258,7 @@ class ProjectStore:
             self._advisor_check(db, spec, advisor_token)
             check_confirmation(self, db, contract, run, confirmation_binding)
             if 'autonomy' in contract.get('advisor_policy', {}):
-                from rds_autonomy import bind_run
-                bind_run(self, db, contract, run)
+                bind_locked(self, db, contract, run, autonomy_binding)
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
             retained = self._runs(db)
             if 'execution_policy' in contract:

@@ -16,6 +16,7 @@ import uuid
 from rds_artifacts import strict_json
 from rds_project_read_services import ProjectReadServices
 from rds_autonomy_read import REQUESTED, PROCESSED, MAX_BYTES, _hash_event, _events, records
+import rds_autonomy_admission as autonomy_admission
 from rds_project import canonical, digest, file_sha, number, require, _alive
 
 PREFIX = 'autonomy.'
@@ -145,33 +146,15 @@ def collect(store, state, nodes, files):
 
 
 def bind_run(store, db, contract, run):
-    config = contract.get('advisor_policy', {}).get('autonomy')
-    if config:
-        require(len(store._runs(db)) < config['max_steps'], 'AUTONOMY_TOTAL_STEP_LIMIT')
-    if config and run['id'] in {s['run_id'] for s in config['repair_slots']}:
-        _check_worker_adapter(store, contract, run['id'])
-        event = next((e for e in records(store, db, contract) if e['kind'] == REQUESTED and e['run_id'] == run['id']), None)
-        require(event is not None and event['parent_sha256'] == run['effective_contract_sha256'], 'Repair request parent is stale')
-        run['autonomy_request'] = deepcopy(event['request'])
+    return autonomy_admission.bind_run(store, db, contract, run, hash_file=file_sha)
 
 
 def _check_worker_adapter(store, contract, rid):
-    slot = next(s for s in contract['advisor_policy']['autonomy']['repair_slots'] if s['run_id'] == rid)
-    path = store._path(slot['worker_path'])
-    bound = next(b for b in contract['bindings'] if store._path(b['path']) == path)
-    require(file_sha(path) == bound['sha256'] == file_sha(Path(__file__).with_name('rds_autonomy_worker.py')),
-            'Unsupported adapter for a new model attempt; retain and inspect original settled evidence')
+    return autonomy_admission._check_worker_adapter(store, contract, rid, hash_file=file_sha)
 
 
 def check_run(store, db, contract, run):
-    if 'autonomy_request' in run:
-        _check_worker_adapter(store, contract, run['id'])
-        from rds_math import blob
-        request = strict_json(blob(store.root, run['autonomy_request']).decode('utf-8'))
-        require(request['run_id'] == run['id'] and request['parent_sha256'] == run['effective_contract_sha256'],
-                'Repair request identity changed before launch')
-        require(file_sha(request['provider']['argv'][0]) == request['provider']['executable_sha256'],
-                'Model provider executable changed before launch')
+    return autonomy_admission.check_run(store, db, contract, run, hash_file=file_sha)
 
 
 def _continuous_holdout(contract):
