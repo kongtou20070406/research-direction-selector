@@ -87,7 +87,9 @@ class WorkspaceReadTests(unittest.TestCase):
                 patch.object(ProjectStore, '_contract', side_effect=AssertionError('Store contract')):
             admitted = workspace.check_admission(self.root)
             self.assertIsInstance(admitted, ProjectStore)
-            self.assertEqual(admitted.root, self.root)
+            # Windows TEMP can use an 8.3 alias; admission returns the canonical root.
+            self.assertEqual(admitted.root, self.root.resolve(strict=True))
+            self.assertTrue(admitted.root.samefile(self.root))
             self.assertEqual(workspace.coverage(self.root)['status'], 'BOUND')
             ref = rds_cas.cas_bytes(self.root, b'read-boundary fixture')
         self.assertEqual(Path(ref['path']).read_bytes(), b'read-boundary fixture')

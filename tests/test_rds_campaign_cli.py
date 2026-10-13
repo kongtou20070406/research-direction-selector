@@ -230,7 +230,12 @@ class CampaignCLITests(unittest.TestCase):
         after = helper.store.snapshot()
         self.assertEqual(helper.calls(), ['repair1'])
         self.assertEqual([run['id'] for run in after['runs']], ['repair1', 'solve'])
-        self.assertEqual([receipt['run_status'] for receipt in after['receipts']], ['SUCCEEDED', 'SUCCEEDED'])
+        diagnostics = {'status': result.get('status'), 'executed': result.get('executed'),
+                       'receipts': [{key: row.get(key) for key in
+                                    ('run_id', 'run_status', 'process_status', 'timeout', 'exit_code', 'errors')}
+                                   for row in after['receipts']]}
+        self.assertEqual([receipt['run_status'] for receipt in after['receipts']],
+                         ['SUCCEEDED', 'SUCCEEDED'], diagnostics)
         with helper.store._db(True) as db:
             self.assertEqual(tuple(db.execute('SELECT sha256,body FROM contract WHERE id=1').fetchone()), original_contract)
         self.assertEqual(len(helper.events('METHOD_REVISION_ADOPTED')), 1)
