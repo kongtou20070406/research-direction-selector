@@ -525,7 +525,10 @@ def _clusters(nodes, edges, groups):
 
 
 def _packed(raw):
-    return base64.b64encode(gzip.compress(raw, mtime=0)).decode("ascii")
+    compressed = bytearray(gzip.compress(raw, compresslevel=9, mtime=0))
+    # Python 3.11/3.12 may expose zlib's host OS byte; exports are platform-neutral.
+    compressed[9] = 255
+    return base64.b64encode(compressed).decode("ascii")
 
 
 def render_archive_html(bundle, replica_root, pixi_js):
