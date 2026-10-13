@@ -8,6 +8,10 @@ updates the runtime revision guard together with these files. Python-only instal
 run RDS. Runtime verification discovers already installed native binaries and
 never installs a toolchain, resolves Lake dependencies, or downloads a cache.
 
+For Agent-assisted provisioning, use the on-demand [Lean setup procedure](../references/skill-routes/lean-setup.md).
+It reuses the project's pins and existing installation authority; it is guidance,
+not a built-in installer or proof-acceptance bypass.
+
 A deployment offering the complete native formal capability must provision this
 matching Lean/mathlib pair and the built `Formal` library. A Python-only setup is
 a reduced-capability installation. There is currently no `required-native`
