@@ -245,8 +245,10 @@ class BrokerTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda client: client.tool('rds_execute_selected', selected), (first, second)))
         self.assertTrue(any(not r['result']['isError'] for r in results), results)
-        self.assertEqual(self.fixture.starts(), ['baseline'])
-        self.assertEqual(len(self.fixture.snapshot()['receipts']), 1)
+        state = self.fixture.snapshot()
+        evidence = {'responses': results, 'runs': state['runs'], 'receipts': state['receipts']}
+        self.assertEqual(self.fixture.starts(), ['baseline'], evidence)
+        self.assertEqual(len(state['receipts']), 1, evidence)
         self.assertEqual(first.value('rds_recover', selected)['result']['run_id'], 'baseline')
 
     def test_strict_transport_rejects_duplicate_keys_nan_batch_and_notifications(self):

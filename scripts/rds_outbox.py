@@ -19,6 +19,56 @@ MAX_BYTES = 65536
 FIELDS = {"schema_version", "job_id", "attempt_id", "sequence", "kind", "payload"}
 
 
+def _publish_lifecycle(store, db, run, kind, payload):
+    """Emit only within the transaction that records the source transition."""
+    # Older accepted run records can carry non-UUID attempt identities. Settle
+    # them unchanged; do not rekey history or weaken the v1 envelope contract.
+    if not isinstance(run["attempt_id"], str) or re.fullmatch(r"[0-9a-f]{32}", run["attempt_id"]) is None:
+        return None
+    outbox = Outbox(store, db)
+    outbox.initialize()
+    sequence = db.execute(
+        "SELECT COALESCE(MAX(sequence),0)+1 FROM outbox_events WHERE job_id=? AND attempt_id=?",
+        (run["id"], run["attempt_id"])).fetchone()[0]
+    return outbox.publish({"schema_version": 1, "job_id": run["id"],
+                           "attempt_id": run["attempt_id"], "sequence": sequence,
+                           "kind": kind, "payload": payload})
+
+
+def publish_started(store, db, run):
+    """JOB_STARTED means the attempt entered RUNNING, before child launch."""
+    require(run["status"] == "RUNNING", "Started event requires a running attempt")
+    return _publish_lifecycle(store, db, run, "JOB_STARTED", {
+        "phase": "ATTEMPT_RUNNING", "run_status": run["run_status"],
+        "started_at": run["started_at"], "worker_pid": run["worker_pid"]})
+
+
+def publish_finished(store, db, run, receipt):
+    """One terminal notification, bound to the original operational receipt.
+
+    Success is result availability, not scientific acceptance. Recovery with
+    unknown exit/costs is JOB_FAILED; a progress stall is not a resource limit.
+    Existing receipts bypass this writer, including pre-outbox ledgers. Legacy
+    non-UUID attempts settle normally without receiving a v1 notification.
+    """
+    require(run["id"] == receipt["run_id"] and run["attempt_id"] == receipt["attempt_id"]
+            and run["status"] == receipt["process_status"], "Terminal event identity mismatch")
+    payload = {"receipt_sha256": receipt["sha256"], "run_status": receipt["run_status"],
+               "exit_code": receipt["exit_code"], "timeout": receipt["timeout"],
+               "process_started": receipt["process_started"], "assessment": receipt["assessment"]}
+    if "stop_reason" in receipt:
+        payload["stop_reason"] = receipt["stop_reason"]
+    kind = "RESULT_READY" if receipt["run_status"] == "SUCCEEDED" else "JOB_FAILED"
+    if receipt["timeout"] is True:
+        kind = "RESOURCE_LIMIT"
+        payload["limit"] = {"cause": "PROCESS_TIMEOUT", "resource": "wall_seconds",
+                            "seconds": run["manifest"]["timeout_seconds"]}
+    elif receipt.get("stop_reason") == "CAMPAIGN_DEADLINE":
+        kind = "RESOURCE_LIMIT"
+        payload["limit"] = {"cause": "CAMPAIGN_DEADLINE", "resource": "wall_seconds"}
+    return _publish_lifecycle(store, db, run, kind, payload)
+
+
 def _integer(value, name, minimum=0, maximum=MAX_INTEGER):
     require(type(value) is int and minimum <= value <= maximum, "Invalid " + name)
 

@@ -30,6 +30,7 @@ import rds_project_records as receipt_records
 from rds_run_records import decode_run_row
 from rds_contract_read import effective_contract
 from rds_project_read_services import ProjectReadServices
+import rds_outbox as project_events
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -1409,6 +1410,7 @@ class ProjectStore:
                 if run["scheduler"]:
                     run["scheduler"]["status"] = "RUNNING"
                 self._save(db, run)
+                project_events.publish_started(self, db, run)
             contract = self._contract(db)
         if admission_error is not None:
             return self._finish(run_id, attempt_id, 'FAILED', None, time.monotonic() - attempt_start,
@@ -1657,6 +1659,7 @@ class ProjectStore:
                 self._save(db, current)
                 db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, receipt["sha256"], canonical(receipt)))
                 db.execute("INSERT INTO events(body) VALUES (?)", (canonical({"kind": "ATTEMPT_FINISHED", "run_id": run_id, "sha256": receipt["sha256"]}),))
+                project_events.publish_finished(self, db, current, receipt)
             if self._run(db, run_id).get('owned_history_recorded') is True:
                 from rds_owned_history import capture_completion
                 capture_completion(self, db, self._run(db, run_id), receipt)

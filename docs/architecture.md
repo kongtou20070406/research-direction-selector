@@ -398,3 +398,18 @@ are recorded separately and never converted into import edges.
   dependency direction. Zero discovered edges would not prove zero callbacks.
 - B0 removes **zero** runtime edges. The table is the baseline for subsequent
   read-side/admission/composition changes, not evidence those changes landed.
+
+## Production attempt notifications
+
+`ProjectStore` now emits existing v1 outbox envelopes in the same database
+transaction as the attempt transition or receipt settlement. `JOB_STARTED`
+means the attempt entered RUNNING, not that child launch succeeded. Completion
+emits `RESULT_READY`, `JOB_FAILED`, or an observed `RESOURCE_LIMIT`, bound to the
+original receipt digest. Exit zero with missing outputs remains failure; result
+availability never promotes scientific support. An event-write failure rolls
+back that transaction. Recovery reuses existing receipts without a second event
+or settlement. Read-only inspection does not create outbox tables or backfill
+old receipts. Legacy non-UUID attempt identities settle unchanged, without a
+v1 notification; their notification coverage is incomplete. This is a downward
+L1 project-to-outbox dependency, not completion of the remaining Advisor/hook
+cycle cuts or a guarantee of host-visible exactly-once notification.
