@@ -505,7 +505,7 @@ class ProjectStore:
                     f"Insufficient {resource} budget before start")
         contract = self._contract(db)
         if 'confirmation' in contract.get('advisor_policy', {}):
-            from rds_postcommit_confirmation import check_run as check_confirmation_run
+            from rds_confirmation_read import check_run as check_confirmation_run
             check_confirmation_run(self, db, contract, run)
         if 'autonomy' in contract.get('advisor_policy', {}):
             from rds_autonomy import check_run

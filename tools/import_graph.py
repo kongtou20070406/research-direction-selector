@@ -50,6 +50,9 @@ LAYERS.update(
     rds_predictor_contract="L3",
     rds_transition_dataset_contract="L2",
     rds_predictor_worker="L1",
+    rds_original_read="L1",
+    rds_confirmation_read="L1",
+    rds_cas_read="L1",
     rds_code_diff="SHARED",
     rds_cpu_jepa="SHARED",
 )
