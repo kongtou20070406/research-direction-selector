@@ -393,7 +393,17 @@ class ProjectStore:
         """Read original evidence before taking the execution write lock."""
         if "advisor_policy" not in contract:
             return None
-        return lifecycle_provider("advisor").prepare_admission(self, spec)
+        provider = lifecycle_provider("advisor")
+        token = provider.prepare_admission(self, spec)
+        # All policy and applicability work runs before the writer is acquired.
+        with self._db(True) as db:
+            db.execute("BEGIN")
+            provider.check_admission(self, db, spec, token)
+            from rds_admission_read import prepare
+            row = self._read_services(db).dependency_snapshot()
+            saved = json.loads(row['body']) if row is not None else None
+            token['_prepared_admission'] = prepare(db, self.path, spec, token['evidence_files'], saved)
+        return token
 
     def _advisor_prepare_run(self, run_id, *, allow_observation=False):
         with self._db(True) as db:
@@ -410,7 +420,8 @@ class ProjectStore:
         if "advisor_policy" not in self._contract(db):
             return
         require(token is not None, "Advisor admission is missing; collect and select the current route first")
-        lifecycle_provider("advisor").check_admission(self, db, spec, token)
+        from rds_admission_read import check_locked
+        check_locked(db, self.path, self.root, spec, token.get('_prepared_admission'))
 
     def _advisor_finished(self, contract):
         """Collection is post-commit; never mutate the owned receipt or repeat a run."""
@@ -492,9 +503,6 @@ class ProjectStore:
         if 'autonomy' in contract.get('advisor_policy', {}):
             from rds_autonomy import check_run
             check_run(self, db, contract, run)
-        if contract.get('advisor_policy', {}).get('feasibility') is not None:
-            from rds_feasibility import check_start
-            check_start(self, db, run['id'])
         claims = self._output_claims(db)
         self._campaign_deadline(db, contract)
         if 'maintenance' in run['manifest']:
@@ -1171,7 +1179,7 @@ class ProjectStore:
                    "executor_sha256": file_sha(executor), "attempt_id": None, "worker_pid": None,
                    "pid": None, "started_at": None, "finished_at": None, "observed_wall_seconds": 0.0,
                    "scheduler": None}
-            from rds_feasibility import runtime_fingerprint
+            from rds_feasibility_values import runtime_fingerprint
             run['effective_contract_sha256'] = digest(contract)
             run['runtime_fingerprint'] = runtime_fingerprint()
             require(executor_sha256 is None or run['executor_sha256'] == executor_sha256,

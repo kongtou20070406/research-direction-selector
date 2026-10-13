@@ -188,6 +188,8 @@ def initialize(store, contract, *, mode=None, supersedes=None, separate_reason=N
 
 
 def _state(store, db):
+    if getattr(db, 'in_transaction', True) is False:
+        db.execute('BEGIN')
     contract = store._contract(db)
     reads = store._read_services(db)
     runs = store._runs(db)

@@ -11,7 +11,7 @@ import sys
 GROUPS = {
     "L0": "bounded_io mutation",
     "L1": "project project_hooks campaign workspace costs checkpoints math method_revision state cas quick_ledger result_record "
-          "project_read_port project_read_services contract_read artifacts owned_history source_documents probe "
+          "project_read_port project_read_services admission_read contract_read artifacts owned_history source_documents probe "
           "tool_applicability project_lifecycle "
           "steering tools tool_compare tool_workbench tool_application tool_calls owned_tools "
           "tms_store proof_cache rsi_confirmation postcommit_confirmation blind_runner "
@@ -29,7 +29,7 @@ GROUPS = {
           "broker_hook host_broker host_hook conversation_hook dashboard dialogue "
           "hypergraph_readable hypergraph_view obelisk session capabilities model_export "
           "outputs research_note usage wheel",
-    "SHARED": "core project_values reference_values output_values admission_values project_records run_records verify_types "
+    "SHARED": "core project_values reference_values output_values admission_values feasibility_values project_records run_records verify_types "
               "unit_disk_voronoi_core",
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}

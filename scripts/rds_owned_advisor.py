@@ -176,6 +176,8 @@ def validate_policy(store, contract):
 
 def _state(store, db):
     """Bounded, coherent read, shared by analysis and the write-lock recheck."""
+    if getattr(db, 'in_transaction', True) is False:
+        db.execute('BEGIN')
     contract = store._contract(db)
     reads = store._read_services(db)
     reads.owned_coverage(MAX_RUNS)

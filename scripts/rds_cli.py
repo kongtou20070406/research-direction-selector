@@ -114,6 +114,8 @@ def engine_id():
                    "quick_ledger": digest((here / "rds_quick_ledger.py").read_bytes()),
                    "output_values": digest((here / "rds_output_values.py").read_bytes()),
                    "result_record": digest((here / "rds_result_record.py").read_bytes()),
+                   "admission_read": digest((here / "rds_admission_read.py").read_bytes()),
+                   "feasibility_values": digest((here / "rds_feasibility_values.py").read_bytes()),
                    "project_read_services": digest((here / "rds_project_read_services.py").read_bytes()),
                    "project_read_port": digest((here / "rds_project_read_port.py").read_bytes()),
                    "methods": digest((here / "rds_methods.py").read_bytes()),
