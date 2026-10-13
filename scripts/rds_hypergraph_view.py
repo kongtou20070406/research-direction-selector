@@ -17,7 +17,7 @@ from rds_hypergraph_readable import graph_digest
 from rds_bounded_io import read_regular_bytes
 from rds_hypergraph_render import (
     D3_BUNDLE, DISPLAY_STYLES, HASH_NAME_TOKEN, LIFECYCLE_ID, PIXI_LICENSE,
-    PIXI_SHA256, REPLICA_COMMIT, REPLICA_FILES, _asset_text, _locale_label,
+    PIXI_SHA256, REPLICA_COMMIT, REPLICA_FILES, _locale_label,
     _REPLICA_RENDERER_PATCHES, _replace_once, display_record, readable_text,
     patch_replica_renderer as _patch_replica_renderer,
 )
@@ -25,6 +25,11 @@ from rds_hypergraph_render import (
 MAX_INPUT_BYTES = 8 * 1024 * 1024
 VIEW_LIMITS = {"nodes": 4096, "hyperedges": 8192, "incidences": 32768}
 ANALYSIS_LIMITS = {"nodes": 200, "hyperedges": 400, "incidences": 2000}
+
+
+def _asset_text(relative):
+    """Resolve through this module to preserve callers that rebind its path."""
+    return (Path(__file__).resolve().parent / "assets" / relative).read_bytes().decode("utf-8")
 
 
 def graph_view(value, source, *, snapshot_sha256=None, demo=False):
