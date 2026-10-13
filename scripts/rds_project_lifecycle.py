@@ -194,7 +194,7 @@ def _state(store, db):
     reads = store._read_services(db)
     runs = store._runs(db)
     receipts = [store._receipt(r) for r in reads.receipts()]
-    from rds_owned_advisor import MAX_RUNS
+    from rds_owned_history import MAX_RUNS
     require(len(runs) <= MAX_RUNS and len(receipts) <= MAX_RUNS, 'Existing work exceeds owned evidence coverage bounds')
     from rds_owned_history import history_cut
     history_cut(store, db)

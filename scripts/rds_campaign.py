@@ -452,7 +452,7 @@ def _native_tails_quiescent(root, db, contract, runs, receipts):
     store = ProjectStore(root)
     policy = contract.get('advisor_policy', {})
     if policy.get('autonomy'):
-        from rds_autonomy import records, REQUESTED, PROCESSED
+        from rds_autonomy_read import records, REQUESTED, PROCESSED
         events = records(store, db, contract)
         require({event['run_id'] for event in events if event['kind'] == REQUESTED}
                 == {event['run_id'] for event in events if event['kind'] == PROCESSED},

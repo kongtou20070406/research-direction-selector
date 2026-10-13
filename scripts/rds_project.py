@@ -1731,7 +1731,8 @@ class ProjectStore:
                 row = reads.latest_event_record('OWNED_ADVISOR_REVIEW')
                 context = {'instruction': steering, 'report_event': dict(row) if row else None}
                 try:
-                    context['state'] = lifecycle_provider("advisor")._state(self, db)
+                    from rds_owned_history import read_state
+                    context['state'] = read_state(self, db)
                 except (ValueError, KeyError, TypeError, OSError, UnicodeError, sqlite3.Error) as exc:
                     # Optional display cannot impose owned-history bounds on
                     # the ordinary plan. Preserve this read's original facts.

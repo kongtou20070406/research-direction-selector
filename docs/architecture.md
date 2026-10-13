@@ -433,3 +433,23 @@ old receipts. Legacy non-UUID attempt identities settle unchanged, without a
 v1 notification; their notification coverage is incomplete. This is a downward
 L1 project-to-outbox dependency, not completion of the remaining Advisor/hook
 cycle cuts or a guarantee of host-visible exactly-once notification.
+
+### Owned state reads without decision callbacks
+
+`rds_owned_history.read_state` reads the coherent contract, runs, receipts,
+budget, completion events, verified checkpoint history, steering, controller
+history and confirmation challenges from the caller's original snapshot.
+`rds_owned_advisor._state` remains a compatibility wrapper; the Store's optional
+dialogue snapshot calls the native reader directly, not the Advisor provider.
+Ordinary snapshots and dialogue failure fallback retain their previous shape.
+
+`rds_autonomy_read` owns the existing bounded event/CAS/run/receipt checks.
+The controller re-exports its old reader names; Campaign and owned state use
+the native reader rather than importing the controller. The 128-run coverage
+limit is shared with the existing owned-history service. No new schema, event,
+permission, budget, execution path or migration is introduced.
+
+This removes a read-only provider callback, not the remaining policy validation
+and post-completion callbacks. QUICK admission and recovery still retain their
+existing boundaries. The module labels are unchanged; only the new native
+autonomy reader is classified L1.

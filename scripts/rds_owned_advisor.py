@@ -21,7 +21,7 @@ from rds_project_hooks import register as register_project_hooks
 
 OWNED_PREFIX = 'owned:'
 ASSURANCE = 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
-MAX_RUNS = 128
+from rds_owned_history import MAX_RUNS
 MAX_ARTIFACTS = 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 32 * 1024 * 1024
@@ -175,44 +175,9 @@ def validate_policy(store, contract):
 
 
 def _state(store, db):
-    """Bounded, coherent read, shared by analysis and the write-lock recheck."""
-    if getattr(db, 'in_transaction', True) is False:
-        db.execute('BEGIN')
-    contract = store._contract(db)
-    reads = store._read_services(db)
-    reads.owned_coverage(MAX_RUNS)
-    runs = store._runs(db)
-    receipts = [store._receipt(row) for row in reads.receipts()]
-    budget = [dict(row) for row in reads.budget(integrity_error=ValueError, digest=digest)]
-    completed = []
-    for receipt in receipts:
-        require(reads.has_completion(receipt['run_id'], receipt['sha256']),
-                'Owned receipt has no matching completion event')
-        completed.append(receipt['sha256'])
-    campaign = reads.campaign_body()
-    history = reads.history()
-    from rds_owned_history import history_cut
-    try:
-        verified_history = history_cut(store, db)
-    except (ValueError, KeyError, TypeError, OSError) as exc:
-        raise ValueError('Repair checkpoint integrity before executing a candidate: ' + str(exc)) from exc
-    state = {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
-            'budget': budget, 'completion_events': completed,
-            'history_cut': verified_history,
-            'contract_history': history,
-            'exposures': [strict_json(body) for body in reads.exposure_bodies()],
-            'campaign_started': strict_json(campaign) if campaign else None}
-    from rds_steering import current, view
-    steering = current(db)
-    if steering is not None:
-        state['steering'] = view(steering)
-    if 'autonomy' in contract.get('advisor_policy', {}):
-        from rds_autonomy import records
-        state['autonomy_records'] = records(store, db, contract)
-    from rds_postcommit_confirmation import enabled, records as confirmation_records
-    if enabled(contract):
-        state['confirmation_challenges'] = confirmation_records(store, db, contract)
-    return state
+    """Compatibility entry for the shared native state reader."""
+    from rds_owned_history import read_state
+    return read_state(store, db)
 
 
 def _fingerprint(state):
