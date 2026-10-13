@@ -22,7 +22,7 @@ from rds_offline_contract_values import (
 
 MAX_INPUT_BYTES = MAX_BYTES
 MAX_OUTPUT_BYTES = 32768
-ADAPTERS = ("unavailable", "code_diff_linear", "fixture_score", "fixture_sleep", "fixture_failure",
+ADAPTERS = ("unavailable", "code_diff_linear", "cpu_jepa", "fixture_score", "fixture_sleep", "fixture_failure",
             "fixture_late_failure", "fixture_overflow", "fixture_stderr",
             "fixture_invalid", "fixture_no_read", "fixture_output_then_sleep")
 
@@ -338,6 +338,33 @@ def _child(adapter):
                 result.update(
                     status="SCORED",
                     reason="CPU_STRUCTURAL_CODE_DIFF shadow score; never selects or grants scientific truth",
+                    reason_code="NONE",
+                    forecasts=forecasts,
+                )
+    elif adapter == "cpu_jepa":
+        from rds_cpu_jepa import predict_transition
+        base_code = request["context"].get("base_code")
+        if not isinstance(base_code, str) or not base_code.strip():
+            result = _abstain(request, "cpu_jepa requires context.base_code", "PROVIDER_ABSTAINED")
+        else:
+            before_state = request["context"].get("before_state") or {}
+            forecasts = []
+            for cand in request["candidates"]:
+                cand_code = cand["parameters"].get("code")
+                if not isinstance(cand_code, str) or not cand_code.strip():
+                    result = _abstain(request, "cpu_jepa requires candidate parameters.code", "PROVIDER_ABSTAINED")
+                    forecasts = []
+                    break
+                pred = predict_transition(before_state, base_code, cand_code, cand["parameters"])
+                forecasts.append({
+                    "candidate_id": cand["id"],
+                    "score": pred["score"],
+                    "uncertainty": pred["uncertainty"],
+                })
+            if forecasts:
+                result.update(
+                    status="SCORED",
+                    reason="CPU_JEPA epistemic latent transition forecast; never selects or grants scientific truth",
                     reason_code="NONE",
                     forecasts=forecasts,
                 )

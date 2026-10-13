@@ -47,6 +47,7 @@ LAYERS.update(
     rds_transition_dataset_contract="L2",
     rds_predictor_worker="L1",
     rds_code_diff="SHARED",
+    rds_cpu_jepa="SHARED",
 )
 LOADERS = {"importlib.import_module", "__import__", "builtins.__import__", "runpy.run_module"}
 OPAQUE_LOADERS = {"importlib.util.spec_from_file_location", "importlib.util.module_from_spec",
