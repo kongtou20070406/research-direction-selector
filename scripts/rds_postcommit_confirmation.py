@@ -10,6 +10,7 @@ import re
 import secrets
 
 from rds_artifacts import strict_json
+from rds_project_read_services import ProjectReadServices
 from rds_project import canonical, digest, require
 
 KIND = 'torch_postcommit_mlp'
@@ -78,7 +79,7 @@ def metric(claim, weights, data):
 def _candidate(store, db, contract, value):
     from rds_domain_confirmation import _output
     rid = value['candidate_runs'][0]
-    row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
+    row = ProjectReadServices(db).receipt_row(rid)
     require(row is not None, 'Post-commit challenge requires an original candidate receipt')
     receipt = store._receipt(row)
     run = store._run(db, rid)
@@ -97,8 +98,8 @@ def records(store, db, contract):
     from rds_method_revision import contract_history
     value = contract['advisor_policy']['confirmation']
     claim = validate_claim(_json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256']))
-    rows = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id", (EVENT,)).fetchall()
-    require(len(rows) <= 1, 'Duplicate post-commit challenge; reseeding is forbidden')
+    rows = ProjectReadServices(db).events((EVENT,), maximum=1,
+                                          limit_message='Duplicate post-commit challenge; reseeding is forbidden')
     result = []
     for row in rows:
         event = strict_json(row['body'])
@@ -114,10 +115,8 @@ def records(store, db, contract):
                 event['genesis_contract_sha256'] == history[0]['sha256'] and
                 event['effective_contract_sha256'] == digest(contract) and
                 event['declaration_sha256'] == digest(value), 'Post-commit challenge identity differs')
-        completed = db.execute("SELECT id FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' AND "
-                               "json_extract(body,'$.run_id')=? AND json_extract(body,'$.sha256')=?",
-                               (receipt['run_id'], receipt['sha256'])).fetchall()
-        require(len(completed) == 1 and completed[0]['id'] < row['id'], 'Challenge was not committed after the candidate')
+        completed = ProjectReadServices(db).completion_ids(receipt['run_id'], receipt['sha256'])
+        require(len(completed) == 1 and completed[0] < row['id'], 'Challenge was not committed after the candidate')
         route = next(r['manifest'] for r in contract['advisor_policy']['routes'] if r['manifest']['id'] == event['run_id'])
         require(event['manifest_sha256'] == digest(route), 'Challenge confirmation route differs')
         challenge = strict_json(blob(store.root, event['challenge']).decode('utf-8'))

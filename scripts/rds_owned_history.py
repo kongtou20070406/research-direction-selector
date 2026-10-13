@@ -49,22 +49,21 @@ def bind_graph(store, contract, graph, *, _executor_hashes=None):
 def history_cut(store, db, *, pending_choice=None, pending_completion=None):
     """Verified local decision-history identities; snapshots cannot invent ancestors."""
     marked = [run for run in store._runs(db) if run.get('owned_history_recorded') is True]
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+    ids = store._read_services(db).checkpoint_ids(maximum=MAX_CHECKPOINTS)
+    if ids is None:
         require(not any(run['id'] != pending_choice for run in marked),
                 'Owned history is missing a committed decision checkpoint')
         return []
-    require(db.execute('SELECT count(*) FROM checkpoints').fetchone()[0] <= MAX_CHECKPOINTS,
-            'Owned decision history exceeds its bounded coverage')
-    lineage = {h['sha256']: h['contract'] for h in contract_history(db)}
+    lineage = {h['sha256']: h['contract'] for h in store._read_services(db).history()}
     cut, records = [], {}
-    for row in db.execute('SELECT id FROM checkpoints ORDER BY rowid').fetchall():
-        retained = read_checkpoint(db, row[0], root=store.root)
+    for ident in ids:
+        retained = read_checkpoint(db, ident, root=store.root)
         record = retained['record']
         require(record['kind'] == 'project' and record['contract_sha256'] in lineage
                 and record['snapshot']['contract'] == lineage[record['contract_sha256']],
                 'Checkpoint contract mismatch: Owned history checkpoint contract is outside verified lineage')
-        cut.append({'id': row[0], 'sha256': retained['sha256']})
-        records[row[0]] = record
+        cut.append({'id': ident, 'sha256': retained['sha256']})
+        records[ident] = record
     for run in marked:
         stages = [('before', pending_choice)]
         if run['status'] in TERMINAL:
@@ -80,7 +79,7 @@ def history_cut(store, db, *, pending_choice=None, pending_completion=None):
                     and identity.get('run_id') == run['id'],
                     'Owned history checkpoint differs from its marked run')
             if stage == 'after':
-                receipt_row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
+                receipt_row = store._read_services(db).receipt_row(run['id'])
                 require(receipt_row is not None, 'Owned history completion has no retained receipt')
                 receipt = store._receipt(receipt_row)
                 require(record['decision'].get('previous_checkpoint') == checkpoint_id('before', run)

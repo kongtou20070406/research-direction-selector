@@ -14,6 +14,7 @@ import time
 import uuid
 
 from rds_artifacts import strict_json
+from rds_project_read_services import ProjectReadServices
 from rds_project import canonical, digest, file_sha, number, require, _alive
 
 PREFIX = 'autonomy.'
@@ -51,9 +52,8 @@ def _append(db, body):
 
 
 def _events(db, kinds):
-    rows = db.execute('SELECT body FROM events WHERE json_extract(body,\'$.kind\') IN (' +
-                      ','.join('?' for _ in kinds) + ') ORDER BY id', tuple(kinds)).fetchall()
-    require(len(rows) <= 256, 'Autonomy event bound exceeded')
+    rows = ProjectReadServices(db).events(tuple(kinds), maximum=256,
+                                          limit_message='Autonomy event bound exceeded')
     result = [strict_json(r['body']) for r in rows]
     require(all(e.get('sha256') == _hash_event(e) for e in result), 'Autonomy event integrity failure')
     return result
@@ -136,6 +136,7 @@ def records(store, db, contract):
         return []
     declared = {s['run_id']: s for s in config['repair_slots']}
     result, seen, processed = [], set(), set()
+    reads = ProjectReadServices(db)
     from rds_math import blob
     for event in _events(db, (REQUESTED, PROCESSED)):
         rid = event.get('run_id')
@@ -152,19 +153,18 @@ def records(store, db, contract):
         else:
             require(rid in seen and rid not in processed, 'Duplicate or orphan processed model result')
             processed.add(rid)
-            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
+            row = reads.receipt_row(rid)
             require(row is not None and store._receipt(row)['sha256'] == event['receipt_sha256'],
                     'Processed model result has no original receipt')
             if event['outcome'] == 'ADOPTED':
-                adopted = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='METHOD_REVISION_ADOPTED' "
-                                     "AND json_extract(body,'$.id')=?", (event['revision_id'],)).fetchone()
+                adopted = reads.revision_adoption(event['revision_id'])
                 require(adopted is not None, 'Model adoption has no revision event')
         result.append(event)
     for run in store._runs(db):
         if run['id'] in declared:
             request = next((e['request'] for e in result if e['kind'] == REQUESTED and e['run_id'] == run['id']), None)
             require(request is not None and run.get('autonomy_request') == request, 'Repair run lacks its request binding')
-            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
+            row = reads.receipt_row(run['id'])
             if row:
                 require(store._receipt(row).get('autonomy_request') == request, 'Repair receipt request binding differs')
     return result

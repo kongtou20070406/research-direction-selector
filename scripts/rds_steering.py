@@ -10,6 +10,7 @@ import re
 import time
 
 from rds_project import canonical, digest, number, require, UNINITIALIZED
+from rds_project_read_services import ProjectReadServices
 
 
 EVENT = 'PROJECT_STEERING'
@@ -28,11 +29,10 @@ def _text(value, name, maximum=4096):
 
 
 def current(db):
-    row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')=? "
-                     "ORDER BY id DESC LIMIT 1", (EVENT,)).fetchone()
-    if row is None:
+    body = ProjectReadServices(db).latest_event(EVENT)
+    if body is None:
         return None
-    event = json.loads(row['body'])
+    event = json.loads(body)
     require(event.get('sha256') == digest({k: v for k, v in event.items() if k != 'sha256'}),
             'Steering record integrity failure')
     return event

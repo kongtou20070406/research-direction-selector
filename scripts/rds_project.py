@@ -29,6 +29,7 @@ from rds_project_hooks import provider as lifecycle_provider
 import rds_project_records as receipt_records
 from rds_run_records import decode_run_row
 from rds_contract_read import effective_contract
+from rds_project_read_services import ProjectReadServices
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -623,10 +624,12 @@ class ProjectStore:
             db.close()
 
     @staticmethod
+    def _read_services(db):
+        return ProjectReadServices(db)
+
+    @staticmethod
     def _contract(db):
-        # Native research records can share this database before project init.
-        require(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone(),
-                UNINITIALIZED)
+        require(ProjectStore._read_services(db).has_contract(), UNINITIALIZED)
         return effective_contract(db)
 
     def _bindings(self, contract):
@@ -1239,7 +1242,7 @@ class ProjectStore:
 
     @classmethod
     def _runs(cls, db):
-        return [cls._run_row(row) for row in db.execute("SELECT id,status,body FROM runs ORDER BY id")]
+        return [cls._run_row(row) for row in cls._read_services(db).runs()]
 
     @staticmethod
     def _run_row(row):
@@ -1681,22 +1684,23 @@ class ProjectStore:
         with self._db(True) as db:
             db.execute("BEGIN")
             contract = self._contract(db)
+            reads = self._read_services(db)
             budget = {}
-            for row in db.execute("SELECT * FROM budget ORDER BY resource"):
+            for row in reads.budget(integrity_error=ReceiptIntegrityError, digest=digest):
                 budget[row["resource"]] = {"cap": row["cap"], "spent_measured": row["spent"],
                                            "charged_estimate": row["charged"], "reserved": row["reserved"],
                                            "remaining": row["cap"] - row["spent"] - row["charged"] - row["reserved"],
                                            "unit": "seconds" if row["resource"].endswith("_seconds") else row["resource"]}
             snapshot = {"schema": 1, "contract": contract, "contract_sha256": digest(contract), "budget": budget,
                     "runs": self._runs(db),
-                    "exposures": [json.loads(r["body"]) for r in db.execute("SELECT body FROM exposures ORDER BY id")],
-                    "receipts": [self._receipt(r) for r in db.execute("SELECT run_id,sha256,body FROM receipts ORDER BY run_id")]}
+                    "exposures": [json.loads(body) for body in reads.exposure_bodies()],
+                    "receipts": [self._receipt(r) for r in reads.receipts()]}
             from rds_steering import current, view
             steering = current(db)
             if steering is not None:
                 snapshot['steering'] = view(steering)
-            from rds_method_revision import contract_history, pending_revision
-            history = contract_history(db)
+            from rds_contract_read import pending_revision
+            history = reads.history()
             if 'method_evolution' in contract or len(history) > 1:
                 snapshot['contract_history'] = history
                 pending = pending_revision(db)
@@ -1705,8 +1709,7 @@ class ProjectStore:
             if _dialogue:
                 # Optional view inputs share this original read; ordinary
                 # snapshots do not collect owned history or report context.
-                row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
-                                 "ORDER BY id DESC LIMIT 1").fetchone()
+                row = reads.latest_event_record('OWNED_ADVISOR_REVIEW')
                 context = {'instruction': steering, 'report_event': dict(row) if row else None}
                 try:
                     context['state'] = lifecycle_provider("advisor")._state(self, db)

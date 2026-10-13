@@ -11,7 +11,7 @@ import sys
 GROUPS = {
     "L0": "bounded_io mutation",
     "L1": "project project_hooks campaign workspace costs checkpoints math method_revision state cas quick_ledger result_record "
-          "project_read_port contract_read artifacts owned_history source_documents probe "
+          "project_read_port project_read_services contract_read artifacts owned_history source_documents probe "
           "tool_applicability project_lifecycle "
           "steering tools tool_compare tool_workbench tool_application tool_calls owned_tools "
           "tms_store proof_cache rsi_confirmation postcommit_confirmation blind_runner "

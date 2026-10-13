@@ -43,6 +43,32 @@ not certified absent. B1 mechanical extraction is implemented; complete central
 policy/execution decoupling is **not** claimed. The next cut needs a lock-external
 decision packet and lock-internal stale/binding checks before execution rewiring.
 
+## B2: production readonly selectors
+
+`rds_project_read_services` (L1) borrows the original connection and selects
+contract, state, checkpoint-history and controller records without opening a
+second database or committing. Store run/status reads, owned Advisor state,
+owned-history coverage, activation state, steering and controller event reads
+use it. Store retains the original contract/run/receipt decoder entry points;
+checkpoint, lineage, controller and completion validators are still enforced.
+
+The existing `ProjectReadPort` now participates in real budget reads. These
+compatibility reads compute scalar-size caps inside the caller's snapshot so
+old contracts with more than 64 resource dimensions remain readable. Explicit
+new bounded queries still use the port's caller-selected fixed limits. This
+cut does not impose a new global legacy body limit or create another ledger.
+
+Original completion events, exposures, cumulative spent/charged/reserved values,
+method lineage and marked before/after checkpoints remain part of the same
+state. The new service never repairs retained records or evaluates Advisor
+policy. Lower-to-upper admission callbacks remain for the B3 cut.
+
+The five metrics remain **29 upward pairs / largest SCC 48 / 48 mutual pairs /
+8 unresolved dynamic sites / 0 unclassified edges**. Seven new downward/leaf
+pairs adopt the read boundary; no upward pair is added or removed. No business
+schema, events, migrations or budget resets are introduced. CLI engine identity
+includes both read-service sources so changed code cannot reuse old identity.
+
 ## B1a: reference state no longer lives in the CLI
 
 `rds_state` (L1) owns the existing `RDSState` implementation; its SQLite schema,
@@ -285,9 +311,9 @@ are not claims that the corresponding paths executed in a live experiment.
 | BuiltinVerifier -> injected ProofRule methods | [method delegation](../scripts/rds_builtin_verifiers.py#L38), [dynamic load](../scripts/rds_verify.py#L42), [installation](../scripts/rds_verify.py#L115); finite declarations are candidate edges, not a runtime registry census |
 | Generated tool driver -> supplied source | [driver template](../scripts/rds_tool_application.py#L27), [exec](../scripts/rds_tool_application.py#L51); supplied source and its imports are outside this graph |
 
-The read-port class exists, but this snapshot has no production import or
-construction of `ProjectReadPort` under `scripts/`. Its test construction
-does not establish main-flow adoption. Store uses the receipt codec directly.
+B2 adopts `ProjectReadPort` through `ProjectReadServices.budget` in Store and
+owned Advisor reads. Store and Advisor retain their original full receipt/run
+validators; a raw genesis or run projection is not substituted for them.
 
 ## Unresolved dynamic sites
 

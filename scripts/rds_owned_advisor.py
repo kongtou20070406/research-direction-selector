@@ -177,21 +177,18 @@ def validate_policy(store, contract):
 def _state(store, db):
     """Bounded, coherent read, shared by analysis and the write-lock recheck."""
     contract = store._contract(db)
-    require(db.execute('SELECT COUNT(*) FROM runs').fetchone()[0] <= MAX_RUNS, 'Owned run coverage limit exceeded')
-    require(db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0] <= MAX_RUNS, 'Owned receipt coverage limit exceeded')
+    reads = store._read_services(db)
+    reads.owned_coverage(MAX_RUNS)
     runs = store._runs(db)
-    receipts = [store._receipt(row) for row in db.execute('SELECT run_id,sha256,body FROM receipts ORDER BY run_id')]
-    budget = [dict(row) for row in db.execute('SELECT * FROM budget ORDER BY resource')]
+    receipts = [store._receipt(row) for row in reads.receipts()]
+    budget = [dict(row) for row in reads.budget(integrity_error=ValueError, digest=digest)]
     completed = []
     for receipt in receipts:
-        require(db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
-                           "AND json_extract(body,'$.run_id')=? AND json_extract(body,'$.sha256')=? LIMIT 1",
-                           (receipt['run_id'], receipt['sha256'])).fetchone() is not None,
+        require(reads.has_completion(receipt['run_id'], receipt['sha256']),
                 'Owned receipt has no matching completion event')
         completed.append(receipt['sha256'])
-    campaign = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED' ORDER BY id LIMIT 1").fetchone()
-    from rds_method_revision import contract_history
-    history = contract_history(db)
+    campaign = reads.campaign_body()
+    history = reads.history()
     from rds_owned_history import history_cut
     try:
         verified_history = history_cut(store, db)
@@ -201,8 +198,8 @@ def _state(store, db):
             'budget': budget, 'completion_events': completed,
             'history_cut': verified_history,
             'contract_history': history,
-            'exposures': [strict_json(row['body']) for row in db.execute('SELECT body FROM exposures ORDER BY id')],
-            'campaign_started': strict_json(campaign['body']) if campaign else None}
+            'exposures': [strict_json(body) for body in reads.exposure_bodies()],
+            'campaign_started': strict_json(campaign) if campaign else None}
     from rds_steering import current, view
     steering = current(db)
     if steering is not None:
