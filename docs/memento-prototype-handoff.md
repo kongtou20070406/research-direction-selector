@@ -28,7 +28,8 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
-S22 reserves two finite survey methods: role_inventory and quoted_fractions.
+S22 ([Draft #351](https://github.com/kongtou20070406/research-direction-selector/pull/351),
+domain source b5fbe86) reserves role_inventory and quoted_fractions.
 All original rows/coded categories are retained; fractions have explicit binary
 label denominators. No inferred missingness/status filtering/population or
 bootstrap settings. Independent verifier parses positional CSV and ranks by
