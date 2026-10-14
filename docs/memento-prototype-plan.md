@@ -49,7 +49,25 @@ paired task supplies a feasibility signal, not a general gain estimate.
 ## Iteration 0 and next action
 
 Baseline: this contract is absent at the frozen source; 0 new obligations pass.
-S1 verify: `python -m pytest tests/test_rds_world_model_contract.py -q`.
+S1 verify: `uv run --with pytest --no-project python -m pytest tests/test_rds_world_model_contract.py -q`.
 Guard: `git diff --check`; net additions below 300 per feature slice.
 Read/admission/composition work on PR #325 remains unfinished. Inspect exact
 live owner and file scope before changing any existing bus implementation.
+
+## Revision after real loop preflight
+
+S1 (#330): 9 contract checks PASS. S2 (#331): 4 isolated compiler/revision checks
+PASS; finite numeric dialect only. S3 (#332): 3 analysis/containment/no-rebuy
+checks PASS. These are engineering results. Scientific gain stays UNKNOWN.
+
+The first real DeepSeek pair consumed 2 calls, one per arm. Both returned model
+responses but failed JSON command parsing, before any tool/RDS execution. The
+driver's shorthand non-JSON examples were misleading. Preserve both originals;
+correct command examples and CSV return semantics, retain the initial deadline,
+and allow at most 38 further calls (19 per arm), without buying the same request.
+
+The public DiscoveryBench source is frozen at
+`c31fcf011e070f021a5f5b906896d0821f6880e8`, real/test/archaeology, qid 0.
+Only task/query/domain descriptions and three original CSVs are agent-visible;
+gold/scoring files are excluded. This first pair covers actual RDS exec only.
+Advisor, long research trajectories and cross-task efficacy remain unmeasured.

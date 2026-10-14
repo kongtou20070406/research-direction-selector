@@ -67,11 +67,15 @@ def run(args):
     if not inputs:
         raise ValueError("No declared CSV inputs")
     task = (source / "task.json").read_text(encoding="utf-8")
+    if not 2 <= args.max_calls <= 40 or args.max_calls % 2:
+        raise ValueError("Matched arms require an even remaining call budget within 2..40")
+    deadline = min(args.deadline or time.time() + 2700, time.time() + 2700)
     frozen = {"model": args.model, "model_weights": "UNKNOWN", "inputs": inputs,
               "task_sha256": sha(source / "task.json"), "cli_sha256": sha(cli),
               "rds_source": {str(p.relative_to(cli.parent)): sha(p) for p in cli.parent.rglob("*.py")},
               "worker_sha256": sha(Path(__file__).with_name("analysis_worker.py")),
-              "max_calls": 40, "total_wall_seconds": 2700, "per_arm_calls": 20,
+              "max_calls": args.max_calls, "deadline_epoch": deadline,
+              "total_wall_seconds": 2700, "per_arm_calls": args.max_calls // 2,
               "arms": ["Bare", "RDS"], "tool_timeout_seconds": 30,
               "comparison_scope": "RDS_EXEC_ONLY", "scientific_benefit": "UNKNOWN"}
     save(root / "frozen.json", frozen)
@@ -82,11 +86,15 @@ def run(args):
         for name in inputs:
             shutil.copyfile(source / name, folder / name)
         shutil.copyfile(Path(__file__).with_name("analysis_worker.py"), folder / "analysis_worker.py")
+        examples = [{"tool": "read", "file": "capital.csv"},
+                    {"tool": "execute", "code": "emit({'example': 1})"},
+                    {"tool": "finish", "answer": "Your evidence-backed answer"}]
         instruction = ("You are a data analysis research agent. Solve the given real task with measured CSV evidence. "
-            "Respond with ONE JSON object and no fences: {tool:read,file:name}, {tool:execute,code:python}, "
-            "or {tool:finish,answer:text}. The execute tool provides csv,json,math,statistics,read(name),emit(dict) "
+            "Respond with ONE valid JSON object, double-quoted keys/string values, escaped code newlines, "
+            "no commentary and no fences. Allowed command examples: " + json.dumps(examples) + ". "
+            "The execute tool provides csv,json,math,statistics,read(name),emit(dict) "
             "and ordinary numeric/list builtins. No imports. Emit exactly one evidence JSON object. "
-            "Code has a 30s wall limit; 20 model calls available. Keep failures and revise methods. "
+            f"read(name) returns UTF-8 CSV TEXT, not rows. Code has a 30s wall limit; {frozen['per_arm_calls']} model calls available. Keep failures and revise methods. "
             "Do not fabricate numerical findings. Files: " + json.dumps(inputs) + ". Task: " + task)
         if arm == "RDS":
             instruction += (" Your execute tool is the actual frozen RDS exec route: code/data binding, "
@@ -94,9 +102,9 @@ def run(args):
                 "operational success is not scientific support. No automatic uncertain retry.")
         messages = [{"role": "system", "content": instruction}]
         attempts, reason, final, arm_start_calls = 0, "CALL_CAP", None, calls
-        for turn in range(20):
-            remaining = 2700 - (time.monotonic() - started)
-            if remaining <= 0 or calls >= 40:
+        for turn in range(frozen["per_arm_calls"]):
+            remaining = deadline - time.time()
+            if remaining <= 0 or calls >= args.max_calls:
                 reason = "TOTAL_CAP"
                 break
             calls += 1
@@ -131,7 +139,7 @@ def run(args):
                         raise ValueError("Undeclared input")
                     result = (folder / name).read_text(encoding="utf-8-sig")[:12000]
                 elif tool == "execute":
-                    if 2700 - (time.monotonic() - started) < 50:
+                    if deadline - time.time() < 50:
                         reason = "INSUFFICIENT_REMAINING_TOOL_BUDGET"
                         break
                     if arm == "RDS" and any(sha(cli.parent / p) != h for p, h in frozen["rds_source"].items()):
@@ -160,4 +168,6 @@ if __name__ == "__main__":
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--model", default="group/deepseek-v4.1flash")
     parser.add_argument("--endpoint", default="http://127.0.0.1:3425/v1")
+    parser.add_argument("--max-calls", type=int, default=40)
+    parser.add_argument("--deadline", type=float, help="Original experiment epoch deadline; recovery never resets it")
     print(json.dumps(run(parser.parse_args()), ensure_ascii=False, indent=2))
