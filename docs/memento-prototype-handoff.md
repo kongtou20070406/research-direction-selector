@@ -35,10 +35,20 @@ bootstrap settings. Independent verifier parses positional CSV and ranks by
 cross-products, preserving complete source/measurement pins. Typed exact
 measurements and scoped role claims are checked separately; no whole-question
 bootstrap acceptance or scientific support follows. Zero denominators and
-boundary ties keep ranking UNKNOWN. Four focused cases pending, no paid call,
+boundary ties keep ranking UNKNOWN. Four focused cases/six subtests passed, no paid call,
 native bridge/driver wiring or ledger write. Verify real original data offline
 before native recipe preparation. Original intermediate list is empty; broad
 cleaning/sampling tags do not specify executable procedures or justify query CIs.
+Original offline outputs verify all coded counts and fractions independently:
+Project_Lead99/194, Data_Scientist95/194; each column retains82 of code -77.
+Both measurement/scoped-claim checks PASS, whole task/bootstrap/science UNKNOWN.
+The query givens differ; do not infer a source error or undocumented filtering.
+Evidence acceptance-s22-offline-survey-20261015.json; code/data/output pins under
+holdout-s22-domain-freeze.json and holdout-s22-offline-domain. All older originals
+and candidate pins unchanged; outputs are CPU measurements, not agent answers or
+native receipts. Next native verifier slot/final schema reservation before a
+separately inspected new native recipe and paid driver freeze. Parent CI38641219929
+failed only inherited QUICK line681; original failed log retained, out of scope.
 
 S21 ([Draft #350](https://github.com/kongtou20070406/research-direction-selector/pull/350),
 freezer source 42d0c05) reserves a prospective rubric freezer and full-answer criteria.
