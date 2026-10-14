@@ -1,6 +1,7 @@
 """Real native CLI fixture setup; only the new prototype reader is exercised."""
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -39,7 +40,11 @@ class AdvisorViewTests(unittest.TestCase):
              patch.object(self.store, "execute", side_effect=AssertionError("Reader dispatched")):
             view = adapter.read_view(self.store, expected_snapshot_sha256=pin)
         self.assertEqual(view["status"], "COMPATIBLE_RECORDED_ADVICE")
-        self.assertEqual(view["native_report"], advice)
+        ref = view["native_plan"]["dialogue"]["source_report"]
+        raw = Path(ref["path"]).read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), ref["sha256"])
+        self.assertEqual(view["native_report"], json.loads(raw))
+        self.assertEqual({**view["native_report"], "workflow": advice["workflow"]}, advice)
         self.assertEqual(view["native_plan"]["dialogue"]["selected_run"], advice["selected_run"])
         self.assertEqual(view["native_report"]["coverage"], advice["coverage"])
         self.assertFalse(view["execution_authorized"])
