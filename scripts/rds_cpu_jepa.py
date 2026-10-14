@@ -514,6 +514,8 @@ class LatentCodeDiffJEPA:
         self.W_P, self.b_P = self._init_transition_predictor(transition_weights)
         self.W_score = self._init_score_head()
         self.W_cost = self._init_cost_head()
+        self.W_score_action = [0.0] * ACTION_DIM
+        self.W_cost_action = [0.0] * ACTION_DIM
         self.b_score, self.b_cost = 0.5, 1.0
         self._linear_transition = False
 
@@ -681,14 +683,14 @@ class LatentCodeDiffJEPA:
 
         # Readout score & cost
         sig = diff["obligation_signals"]
-        raw_score = self.b_score + _dot(self.W_score, z_hat_after)
+        raw_score = self.b_score + _dot(self.W_score, z_hat_after) + _dot(self.W_score_action, u)
         if sig["control_modified"]:
             raw_score -= 0.40
         if sig["signature_changed"]:
             raw_score -= 0.20
         score = round(max(0.0, min(1.0, raw_score)), 6)
 
-        raw_cost = self.b_cost + _dot(self.W_cost, z_hat_after)
+        raw_cost = self.b_cost + _dot(self.W_cost, z_hat_after) + _dot(self.W_cost_action, u)
         cost = round(max(0.01, raw_cost), 4)
 
         # Epistemic uncertainty detection: base + latent error + structural indicators
@@ -767,10 +769,13 @@ class LatentCodeDiffJEPA:
         self._linear_transition = True
 
         # Train on the same predicted latents used at inference, with an intercept.
-        ZHat = [self.predict_latent(zu[:LATENT_DIM], zu[LATENT_DIM:]) + [1.0] for zu in ZU]
+        # Keep action conditioning: numeric-only edits can have identical structural targets.
+        ZHat = [self.predict_latent(zu[:LATENT_DIM], zu[LATENT_DIM:]) + zu[LATENT_DIM:] + [1.0] for zu in ZU]
         W_readout = _ridge_fit(ZHat, Targets, l2_reg=l2_reg)
-        self.W_score = [row[0] for row in W_readout[:-1]]
-        self.W_cost = [row[1] for row in W_readout[:-1]]
+        self.W_score = [row[0] for row in W_readout[:LATENT_DIM]]
+        self.W_cost = [row[1] for row in W_readout[:LATENT_DIM]]
+        self.W_score_action = [row[0] for row in W_readout[LATENT_DIM:-1]]
+        self.W_cost_action = [row[1] for row in W_readout[LATENT_DIM:-1]]
         self.b_score, self.b_cost = W_readout[-1]
         return self
 
