@@ -146,6 +146,9 @@ def prepare_decision(store, report, contract):
     record['owned_history'] = {'run_id': manifest['id'], 'manifest_sha256': digest(manifest),
                              'effective_contract_sha256': digest(contract), 'method_sha256': identity,
                              'dependency_snapshot_sha256': report.get('snapshot_sha256')}
+    if 'training_packet' in report:
+        from rds_training_records import freeze_packet
+        record['training_packet'] = freeze_packet(report['training_packet'], route['candidate'])
     return record
 
 
