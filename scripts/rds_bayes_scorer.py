@@ -163,3 +163,78 @@ def update_normal(model, before, base, code, outcome):
     nv = 1. / (1. / v + 1. / model['noise_variance'])
     out['groups'][key] = [nv * (m / v + (outcome - before['score']) / model['noise_variance']), nv]
     return out
+
+
+def validate_model(model):
+    """Validate the entire frozen inference JSON; no paths or executable fields."""
+    from rds_offline_contract_values import bounded, fields, number, require, text
+    model = bounded(model)
+    fields(model, 'schema kind feature_schema roles diagnostics prior alpha beta mean covariance ranges', 'BLR model')
+    require(type(model['schema']) is int and model['schema'] == 1 and model['kind'] == 'bayes_blr'
+            and model['feature_schema'] == FEATURE_SCHEMA, 'Unsupported BLR feature contract')
+    for key, limit in (('roles', 16), ('diagnostics', 8)):
+        names = model[key]
+        require(type(names) is list and len(names) <= limit and len(set(names)) == len(names), 'Invalid ' + key)
+        for name in names:
+            text(name, key, 128)
+    fields(model['prior'], 'task_variance iterations', 'BLR prior')
+    number(model['prior']['task_variance'], 'task variance', 0, 1)
+    require(type(model['prior']['iterations']) is int and 1 <= model['prior']['iterations'] <= 100, 'Invalid fit bound')
+    number(model['alpha'], 'alpha', 1e-15)
+    number(model['beta'], 'beta', 1e-15)
+    p = (2 * len(model['roles']) + 7) * (len(model['diagnostics']) + 1)
+    require(p <= 128 and len(model['mean']) == p and len(model['covariance']) == p
+            and len(model['ranges']) == p, 'BLR feature dimension mismatch')
+    for value in model['mean']:
+        number(value, 'mean')
+    L = [[0.] * p for _ in range(p)]
+    for i, row in enumerate(model['covariance']):
+        require(type(row) is list and len(row) == p, 'BLR covariance dimension mismatch')
+        for j, value in enumerate(row):
+            number(value, 'covariance')
+            require(abs(value - model['covariance'][j][i]) <= 1e-8 * max(1., abs(value)), 'Asymmetric covariance')
+        for j in range(i + 1):
+            value = row[j] - dot(L[i][:j], L[j][:j])
+            require(j != i or value > 0., 'Covariance is not positive definite')
+            L[i][j] = math.sqrt(value) if j == i else value / L[j][j]
+        bounds = model['ranges'][i]
+        require(type(bounds) is list and len(bounds) == 2, 'Invalid feature bounds')
+        for bound in bounds:
+            number(bound, 'feature bound')
+        require(bounds[0] <= bounds[1], 'Reversed feature bounds')
+    return model
+
+
+def score_request(request):
+    """All-or-nothing scores from request-bound JSON; unknowns cause abstention."""
+    from rds_core import object_digest
+    from rds_offline_contract_values import fields, number, require
+    context = request['context']
+    bound = context['scorer_contract']
+    fields(bound, 'schema model model_sha256 abstain_threshold', 'scorer contract')
+    require(type(bound['schema']) is int and bound['schema'] == 1, 'Unsupported scorer contract')
+    model = validate_model(bound['model'])
+    require(object_digest(model) == bound['model_sha256'] == request['model']['sha256'], 'Frozen model hash mismatch')
+    # Existing forecast uncertainty contract is normalized to [0, 1].
+    number(bound['abstain_threshold'], 'abstain threshold', 0, 1)
+    before, base = context['before_state'], context['base_code']
+    number(before['score'], 'before score')
+    require(type(base) is str and bool(base.strip()), 'Missing base code')
+    diagnostics = before.get('diagnostics', {})
+    for name in model['diagnostics']:
+        number(diagnostics[name], 'diagnostic ' + name)
+    forecasts = []
+    for candidate in request['candidates']:
+        code = candidate['parameters']['code']
+        require(type(code) is str and bool(code.strip()), 'Missing candidate code')
+        diff = encode_code_diff(base, code)
+        require(not diff['parameter_delta']['added_bindings'] and not diff['parameter_delta']['removed_bindings'],
+                'Unseen added or removed parameter binding')
+        require(set(diff['parameter_delta']['numeric_log10_ratios']) <= set(model['roles']), 'Unseen parameter role')
+        x = features(model, before, base, code)
+        require(all(lo - 1e-12 <= v <= hi + 1e-12 for v, (lo, hi) in zip(x, model['ranges'])), 'Feature outside training bounds')
+        mean, sd = predict_blr(model, before, base, code)
+        number(mean, 'posterior mean')
+        require(math.isfinite(sd) and sd <= bound['abstain_threshold'], 'Predictive standard deviation exceeds threshold')
+        forecasts.append(dict(candidate_id=candidate['id'], score=mean, uncertainty=sd))
+    return forecasts

@@ -22,7 +22,7 @@ from rds_offline_contract_values import (
 
 MAX_INPUT_BYTES = MAX_BYTES
 MAX_OUTPUT_BYTES = 32768
-ADAPTERS = ("unavailable", "code_diff_linear", "cpu_jepa", "fixture_score", "fixture_sleep", "fixture_failure",
+ADAPTERS = ("unavailable", "code_diff_linear", "cpu_jepa", "bayes_blr", "fixture_score", "fixture_sleep", "fixture_failure",
             "fixture_late_failure", "fixture_overflow", "fixture_stderr",
             "fixture_invalid", "fixture_no_read", "fixture_output_then_sleep")
 
@@ -368,6 +368,14 @@ def _child(adapter):
                     reason_code="NONE",
                     forecasts=forecasts,
                 )
+    elif adapter == "bayes_blr":
+        from rds_bayes_scorer import score_request
+        try:
+            forecasts = score_request(request)
+            result.update(status="SCORED", reason="Frozen BLR posterior preferences; shadow only",
+                          reason_code="NONE", forecasts=forecasts)
+        except (ValueError, KeyError, TypeError, IndexError, ArithmeticError) as exc:
+            result = _abstain(request, "bayes_blr: " + str(exc), "PROVIDER_ABSTAINED")
     elif adapter in ("fixture_score", "fixture_sleep", "fixture_failure", "fixture_late_failure", "fixture_output_then_sleep"):
         result.update(status="SCORED", reason="FIXTURE_ONLY synthetic scores; not an installed predictor",
                       reason_code="NONE", forecasts=[{"candidate_id": c["id"], "score": i,
