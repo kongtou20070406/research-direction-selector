@@ -28,7 +28,8 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
-S23 reserves domain_bridge.specification/parse_final/inspect for frozen survey
+S23 ([Draft #352](https://github.com/kongtou20070406/research-direction-selector/pull/352),
+bridge source 9ed5c45) reserves domain_bridge.specification/parse_final/inspect for survey
 outputs. Required final fields are answer, top_roles, proportion_basis and
 bootstrap_ci; all extra fields stay intact. Native contract, worker/evaluator,
 data, terminal task/model and effective receipt contract identities must match.
