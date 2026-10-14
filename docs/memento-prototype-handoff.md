@@ -24,8 +24,31 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S15 | [344](https://github.com/kongtou20070406/research-direction-selector/pull/344) | cfe9e00 | Matched native preflight and untouched plant inputs |
 | S16 | [345](https://github.com/kongtou20070406/research-direction-selector/pull/345) | f9de1fb | Shared finite TSV methods and independent arithmetic |
 | S17 | [346](https://github.com/kongtou20070406/research-direction-selector/pull/346) | e0a34ea | Owned native receipt-bound study projection |
+| S18 | [347](https://github.com/kongtou20070406/research-direction-selector/pull/347) | 1bd9ae6 | Matched native driver and original paid pair |
 
 ## Accepted engineering scope
+
+S19 ([Draft #348](https://github.com/kongtou20070406/research-direction-selector/pull/348),
+reader source 0265ed3) reserves feedback_view.read_feedback(store, expected_snapshot_sha256,
+outputs): native receipt/output ownership and original byte pins, unchanged
+errors/resources/unknown charges, all artifact references, measured JSON and
+complete bounded native dialogue. Full native originals/CAS are returned
+separately; they are neither deleted nor replaced by the model projection.
+Current selection comes only from compatible recorded advice; stale selection
+stays unavailable. This interface has no dispatch, assessment write or driver
+wiring. Four focused fixtures/two subtests passed. Read-only S18 comparison
+retains both receipts/eight artifact references, unchanged errors/costs/values
+and complete CAS report. Receipt-only JSON: 8989 to 4267 bytes, 52.53% smaller;
+complete current feedback: 10197 versus original two-tool 9135 bytes. Current
+native dialogue adds diagnostics absent from historical tool feedback; this is
+not prompt replay or a demonstrated total saving. Evidence under experiment
+root: acceptance-s19-original-feedback-20261015.json. All S18 original files,
+181 runtime pins and 988 protected old files remain unchanged; no paid call or
+dispatch. Message bytes cannot establish token savings or agent efficacy.
+Next prepare receipt-bound full-answer semantic-review inputs, then an unused
+task with matched tools and independently frozen evaluator before paid work.
+Do not replay the now-used plant task or either stopped scheduler. Deadline
+remains 2026-10-15 18:02:08 Asia/Shanghai; scientific support stays UNKNOWN.
 
 S18 adds the isolated native agent driver: same finite methods and per-request
 limits, native next/advance/S12 receipts for RDS, ordinary raw tools for Bare,

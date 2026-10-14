@@ -33,6 +33,26 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S19: receipt-bound model feedback reservation
+
+Scope: prototypes/rds_agent_eval/feedback_view.py, test_feedback_view.py, this
+plan and handoff. Reuse S12 original-byte decoding and S14 current native/CAS
+view. Return compact receipt fields, all artifact references, unchanged resource
+unknowns/charges, complete errors and receipt-owned measured JSON to the model;
+keep full receipts/artifact bytes and complete CAS report separately. Preserve
+the entire bounded native dialogue, including budgets, missing/stale diagnostics
+and evidence locators; no new truncation or inferred selection. Recheck native
+view after projection. No driver wiring, dispatch, review write or paid request.
+Four focused native fixture checks and two subtests passed. Read-only S18
+projection retains two receipts/eight artifact references. Receipt JSON drops
+8989 to 4267 bytes (52.53%); complete current feedback is 10197 bytes against
+9135 original two-tool bytes because it adds current native dialogue. This is
+not historical prompt replay or total-context savings. Token savings/efficacy
+remain UNMEASURED/UNKNOWN. Evidence acceptance-s19-original-feedback-20261015.json;
+181 runtime pins, 988 old pins and all S18 outputs/ledgers unchanged. Zero new
+calls/dispatches. Next reserve receipt-bound full-answer semantic-review inputs.
+The S18 plant task is now used and excluded from future fresh studies.
+
 ### S18: isolated native agent driver
 
 Scope: prototypes/rds_agent_eval/native_driver.py, test_native_driver.py, this
