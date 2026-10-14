@@ -22,8 +22,19 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S13 | [342](https://github.com/kongtou20070406/research-direction-selector/pull/342) | 401632c | Complete terminal responses, retained old results |
 | S14 | [343](https://github.com/kongtou20070406/research-direction-selector/pull/343) | 6791645 | Original retained native Advisor view |
 | S15 | [344](https://github.com/kongtou20070406/research-direction-selector/pull/344) | cfe9e00 | Matched native preflight and untouched plant inputs |
+| S16 | [345](https://github.com/kongtou20070406/research-direction-selector/pull/345) | f9de1fb | Shared finite TSV methods and independent arithmetic |
 
 ## Accepted engineering scope
+
+S17 reserves a read-only native study bridge: effective contract identity,
+retained Advisor view, original receipt/artifact decoding, declared output
+ownership and independently checked structured counts. Failed receipts remain
+UNKNOWN without verification or rebuy; all originals remain in the returned
+observation denominator. Native view recheck guards a mixed projection. No
+dispatch, new advice or scientific-truth write. Verify real FULL synthetic
+fixtures before freezing the actual candidate recipe; no new paid study yet.
+Parent exact-head CI 38597288014 retains only the inherited QUICK failure;
+ci-38597288014-original-failed.log is preserved under the experiment root.
 
 S16 reserves two shared finite plant methods and an independent original-byte
 numeric verifier under prototypes/rds_agent_eval. Both methods use the same

@@ -33,6 +33,21 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S17: native owned-study output projection
+
+Scope: prototypes/rds_agent_eval/study_bridge.py, test_study_bridge.py, this plan
+and the handoff. Read the initialized native effective contract and match the
+preflight freeze; reuse S14 advice and S12 original receipt decoding. Bind each
+requested output to its exact frozen native manifest and original artifact
+bytes. Verify successful measured outputs with S16 arithmetic; retain failed
+receipts as UNKNOWN with every raw artifact and cost. Recheck the native view
+after projection. No initialization, advice collection, dispatch, assessment
+persistence or second ledger. Structured claims remain separate from free-text
+review and scientific support. Next verify controlled real FULL fixtures,
+then freeze a native domain recipe for an inspected new paid study.
+Parent CI 38597288014 still fails only the inherited QUICK KeyError at line 681;
+original log retained outside the repo. Baseline: cumulative obligations 44.
+
 ### S16: shared plant methods and independent arithmetic verification
 
 Scope: prototypes/rds_agent_eval/plant_methods.py, plant_verifier.py,
