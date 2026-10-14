@@ -28,7 +28,8 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
-S20 reserves review_inputs.read_answer(root, pins) for matched Bare/RDS original
+S20 ([Draft #349](https://github.com/kongtou20070406/research-direction-selector/pull/349),
+reader source fbac66c) reserves review_inputs.read_answer(root, pins) for matched Bare/RDS original
 terminal files, and prepare_review(store, expected_snapshot_sha256, outputs,
 answer_pins) for full native evidence. Pins include task/request/response/summary
 bytes, attempt index, requested/resolved model and unchanged S13 protocol.
