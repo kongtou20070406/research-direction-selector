@@ -2,7 +2,7 @@ import copy
 from pathlib import Path
 import sys
 
-import pytest
+import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from rds_offline_contract_values import digest
@@ -29,48 +29,55 @@ def assess(candidate, history, predictions=None, verdict="PASS", **kw):
                          receipt_identities=kw.get("receipts", {"run-1": "a" * 64}))
 
 
-def test_exact_replay_retains_unknown_and_detached_values():
-    candidate, history = packet()
-    original = copy.deepcopy(candidate)
-    result = assess(candidate, history)
-    assert result["status"] == "ACCEPTED"
-    assert result["scope"] == "SUPPLIED_HISTORY_ONLY"
-    assert result["selection_effect"] == "NONE" and result["evidence_status"] == "UNKNOWN"
-    assert candidate == original
+class WorldModelContractTests(unittest.TestCase):
+    def test_exact_replay_retains_unknown_and_detached_values(self):
+        candidate, history = packet()
+        original = copy.deepcopy(candidate)
+        result = assess(candidate, history)
+        self.assertEqual(result["status"], "ACCEPTED")
+        self.assertEqual(result["scope"], "SUPPLIED_HISTORY_ONLY")
+        self.assertEqual(result["selection_effect"], "NONE")
+        self.assertEqual(result["evidence_status"], "UNKNOWN")
+        self.assertEqual(candidate, original)
 
+    def test_failed_semantic_review_rejects(self):
+        candidate, history = packet()
+        self.assertEqual(assess(candidate, history, verdict="FAIL")["status"], "REJECTED")
 
-def test_semantic_gate_cannot_be_skipped(verdict):
-    candidate, history = packet()
-    assert assess(candidate, history, verdict=verdict)["status"] == "REJECTED"
+    def test_unknown_semantic_review_rejects(self):
+        candidate, history = packet()
+        self.assertEqual(assess(candidate, history, verdict="UNKNOWN")["status"], "REJECTED")
 
+    def test_original_counterexample_is_retained(self):
+        candidate, history = packet()
+        result = assess(candidate, history, [{"id": "run-1", "after": {"cost": 2}}])
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["mismatches"], ["run-1"])
 
-def test_original_counterexample_is_retained():
-    candidate, history = packet()
-    result = assess(candidate, history, [{"id": "run-1", "after": {"cost": 2}}])
-    assert result["status"] == "REJECTED" and result["mismatches"] == ["run-1"]
-
-
-def test_tamper_stale_and_incomplete_replay_fail_closed(change):
-    candidate, history = packet()
-    kw, predictions = {}, None
-    if change == "history":
+    def test_changed_history_rejects(self):
+        candidate, history = packet()
         history[0]["after"]["cost"] = 2
-    elif change == "receipt":
-        kw["receipts"] = {"run-1": "e" * 64}
-    elif change == "parent":
-        kw["parent"] = "e" * 64
-    else:
-        predictions = []
-    with pytest.raises(ValueError):
-        assess(candidate, history, predictions, **kw)
+        with self.assertRaises(ValueError):
+            assess(candidate, history)
 
+    def test_changed_original_receipt_rejects(self):
+        candidate, history = packet()
+        with self.assertRaises(ValueError):
+            assess(candidate, history, receipts={"run-1": "e" * 64})
 
-def test_boolean_revision_and_invented_authority_rejected():
-    candidate, _ = packet()
-    with pytest.raises(ValueError):
-        validate_candidate({**candidate, "revision": True})
-    with pytest.raises(ValueError):
-        validate_candidate({**candidate, "verified": True})
+    def test_stale_parent_rejects(self):
+        candidate, history = packet()
+        with self.assertRaises(ValueError):
+            assess(candidate, history, parent="e" * 64)
 
-test_semantic_gate_cannot_be_skipped = pytest.mark.parametrize("verdict", ["FAIL", "UNKNOWN"])(test_semantic_gate_cannot_be_skipped)
-test_tamper_stale_and_incomplete_replay_fail_closed = pytest.mark.parametrize("change", ["history", "receipt", "parent", "denominator"])(test_tamper_stale_and_incomplete_replay_fail_closed)
+    def test_incomplete_replay_rejects(self):
+        candidate, history = packet()
+        with self.assertRaises(ValueError):
+            assess(candidate, history, [])
+
+    def test_boolean_revision_and_invented_authority_rejected(self):
+        candidate, _ = packet()
+        with self.assertRaises(ValueError):
+            validate_candidate({**candidate, "revision": True})
+        with self.assertRaises(ValueError):
+            validate_candidate({**candidate, "verified": True})

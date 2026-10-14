@@ -50,6 +50,7 @@ LAYERS.update(
     rds_offline_contract_values="SHARED",
     rds_retrieval_contract="L3",
     rds_predictor_contract="L3",
+    rds_world_model_contract="L3",
     rds_transition_dataset_contract="L2",
     rds_predictor_worker="L1",
     rds_original_read="L1",
