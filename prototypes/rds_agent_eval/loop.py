@@ -23,6 +23,14 @@ def save(path, value):
     Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
 
 
+def commands(message):
+    actions = message.get("tool_calls", [])
+    if not 1 <= len(actions) <= 8 or len({a["id"] for a in actions}) != len(actions):
+        raise ValueError("Function batch must contain 1..8 distinct calls")
+    return [(a["id"], {**json.loads(a["function"]["arguments"]), "tool": a["function"]["name"]})
+            for a in actions]
+
+
 def bound_artifacts(job, receipt, output):
     """Read only contained files whose original receipt hashes and sizes match."""
     values = {}
@@ -107,13 +115,14 @@ def run(args):
     if not inputs:
         raise ValueError("No declared CSV inputs")
     task = (source / "task.json").read_text(encoding="utf-8")
-    if not 2 <= args.max_calls <= 40 or args.max_calls % 2:
-        raise ValueError("Matched arms require an even remaining call budget within 2..40")
+    if not 2 <= args.max_calls <= 1040 or args.max_calls % 2:
+        raise ValueError("Matched arms require an even remaining call budget within 2..1040")
     deadline = min(args.deadline or time.time() + 2700, time.time() + 2700)
     frozen = {"model": args.model, "model_weights": "UNKNOWN", "inputs": inputs,
               "task_sha256": sha(source / "task.json"), "cli_sha256": sha(cli),
               "rds_source": {str(p.relative_to(cli.parent)): sha(p) for p in cli.parent.rglob("*.py")},
               "worker_sha256": sha(Path(__file__).with_name("analysis_worker.py")),
+              "loop_sha256": sha(__file__), "response_model": args.response_model,
               "max_calls": args.max_calls, "deadline_epoch": deadline,
               "total_wall_seconds": 2700, "per_arm_calls": args.max_calls // 2,
               "arms": ["Bare", "RDS"], "tool_timeout_seconds": 30,
@@ -133,9 +142,9 @@ def run(args):
                 ("execute", "code", "Run CSV analysis Python; no imports; emit one evidence object"),
                 ("finish", "answer", "Finish with an evidence-backed answer and limitations"))]
         instruction = ("You are a data analysis research agent. Solve the given real task with measured CSV evidence. "
-            "Use exactly one of the provided function tools per turn. Do not write tool markup or JSON as text. "
+            "Use the provided function tools; multiple calls are executed serially. Do not write tool markup or JSON as text. "
             "The execute tool provides csv,json,math,statistics,read(name),emit(dict) "
-            "and ordinary numeric/list builtins. No imports. Emit exactly one evidence JSON object. "
+            "and ordinary numeric/list builtins. Only csv/json/math/statistics imports are permitted. Emit exactly one evidence JSON object. "
             f"read(name) returns UTF-8 CSV TEXT, not rows. Code has a 30s wall limit; {frozen['per_arm_calls']} model calls available. Keep failures and revise methods. "
             "Do not fabricate numerical findings. Files: " + json.dumps(inputs) + ". Task: " + task)
         if arm == "RDS":
@@ -162,46 +171,47 @@ def run(args):
                 response = json.loads(raw)
                 if "deepseek" not in response.get("model", "").lower():
                     raise ValueError("Response model identity is missing or differs from DeepSeek")
+                if frozen["response_model"] != response["model"]:
+                    raise ValueError("Frozen resolved model identity changed")
                 message = response["choices"][0]["message"]
                 messages.append(message)
-                actions = message.get("tool_calls", [])
-                if len(actions) != 1:
-                    raise ValueError("Expected exactly one structured function call")
-                action = actions[0]
-                command = {**json.loads(action["function"]["arguments"]), "tool": action["function"]["name"]}
+                batch = commands(message)
             except Exception as exc:
                 save(folder / f"failure-{turn}.json", {"type": type(exc).__name__, "error": str(exc),
                     "call": calls, "wall_seconds": time.monotonic() - began, "paid_cost": "UNKNOWN"})
                 reason = "REQUEST_OR_PARSE_FAILURE_NO_RETRY"
                 break
-            tool = command.get("tool")
-            if tool == "finish":
-                final, reason = command.get("answer"), "AGENT_FINISHED"
+            for action_id, command in batch:
+                tool = command.get("tool")
+                if tool == "finish":
+                    final, reason = command.get("answer"), "AGENT_FINISHED"
+                    break
+                try:
+                    if tool == "read":
+                        name = command["file"]
+                        if name not in inputs:
+                            raise ValueError("Undeclared input")
+                        result = (folder / name).read_text(encoding="utf-8-sig")[:12000]
+                    elif tool == "execute":
+                        if deadline - time.time() < 50:
+                            reason = "INSUFFICIENT_REMAINING_TOOL_BUDGET"
+                            break
+                        if arm == "RDS" and any(sha(cli.parent / p) != h for p, h in frozen["rds_source"].items()):
+                            raise ValueError("Frozen RDS source changed")
+                        attempts += 1
+                        result = execute(folder, arm, cli, command["code"], attempts)
+                        if result["status"] == "TIMEOUT_UNKNOWN":
+                            reason = "UNCERTAIN_TOOL_NO_RETRY"
+                            break
+                    else:
+                        raise ValueError("Unsupported tool")
+                except (ValueError, KeyError) as exc:
+                    result = {"tool_error": str(exc)}
+                feedback = {k: v for k, v in result.items() if k != "cli_stdout"} if type(result) is dict else result
+                messages.append({"role": "tool", "tool_call_id": action_id,
+                                 "content": json.dumps(feedback, ensure_ascii=False)[:16000]})
+            if reason != "CALL_CAP":
                 break
-            try:
-                if tool == "read":
-                    name = command["file"]
-                    if name not in inputs:
-                        raise ValueError("Undeclared input")
-                    result = (folder / name).read_text(encoding="utf-8-sig")[:12000]
-                elif tool == "execute":
-                    if deadline - time.time() < 50:
-                        reason = "INSUFFICIENT_REMAINING_TOOL_BUDGET"
-                        break
-                    if arm == "RDS" and any(sha(cli.parent / p) != h for p, h in frozen["rds_source"].items()):
-                        raise ValueError("Frozen RDS source changed")
-                    attempts += 1
-                    result = execute(folder, arm, cli, command["code"], attempts)
-                    if result["status"] == "TIMEOUT_UNKNOWN":
-                        reason = "UNCERTAIN_TOOL_NO_RETRY"
-                        break
-                else:
-                    raise ValueError("Unsupported tool")
-            except (ValueError, KeyError) as exc:
-                result = {"tool_error": str(exc)}
-            feedback = {k: v for k, v in result.items() if k != "cli_stdout"} if type(result) is dict else result
-            messages.append({"role": "tool", "tool_call_id": action["id"],
-                             "content": json.dumps(feedback, ensure_ascii=False)[:16000]})
         report = {"arm": arm, "stop_reason": reason, "final_answer": final, "attempts": attempts,
                   "calls": calls - arm_start_calls, "scientific_benefit": "UNKNOWN"}
         save(folder / "summary.json", report)
@@ -217,5 +227,6 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="group/deepseek-v4.1flash")
     parser.add_argument("--endpoint", default="http://127.0.0.1:3425/v1")
     parser.add_argument("--max-calls", type=int, default=40)
+    parser.add_argument("--response-model", required=True, help="Exact resolved model ID from retained provider metadata")
     parser.add_argument("--deadline", type=float, help="Original experiment epoch deadline; recovery never resets it")
-    print(json.dumps(run(parser.parse_args()), ensure_ascii=False, indent=2))
+    sys.stdout.buffer.write(json.dumps(run(parser.parse_args()), ensure_ascii=False, indent=2).encode("utf-8"))
