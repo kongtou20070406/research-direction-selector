@@ -43,9 +43,16 @@ preserve extra fields. Declare answer/top_roles/proportion_basis/bootstrap_ci
 fields and finite domain instruction; no driver wiring. Successful original
 outputs are independently checked; failed/unknown finals/receipts remain
 unassessed with original errors/costs. Recheck native view and verifier source.
-Four focused FULL fixture checks pending. Full task, prose and science UNKNOWN;
+Four focused real FULL fixture checks passed: two successful receipts separately
+verified, actual failure/unknown terminal retained, implementation/output/final
+bindings rejected when wrong, changed native view rejected. Full task, prose and science UNKNOWN;
 no new paid call, dispatch, native assessment write or S18 reinterpretation.
-Next prepare exact survey native recipe and inspected new driver freeze.
+Survey native recipe is now PREPARED_NOT_INITIALIZED at holdout-s23-native-preflight.
+Twelve assets/162 native sources pinned in holdout-s23-native-freeze.json; task/data
+only agent inputs, numeric review/rubric/protocol excluded. Prior IDs include the
+original archaeological pilot and used plant task. Existing tool7.2/campaign100/
+per-arm20/model/deadline bounds retained; no candidate ledger or paid call. Evidence
+acceptance-s23-native-bridge-20261015.json. Next domain-aware driver/freeze inspection.
 
 ### S22: explicit survey-code inventory and fractions
 
