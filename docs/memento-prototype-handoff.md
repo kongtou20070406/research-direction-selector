@@ -28,7 +28,8 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
-S21 reserves a prospective rubric freezer and checked-in full-answer criteria.
+S21 ([Draft #350](https://github.com/kongtou20070406/research-direction-selector/pull/350),
+freezer source 42d0c05) reserves a prospective rubric freezer and full-answer criteria.
 Original rubric SHA, canonical protocol SHA and task/prior binding SHA identify
 the prospective unused declared task;
 all five criteria and failed/unknown original inputs are mandatory. Reject
