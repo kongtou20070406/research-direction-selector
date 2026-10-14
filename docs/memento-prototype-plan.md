@@ -33,6 +33,24 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S21: prospective full-answer review protocol
+
+Scope: review_protocol.py, semantic_rubric.json, test_review_protocol.py under
+prototypes/rds_agent_eval, this plan and handoff. Freeze original rubric bytes
+and all five full-answer criteria: relevance, measured-number faithfulness,
+claim scope, evidence independence and uncertainty consistency. Require raw
+terminal inputs, extra fields, original measurements, negative/unknown costs
+and frozen independent verifier outputs. Refuse used tasks, missing criteria,
+inferred identity pins or execution fields. A frozen rubric is not study
+readiness or an independent reviewer; unknown implementation identities stay
+explicit. No S18 semantic scoring or native assessment write. Checks pending.
+Inspect unused requirements_engineering_for_ML_enabled_systems metadata0-q0
+at the same DiscoveryBench commit; private metadata remains outside agent
+inputs. Query-supplied proportions/CIs are givens, not independent evidence;
+bootstrap settings and domain/evaluator/native recipe require further review.
+No new paid run. Parent CI38631819237 retains only inherited QUICK KeyError;
+original failed log saved, discovery out of scope.
+
 ### S20: full-answer semantic-review inputs
 
 Scope: prototypes/rds_agent_eval/review_inputs.py, test_review_inputs.py, this

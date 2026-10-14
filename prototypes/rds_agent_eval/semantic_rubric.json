@@ -1,0 +1,46 @@
+{
+  "schema": "rds-prospective-semantic-rubric-v1",
+  "scope": "FULL_FINAL_ANSWER_AND_EXTRA_FIELDS",
+  "required_evidence": [
+    "full_final_answer_and_extra_fields",
+    "original_request_response_summary_task",
+    "original_measured_bytes_and_pins",
+    "failed_unknown_attempts_and_costs",
+    "frozen_independent_verifier_outputs"
+  ],
+  "reviewer": {"identity": "UNKNOWN", "source_sha256": null},
+  "verifier": {"identity": "UNKNOWN", "source_sha256": null},
+  "verdicts": ["PASS", "FAIL", "UNKNOWN"],
+  "criteria": {
+    "answer_relevance": {
+      "question": "Does the entire final answer address the original task?",
+      "pass_rule": "All material task parts are answered within the declared evidence scope.",
+      "fail_rule": "A material answer is contradicted or answers a different task; cite exact final text and original task pins.",
+      "unknown_rule": "Missing evidence or unresolved task ambiguity prevents a complete judgment."
+    },
+    "measurement_faithfulness": {
+      "question": "Are material numbers, rankings and uncertainty statements faithful to original measurements?",
+      "pass_rule": "Every material numeric claim matches frozen independent verification of the original measured bytes.",
+      "fail_rule": "A material claim conflicts with original independently verified measurements; bind the quote and measurement pins.",
+      "unknown_rule": "Missing verifier outputs, unknown procedures or unresolved numerical claims remain UNKNOWN."
+    },
+    "claim_scope": {
+      "question": "Do claims respect measured population, variables, temporal precision and method assumptions?",
+      "pass_rule": "All claims stay within observed quantities and explicitly declared assumptions.",
+      "fail_rule": "A material claim invents causality, precision, population generality or significance beyond the measured scope.",
+      "unknown_rule": "Ambiguous language or missing assumptions require evidence or independent adjudication."
+    },
+    "evidence_independence": {
+      "question": "Does the answer accurately describe evidence provenance and independence?",
+      "pass_rule": "Shared-source/method agreement is described as consistency; independent corroboration has separately pinned sources.",
+      "fail_rule": "A material independence or corroboration claim is contradicted by original source identities.",
+      "unknown_rule": "Source or reviewer independence that cannot be established stays UNKNOWN."
+    },
+    "uncertainty_consistency": {
+      "question": "Is uncertainty consistent across main prose and all extra fields?",
+      "pass_rule": "Main claims and extra fields consistently retain material failed, unknown or unresolved evidence.",
+      "fail_rule": "A material definite claim conflicts with an explicit unresolved limitation or suppressed negative evidence.",
+      "unknown_rule": "A wording tension without an independently justified interpretation remains UNKNOWN."
+    }
+  }
+}

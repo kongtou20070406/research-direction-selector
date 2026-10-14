@@ -28,6 +28,22 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
+S21 reserves a prospective rubric freezer and checked-in full-answer criteria.
+Original rubric SHA and canonical protocol SHA bind an unused declared task;
+all five criteria and failed/unknown original inputs are mandatory. Reject
+used tasks, absent criteria, ambiguous identity pins and dispatch fields.
+Identity pins are declarations only, not independent review or a scientific
+verdict. Reviewer/verifier remain UNKNOWN; native ProjectStore/CAS/TMS alone
+retain admission and research-truth authority. Four focused cases pending.
+Candidate: requirements_engineering_for_ML_enabled_systems metadata0-q0,
+DiscoveryBench c31fcf011e070f021a5f5b906896d0821f6880e8. Original survey data
+has 276 rows/202 columns, all row widths consistent. Metadata/questions are
+inspected separately; private hypothesis/intermediate fields must be excluded
+from agent inputs. Do not accept query-provided bootstrap CIs as measurements,
+or invent resampling settings. Domain methods/verifier/recipe remain pending;
+new paid work requires separate inspected freeze within the original deadline.
+Parent CI38631819237 failed only inherited QUICK line681; original log retained.
+
 S20 ([Draft #349](https://github.com/kongtou20070406/research-direction-selector/pull/349),
 reader source fbac66c) reserves review_inputs.read_answer(root, pins) for matched Bare/RDS original
 terminal files, and prepare_review(store, expected_snapshot_sha256, outputs,
