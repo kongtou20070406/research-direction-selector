@@ -53,7 +53,10 @@ def test_unknown_semantic_review_rejects_exact_replay():
 
 
 def test_calls_attributes_loops_nonfinite_and_huge_expressions_rejected():
-    for expr in ("__import__('os')", "state.__class__", "[x for x in state]", "1e309", "2 ** 1000"):
+    for expr in ("__import__('os')", "state.__class__", "[x for x in state]", "1e309", "2 ** 1000", "'x' * 1000000"):
         with pytest.raises((ValueError, SyntaxError)):
             predict, _ = model.compile_rulebook(rules(expr))
             predict({"remaining": 2}, {"kind": "execute", "cost": 1})
+    predict, _ = model.compile_rulebook(rules())
+    with pytest.raises(ValueError, match="numeric"):
+        predict({"remaining": "x"}, {"kind": "execute", "cost": 1000000})

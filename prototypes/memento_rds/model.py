@@ -58,6 +58,10 @@ def compile_rulebook(rulebook):
             if any(isinstance(node, ast.Constant) and type(node.value) not in (int, float, str, bool, type(None))
                    for node in nodes):
                 raise ValueError("Forbidden constant")
+            keys = {id(node.slice) for node in nodes if isinstance(node, ast.Subscript)}
+            if any(isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in keys
+                   for node in nodes):
+                raise ValueError("Strings are only field keys")
             if any(isinstance(node, ast.BinOp) and not isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod))
                    for node in nodes):
                 raise ValueError("Forbidden arithmetic")
@@ -69,6 +73,9 @@ def compile_rulebook(rulebook):
         state, action = frozen(state), frozen(action)
         if type(state) is not dict or type(action) is not dict:
             raise ValueError("State and action must be objects")
+        values = list(state.values()) + [v for k, v in action.items() if k != "kind"]
+        if any(type(v) not in (int, float, bool, type(None)) for v in values):
+            raise ValueError("Initial dialect requires scalar numeric state/action values")
         if action.get("kind") not in compiled:
             raise ValueError("UNKNOWN action dynamics")
         updates = {key: eval(code, {"__builtins__": {}}, {"state": state, "action": action})
