@@ -86,17 +86,20 @@ class ObservationTests(unittest.TestCase):
         pin = self.retain("ok")
         original = self.receipt(pin)
         path = self.store.root / original["artifacts"][0]["path"]
-        path.write_bytes(b"tampered")
+        path.write_bytes(b"tampered stdout")
         with self.assertRaises(ValueError):
             adapter.read_observations(self.store, [pin])
         path.unlink()
         with self.assertRaises(FileNotFoundError):
             adapter.read_observations(self.store, [pin])
+        path.write_bytes(b"original stdout")
         for relative in ("../outside.bin", original["artifacts"][1]["path"]):
             receipt = copy.deepcopy(original)
+            if relative == original["artifacts"][1]["path"]:
+                receipt["artifacts"][0] = copy.deepcopy(original["artifacts"][1])
             receipt["artifacts"][0]["path"] = relative
             self.write(receipt)
-            with self.subTest(relative=relative), self.assertRaises(ValueError):
+            with self.subTest(relative=relative), self.assertRaisesRegex(ValueError, "escapes root or repeats"):
                 adapter.read_observations(self.store, [{**pin, "receipt_sha256": receipt["sha256"]}])
 
     def test_missing_started_streams_and_oversized_artifact_reject(self):

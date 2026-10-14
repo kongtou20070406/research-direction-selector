@@ -102,7 +102,14 @@ resolved-path/size/SHA-256 checks bind every retained artifact. All supplied
 negative observations and unknown costs remain; missing/tampered records fail
 without repair or execution. This is SUPPLIED_PINS_ONLY, not a complete project
 history or a research-state projection. No authority moves out of the kernel.
-Focused adapter/compiler verification is pending for this cut.
+Five adapter checks plus four compiler/revision checks passed. Read-only
+acceptance verified all 401 retained RDS receipts (164 SUCCEEDED, 237 FAILED)
+and 1,102,381 artifact bytes, with no inspection errors or ledger-hash changes.
+Two original UNVERIFIED tool attempts remain separate; no receipt was invented.
+External evidence: acceptance-s12-original-observations-20261014.json. Adapter
+SHA-256 c3911cd94fc9fb546d67c835ddb9872eb36a0d8b0163a323738ae1a7d7e99e45;
+manifest and frozen-source hashes match. This is engineering byte-binding
+acceptance, not numerical/claim correctness or scientific support.
 
 Next: collect independent numerical/claim checks for the new task groups, then
 choose one concrete interface slice. Candidate work is a receipt-bound adapter

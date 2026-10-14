@@ -56,7 +56,13 @@ this plan and the handoff. Reuse caller-supplied ProjectStore._db(readonly=True)
 and _receipt; validate supplied pins and every artifact's original bytes, retain
 FAILED/unstarted receipts and unknown costs, and never write or execute. Return
 observations only: domain before/action/after remains UNKNOWN. Focused checks:
-test_observations.py and test_model.py. Verification is pending for this cut.
+test_observations.py and test_model.py passed: five adapter checks plus four
+compiler/revision checks. Read-only acceptance inspected 401 original RDS
+receipts (164 SUCCEEDED, 237 FAILED), verified 1,102,381 artifact bytes with no
+inspection failures, and confirmed unchanged ledger hashes. The frozen manifest
+and every pinned source hash still match; no new API call or execution occurred.
+Evidence: external acceptance-s12-original-observations-20261014.json, adapter
+SHA-256 c3911cd94fc9fb546d67c835ddb9872eb36a0d8b0163a323738ae1a7d7e99e45.
 
 Revised next step: define receipt-bound domain projection and semantic-review
 inputs before any model adoption. Inspect terminal-content handling and declare
