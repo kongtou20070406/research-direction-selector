@@ -33,6 +33,27 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S22: explicit survey-code inventory and fractions
+
+Scope: survey_methods.py, survey_verifier.py, test_survey_domain.py under
+prototypes/rds_agent_eval, this plan and handoff. Preserve all original rows and
+all eight role-column codes (quoted/not quoted/-77); -77 is retained without
+inventing its meaning. Fractions explicitly use quoted/(quoted+not quoted),
+not a guessed population or status filter. No bootstrap/CI computation; zero
+denominators or boundary ties abstain from top-two selection. Independent
+positional parsing and cross-product ranking import no worker helpers. Verify
+original bytes and scoped claims separately; whole bootstrap task/science
+remain UNKNOWN. Four focused cases/six subtests passed; no new paid run or wiring.
+Original metadata has an empty intermediate list and only broad workflow tags;
+query-given CIs are not verified procedure. Two original-byte offline CPU outputs
+pass independent measurement/scoped-claim checks; top code fractions 99/194 and
+95/194, each role retains 82 of code -77. These differ from query givens but do
+not establish a query/data error without the missing procedures. Evidence
+acceptance-s22-offline-survey-20261015.json; frozen-domain and pins at
+holdout-s22-offline-domain and holdout-s22-domain-freeze.json. All protected
+originals/candidate pins unchanged. Next reserve the native domain-verifier
+slot and explicit final-answer schema, then inspect new preflight/driver freeze.
+
 ### S21: prospective full-answer review protocol
 
 Scope: review_protocol.py, semantic_rubric.json, test_review_protocol.py under
