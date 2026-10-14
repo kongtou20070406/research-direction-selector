@@ -9,13 +9,7 @@ import math
 import platform
 import time
 
-from rds_project import IDENTITY, digest, load_json, number, require
-
-
-def runtime_fingerprint():
-    return digest({'system': platform.system(), 'release': platform.release(),
-                   'machine': platform.machine(), 'processor': platform.processor(),
-                   'python': platform.python_version()})
+from rds_feasibility_values import IDENTITY, _shell_argument, digest, load_json, number, require, runtime_fingerprint
 
 
 def _validate_step_order(policy, steps):
@@ -263,8 +257,8 @@ def assess(store, state, *, now=None):
                                      'create or improve an executable tool; inspect dominant cost and failure diagnostics',
                                      'preserve final verification and delivery obligations',
                                      'change the method, not just timeout, precision or name'],
-                'command': 'python -B scripts/rds_cli.py --root ' + __import__('rds_project')._shell_argument(str(store.root)) + ' project revise --proposal <proposal.json>',
-                'tool_workbench_command':'python -B scripts/rds_cli.py --root ' + __import__('rds_project')._shell_argument(str(store.root)) + ' project improve --code-path <authorized-code-path> --id <revision-id>',
+                'command': 'python -B scripts/rds_cli.py --root ' + _shell_argument(str(store.root)) + ' project revise --proposal <proposal.json>',
+                'tool_workbench_command':'python -B scripts/rds_cli.py --root ' + _shell_argument(str(store.root)) + ' project improve --code-path <authorized-code-path> --id <revision-id>',
                 'remaining_wall_seconds': unreserved, 'authorization': 'EXISTING_METHOD_EVOLUTION_ENVELOPE_ONLY'}}
 
 

@@ -106,6 +106,7 @@ def engine_id():
     here = Path(__file__).resolve().parent
     from rds_verify import verifier_id
     return digest({"cli": digest((here / "rds_cli.py").read_bytes()),
+                   "app": digest((here / "rds_app.py").read_bytes()),
                    "core": digest((here / "rds_core.py").read_bytes()),
                    "reference_values": digest((here / "rds_reference_values.py").read_bytes()),
                    "state": digest((here / "rds_state.py").read_bytes()),
@@ -114,6 +115,13 @@ def engine_id():
                    "quick_ledger": digest((here / "rds_quick_ledger.py").read_bytes()),
                    "output_values": digest((here / "rds_output_values.py").read_bytes()),
                    "result_record": digest((here / "rds_result_record.py").read_bytes()),
+                   "admission_read": digest((here / "rds_admission_read.py").read_bytes()),
+                   "feasibility_values": digest((here / "rds_feasibility_values.py").read_bytes()),
+                   "scalar_values": digest((here / "rds_scalar_values.py").read_bytes()),
+                   "plugin_registry": digest((here / "rds_plugin_registry.py").read_bytes()),
+                   "outbox": digest((here / "rds_outbox.py").read_bytes()),
+                   "project_read_services": digest((here / "rds_project_read_services.py").read_bytes()),
+                   "project_read_port": digest((here / "rds_project_read_port.py").read_bytes()),
                    "methods": digest((here / "rds_methods.py").read_bytes()),
                    "direction_search": digest((here / "rds_advisor_search.py").read_bytes()),
                    "direction_advisor": digest((here / "rds_advisor.py").read_bytes()),
@@ -998,11 +1006,11 @@ def cmd_project(args):
     if args.action == 'compose-tools':
         from rds_tool_calls import compose
         return compose(args.root, args.request)
-    from rds_project import ProjectStore
+    from rds_app import open_store
     from rds_project_lifecycle import check_root, discover, enable_advisor, initialize
     if args.action == 'discover':
         return discover(args.root)
-    store = ProjectStore(args.root)
+    store = open_store(args.root)
     if args.action == 'bind-workspace':
         from rds_campaign import bind
         return {'status': 'BOUND', 'binding': bind(store, args.workspace_root), 'execution_started': False}

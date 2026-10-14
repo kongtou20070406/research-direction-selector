@@ -364,7 +364,7 @@ class DialogueCLITests(unittest.TestCase):
         store = ProjectStore(self.root)
         before, count = self.snapshot(), self.event_count()
         ordinary = plan(store)
-        with patch('rds_owned_advisor._state', side_effect=ValueError('Owned history exceeds 128-run coverage')):
+        with patch('rds_owned_history.read_state', side_effect=ValueError('Owned history exceeds 128-run coverage')):
             displayed = plan(store, dialogue=True)
         self.assertEqual({k: v for k, v in displayed.items() if k != 'dialogue'}, ordinary)
         view = displayed['dialogue']

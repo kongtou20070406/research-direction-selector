@@ -25,10 +25,13 @@ import time
 import uuid
 
 from rds_mutation import mutation
+from rds_admission_read import StaleAdmission
 from rds_project_hooks import provider as lifecycle_provider
 import rds_project_records as receipt_records
 from rds_run_records import decode_run_row
 from rds_contract_read import effective_contract
+from rds_project_read_services import ProjectReadServices
+import rds_outbox as project_events
 
 
 TERMINAL = {"COMPLETED", "FAILED", "INTERRUPTED"}
@@ -344,7 +347,13 @@ class _WindowsPopen(subprocess.Popen):
                 raise ctypes.WinError(ctypes.get_last_error())
             initialized = True
             jobs = (wintypes.HANDLE * 1)(self._owned_job.handle)
-            streams = self._filter_handle_list([int(p2cread), int(c2pwrite), int(errwrite)])
+            streams = [int(p2cread), int(c2pwrite), int(errwrite)]
+            require(all(handle > 0 for handle in streams),
+                    "Owned Windows worker requires all standard streams")
+            try:
+                streams = self._filter_handle_list(streams)
+            except OSError as exc:
+                raise ValueError("Invalid owned Windows standard stream handles") from exc
             require(streams and -1 not in streams, "Owned Windows worker requires all standard streams")
             handles = (wintypes.HANDLE * len(streams))(*streams)
             # Only stdio is inherited. In particular, the job handle must stay
@@ -392,7 +401,17 @@ class ProjectStore:
         """Read original evidence before taking the execution write lock."""
         if "advisor_policy" not in contract:
             return None
-        return lifecycle_provider("advisor").prepare_admission(self, spec)
+        provider = lifecycle_provider("advisor")
+        token = provider.prepare_admission(self, spec)
+        # All policy and applicability work runs before the writer is acquired.
+        with self._db(True) as db:
+            db.execute("BEGIN")
+            provider.check_admission(self, db, spec, token)
+            from rds_admission_read import prepare
+            row = self._read_services(db).dependency_snapshot()
+            saved = json.loads(row['body']) if row is not None else None
+            token['_prepared_admission'] = prepare(db, self.path, spec, token['evidence_files'], saved)
+        return token
 
     def _advisor_prepare_run(self, run_id, *, allow_observation=False):
         with self._db(True) as db:
@@ -409,7 +428,8 @@ class ProjectStore:
         if "advisor_policy" not in self._contract(db):
             return
         require(token is not None, "Advisor admission is missing; collect and select the current route first")
-        lifecycle_provider("advisor").check_admission(self, db, spec, token)
+        from rds_admission_read import check_locked
+        check_locked(db, self.path, self.root, spec, token.get('_prepared_admission'))
 
     def _advisor_finished(self, contract):
         """Collection is post-commit; never mutate the owned receipt or repeat a run."""
@@ -486,18 +506,14 @@ class ProjectStore:
                     f"Insufficient {resource} budget before start")
         contract = self._contract(db)
         if 'confirmation' in contract.get('advisor_policy', {}):
-            from rds_postcommit_confirmation import check_run as check_confirmation_run
+            from rds_confirmation_read import check_run as check_confirmation_run
             check_confirmation_run(self, db, contract, run)
         if 'autonomy' in contract.get('advisor_policy', {}):
-            from rds_autonomy import check_run
+            from rds_autonomy_admission import check_run
             check_run(self, db, contract, run)
-        if contract.get('advisor_policy', {}).get('feasibility') is not None:
-            from rds_feasibility import check_start
-            check_start(self, db, run['id'])
         claims = self._output_claims(db)
         self._campaign_deadline(db, contract)
         if 'maintenance' in run['manifest']:
-            self._maintenance_review(contract, run['manifest']['maintenance'], run['manifest']['argv'])
             _, used = self._maintenance_spend(db)
             require(used <= contract['maintenance_allowance']['wall_seconds'] + 1e-9,
                     'Maintenance wall allowance exhausted before start')
@@ -566,6 +582,54 @@ class ProjectStore:
                 'dependency_map_sha256': dependency['input_sha256'], 'contribution': contribution,
                 'assurance': 'INPUT_REPORTED_GRAPH_PATH_NOT_PROOF'}
 
+    def _maintenance_prepare(self, spec, contract):
+        if 'maintenance' not in spec:
+            return None
+        from rds_maintenance_admission import freeze
+        from rds_math import objective
+        with self._db(True) as db:
+            db.execute('BEGIN')
+            if digest(self._contract(db)) != digest(contract):
+                raise StaleAdmission('Maintenance contract changed during preparation; STALE')
+            review, rejection, files = None, None, []
+            try:
+                review = self._maintenance_review(contract, spec['maintenance'], spec['argv'])
+                ref = contract['maintenance_allowance']['context']
+                files.append({'path': ref['path'], 'sha256': ref['sha256'],
+                              'size': self._path(ref['path']).stat().st_size})
+                goal = objective(self.root)
+                require(goal is not None, 'Maintenance original objective is missing')
+                asset = goal['asset']
+                path = (self.root / asset['path']).resolve()
+                files.append({'path': str(path.relative_to(self.root)),
+                              'sha256': asset['sha256'], 'size': asset['bytes']})
+            except ValueError as exc:
+                if type(exc) is not ValueError:
+                    raise
+                review, rejection, files = None, str(exc), []
+            return freeze(db, self.path, spec, contract, review, rejection, files)
+
+
+    def _maintenance_prepare_run(self, run_id, *, allow_observation=False):
+        with self._db(True) as db:
+            contract = self._contract(db)
+            if 'maintenance_allowance' not in contract:
+                return None
+            run = self._run(db, run_id)
+            if (allow_observation and ('execution_policy' in contract or 'method_evolution' in contract)
+                    and (run['status'] != 'RESERVED' or run['attempt_id'] is not None)):
+                return None
+        return self._maintenance_prepare(run['manifest'], contract)
+
+
+    def _check_prepared_start(self, db, run, maintenance_packet):
+        # Preserve the old integrity-check seam before consuming frozen policy.
+        self._check_start(db, run)
+        if 'maintenance' in run['manifest']:
+            from rds_maintenance_admission import check_review
+            check_review(self, db, self._contract(db), run['manifest'], maintenance_packet)
+
+
     @classmethod
     def _maintenance_spend(cls, db):
         prior = [json.loads(row['body']) for row in db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='MAINTENANCE_USE'")]
@@ -623,10 +687,12 @@ class ProjectStore:
             db.close()
 
     @staticmethod
+    def _read_services(db):
+        return ProjectReadServices(db)
+
+    @staticmethod
     def _contract(db):
-        # Native research records can share this database before project init.
-        require(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone(),
-                UNINITIALIZED)
+        require(ProjectStore._read_services(db).has_contract(), UNINITIALIZED)
         return effective_contract(db)
 
     def _bindings(self, contract):
@@ -1168,7 +1234,7 @@ class ProjectStore:
                    "executor_sha256": file_sha(executor), "attempt_id": None, "worker_pid": None,
                    "pid": None, "started_at": None, "finished_at": None, "observed_wall_seconds": 0.0,
                    "scheduler": None}
-            from rds_feasibility import runtime_fingerprint
+            from rds_feasibility_values import runtime_fingerprint
             run['effective_contract_sha256'] = digest(contract)
             run['runtime_fingerprint'] = runtime_fingerprint()
             require(executor_sha256 is None or run['executor_sha256'] == executor_sha256,
@@ -1177,6 +1243,11 @@ class ProjectStore:
                 run['execution_route_sha256'] = execution_route(spec['argv'], bindings, outpaths, self.root,
                     contract.get('objective_sha256'), arm=spec['arm'], executor_sha256=run['executor_sha256'])
             advisor_token = self._advisor_prepare(spec, contract)
+            from rds_autonomy_admission import prepare_binding, bind_locked
+            autonomy_binding = prepare_binding(self, contract, run)
+            from rds_postcommit_confirmation import prepare_binding as prepare_confirmation, check_binding as check_confirmation, bind_prepared
+            confirmation_binding = prepare_confirmation(self, contract, run)
+            maintenance_packet = self._maintenance_prepare(spec, contract)
             db.execute("BEGIN IMMEDIATE")
             from rds_method_revision import pending_revision
             require(pending_revision(db) is None, 'Resume prepared method revision before registering')
@@ -1185,9 +1256,9 @@ class ProjectStore:
             from rds_steering import check_dispatch
             check_dispatch(db, run_id)
             self._advisor_check(db, spec, advisor_token)
+            check_confirmation(self, db, contract, run, confirmation_binding)
             if 'autonomy' in contract.get('advisor_policy', {}):
-                from rds_autonomy import bind_run
-                bind_run(self, db, contract, run)
+                bind_locked(self, db, contract, run, autonomy_binding)
             require(db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone() is None, "Run ID already exists")
             retained = self._runs(db)
             if 'execution_policy' in contract:
@@ -1199,7 +1270,8 @@ class ProjectStore:
             if spec.get("control_id"):
                 require(db.execute("SELECT 1 FROM runs WHERE id=?", (spec["control_id"],)).fetchone() is not None, "Unknown control ID")
             if "maintenance" in spec:
-                run['maintenance_review'] = self._maintenance_review(contract, spec['maintenance'], spec['argv'])
+                from rds_maintenance_admission import check_review
+                run['maintenance_review'] = check_review(self, db, contract, spec, maintenance_packet)
                 uses, used = self._maintenance_spend(db)
                 require(uses < contract['maintenance_allowance']['max_uses'], 'Maintenance allowance is exhausted')
                 cap = contract['maintenance_allowance']['wall_seconds']
@@ -1219,8 +1291,7 @@ class ProjectStore:
                 db.execute("INSERT INTO output_claims VALUES (?,?)", (key, run_id))
             self._campaign_deadline(db, contract, admit=True)
             if 'confirmation' in contract.get('advisor_policy', {}):
-                from rds_postcommit_confirmation import bind_run as bind_confirmation_run
-                bind_confirmation_run(self, db, contract, run)
+                bind_prepared(self, db, contract, run, confirmation_binding)
             for resource, amount in estimates.items():
                 db.execute("UPDATE budget SET reserved=reserved+? WHERE resource=?", (amount, resource))
             if advisor_token is not None:
@@ -1239,7 +1310,7 @@ class ProjectStore:
 
     @classmethod
     def _runs(cls, db):
-        return [cls._run_row(row) for row in db.execute("SELECT id,status,body FROM runs ORDER BY id")]
+        return [cls._run_row(row) for row in cls._read_services(db).runs()]
 
     @staticmethod
     def _run_row(row):
@@ -1267,11 +1338,14 @@ class ProjectStore:
         require(isinstance(background, bool), "background must be Boolean")
         if background and os.name != "nt":
             raise NotImplementedError("Background execution requires Windows Task Scheduler")
+        # The caller context may already acquire parent write locks. Prepare
+        # before entering it; the original locked checks reject stale data.
+        advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
+        maintenance_packet = self._maintenance_prepare_run(run_id, allow_observation=True)
         # Parents must be acquired before this child write transaction. Exit
         # order commits the attempt before releasing the admission context.
         with ExitStack() as context:
             context.enter_context(admission_context() if admission_context is not None else nullcontext())
-            advisor_token = self._advisor_prepare_run(run_id, allow_observation=True)
             db = context.enter_context(self._db())
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, run_id)
@@ -1282,7 +1356,7 @@ class ProjectStore:
                 return self._observe(db, run)
             require(run["status"] == "RESERVED" and run["attempt_id"] is None, "Run already dispatched or started; recover never reruns it")
             self._advisor_check(db, run["manifest"], advisor_token)
-            self._check_start(db, run)
+            self._check_prepared_start(db, run, maintenance_packet)
             if admission_guard is not None:
                 require(admission_guard(db, run) is None, "Admission guard must allow or raise")
             run["attempt_id"] = uuid.uuid4().hex
@@ -1358,7 +1432,7 @@ class ProjectStore:
         try:
             return self._execute_admitted(run_id, attempt_id)
         except ValueError as exc:
-            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)):
+            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError, StaleAdmission)):
                 raise
             from rds_campaign import binding
             bound = binding(self.root)
@@ -1373,23 +1447,54 @@ class ProjectStore:
             return self._finish(run_id, attempt_id, 'FAILED', None, None, None,
                                 ['Campaign changed before launch: ' + str(exc)], only_unstarted=True)
 
+    @contextmanager
+    def _prepared_launch(self, run_id, attempt_id, status):
+        """Yield one writer after unlocked preparation and a current native fence.
+
+        Only the Advisor fence can be refreshed, once. Exceptions after yielding,
+        including maintenance STALE or a launch failure, are never retried.
+        """
+        require(status in ('RESERVED', 'RUNNING'), 'Invalid launch admission phase')
+        with self._db(True) as db:
+            db.execute('BEGIN')
+            initial = self._run(db, run_id)
+            identity = (digest(initial), digest(self._contract(db)))
+        for validation in range(2):
+            advisor_token = self._advisor_prepare_run(run_id)
+            maintenance_packet = self._maintenance_prepare_run(run_id)
+            with self._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                run = self._run(db, run_id)
+                require(run['status'] == status and run['attempt_id'] == attempt_id
+                        and run['pid'] is None, 'Run cannot be started twice')
+                if (digest(run), digest(self._contract(db))) != identity:
+                    raise StaleAdmission('Claim or contract changed; STALE; recover original attempt')
+                if status == 'RESERVED':
+                    self._runs(db)
+                else:
+                    # User stops retain their original refusal/settlement path.
+                    from rds_steering import check_dispatch
+                    check_dispatch(db, run_id)
+                try:
+                    self._advisor_check(db, run['manifest'], advisor_token)
+                except StaleAdmission:
+                    if validation:
+                        raise
+                    continue
+                yield db, run, maintenance_packet
+                return
+
     def _execute_admitted(self, run_id, attempt_id):
         from rds_campaign import enforce
         enforce(self.root)
         attempt_start = time.monotonic()
         admission_error = None
-        advisor_token = self._advisor_prepare_run(run_id)
-        with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
-            run = self._run(db, run_id)
-            require(run["status"] == "RESERVED" and run["attempt_id"] == attempt_id, "Run cannot be started twice")
-            self._runs(db)
-            self._advisor_check(db, run["manifest"], advisor_token)
+        with self._prepared_launch(run_id, attempt_id, "RESERVED") as (db, run, maintenance_packet):
             try:
-                self._check_start(db, run)
+                self._check_prepared_start(db, run, maintenance_packet)
             except ValueError as exc:
                 # A damaged prior receipt leaves this run RESERVED and unsettled, recoverable once restored.
-                if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)) or (
+                if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError, StaleAdmission)) or (
                         'stop_policy' not in self._contract(db) and 'maintenance' not in run['manifest']):
                     raise
                 admission_error = str(exc)
@@ -1398,6 +1503,7 @@ class ProjectStore:
                 if run["scheduler"]:
                     run["scheduler"]["status"] = "RUNNING"
                 self._save(db, run)
+                project_events.publish_started(self, db, run)
             contract = self._contract(db)
         if admission_error is not None:
             return self._finish(run_id, attempt_id, 'FAILED', None, time.monotonic() - attempt_start,
@@ -1443,14 +1549,8 @@ class ProjectStore:
                 # keeps execution behind PID persistence and original deadlines.
                 flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | 0x4 if os.name == "nt" else 0
                 argv = [run["executor"], *run["manifest"]["argv"][1:]]
-                advisor_token = self._advisor_prepare_run(run_id)
-                with self._db() as db:
-                    db.execute("BEGIN IMMEDIATE")
-                    current = self._run(db, run_id)
-                    require(current["status"] == "RUNNING" and current["attempt_id"] == attempt_id
-                            and current["pid"] is None, "Run cannot be started twice")
-                    self._advisor_check(db, current["manifest"], advisor_token)
-                    self._check_start(db, current)
+                with self._prepared_launch(run_id, attempt_id, "RUNNING") as (db, current, maintenance_packet):
+                    self._check_prepared_start(db, current, maintenance_packet)
                     deadline = self._campaign_deadline(db, contract)
                     if deadline is not None:
                         policy_deadline = time.monotonic() + max(0.0, deadline - time.time())
@@ -1542,7 +1642,7 @@ class ProjectStore:
                 elif process.poll() is None:
                     process.kill()
                 exit_code = process.wait()
-            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError)):
+            if isinstance(exc, (ReceiptIntegrityError, RunIntegrityError, StaleAdmission)):
                 # Retain the attempt and unknown costs. Recovery can reconcile it
                 # after the damaged history is restored; this is no FAILED receipt.
                 raise
@@ -1646,6 +1746,7 @@ class ProjectStore:
                 self._save(db, current)
                 db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, receipt["sha256"], canonical(receipt)))
                 db.execute("INSERT INTO events(body) VALUES (?)", (canonical({"kind": "ATTEMPT_FINISHED", "run_id": run_id, "sha256": receipt["sha256"]}),))
+                project_events.publish_finished(self, db, current, receipt)
             if self._run(db, run_id).get('owned_history_recorded') is True:
                 from rds_owned_history import capture_completion
                 capture_completion(self, db, self._run(db, run_id), receipt)
@@ -1662,7 +1763,8 @@ class ProjectStore:
             receipt = self._receipt(old) if old else None
         if receipt is not None:
             self._advisor_finished(contract)
-            lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
+            from rds_quick_ledger import _recover_prospective
+            _recover_prospective(self, contract, receipt)
             return receipt
         if run["attempt_id"] is None:
             return {**run, "recovery": "Unstarted reservation; no process to restart"}
@@ -1672,7 +1774,8 @@ class ProjectStore:
             return {**run, "recovery": "Process may still be active; no rerun or termination"}
         receipt = self._finish(run_id, run["attempt_id"], "INTERRUPTED", None, None, None,
                               ["Worker and process unavailable; final costs and exit status unknown; no automatic rerun"], recovering=True)
-        lifecycle_provider("quick")._recover_prospective(self, contract, receipt)
+        from rds_quick_ledger import _recover_prospective
+        _recover_prospective(self, contract, receipt)
         return receipt
 
     def snapshot(self, check_bindings=False, *, _dialogue=False):
@@ -1681,22 +1784,23 @@ class ProjectStore:
         with self._db(True) as db:
             db.execute("BEGIN")
             contract = self._contract(db)
+            reads = self._read_services(db)
             budget = {}
-            for row in db.execute("SELECT * FROM budget ORDER BY resource"):
+            for row in reads.budget(integrity_error=ReceiptIntegrityError, digest=digest):
                 budget[row["resource"]] = {"cap": row["cap"], "spent_measured": row["spent"],
                                            "charged_estimate": row["charged"], "reserved": row["reserved"],
                                            "remaining": row["cap"] - row["spent"] - row["charged"] - row["reserved"],
                                            "unit": "seconds" if row["resource"].endswith("_seconds") else row["resource"]}
             snapshot = {"schema": 1, "contract": contract, "contract_sha256": digest(contract), "budget": budget,
                     "runs": self._runs(db),
-                    "exposures": [json.loads(r["body"]) for r in db.execute("SELECT body FROM exposures ORDER BY id")],
-                    "receipts": [self._receipt(r) for r in db.execute("SELECT run_id,sha256,body FROM receipts ORDER BY run_id")]}
+                    "exposures": [json.loads(body) for body in reads.exposure_bodies()],
+                    "receipts": [self._receipt(r) for r in reads.receipts()]}
             from rds_steering import current, view
             steering = current(db)
             if steering is not None:
                 snapshot['steering'] = view(steering)
-            from rds_method_revision import contract_history, pending_revision
-            history = contract_history(db)
+            from rds_contract_read import pending_revision
+            history = reads.history()
             if 'method_evolution' in contract or len(history) > 1:
                 snapshot['contract_history'] = history
                 pending = pending_revision(db)
@@ -1705,11 +1809,11 @@ class ProjectStore:
             if _dialogue:
                 # Optional view inputs share this original read; ordinary
                 # snapshots do not collect owned history or report context.
-                row = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')='OWNED_ADVISOR_REVIEW' "
-                                 "ORDER BY id DESC LIMIT 1").fetchone()
+                row = reads.latest_event_record('OWNED_ADVISOR_REVIEW')
                 context = {'instruction': steering, 'report_event': dict(row) if row else None}
                 try:
-                    context['state'] = lifecycle_provider("advisor")._state(self, db)
+                    from rds_owned_history import read_state
+                    context['state'] = read_state(self, db)
                 except (ValueError, KeyError, TypeError, OSError, UnicodeError, sqlite3.Error) as exc:
                     # Optional display cannot impose owned-history bounds on
                     # the ordinary plan. Preserve this read's original facts.

@@ -17,6 +17,7 @@ import uuid
 
 from rds_project import ProjectStore, canonical, digest, execution_route, file_sha, number, require
 from rds_mutation import mutation
+from rds_advisor_choice import _discarded_choice_hint, choice
 from rds_output_values import _brief_move, serialize_brief, compact_brief_planning
 from rds_result_record import brief
 from rds_quick_ledger import (
@@ -53,105 +54,49 @@ def latest_decision(root, checkpoint_id=None):
     return decision, restored
 
 
-def _discarded_choice_hint(records):
-    def bounded(value, limit):
-        value = value if isinstance(value, str) else 'UNKNOWN'
-        escaped = json.dumps(value[:limit], ensure_ascii=True)[1:-1]
-        return escaped[:limit] + ('...' if len(value) > limit or len(escaped) > limit else '')
-
-    hints = ['"' + bounded(c.get('id', c.get('rule_id')), 96) + '": ' + bounded(c.get('reason'), 200)
-             for c in records[:3]]
-    if len(records) > 3:
-        hints.append(str(len(records) - 3) + ' more discarded actions')
-    return '; '.join(hints) + '. Repair the configured action; inspect full advice for original reasons'
 
 
-def choice(advice, context, candidate_id=None):
-    from rds_advisor import _scope, _text, _loop_route
-    decision = context.get('decision', {})
-    require(isinstance(decision, dict) and _text(decision.get('id')) and _text(decision.get('goal_revision')),
-            'Recording a choice needs decision.id and goal_revision in the context')
-    _scope(decision.get('scope'))
-    searches = [r['search'] for r in advice.get('recommendations', []) if r.get('type') == 'EXECUTABLE_DIRECTION_SEARCH']
-    available = [c for search in searches for c in search['candidates']]
-    discarded = [c for search in searches for c in search.get('discarded_candidates', [])]
-    matches = ([c for c in available if c.get('status') == 'READY'] if candidate_id is None else
-               [c for c in available if c.get('id') == candidate_id or c.get('action', {}).get('id') == candidate_id])
-    discarded_matches = ([] if candidate_id is None else
-                         [c for c in discarded if c.get('id') == candidate_id or c.get('action_id') == candidate_id])
-    if not matches and candidate_id is None:
-        unresolved = [c for c in available if c.get('method_review', {}).get('status') == 'UNKNOWN']
-        require(not unresolved, 'Method scope is unresolved; inspect method_review questions and clarify only the affected work')
-        if not available and discarded and not any(search.get('blocked_candidates') for search in searches):
-            raise ValueError('No READY candidate; configured actions were discarded: ' + _discarded_choice_hint(discarded))
-    if not matches and len(discarded_matches) == 1:
-        raise ValueError('Selected candidate was discarded: ' + _discarded_choice_hint(discarded_matches))
-    from rds_advisor_coverage import require_complete
-    require_complete(searches)
-    require(all(search.get('context_sha256') == digest(context) for search in searches),
-            'Advisor context changed after complete graph analysis; review the current graph and facts again')
-    require(len(matches) == 1, 'Choose one returned candidate ID; missing, pruned or ambiguous candidate')
-    candidate = deepcopy(matches[0])
-    from rds_methods import review_candidate
-    method_review = review_candidate(context, candidate)
-    require(method_review is None or method_review['status'] in {'COMPATIBLE', 'UNCONSTRAINED'},
-            'Method scope is unresolved or conflicting; describe missing steps or ask the user to clarify the affected restriction')
-    require(candidate.get('status') == 'READY', 'Candidate still needs evidence; inspect its pending prerequisites')
-    require(type(context.get('require_goal_link', False)) is bool, 'require_goal_link must be boolean')
-    goal_guard = None
-    if context.get('require_goal_link'):
-        from rds_advisor_search import _dependency_review, _goal_contribution
-        guarded_context = deepcopy(context)
-        if advice.get('objective_binding') is not None:
-            require(guarded_context.get('objective_binding') == advice['objective_binding'],
-                    'Goal-link guard: advice objective binding differs from the current checked context')
-        dependency = _dependency_review(guarded_context, audit_receipts=True, audit_files=True)
-        contribution = _goal_contribution(candidate.get('action', {}), guarded_context, dependency)
-        mapped = (contribution or {}).get('graph_path', {})
-        if mapped.get('status') != 'DECLARED_CONNECTED_PATH' and mapped.get('blocked_bindings'):
-            binding = mapped['blocked_bindings'][0]
-            require(False, 'Goal-link guard: this route relies on a binding whose checked evidence is not grounded; '
-                           'repair ' + binding['token'] + ' (' + binding['reason'] + ') before dispatch')
-        require(dependency is not None and mapped.get('status') == 'DECLARED_CONNECTED_PATH'
-                and mapped.get('goal_review', {}).get('blocker_sets_complete') is True,
-                'Goal-link guard needs a complete actual dependency map and a connected original-goal path')
-        require(mapped['goal_review']['status'] != 'DECLARED_SUPPORTED',
-                'Goal-link guard: the declared goal is already closed; inspect retained evidence before another job')
-        require(not set(contribution['path'][1:-1]).intersection(dependency['declared_supported_closure']),
-                'Goal-link guard: the path crosses an already closed intermediate obligation; inspect retained evidence')
-        token = mapped['start_token']
-        require(token in {row['token'] for row in dependency['ready_obligations']},
-                'Goal-link guard: this target is not a current ready obligation; inspect existing evidence or earlier premises')
-        goal_guard = {'dependency_map': deepcopy(guarded_context['dependency_map']),
-                      'input_sha256': dependency['input_sha256'], 'ready_obligation': token,
-                      'contribution': deepcopy(contribution)}
-    history_errors = [str(f.get('reason', '')) for r in advice.get('recommendations', [])
-                      for f in r.get('review', {}).get('flags', []) if f.get('kind') == 'LOOP_HISTORY_REVIEW_ERROR']
-    require(not history_errors, 'Repair checkpoint integrity before executing a candidate'
-            + (': ' + history_errors[0] if history_errors and history_errors[0] else ''))
-    require(_loop_route(candidate) is not None, 'Candidate has no structured route identity')
-    record = {'question_id': decision['id'], 'goal_revision': decision['goal_revision'],
-              'scope': deepcopy(decision['scope']), 'candidate': deepcopy(candidate),
-              'outcome': 'plan_locked', 'evidence': deepcopy(context.get('facts', {})),
-              'scientific_support': 'UNKNOWN'}
-    if goal_guard is not None:
-        record['goal_guard'] = goal_guard
-    for recommendation in advice.get('recommendations', []):
-        search = recommendation.get('search', {})
-        if any(c.get('id') == candidate['id'] for c in search.get('candidates', [])) and 'selection_review' in search:
-            record['selection_review'] = deepcopy(search['selection_review'])
-            break
-    if 'goal_conditions' in decision:
-        record['goal_conditions'] = deepcopy(decision['goal_conditions'])
-    if 'method_constraints' in context:
-        record['method_constraints'] = deepcopy(context['method_constraints'])
-    if 'require_goal_link' in context:
-        record['require_goal_link'] = context['require_goal_link']
-    return record
+
+
+def _prepare_choice(root, advice, context, candidate_id, request):
+    from rds_admission_read import StaleAdmission, prepare
+    from rds_advisor_coverage import project_context
+    from rds_quick_admission import PreparedQuickChoice, evidence_fence
+    store = ProjectStore(root)
+    with store._db(True) as db:
+        db.execute('BEGIN')
+        context = project_context(root, context)
+        files, receipts, source_bytes = (), (), 0
+        if context.get('require_goal_link'):
+            from rds_hypergraph_input import prepare_input
+            spec, _ = prepare_input(context['dependency_map'])
+            records = spec['nodes'] + spec['hyperedges']
+            files = tuple(str(Path(row['source']['file']).absolute()) for row in records
+                          if isinstance(row['source'], dict) and 'file' in row['source'])
+            receipts = tuple(sorted({(row['evidence']['receipt']['project_root'],
+                                     row['evidence']['receipt']['sha256'])
+                                    for row in records if row.get('evidence') is not None}))
+            source_bytes = spec.get('limits', {}).get('max_source_bytes', 8 * 1024 * 1024)
+        before = evidence_fence(db, root, files, receipts, source_bytes)
+        record = choice(advice, context, candidate_id)
+        if evidence_fence(db, root, files, receipts, source_bytes) != before:
+            raise StaleAdmission('QUICK evidence changed during selection; STALE')
+        row = (db.execute('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+               if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone()
+               else None)
+        require((row['sha256'] if row else None) == context.get('dependency_snapshot_sha256'),
+                'Dependency snapshot changed during QUICK preparation')
+        record['advice'] = cas_json(root, advice)
+        ref = record['advice']
+        originals = [{'path': Path(ref['path']).relative_to(store.root).as_posix(),
+                      'sha256': ref['sha256'], 'size': ref['bytes']}]
+        admission = prepare(db, store.path, request, originals, json.loads(row['body']) if row else None)
+    return PreparedQuickChoice(admission, canonical(record), digest(context), record['candidate']['id'],
+                               context.get('dependency_snapshot_sha256'), files, receipts, source_bytes, before)
 
 
 def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
-                  _expected_contract_sha256=None, _parent_db=None):
+                  _expected_contract_sha256=None, _parent_db=None, _prepared_choice=None):
     from rds_checkpoints import save_checkpoint, append_checkpoint
     from rds_advisor_coverage import project_context
     # QUICK contracts remain frozen; native activation changes ownership.
@@ -173,8 +118,17 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
             'Expected choice contract differs from the current QUICK contract; inspect the original decision')
     expected_contract = (snapshot['contract_sha256'] if _expected_contract_sha256 is None
                          else _expected_contract_sha256)
-    context = project_context(root, context)
-    record = choice(advice, context, candidate_id)
+    if _parent_db is None:
+        context = project_context(root, context)
+        record = choice(advice, context, candidate_id)
+    else:
+        from rds_quick_admission import PreparedQuickChoice
+        require(type(_prepared_choice) is PreparedQuickChoice
+                and _prepared_choice.admission.ledger_path == str(store.path.resolve())
+                and _prepared_choice.context_sha256 == digest(context)
+                and _prepared_choice.candidate_id == candidate_id,
+                'Locked choice publication needs its original native preparation')
+        record = json.loads(_prepared_choice.decision_json)
     if _parent_db is not None:
         head = None
         if _parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
@@ -184,7 +138,8 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
     # Analysis stays outside the gate; its original snapshot guards are checked
     # again while publishing the CAS and checkpoint as one bounded operation.
     with mutation():
-        record['advice'] = cas_json(root, advice)
+        if _parent_db is None:
+            record['advice'] = cas_json(root, advice)
         if _parent_db is None:
             saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
                                     _expected_contract_sha256=expected_contract,
@@ -544,9 +499,13 @@ def execute(args, review=None, *, _native_preparation_root=None):
             args.name = prior['name']
         resume_materialization = True
     locked_parents = {}
+    prepared_choice = None
 
     @contextmanager
     def admission_context():
+        nonlocal prepared_choice
+        prepared_choice = (_prepare_choice(args.ledger, review[0], review[1], args.choose, request)
+                           if review is not None and not resume_materialization else None)
         # The original allowance path acquires parent before child. Keep that
         # order during preparation and through the child's attempt commit.
         with mutation(), ExitStack() as locks:
@@ -590,8 +549,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 require(steering is None,
                         'Human steering changed before quick admission; use project create/execute')
         if review is not None and validate_choice:
-            from rds_advisor_coverage import project_context
-            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+            from rds_quick_admission import check_choice
+            check_choice(locked_parents[owner], owner, request, prepared_choice)
     def admit_quick(_db, _run):
         check_quick_parents(validate_choice=not resume_materialization)
 
@@ -666,7 +625,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                                               parent_contracts[owner])
                 else:
                     record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
-                                  _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner])
+                                  _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner],
+                                  _prepared_choice=prepared_choice)
     if goal_raw is not None:
         bind_objective(root, goal_raw)
     with admission_context():
@@ -777,9 +737,6 @@ def execute(args, review=None, *, _native_preparation_root=None):
                                 'request_sha256': digest(request), 'materialization_state': 'MATERIALIZED'}),))
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
-    if review is not None and not resume_materialization:
-        from rds_advisor_coverage import project_context
-        choice(review[0], project_context(args.ledger, review[1]), args.choose)
     receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,
                             admission_context=admission_context)
     regression = None

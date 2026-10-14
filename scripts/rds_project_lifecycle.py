@@ -188,28 +188,28 @@ def initialize(store, contract, *, mode=None, supersedes=None, separate_reason=N
 
 
 def _state(store, db):
+    if getattr(db, 'in_transaction', True) is False:
+        db.execute('BEGIN')
     contract = store._contract(db)
+    reads = store._read_services(db)
     runs = store._runs(db)
-    receipts = [store._receipt(r) for r in db.execute('SELECT run_id,sha256,body FROM receipts ORDER BY run_id')]
-    from rds_owned_advisor import MAX_RUNS
+    receipts = [store._receipt(r) for r in reads.receipts()]
+    from rds_owned_history import MAX_RUNS
     require(len(runs) <= MAX_RUNS and len(receipts) <= MAX_RUNS, 'Existing work exceeds owned evidence coverage bounds')
     from rds_owned_history import history_cut
     history_cut(store, db)
-    budget = [dict(r) for r in db.execute('SELECT * FROM budget ORDER BY resource')]
-    last = db.execute('SELECT id,body FROM events ORDER BY id DESC LIMIT 1').fetchone()
-    checkpoints = []
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
-        checkpoints = [dict(r) for r in db.execute('SELECT * FROM checkpoints ORDER BY id')]
+    budget = [dict(row) for row in reads.budget(integrity_error=ValueError, digest=digest)]
+    last = reads.latest_event_record()
+    checkpoints = [dict(row) for row in reads.checkpoints()]
     state = {'contract_sha256': digest(contract), 'runs': runs, 'receipts': receipts, 'budget': budget,
              'last_event': dict(last) if last else None, 'checkpoints': checkpoints}
     dependency = None
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
-        row = db.execute('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
-        if row is not None:
-            from rds_math import MAX_BYTES
-            require(len(row['body'].encode('utf-8')) <= MAX_BYTES
-                    and digest(json.loads(row['body'])) == row['sha256'], 'Activation dependency snapshot integrity failure')
-            dependency = row['sha256']
+    row = reads.dependency_snapshot()
+    if row is not None:
+        from rds_math import MAX_BYTES
+        require(len(row['body'].encode('utf-8')) <= MAX_BYTES
+                and digest(json.loads(row['body'])) == row['sha256'], 'Activation dependency snapshot integrity failure')
+        dependency = row['sha256']
     state['dependency_snapshot_sha256'] = dependency
     return contract, state, digest(state)
 

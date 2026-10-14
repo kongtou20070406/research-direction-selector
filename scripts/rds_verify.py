@@ -6,7 +6,6 @@ arbitrary dependent types. Search and certificate checking have separate APIs.
 """
 from copy import deepcopy
 from dataclasses import dataclass
-import importlib
 from pathlib import Path
 import re
 import sys
@@ -14,7 +13,7 @@ import sys
 from rds_verify_types import MAX_CERTIFICATE_BYTES, SEMANTICS, bounded_json, canonical, digest, rational, require
 from rds_verify_registry import (get_verifier, registered_verifiers, registry_id,
                                  _install_builtin_verifiers, is_builtin, extension_assurance_allowed)
-from rds_builtin_verifiers import BuiltinVerifier, ConjunctionVerifier
+from rds_builtin_verifiers import BuiltinVerifier, ConjunctionVerifier, builtin_module
 from rds_affine_toolchain import ASSURANCE as AFFINE_CHAIN_ASSURANCE
 from rds_affine_toolchain import COMPOSITION_KIND as AFFINE_COMPOSITION_KIND
 from rds_affine_toolchain import COMPOSITION_RULE as AFFINE_COMPOSITION_RULE
@@ -39,17 +38,17 @@ class ProofRule:
     support_files: tuple = ()
 
     def generate(self, statement, *, max_work_units=None):
-        module = importlib.import_module(self.module)
+        module = builtin_module(self.module)
         if max_work_units is None:
             return module.verify(statement)
         return module.verify(statement, max_work_units=max_work_units)
 
     def check(self, statement, certificate):
-        return importlib.import_module(self.module).check_certificate(statement, certificate)
+        return builtin_module(self.module).check_certificate(statement, certificate)
 
     def canonical_statement(self, statement):
         """Return a registered rule's semantics-preserving normal form, if available."""
-        module = importlib.import_module(self.module)
+        module = builtin_module(self.module)
         normalize = getattr(module, "canonical_statement", None)
         return normalize(statement) if callable(normalize) else statement
 
@@ -88,7 +87,8 @@ class RuleRegistry:
 
 
 REGISTRY = RuleRegistry((
-    ProofRule("scalar.threshold_separation", ("scalar_threshold",), "rds_scalar_verify"),
+    ProofRule("scalar.threshold_separation", ("scalar_threshold",), "rds_scalar_verify",
+              support_files=("rds_scalar_values.py",)),
     ProofRule("lean.rational_relation", ("lean_obligation", "lean_vector_obligation"), "rds_lean_verify"),
     ProofRule("lean.statistical_obligation", ("statistical_obligation",), "rds_statistical_verify"),
     ProofRule(AFFINE_CHAIN_RULE, (AFFINE_CHAIN_KIND,), "rds_affine_toolchain",
@@ -188,16 +188,27 @@ def verifier_id():
     names = {rule.module + ".py" for rule in REGISTRY.by_name.values()}
     names.update(name for rule in REGISTRY.by_name.values() for name in rule.support_files)
     names.update({"rds_verify.py", "rds_verify_registry.py", "rds_builtin_verifiers.py", "rds_verify_types.py",
+                  "rds_plugin_registry.py",
                   "rds_formal_kernel.py", "rds_probe.py", "rds_core.py"})
+    if (here / "rds_scalar_values.py").exists():
+        names.add("rds_scalar_values.py")
     registered_sources = {}
     implementations = []
     for verifier in registered_verifiers():
-        module = sys.modules[type(verifier).__module__]
-        registered_sources[verifier.name] = digest(Path(module.__file__).read_bytes())
+        module = sys.modules.get(type(verifier).__module__)
+        mod_file = getattr(module, "__file__", None)
+        if mod_file and Path(mod_file).exists():
+            registered_sources[verifier.name] = digest(Path(mod_file).read_bytes())
+        support = tuple(getattr(verifier, "support_files", ()) or ())
+        for s_file in support:
+            if (here / s_file).exists():
+                names.add(s_file)
         if is_builtin(verifier):
             names.add(verifier.module + ".py")
             names.update(verifier.support_files)
             implementations.append((verifier.name, verifier.module, verifier.support_files))
+        elif support:
+            implementations.append((verifier.name, type(verifier).__module__, support))
     return digest({"sources": {name: digest((here / name).read_bytes()) for name in sorted(names)},
                    "registry": registry_id(), "registered_sources": registered_sources,
                    "implementations": implementations,
@@ -321,7 +332,7 @@ def _resolve_plan_value(value, artifacts):
 def _step_cost(step):
     """Ask the registered adapter for cost features, with a generic size fallback."""
     statement = step["statement"]
-    module = importlib.import_module(step["rule"].module)
+    module = builtin_module(step["rule"].module)
     estimator = getattr(module, "estimate_cost", None)
     if callable(estimator):
         estimate = estimator(statement)
@@ -642,7 +653,7 @@ def plan(spec, *, max_work_units=None):
     """Inspect a trusted adapter plan; READY is not a proof or certificate."""
     try:
         rule = _affine_plan_rule(spec, max_work_units)
-        proof_plan = importlib.import_module(rule.module).build_proof_plan(spec)
+        proof_plan = builtin_module(rule.module).build_proof_plan(spec)
         result = optimize_proof_plan(proof_plan, max_work_units=max_work_units)
         return dict(result, assurance="NONE", backend="rds_declarative", spec_sha256=digest(spec))
     except (ValueError, TypeError, KeyError, AttributeError, ImportError, OSError,
@@ -788,7 +799,10 @@ def checked_result(spec, certificate):
                   [item["certificate"] for item in proof["theorems"].values() if "certificate" in item])
         native = bool(leaves) and all(leaf.get("assurance") == "LEAN_KERNEL_CHECKED" for leaf in leaves)
         atomic = outcomes is None
-        result = {"status": verdict, "assurance": "LEAN_KERNEL_CHECKED" if native else "CERTIFICATE_CHECKED",
+        assurance = ("LEAN_KERNEL_CHECKED" if native else
+                     _dispatch_rule(spec, proof.get("rule")).checked_assurance(proof["certificate"])
+                     if atomic else "CERTIFICATE_CHECKED")
+        result = {"status": verdict, "assurance": assurance,
                   "backend": leaves[0].get("backend", "rds_declarative") if atomic else "rds_declarative",
                   "semantics": SEMANTICS, "spec_sha256": certificate["spec_sha256"],
                   "verifier_sha256": certificate["verifier_sha256"], "certificate": certificate}
@@ -904,7 +918,7 @@ class LeanFormalEngine:
                 if applies and method not in tried:
                     if explicit_rational:
                         rule = _dispatch_rule(spec)
-                        adapter = importlib.import_module(rule.module)
+                        adapter = builtin_module(rule.module)
                         answer = (adapter.verify_rational(spec) if tactic == "rational" else
                                   adapter.verify(spec, allow_fallback=False))
                         if answer["status"] == "PASS":

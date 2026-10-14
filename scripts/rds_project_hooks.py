@@ -1,8 +1,5 @@
 """Optional project lifecycle providers, loaded only when their hooks are needed."""
 
-from importlib import import_module
-
-
 _providers = {}
 _modules = {"advisor": "rds_owned_advisor", "quick": "rds_quick_ledger"}
 
@@ -17,5 +14,8 @@ def provider(name):
     if name not in _modules:
         raise ValueError(f"Unknown project hook provider: {name}")
     if name not in _providers:
-        import_module(_modules[name])
+        if name == "advisor":
+            import rds_owned_advisor  # noqa: F401
+        elif name == "quick":
+            import rds_quick_ledger  # noqa: F401
     return _providers[name]

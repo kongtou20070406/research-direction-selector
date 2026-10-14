@@ -14,7 +14,7 @@ import stat
 import tempfile
 import uuid
 
-from rds_project import canonical, digest, require
+from rds_project_values import canonical, digest, require
 from rds_source_documents import strict_json
 from rds_bounded_io import read_regular_bytes
 
@@ -118,7 +118,7 @@ def _open_database(project, *, write=False):
 
 
 def _lineage(db):
-    from rds_method_revision import contract_history
+    from rds_contract_read import contract_history
     try:
         return contract_history(db)
     except sqlite3.Error as exc:
@@ -452,7 +452,7 @@ def _native_tails_quiescent(root, db, contract, runs, receipts):
     store = ProjectStore(root)
     policy = contract.get('advisor_policy', {})
     if policy.get('autonomy'):
-        from rds_autonomy import records, REQUESTED, PROCESSED
+        from rds_autonomy_read import records, REQUESTED, PROCESSED
         events = records(store, db, contract)
         require({event['run_id'] for event in events if event['kind'] == REQUESTED}
                 == {event['run_id'] for event in events if event['kind'] == PROCESSED},

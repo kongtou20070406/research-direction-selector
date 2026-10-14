@@ -227,7 +227,7 @@ only the detail needed for the current decision.
 | Audit evidence | `artifacts import --manifest <manifest.json>` | [Agent entry](docs/agent-entry.md) |
 | Show/open hypergraph or explain a node | `python -B "<skill_dir>/scripts/rds_hypergraph_view.py" --root <user-project> --output <html>`; `--export-agent-input` and `--readable-json <file>` for agent explanations | [Display procedure](references/skill-routes/display.md) |
 | Explore a blocked problem model | `structure request --limit 3`, `structure propose --proposal <reply.json>`, `structure drive --steps 1` | [Structure procedure](references/skill-routes/structure.md) |
-| Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md) |
+| Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md); missing native tools: [Lean setup](references/skill-routes/lean-setup.md) |
 | Reuse/register local tool | `rsi extract --source <file> --entry <function> --name <id>`; `rsi validate --name <id> --cases <cases.json>`; `rsi register --name <id>` | [Native research](docs/native-research.md) |
 | Read repeated JSON/metric/failure results | Extract a selected `scripts/rds_result_tools.py` function, qualify exact inputs and use the original owned result consumer | [Finite result tools](docs/result-tools.md) |
 | Wrap frozen job | `exec --name <id> --timeout 30 -- <command...>` | [Command wrapper](docs/agent-entry.md#wrap-a-command) |

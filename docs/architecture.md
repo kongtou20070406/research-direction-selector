@@ -43,6 +43,88 @@ not certified absent. B1 mechanical extraction is implemented; complete central
 policy/execution decoupling is **not** claimed. The next cut needs a lock-external
 decision packet and lock-internal stale/binding checks before execution rewiring.
 
+## B2: production readonly selectors
+
+Checkpoint save and retained-row reads validate recorded decisions through
+`rds_checkpoint_decision` (L1), not through Advisor. The kernel owns the existing
+bounded route normalization, structural checks and rejected-domain CAS witness
+checks. Advisor re-exports the old callable names for compatibility and uses
+the same validation during history review. A recorded choice is still input,
+not scientific verification or execution permission. No checkpoint schema,
+writer admission, ledger or accounting semantics change.
+
+This removes the direct `rds_checkpoints -> rds_advisor` dependency, not all
+upper-layer callbacks. QUICK choice/lifecycle preparation and the guard's
+bounded theory execution still need their separate admission/composition cuts.
+
+The checkpoint validator obtains bounded numeric/domain predicates from
+`rds_guard_values` (SHARED), rather than importing the mixed `rds_guard`
+execution module. Rejected-domain CAS checks therefore do not cold-load
+ProjectStore or Advisor. `rds_guard` re-exports the same predicates and byte
+limit; numeric formats, domain refusal rules and evidence checks are unchanged.
+Guard execution and its upper-layer theory callback remain separate work.
+
+Selected-route validation lives in `rds_advisor_choice` (L3). QUICK keeps
+`choice` as a compatible re-export; owned Advisor and history preparation
+consume the decision service directly. This removes their imports of the
+QUICK entrypoint. The internal `prepare_decision` function belongs to owned
+Advisor; the history writer no longer imports route-selection policy. QUICK
+admission prepares each choice before opening parent writers. The kernel
+rechecks the original ledger, request and CAS plus file/receipt identities;
+stale preparation is refused before allowance or dispatch. Recovery uses the
+retained choice. The Store admission callback and lifecycle/composition
+boundaries remain to be removed.
+
+Guard reads route identities from the checkpoint kernel and owns the shared
+bounded theory worker. Advisor retains its worker export for compatibility;
+Guard no longer imports Advisor. Worker deadlines, process cleanup, raw output
+retention and the distinction between execution and scientific support remain
+unchanged.
+
+Workspace admission now opens its committed identity/progress reads through
+`rds_sqlite.readonly_connection` rather than `ProjectStore._db`. Ancestor
+discovery and paid QUICK scope checks use the same connection boundary; effective
+child contracts and owner revision history retain the existing verified readers.
+The platform helper uses `mode=ro`, `query_only` and the original timeout, closes
+on failure, and does not select WAL, migrate, or change the writer connection.
+Pending writer events must not hide a rolled-back committed ledger.
+
+The legacy admission API still returns a `ProjectStore`, and CAS still invokes
+both campaign and workspace guards. This is a read-path extraction, not complete
+Store removal, lock-free publication, or a finished bus. Binding, mutation locks,
+pointer anchoring, original event names and cumulative accounting are unchanged.
+
+Campaign marker admission also uses leaf JSON/value helpers and the verified
+`rds_contract_read` lineage reader directly. Its unbound and bound read paths do
+not import Store, method-revision writers, Advisor, QUICK or CLI. This does not
+remove Campaign's writer-side Store/revision dependencies: binding and recovery
+retain their original implementations. Damaged genesis and missing identity
+events still refuse admission without repairing or rewriting the ledger.
+
+`rds_project_read_services` (L1) borrows the original connection and selects
+contract, state, checkpoint-history and controller records without opening a
+second database or committing. Store run/status reads, owned Advisor state,
+owned-history coverage, activation state, steering and controller event reads
+use it. Store retains the original contract/run/receipt decoder entry points;
+checkpoint, lineage, controller and completion validators are still enforced.
+
+The existing `ProjectReadPort` now participates in real budget reads. These
+compatibility reads compute scalar-size caps inside the caller's snapshot so
+old contracts with more than 64 resource dimensions remain readable. Explicit
+new bounded queries still use the port's caller-selected fixed limits. This
+cut does not impose a new global legacy body limit or create another ledger.
+
+Original completion events, exposures, cumulative spent/charged/reserved values,
+method lineage and marked before/after checkpoints remain part of the same
+state. The new service never repairs retained records or evaluates Advisor
+policy. Lower-to-upper admission callbacks remain for the B3 cut.
+
+The five metrics remain **29 upward pairs / largest SCC 48 / 48 mutual pairs /
+8 unresolved dynamic sites / 0 unclassified edges**. Seven new downward/leaf
+pairs adopt the read boundary; no upward pair is added or removed. No business
+schema, events, migrations or budget resets are introduced. CLI engine identity
+includes both read-service sources so changed code cannot reuse old identity.
+
 ## B1a: reference state no longer lives in the CLI
 
 `rds_state` (L1) owns the existing `RDSState` implementation; its SQLite schema,
@@ -285,9 +367,9 @@ are not claims that the corresponding paths executed in a live experiment.
 | BuiltinVerifier -> injected ProofRule methods | [method delegation](../scripts/rds_builtin_verifiers.py#L38), [dynamic load](../scripts/rds_verify.py#L42), [installation](../scripts/rds_verify.py#L115); finite declarations are candidate edges, not a runtime registry census |
 | Generated tool driver -> supplied source | [driver template](../scripts/rds_tool_application.py#L27), [exec](../scripts/rds_tool_application.py#L51); supplied source and its imports are outside this graph |
 
-The read-port class exists, but this snapshot has no production import or
-construction of `ProjectReadPort` under `scripts/`. Its test construction
-does not establish main-flow adoption. Store uses the receipt codec directly.
+B2 adopts `ProjectReadPort` through `ProjectReadServices.budget` in Store and
+owned Advisor reads. Store and Advisor retain their original full receipt/run
+validators; a raw genesis or run projection is not substituted for them.
 
 ## Unresolved dynamic sites
 
@@ -372,3 +454,107 @@ are recorded separately and never converted into import edges.
   dependency direction. Zero discovered edges would not prove zero callbacks.
 - B0 removes **zero** runtime edges. The table is the baseline for subsequent
   read-side/admission/composition changes, not evidence those changes landed.
+
+## Production attempt notifications
+
+`ProjectStore` now emits existing v1 outbox envelopes in the same database
+transaction as the attempt transition or receipt settlement. `JOB_STARTED`
+means the attempt entered RUNNING, not that child launch succeeded. Completion
+emits `RESULT_READY`, `JOB_FAILED`, or an observed `RESOURCE_LIMIT`, bound to the
+original receipt digest. Exit zero with missing outputs remains failure; result
+availability never promotes scientific support. An event-write failure rolls
+back that transaction. Recovery reuses existing receipts without a second event
+or settlement. Read-only inspection does not create outbox tables or backfill
+old receipts. Legacy non-UUID attempt identities settle unchanged, without a
+v1 notification; their notification coverage is incomplete. This is a downward
+L1 project-to-outbox dependency, not completion of the remaining Advisor/hook
+cycle cuts or a guarantee of host-visible exactly-once notification.
+
+### Owned state reads without decision callbacks
+
+`rds_owned_history.read_state` reads the coherent contract, runs, receipts,
+budget, completion events, verified checkpoint history, steering, controller
+history and confirmation challenges from the caller's original snapshot.
+`rds_owned_advisor._state` remains a compatibility wrapper; the Store's optional
+dialogue snapshot calls the native reader directly, not the Advisor provider.
+Ordinary snapshots and dialogue failure fallback retain their previous shape.
+
+`rds_autonomy_read` owns the existing bounded event/CAS/run/receipt checks.
+The controller re-exports its old reader names; Campaign and owned state use
+the native reader rather than importing the controller. The 128-run coverage
+limit is shared through the pure admission values module, so loading Advisor
+does not load the Store-backed history service. No new schema, event,
+permission, budget, execution path or migration is introduced.
+
+This removes a read-only provider callback, not the remaining policy validation
+and post-completion callbacks. QUICK admission and recovery still retain their
+existing boundaries. The module labels are unchanged; only the new native
+autonomy reader is classified L1.
+
+### Native receipt recovery
+
+`ProjectStore.recover` calls the existing `rds_quick_ledger` recovery service
+directly for retained receipts and interrupted attempts, not the optional QUICK
+provider registry. Its frozen request, CAS, guard-report and checkpoint checks
+are unchanged. Repeated recovery retains the same receipt and charged budget;
+the old QUICK helper and provider exports remain available for compatibility.
+This replaces two callback sites with an explicit L1 dependency. It does not
+remove the existing Store/QUICK-ledger cycle or the Advisor completion callback,
+and does not complete composition-root takeover.
+
+### Execute preparation before parent locks
+
+`ProjectStore.execute` prepares Advisor and maintenance decisions before entering
+the caller's admission context, which may acquire parent write transactions.
+Parent-before-child lock ordering and locked contract, budget, CAS and native
+STALE checks remain unchanged. Preparation failure does not enter that context;
+a later context refusal or stale state does not launch or settle the reserved
+run. This moves preparation calls, not module dependencies. QUICK's own
+choice/checkpoint callbacks and composition-root takeover still need separation.
+
+### Frozen maintenance admission
+
+Registration, dispatch, queued start and final prelaunch prepare the original
+maintenance graph/goal review outside database write transactions. The native
+`rds_maintenance_admission` consumes a frozen review or refusal, checks the
+original contract, ledger fingerprint and bound evidence files, and preserves
+the existing budget checks and policy-refusal settlement boundary. STALE keeps
+the original attempt and reservation for recovery, not a fabricated failure
+receipt or automatic relaunch. The old two-argument integrity-check seam remains.
+
+The version-1 JSON Schema describes an audit representation only; there is no
+JSON loader, new execution authority, database migration or new event type.
+The Store still initiates unlocked preparation through its compatibility
+methods. Moving this assembly to the composition root is separate work; this
+slice does not claim to eliminate the Store-to-decision import edge.
+
+### Frozen autonomy registration and native launch checks
+
+Registration reads the original autonomy history on a query-only snapshot,
+before taking the writer. `rds_autonomy_admission` carries its existing request
+reference in a frozen native value, then checks the original contract, run,
+manifest, ledger fingerprint, CAS and worker identity under the caller's lock.
+An intervening ledger change is STALE; it does not create a replacement attempt
+or reset the original charge. Launch still checks the frozen worker and provider.
+The kernel no longer imports the autonomy controller to bind or check a run.
+The old controller entrypoints remain thin downward compatibility wrappers.
+
+The v1 JSON Schema is audit-only, not a loader or execution permission. There
+is no database migration or new event. Other lifecycle/QUICK callbacks and the
+composition-root transition remain unfinished; this is one admission boundary,
+not a complete bus or a claim of autonomous research effectiveness.
+
+### Bounded revalidation of an already claimed attempt
+
+At queued start and final prelaunch, Store freezes the original run and contract
+identity. If a competing review invalidates the native Advisor ledger fence,
+it releases the writer and prepares again, at most once. Both checks still
+cover the entire ledger and bound CAS; changed run/contract identities and a
+second STALE are rejected. Budget and maintenance checks remain mandatory.
+No attempt is replaced, no reservation is reset, and no launched process or
+settlement is retried. Maintenance STALE and exceptions after admission are not
+retry candidates. An explicit pause or withdrawal at final prelaunch follows
+the original failed-without-launch receipt and recovery path.
+
+This is a launch liveness correction, not relaxed admission or composition-root
+completion. It changes no schema, event, import dependency pair or legacy data.

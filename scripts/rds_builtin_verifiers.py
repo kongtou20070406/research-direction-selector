@@ -3,6 +3,49 @@ from rds_verify_registry import VerifierSpec
 from rds_verify_types import SEMANTICS, require
 
 
+def _load_builtin_module(name):
+    """Load only source-owned adapters, lazily, using explicit Python imports.
+
+    This allowlist is code, not configuration. Domain methods and their optional
+    backend/fallback policies remain owned by the original adapter.
+    """
+    if name == "rds_scalar_verify":
+        import rds_scalar_verify as adapter
+    elif name == "rds_lean_verify":
+        import rds_lean_verify as adapter
+    elif name == "rds_statistical_verify":
+        import rds_statistical_verify as adapter
+    elif name == "rds_affine_toolchain":
+        import rds_affine_toolchain as adapter
+    elif name == "rds_dynamics_verify":
+        import rds_dynamics_verify as adapter
+    elif name == "rds_matrix_verify":
+        import rds_matrix_verify as adapter
+    elif name == "rds_scale_verify":
+        import rds_scale_verify as adapter
+    elif name == "rds_nn_verify":
+        import rds_nn_verify as adapter
+    elif name == "rds_tensor_verify":
+        import rds_tensor_verify as adapter
+    elif name == "rds_disk_cover_verify":
+        import rds_disk_cover_verify as adapter
+    elif name == "rds_rational_voronoi_verify":
+        import rds_rational_voronoi_verify as adapter
+    elif name == "rds_theory_progression":
+        import rds_theory_progression as adapter
+    else:
+        raise ValueError("Unavailable builtin verifier implementation: " + str(name))
+    return adapter
+
+
+def builtin_module(name):
+    try:
+        return _load_builtin_module(name)
+    except ImportError as exc:
+        raise ValueError("Unavailable builtin verifier implementation: " + str(name) +
+                         "; " + str(exc)) from exc
+
+
 class BuiltinVerifier(VerifierSpec):
     """Preserve a trusted ProofRule's domain APIs and source dependencies."""
 

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rds-autonomy-binding-v1",
+  "title": "Prepared original autonomy request binding (audit only)",
+  "$comment": "No JSON loader or permission grant. Kernel accepts native frozen values only; the existing ledger fence, CAS, command and budget checks still apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "contract_sha256", "request_json", "fence"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 80},
+    "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "request_json": {"type": ["string", "null"]},
+    "fence": {"$ref": "rds-admission-read.schema.json"}
+  }
+}

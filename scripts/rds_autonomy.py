@@ -14,12 +14,12 @@ import time
 import uuid
 
 from rds_artifacts import strict_json
+from rds_project_read_services import ProjectReadServices
+from rds_autonomy_read import REQUESTED, PROCESSED, MAX_BYTES, _hash_event, _events, records
+import rds_autonomy_admission as autonomy_admission
 from rds_project import canonical, digest, file_sha, number, require, _alive
 
 PREFIX = 'autonomy.'
-REQUESTED = 'AUTONOMY_MODEL_REQUESTED'
-PROCESSED = 'AUTONOMY_MODEL_PROCESSED'
-MAX_BYTES = 2 * 1024 * 1024
 EXCERPT_BYTES = 4096
 EXCERPT_TOTAL = 64 * 1024
 
@@ -39,8 +39,7 @@ def _processed_once(db, body):
     return body['outcome']
 
 
-def _hash_event(body):
-    return digest({k: v for k, v in body.items() if k != 'sha256'})
+
 
 
 def _append(db, body):
@@ -50,13 +49,7 @@ def _append(db, body):
     return body
 
 
-def _events(db, kinds):
-    rows = db.execute('SELECT body FROM events WHERE json_extract(body,\'$.kind\') IN (' +
-                      ','.join('?' for _ in kinds) + ') ORDER BY id', tuple(kinds)).fetchall()
-    require(len(rows) <= 256, 'Autonomy event bound exceeded')
-    result = [strict_json(r['body']) for r in rows]
-    require(all(e.get('sha256') == _hash_event(e) for e in result), 'Autonomy event integrity failure')
-    return result
+
 
 
 def validate_policy(store, contract, policy):
@@ -129,45 +122,7 @@ def validate_policy(store, contract, policy):
     return value
 
 
-def records(store, db, contract):
-    """Coherent immutable event inputs for ordinary Advisor fingerprints."""
-    config = contract.get('advisor_policy', {}).get('autonomy')
-    if config is None:
-        return []
-    declared = {s['run_id']: s for s in config['repair_slots']}
-    result, seen, processed = [], set(), set()
-    from rds_math import blob
-    for event in _events(db, (REQUESTED, PROCESSED)):
-        rid = event.get('run_id')
-        require(rid in declared, 'Autonomy event names an undeclared repair route')
-        if event['kind'] == REQUESTED:
-            require(rid not in seen, 'Duplicate model request')
-            seen.add(rid)
-            raw = blob(store.root, event['request'])
-            require(len(raw) <= MAX_BYTES, 'Model request exceeds bound')
-            request = strict_json(raw.decode('utf-8'))
-            require(request['run_id'] == rid and request['parent_sha256'] == event['parent_sha256'] and
-                    request['provider'] == config['provider'] and request['response_path'] == declared[rid]['response_path'],
-                    'Model request differs from frozen provider/parent/route')
-        else:
-            require(rid in seen and rid not in processed, 'Duplicate or orphan processed model result')
-            processed.add(rid)
-            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
-            require(row is not None and store._receipt(row)['sha256'] == event['receipt_sha256'],
-                    'Processed model result has no original receipt')
-            if event['outcome'] == 'ADOPTED':
-                adopted = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='METHOD_REVISION_ADOPTED' "
-                                     "AND json_extract(body,'$.id')=?", (event['revision_id'],)).fetchone()
-                require(adopted is not None, 'Model adoption has no revision event')
-        result.append(event)
-    for run in store._runs(db):
-        if run['id'] in declared:
-            request = next((e['request'] for e in result if e['kind'] == REQUESTED and e['run_id'] == run['id']), None)
-            require(request is not None and run.get('autonomy_request') == request, 'Repair run lacks its request binding')
-            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
-            if row:
-                require(store._receipt(row).get('autonomy_request') == request, 'Repair receipt request binding differs')
-    return result
+
 
 
 def collect(store, state, nodes, files):
@@ -191,33 +146,15 @@ def collect(store, state, nodes, files):
 
 
 def bind_run(store, db, contract, run):
-    config = contract.get('advisor_policy', {}).get('autonomy')
-    if config:
-        require(len(store._runs(db)) < config['max_steps'], 'AUTONOMY_TOTAL_STEP_LIMIT')
-    if config and run['id'] in {s['run_id'] for s in config['repair_slots']}:
-        _check_worker_adapter(store, contract, run['id'])
-        event = next((e for e in records(store, db, contract) if e['kind'] == REQUESTED and e['run_id'] == run['id']), None)
-        require(event is not None and event['parent_sha256'] == run['effective_contract_sha256'], 'Repair request parent is stale')
-        run['autonomy_request'] = deepcopy(event['request'])
+    return autonomy_admission.bind_run(store, db, contract, run, hash_file=file_sha)
 
 
 def _check_worker_adapter(store, contract, rid):
-    slot = next(s for s in contract['advisor_policy']['autonomy']['repair_slots'] if s['run_id'] == rid)
-    path = store._path(slot['worker_path'])
-    bound = next(b for b in contract['bindings'] if store._path(b['path']) == path)
-    require(file_sha(path) == bound['sha256'] == file_sha(Path(__file__).with_name('rds_autonomy_worker.py')),
-            'Unsupported adapter for a new model attempt; retain and inspect original settled evidence')
+    return autonomy_admission._check_worker_adapter(store, contract, rid, hash_file=file_sha)
 
 
 def check_run(store, db, contract, run):
-    if 'autonomy_request' in run:
-        _check_worker_adapter(store, contract, run['id'])
-        from rds_math import blob
-        request = strict_json(blob(store.root, run['autonomy_request']).decode('utf-8'))
-        require(request['run_id'] == run['id'] and request['parent_sha256'] == run['effective_contract_sha256'],
-                'Repair request identity changed before launch')
-        require(file_sha(request['provider']['argv'][0]) == request['provider']['executable_sha256'],
-                'Model provider executable changed before launch')
+    return autonomy_admission.check_run(store, db, contract, run, hash_file=file_sha)
 
 
 def _continuous_holdout(contract):

@@ -12,6 +12,7 @@ import sys
 import threading
 
 import rds_campaign as campaign
+from rds_admission_read import StaleAdmission
 from rds_owned_advisor import review
 from rds_project import ProjectStore, digest, require
 from rds_source_documents import strict_json
@@ -84,6 +85,20 @@ class Broker:
         return value
 
     def call(self, name, arguments):
+        if name != 'rds_execute_selected':
+            return self._call_once(name, arguments)
+        run_id, sha = identity(arguments)
+        frozen = {'expected_run_id': run_id, 'expected_manifest_sha256': sha}
+        # One concurrent review can invalidate the native read fence. Retry the
+        # same identity once, through all checks; never retry other refusals.
+        for attempt in range(2):
+            try:
+                return self._call_once(name, frozen)
+            except StaleAdmission:
+                if attempt:
+                    raise
+
+    def _call_once(self, name, arguments):
         require(name in NAMES, 'Unknown broker tool')
         if name in NAMES[:2]:
             require(isinstance(arguments, dict) and not arguments, 'This tool takes no arguments')

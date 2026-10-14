@@ -6,14 +6,55 @@ writers use the caller's ledger transaction and grant no execution authority.
 from copy import deepcopy
 import json
 import sqlite3
+from rds_source_documents import strict_json
 
 from rds_checkpoints import MAX_BYTES, _checkpoint_record, append_checkpoint, read_checkpoint
 from rds_method_revision import contract_history
 from rds_project import TERMINAL, ProjectStore, canonical, digest, execution_route, file_sha, require
+from rds_admission_values import MAX_RUNS
 
 MAX_CHECKPOINTS = 512
-MAX_RUNS = 128
 COMPLETION_HEADROOM = 128 * 1024
+
+
+def read_state(store, db):
+    """Bounded, coherent read, shared by analysis and the write-lock recheck."""
+    if getattr(db, 'in_transaction', True) is False:
+        db.execute('BEGIN')
+    contract = store._contract(db)
+    reads = store._read_services(db)
+    reads.owned_coverage(MAX_RUNS)
+    runs = store._runs(db)
+    receipts = [store._receipt(row) for row in reads.receipts()]
+    budget = [dict(row) for row in reads.budget(integrity_error=ValueError, digest=digest)]
+    completed = []
+    for receipt in receipts:
+        require(reads.has_completion(receipt['run_id'], receipt['sha256']),
+                'Owned receipt has no matching completion event')
+        completed.append(receipt['sha256'])
+    campaign = reads.campaign_body()
+    history = reads.history()
+    try:
+        verified_history = history_cut(store, db)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        raise ValueError('Repair checkpoint integrity before executing a candidate: ' + str(exc)) from exc
+    state = {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
+            'budget': budget, 'completion_events': completed,
+            'history_cut': verified_history,
+            'contract_history': history,
+            'exposures': [strict_json(body) for body in reads.exposure_bodies()],
+            'campaign_started': strict_json(campaign) if campaign else None}
+    from rds_steering import current, view
+    steering = current(db)
+    if steering is not None:
+        state['steering'] = view(steering)
+    if 'autonomy' in contract.get('advisor_policy', {}):
+        from rds_autonomy_read import records
+        state['autonomy_records'] = records(store, db, contract)
+    from rds_confirmation_read import enabled, records as confirmation_records
+    if enabled(contract):
+        state['confirmation_challenges'] = confirmation_records(store, db, contract)
+    return state
 
 
 def method_identity(store, contract, manifest, *, _executor_sha256=None):
@@ -49,22 +90,21 @@ def bind_graph(store, contract, graph, *, _executor_hashes=None):
 def history_cut(store, db, *, pending_choice=None, pending_completion=None):
     """Verified local decision-history identities; snapshots cannot invent ancestors."""
     marked = [run for run in store._runs(db) if run.get('owned_history_recorded') is True]
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+    ids = store._read_services(db).checkpoint_ids(maximum=MAX_CHECKPOINTS)
+    if ids is None:
         require(not any(run['id'] != pending_choice for run in marked),
                 'Owned history is missing a committed decision checkpoint')
         return []
-    require(db.execute('SELECT count(*) FROM checkpoints').fetchone()[0] <= MAX_CHECKPOINTS,
-            'Owned decision history exceeds its bounded coverage')
-    lineage = {h['sha256']: h['contract'] for h in contract_history(db)}
+    lineage = {h['sha256']: h['contract'] for h in store._read_services(db).history()}
     cut, records = [], {}
-    for row in db.execute('SELECT id FROM checkpoints ORDER BY rowid').fetchall():
-        retained = read_checkpoint(db, row[0], root=store.root)
+    for ident in ids:
+        retained = read_checkpoint(db, ident, root=store.root)
         record = retained['record']
         require(record['kind'] == 'project' and record['contract_sha256'] in lineage
                 and record['snapshot']['contract'] == lineage[record['contract_sha256']],
                 'Checkpoint contract mismatch: Owned history checkpoint contract is outside verified lineage')
-        cut.append({'id': row[0], 'sha256': retained['sha256']})
-        records[row[0]] = record
+        cut.append({'id': ident, 'sha256': retained['sha256']})
+        records[ident] = record
     for run in marked:
         stages = [('before', pending_choice)]
         if run['status'] in TERMINAL:
@@ -80,7 +120,7 @@ def history_cut(store, db, *, pending_choice=None, pending_completion=None):
                     and identity.get('run_id') == run['id'],
                     'Owned history checkpoint differs from its marked run')
             if stage == 'after':
-                receipt_row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
+                receipt_row = store._read_services(db).receipt_row(run['id'])
                 require(receipt_row is not None, 'Owned history completion has no retained receipt')
                 receipt = store._receipt(receipt_row)
                 require(record['decision'].get('previous_checkpoint') == checkpoint_id('before', run)
@@ -91,22 +131,6 @@ def history_cut(store, db, *, pending_choice=None, pending_completion=None):
     return cut
 
 
-def prepare_decision(store, report, contract):
-    """Retain the actual selected candidate and its decision-time evidence."""
-    from rds_quick import choice
-    manifest = report.get('selected_manifest')
-    require(report.get('status') == 'REVIEWED' and isinstance(manifest, dict),
-            'Owned history needs a reviewed selected manifest')
-    route = next((r for r in contract['advisor_policy']['routes'] if r['manifest'] == manifest), None)
-    require(route is not None, 'Owned history manifest is not an authorized policy route')
-    record = choice(report['advice'], report['context'], route['candidate'])
-    identity = method_identity(store, contract, manifest)
-    require(record['candidate']['action'].get('owned_execution_identity') == identity,
-            'Owned history candidate lacks its program-derived method identity')
-    record['owned_history'] = {'run_id': manifest['id'], 'manifest_sha256': digest(manifest),
-                             'effective_contract_sha256': digest(contract), 'method_sha256': identity,
-                             'dependency_snapshot_sha256': report.get('snapshot_sha256')}
-    return record
 
 
 def checkpoint_id(stage, run):

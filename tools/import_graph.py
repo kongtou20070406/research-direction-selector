@@ -9,10 +9,10 @@ import sys
 
 # Responsibility labels describe the current mixed modules, not compliance.
 GROUPS = {
-    "L0": "bounded_io mutation",
-    "L1": "project project_hooks campaign workspace costs checkpoints math method_revision state cas quick_ledger result_record "
-          "project_read_port contract_read artifacts owned_history source_documents probe "
-          "tool_applicability project_lifecycle "
+    "L0": "bounded_io mutation sqlite",
+    "L1": "project project_hooks campaign workspace costs checkpoints checkpoint_decision math method_revision state cas quick_ledger quick_admission result_record "
+          "project_read_port project_read_services admission_read maintenance_admission contract_read artifacts owned_history source_documents probe "
+          "outbox tool_applicability project_lifecycle "
           "steering tools tool_compare tool_workbench tool_application tool_calls owned_tools "
           "tms_store proof_cache rsi_confirmation postcommit_confirmation blind_runner "
           "verify verify_registry builtin_verifiers formal_kernel lean_verify scalar_verify "
@@ -21,19 +21,43 @@ GROUPS = {
           "continuous_confirmation polynomial_confirmation domain_confirmation advancement guard",
     "L2": "hypergraph hypergraph_blockers hypergraph_input bus_adapter accelerator trajectory "
           "context_compact compress dynamics_probe discrimination",
-    "L3": "advisor advisor_coverage advisor_search advisor_workset owned_advisor autonomy "
+    "L3": "advisor advisor_choice advisor_coverage advisor_search advisor_workset owned_advisor autonomy "
           "continuation experiments feasibility frontier frontier_proposals global_planning graph_ranker "
           "jump jump_search math_router meta methods operators resources result_tools rsi "
           "adversary search_allocation search_neighborhood structure theory_tools",
-    "L4": "cli quick project_worker autonomy_worker project_assembly hypergraph_archive "
+    "L4": "app cli quick project_worker autonomy_worker project_assembly hypergraph_archive hypergraph_render "
           "broker_hook host_broker host_hook conversation_hook dashboard dialogue "
           "hypergraph_readable hypergraph_view obelisk session capabilities model_export "
           "outputs research_note usage wheel",
-    "SHARED": "core project_values reference_values output_values admission_values project_records run_records verify_types "
-              "unit_disk_voronoi_core",
+    "SHARED": "core guard_values project_values reference_values output_values admission_values feasibility_values scalar_values project_records run_records verify_types "
+              "plugin_registry unit_disk_voronoi_core",
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}
 LAYERS.update(build_plugins="L4", update_lean_toolchain="L4")
+LAYERS.update(
+    rds_autonomy_read="L1",
+    rds_autonomy_admission="L1",
+    rds_lean_catalog="L1",
+    rds_lean_obligation="SHARED",
+    rds_lean_feedback="SHARED",
+    rds_lean_research="L4",
+    rds_research_import="L1",
+    rds_decision_packet="L2",
+    rds_packet_graph="L2",
+    rds_research_advisor="L3",
+    rds_transition="L2",
+    rds_research_policy="L3",
+    rds_offline_contract_values="SHARED",
+    rds_retrieval_contract="L3",
+    rds_predictor_contract="L3",
+    rds_transition_dataset_contract="L2",
+    rds_predictor_worker="L1",
+    rds_original_read="L1",
+    rds_confirmation_read="L1",
+    rds_cas_read="L1",
+    rds_code_diff="SHARED",
+    rds_cpu_jepa="SHARED",
+)
 LOADERS = {"importlib.import_module", "__import__", "builtins.__import__", "runpy.run_module"}
 OPAQUE_LOADERS = {"importlib.util.spec_from_file_location", "importlib.util.module_from_spec",
                   "importlib.machinery.SourceFileLoader", "runpy.run_path"}

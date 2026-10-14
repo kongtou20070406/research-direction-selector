@@ -21,7 +21,7 @@ from rds_project_hooks import register as register_project_hooks
 
 OWNED_PREFIX = 'owned:'
 ASSURANCE = 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
-MAX_RUNS = 128
+from rds_admission_values import MAX_RUNS
 MAX_ARTIFACTS = 1024
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 32 * 1024 * 1024
@@ -175,45 +175,9 @@ def validate_policy(store, contract):
 
 
 def _state(store, db):
-    """Bounded, coherent read, shared by analysis and the write-lock recheck."""
-    contract = store._contract(db)
-    require(db.execute('SELECT COUNT(*) FROM runs').fetchone()[0] <= MAX_RUNS, 'Owned run coverage limit exceeded')
-    require(db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0] <= MAX_RUNS, 'Owned receipt coverage limit exceeded')
-    runs = store._runs(db)
-    receipts = [store._receipt(row) for row in db.execute('SELECT run_id,sha256,body FROM receipts ORDER BY run_id')]
-    budget = [dict(row) for row in db.execute('SELECT * FROM budget ORDER BY resource')]
-    completed = []
-    for receipt in receipts:
-        require(db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' "
-                           "AND json_extract(body,'$.run_id')=? AND json_extract(body,'$.sha256')=? LIMIT 1",
-                           (receipt['run_id'], receipt['sha256'])).fetchone() is not None,
-                'Owned receipt has no matching completion event')
-        completed.append(receipt['sha256'])
-    campaign = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED' ORDER BY id LIMIT 1").fetchone()
-    from rds_method_revision import contract_history
-    history = contract_history(db)
-    from rds_owned_history import history_cut
-    try:
-        verified_history = history_cut(store, db)
-    except (ValueError, KeyError, TypeError, OSError) as exc:
-        raise ValueError('Repair checkpoint integrity before executing a candidate: ' + str(exc)) from exc
-    state = {'contract': contract, 'runs': sorted(runs, key=lambda r: r['id']), 'receipts': receipts,
-            'budget': budget, 'completion_events': completed,
-            'history_cut': verified_history,
-            'contract_history': history,
-            'exposures': [strict_json(row['body']) for row in db.execute('SELECT body FROM exposures ORDER BY id')],
-            'campaign_started': strict_json(campaign['body']) if campaign else None}
-    from rds_steering import current, view
-    steering = current(db)
-    if steering is not None:
-        state['steering'] = view(steering)
-    if 'autonomy' in contract.get('advisor_policy', {}):
-        from rds_autonomy import records
-        state['autonomy_records'] = records(store, db, contract)
-    from rds_postcommit_confirmation import enabled, records as confirmation_records
-    if enabled(contract):
-        state['confirmation_challenges'] = confirmation_records(store, db, contract)
-    return state
+    """Compatibility entry for the shared native state reader."""
+    from rds_owned_history import read_state
+    return read_state(store, db)
 
 
 def _fingerprint(state):
@@ -505,7 +469,7 @@ def review(store, persist=True):
     """Collect owned evidence, update its TMS subgraph, and propose one route."""
     from rds_tms_store import current, save
     from rds_cas import cas_json
-    from rds_quick import choice
+    from rds_advisor_choice import choice
     from rds_advisor import RDSAdvisor
     from rds_advisor_search import evaluate_condition
     with store._db(True) as db:
@@ -757,12 +721,30 @@ def review(store, persist=True):
     return result
 
 
+def prepare_decision(store, report, contract):
+    """Retain the actual selected candidate and its decision-time evidence."""
+    from rds_advisor_choice import choice
+    from rds_owned_history import method_identity
+    manifest = report.get('selected_manifest')
+    require(report.get('status') == 'REVIEWED' and isinstance(manifest, dict),
+            'Owned history needs a reviewed selected manifest')
+    route = next((r for r in contract['advisor_policy']['routes'] if r['manifest'] == manifest), None)
+    require(route is not None, 'Owned history manifest is not an authorized policy route')
+    record = choice(report['advice'], report['context'], route['candidate'])
+    identity = method_identity(store, contract, manifest)
+    require(record['candidate']['action'].get('owned_execution_identity') == identity,
+            'Owned history candidate lacks its program-derived method identity')
+    record['owned_history'] = {'run_id': manifest['id'], 'manifest_sha256': digest(manifest),
+                             'effective_contract_sha256': digest(contract), 'method_sha256': identity,
+                             'dependency_snapshot_sha256': report.get('snapshot_sha256')}
+    return record
+
+
 def prepare_admission(store, spec):
     report = review(store)
     require(report['status'] == 'REVIEWED' and report['selected_run'] == spec.get('id')
             and report.get('analysis_coverage', {}).get('full') is True
             and report['selected_manifest'] == spec, 'Owned Advisor did not select this frozen manifest; inspect project next')
-    from rds_owned_history import prepare_decision
     with store._db(True) as db:
         contract = store._contract(db)
     return {'fingerprint': report['fingerprint'], 'selected_run': report['selected_run'],
