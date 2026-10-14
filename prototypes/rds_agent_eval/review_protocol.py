@@ -45,6 +45,7 @@ def freeze_protocol(raw, *, expected_sha256, task_id, used_task_ids):
             sha256(entry["source_sha256"], name + " source")
     return {"schema": "rds-semantic-protocol-freeze-v1", "protocol": spec,
             "raw_rubric_sha256": expected_sha256, "protocol_sha256": digest(spec), "task_id": task_id,
+            "binding_sha256": digest({"protocol": digest(spec), "task_id": task_id, "used_task_ids": used}),
             "used_task_ids": used, "status": "FROZEN_PROTOCOL_ONLY", "study_readiness": "UNKNOWN",
             "identity_assurance": "DECLARATION_ONLY", "independence": "UNKNOWN",
             "task_novelty_scope": "DECLARED_ID_INVENTORY_ONLY", "free_text_review": "UNKNOWN",

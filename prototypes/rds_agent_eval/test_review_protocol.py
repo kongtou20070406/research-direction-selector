@@ -34,6 +34,9 @@ class ReviewProtocolTests(unittest.TestCase):
         self.assertEqual(result["study_readiness"], "UNKNOWN")
         self.assertEqual(result["scientific_support"], "UNKNOWN")
         self.assertEqual(result["assessment_effect"], "NONE")
+        other = self.freeze(task_id="different-unused-task")
+        self.assertEqual(other["protocol_sha256"], result["protocol_sha256"])
+        self.assertNotEqual(other["binding_sha256"], result["binding_sha256"])
 
     def test_wrong_raw_pin_missing_evidence_or_criterion_reject(self):
         with self.assertRaises(ValueError):
