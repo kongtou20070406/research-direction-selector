@@ -17,7 +17,14 @@ def tool(root, arm, manifest):
     audit.mkdir(exist_ok=True)
     raw_path, done = audit / (manifest['id'] + '-raw.json'), audit / (manifest['id'] + '-tool.json')
     if done.exists():
-        return {**json.loads(done.read_text(encoding='utf-8')), 'reused_original': True}
+        prior = json.loads(done.read_text(encoding='utf-8'))
+        if arm == 'RDS':
+            from rds_project import ProjectStore
+            read_observations(ProjectStore(root), [{'run_id': prior['receipt']['run_id'],
+                'receipt_sha256': prior['receipt']['sha256']}])
+        elif prior['status'] == 'SUCCEEDED' and sha(root / manifest['outpaths'][0]) != prior['measurement_sha256']:
+            raise ValueError('Original Bare output changed')
+        return {**prior, 'reused_original': True}
     if raw_path.exists():
         raise ValueError('Prior attempt lacks verified feedback; no rerun')
     if arm == 'RDS':
@@ -34,6 +41,10 @@ def tool(root, arm, manifest):
         measured = [a for a in originals['observations'][0]['artifacts'] if a['kind'] == 'project_output']
         result = {'status': receipt['run_status'], 'receipt': receipt,
                   'measurement': json.loads(measured[0]['bytes']) if receipt['run_status'] == 'SUCCEEDED' else None}
+        following = cmd_project(SimpleNamespace(root=str(root), action='next'))
+        save(audit / (manifest['id'] + '-advice.json'), following)
+        result['native_advice'] = {'selected_run': following.get('selected_run'),
+            'selected_method': following['selected_manifest']['argv'][-2] if following.get('selected_manifest') else None}
     else:
         # Bare is the ordinary-tool control: raw audit files have no kernel authority.
         began = time.monotonic()
@@ -56,23 +67,29 @@ def tool(root, arm, manifest):
     return result
 
 
-def run_arm(root, seed, arm, declaration, recipe, endpoint):
+def run_arm(root, seed, arm, declaration, recipe, endpoint, pins):
     """One fresh arm, at most 20 requests; the host must inspect/freeze all sources."""
     root, seed = Path(root).resolve(), Path(seed).resolve()
     if arm not in {'Bare', 'RDS'} or declaration['per_arm_calls'] != 20 or root.exists():
         raise ValueError('Require a fresh declared arm and unchanged 20-call cap')
     if declaration['completion_protocol'] != 'finish-function-or-stop-text-v2':
         raise ValueError('Uninspected completion protocol')
+    end = min(declaration['deadline_epoch'], time.time() + recipe['budget']['wall_seconds'])
+    if time.time() >= end or pins.get(str(Path(__file__).resolve())) != sha(__file__):
+        raise ValueError('Deadline reached or driver lacks its inspected source pin')
     shutil.copytree(seed, root)
     audit = root / 'audit'
     audit.mkdir()
+    assets = declaration['agent_files'] + sum(recipe['files'].values(), [])
+    pins = {**pins, **{str(root / p): sha(seed / p) for p in assets}}
     routes = {r['run']['argv'][-2]: r['run'] for r in recipe['routes']}
     if arm == 'RDS':
+        from rds_project import ProjectStore
         from rds_project_assembly import initialize
-        initialize(__import__('rds_project').ProjectStore(root), root / 'recipe.json')
+        initialize(ProjectStore(root), root / 'recipe.json')
         # Native initialization adds schema/protocol/control identities to manifests.
-        with __import__('rds_project').ProjectStore(root)._db(readonly=True) as db:
-            contract = __import__('rds_project').ProjectStore._contract(db)
+        with ProjectStore(root)._db(readonly=True) as db:
+            contract = ProjectStore._contract(db)
         routes = {r['manifest']['argv'][-2]: r['manifest'] for r in contract['advisor_policy']['routes']}
     task = (root / declaration['task_file']).read_text(encoding='utf-8')
     schema = [{'type': 'function', 'function': {'name': name, 'description': description,
@@ -88,9 +105,9 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint):
         from rds_cli import cmd_project
         advice = cmd_project(SimpleNamespace(root=str(root), action='next'))
         save(audit / 'initial-advice.json', advice)
-        instruction += ' Native RDS Advisor selected_run=' + str(advice.get('selected_run')) + '; execute only its selected method. Operational success is not science.'
+        selected = advice.get('selected_manifest')
+        instruction += ' Native RDS Advisor selected_method=' + str(selected['argv'][-2] if selected else None) + '; execute only its selected method. Operational success is not science.'
     messages = [{'role': 'system', 'content': instruction}]
-    end = min(declaration['deadline_epoch'], time.time() + recipe['budget']['wall_seconds'])
     report = {'arm': arm, 'calls': 0, 'status': 'IN_PROGRESS', 'final_answer': None,
               'arm_deadline_epoch': end, 'scientific_support': 'UNKNOWN'}
     for turn in range(20):
@@ -102,6 +119,8 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint):
         report.update(calls=turn + 1, status='REQUESTING')
         save(audit / 'summary.json', report)
         try:
+            if any(sha(p) != pin for p, pin in pins.items()):
+                raise ValueError('Frozen study source or asset changed')
             req = urllib.request.Request(endpoint.rstrip('/') + '/chat/completions', data=json.dumps(request).encode(),
                 headers={'Content-Type': 'application/json', 'Authorization': 'Bearer magpie'})
             with urllib.request.urlopen(req, timeout=min(120, end - time.time())) as response:
@@ -117,6 +136,8 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint):
                 report.update(status='AGENT_FINISHED', final_answer=final, completion_mode='TEXT')
                 break
             for ident, command in actions:
+                if any(sha(p) != pin for p, pin in pins.items()):
+                    raise ValueError('Frozen study source or asset changed before dispatch')
                 if command['tool'] == 'finish':
                     report.update(status='AGENT_FINISHED', final_answer=command['answer'], completion_mode='FUNCTION')
                     break

@@ -11,7 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / 'scripts'), str(ROOT / 'tests')]
 from prototypes.rds_agent_eval import native_driver as driver
-from prototypes.rds_agent_eval.test_study_bridge import StudyBridgeTests
+from prototypes.rds_agent_eval import test_study_bridge as fixtures
 from rds_project import file_sha
 
 
@@ -30,13 +30,14 @@ class NativeDriverTests(unittest.TestCase):
             'agent_files': ['task.json', 'table.csv'], 'model': 'fixture', 'response_model': 'resolved'}
         self.manifest = {'id': 'method', 'argv': ['python', 'worker', 'period_counts', 'out.json'],
                          'outpaths': ['out.json'], 'timeout_seconds': 7.2}
-        self.recipe = {'routes': [{'run': self.manifest}], 'budget': {'wall_seconds': 100}}
+        self.recipe = {'routes': [{'run': self.manifest}], 'budget': {'wall_seconds': 100}, 'files': {'data': ['table.csv']}}
+        self.pins = {str(Path(driver.__file__).resolve()): driver.sha(driver.__file__)}
 
     def run_response(self, choice):
         raw = json.dumps({'model': 'resolved', 'choices': [choice]}).encode()
         with patch.object(driver.time, 'time', return_value=100), \
              patch.object(driver.urllib.request, 'urlopen', return_value=io.BytesIO(raw)) as opened:
-            result = driver.run_arm(self.root / 'arm', self.seed, 'Bare', self.declaration, self.recipe, 'http://fixture')
+            result = driver.run_arm(self.root / 'arm', self.seed, 'Bare', self.declaration, self.recipe, 'http://fixture', self.pins)
         return result, opened
 
     def test_complete_text_retains_raw_request_response_and_private_gold_is_not_sent(self):
@@ -47,7 +48,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertNotIn('PRIVATE_GOLD', (audit / 'request-0.json').read_text(encoding='utf-8'))
         self.assertEqual(opened.call_args.kwargs['timeout'], 100)
         with self.assertRaises(ValueError):
-            driver.run_arm(self.root / 'arm', self.seed, 'Bare', self.declaration, self.recipe, 'http://fixture')
+            driver.run_arm(self.root / 'arm', self.seed, 'Bare', self.declaration, self.recipe, 'http://fixture', self.pins)
 
     def test_truncated_turn_never_dispatches_and_counts_uncertain_request(self):
         choice = {'finish_reason': 'length', 'message': {'role': 'assistant', 'content': 'truncated'}}
@@ -68,8 +69,9 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(ran.call_count, 1)
 
     def test_real_native_advance_and_original_receipt_feedback_without_rebuy(self):
-        fixture = StudyBridgeTests('runTest')
+        fixture = fixtures.StudyBridgeTests('runTest')
         fixture.setUp()
+        fixture.fixture._testMethodName = self._testMethodName
         self.addCleanup(fixture.doCleanups)
         fixture.initialize()
         manifest = fixture.prepared['contract']['advisor_policy']['routes'][0]['manifest']
@@ -77,6 +79,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(result['status'], 'SUCCEEDED')
         self.assertEqual(result['measurement']['method'], 'period_counts')
         self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
+        self.assertEqual(result['native_advice']['selected_method'], 'gardening_dominance')
         before = file_sha(fixture.store.path)
         self.assertTrue(driver.tool(fixture.store.root, 'RDS', manifest)['reused_original'])
         self.assertEqual(file_sha(fixture.store.path), before)
