@@ -29,12 +29,14 @@ CI on a parent does not certify later changes or inherited dirty files.
 ## Accepted engineering scope
 
 S21 reserves a prospective rubric freezer and checked-in full-answer criteria.
-Original rubric SHA and canonical protocol SHA bind an unused declared task;
+Original rubric SHA, canonical protocol SHA and task/prior binding SHA identify
+the prospective unused declared task;
 all five criteria and failed/unknown original inputs are mandatory. Reject
 used tasks, absent criteria, ambiguous identity pins and dispatch fields.
 Identity pins are declarations only, not independent review or a scientific
 verdict. Reviewer/verifier remain UNKNOWN; native ProjectStore/CAS/TMS alone
-retain admission and research-truth authority. Four focused cases pending.
+retain admission and research-truth authority. Four focused cases/six subtests
+passed, including task-specific binding and used S18 task rejection.
 Candidate: requirements_engineering_for_ML_enabled_systems metadata0-q0,
 DiscoveryBench c31fcf011e070f021a5f5b906896d0821f6880e8. Original survey data
 has 276 rows/202 columns, all row widths consistent. Metadata/questions are
@@ -42,6 +44,13 @@ inspected separately; private hypothesis/intermediate fields must be excluded
 from agent inputs. Do not accept query-provided bootstrap CIs as measurements,
 or invent resampling settings. Domain methods/verifier/recipe remain pending;
 new paid work requires separate inspected freeze within the original deadline.
+Frozen agent root holdout-s21-inputs contains only task.json and original CSV;
+Q8 column descriptions come from public dataset metadata, not private hypotheses.
+Private original metadata/API responses remain at holdout-s21-source. Rubric/code
+and bound protocol reside at holdout-s21-protocol; pins/exclusions/source notes in
+holdout-s21-input-and-protocol-freeze.json. All prior original pins unchanged;
+no new call, original replay or dispatch. Next inspect source procedures and
+implement finite role-count outputs plus original-byte independent verification.
 Parent CI38631819237 failed only inherited QUICK line681; original log retained.
 
 S20 ([Draft #349](https://github.com/kongtou20070406/research-direction-selector/pull/349),

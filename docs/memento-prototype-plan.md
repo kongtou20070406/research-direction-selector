@@ -43,12 +43,18 @@ terminal inputs, extra fields, original measurements, negative/unknown costs
 and frozen independent verifier outputs. Refuse used tasks, missing criteria,
 inferred identity pins or execution fields. A frozen rubric is not study
 readiness or an independent reviewer; unknown implementation identities stay
-explicit. No S18 semantic scoring or native assessment write. Checks pending.
+explicit. No S18 semantic scoring or native assessment write. Four focused cases
+and six subtests passed; separate task/prior binding digest differs across tasks.
 Inspect unused requirements_engineering_for_ML_enabled_systems metadata0-q0
 at the same DiscoveryBench commit; private metadata remains outside agent
 inputs. Query-supplied proportions/CIs are givens, not independent evidence;
 bootstrap settings and domain/evaluator/native recipe require further review.
-No new paid run. Parent CI38631819237 retains only inherited QUICK KeyError;
+Original CSV276 rows/202 columns, Git blob size/hash and private exclusions
+verified. Frozen holdout-s21-inputs and holdout-s21-protocol; evidence under
+holdout-s21-input-and-protocol-freeze.json. Protocol rejects used S18 task.
+Old originals/pins unchanged; no new paid run. Next inspect source procedures
+and implement one finite role-count domain/independent verifier slice before
+native preflight or paid launch. Parent CI38631819237 retains only QUICK KeyError;
 original failed log saved, discovery out of scope.
 
 ### S20: full-answer semantic-review inputs
