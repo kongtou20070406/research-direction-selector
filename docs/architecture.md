@@ -69,7 +69,11 @@ Selected-route validation lives in `rds_advisor_choice` (L3). QUICK keeps
 consume the decision service directly. This removes their imports of the
 QUICK entrypoint. The internal `prepare_decision` function belongs to owned
 Advisor; the history writer no longer imports route-selection policy. QUICK
-admission still needs its lock-boundary cut.
+admission prepares each choice before opening parent writers. The kernel
+rechecks the original ledger, request and CAS plus file/receipt identities;
+stale preparation is refused before allowance or dispatch. Recovery uses the
+retained choice. The Store admission callback and lifecycle/composition
+boundaries remain to be removed.
 
 Workspace admission now opens its committed identity/progress reads through
 `rds_sqlite.readonly_connection` rather than `ProjectStore._db`. Ancestor

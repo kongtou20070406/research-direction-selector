@@ -58,8 +58,45 @@ def latest_decision(root, checkpoint_id=None):
 
 
 
+def _prepare_choice(root, advice, context, candidate_id, request):
+    from rds_admission_read import StaleAdmission, prepare
+    from rds_advisor_coverage import project_context
+    from rds_quick_admission import PreparedQuickChoice, evidence_fence
+    store = ProjectStore(root)
+    with store._db(True) as db:
+        db.execute('BEGIN')
+        context = project_context(root, context)
+        files, receipts, source_bytes = (), (), 0
+        if context.get('require_goal_link'):
+            from rds_hypergraph_input import prepare_input
+            spec, _ = prepare_input(context['dependency_map'])
+            records = spec['nodes'] + spec['hyperedges']
+            files = tuple(str(Path(row['source']['file']).absolute()) for row in records
+                          if isinstance(row['source'], dict) and 'file' in row['source'])
+            receipts = tuple(sorted({(row['evidence']['receipt']['project_root'],
+                                     row['evidence']['receipt']['sha256'])
+                                    for row in records if row.get('evidence') is not None}))
+            source_bytes = spec.get('limits', {}).get('max_source_bytes', 8 * 1024 * 1024)
+        before = evidence_fence(db, root, files, receipts, source_bytes)
+        record = choice(advice, context, candidate_id)
+        if evidence_fence(db, root, files, receipts, source_bytes) != before:
+            raise StaleAdmission('QUICK evidence changed during selection; STALE')
+        row = (db.execute('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+               if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone()
+               else None)
+        require((row['sha256'] if row else None) == context.get('dependency_snapshot_sha256'),
+                'Dependency snapshot changed during QUICK preparation')
+        record['advice'] = cas_json(root, advice)
+        ref = record['advice']
+        originals = [{'path': Path(ref['path']).relative_to(store.root).as_posix(),
+                      'sha256': ref['sha256'], 'size': ref['bytes']}]
+        admission = prepare(db, store.path, request, originals, json.loads(row['body']) if row else None)
+    return PreparedQuickChoice(admission, canonical(record), digest(context), record['candidate']['id'],
+                               context.get('dependency_snapshot_sha256'), files, receipts, source_bytes, before)
+
+
 def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
-                  _expected_contract_sha256=None, _parent_db=None):
+                  _expected_contract_sha256=None, _parent_db=None, _prepared_choice=None):
     from rds_checkpoints import save_checkpoint, append_checkpoint
     from rds_advisor_coverage import project_context
     # QUICK contracts remain frozen; native activation changes ownership.
@@ -81,8 +118,17 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
             'Expected choice contract differs from the current QUICK contract; inspect the original decision')
     expected_contract = (snapshot['contract_sha256'] if _expected_contract_sha256 is None
                          else _expected_contract_sha256)
-    context = project_context(root, context)
-    record = choice(advice, context, candidate_id)
+    if _parent_db is None:
+        context = project_context(root, context)
+        record = choice(advice, context, candidate_id)
+    else:
+        from rds_quick_admission import PreparedQuickChoice
+        require(type(_prepared_choice) is PreparedQuickChoice
+                and _prepared_choice.admission.ledger_path == str(store.path.resolve())
+                and _prepared_choice.context_sha256 == digest(context)
+                and _prepared_choice.candidate_id == candidate_id,
+                'Locked choice publication needs its original native preparation')
+        record = json.loads(_prepared_choice.decision_json)
     if _parent_db is not None:
         head = None
         if _parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
@@ -92,7 +138,8 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
     # Analysis stays outside the gate; its original snapshot guards are checked
     # again while publishing the CAS and checkpoint as one bounded operation.
     with mutation():
-        record['advice'] = cas_json(root, advice)
+        if _parent_db is None:
+            record['advice'] = cas_json(root, advice)
         if _parent_db is None:
             saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
                                     _expected_contract_sha256=expected_contract,
@@ -452,9 +499,13 @@ def execute(args, review=None, *, _native_preparation_root=None):
             args.name = prior['name']
         resume_materialization = True
     locked_parents = {}
+    prepared_choice = None
 
     @contextmanager
     def admission_context():
+        nonlocal prepared_choice
+        prepared_choice = (_prepare_choice(args.ledger, review[0], review[1], args.choose, request)
+                           if review is not None and not resume_materialization else None)
         # The original allowance path acquires parent before child. Keep that
         # order during preparation and through the child's attempt commit.
         with mutation(), ExitStack() as locks:
@@ -498,8 +549,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 require(steering is None,
                         'Human steering changed before quick admission; use project create/execute')
         if review is not None and validate_choice:
-            from rds_advisor_coverage import project_context
-            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+            from rds_quick_admission import check_choice
+            check_choice(locked_parents[owner], owner, request, prepared_choice)
     def admit_quick(_db, _run):
         check_quick_parents(validate_choice=not resume_materialization)
 
@@ -574,7 +625,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                                               parent_contracts[owner])
                 else:
                     record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
-                                  _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner])
+                                  _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner],
+                                  _prepared_choice=prepared_choice)
     if goal_raw is not None:
         bind_objective(root, goal_raw)
     with admission_context():
@@ -685,9 +737,6 @@ def execute(args, review=None, *, _native_preparation_root=None):
                                 'request_sha256': digest(request), 'materialization_state': 'MATERIALIZED'}),))
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
-    if review is not None and not resume_materialization:
-        from rds_advisor_coverage import project_context
-        choice(review[0], project_context(args.ledger, review[1]), args.choose)
     receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,
                             admission_context=admission_context)
     regression = None
