@@ -28,7 +28,8 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
-S19 reserves feedback_view.read_feedback(store, expected_snapshot_sha256,
+S19 ([Draft #348](https://github.com/kongtou20070406/research-direction-selector/pull/348),
+reader source 0265ed3) reserves feedback_view.read_feedback(store, expected_snapshot_sha256,
 outputs): native receipt/output ownership and original byte pins, unchanged
 errors/resources/unknown charges, all artifact references, measured JSON and
 complete bounded native dialogue. Full native originals/CAS are returned
