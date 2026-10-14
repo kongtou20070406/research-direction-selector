@@ -808,6 +808,9 @@ def predict_transition(before_state, base_code, candidate_code, parameters=None,
 
 def fit_transitions(records, model_type="latent_jepa", l2_reg=1.0):
     """Fit a new transition model instance on a list of transition dicts."""
+    records = list(records)
+    if any(r.get('split') == 'confirmation' or r.get('validity', 'VALID') != 'VALID' for r in records):
+        raise ValueError('Confirmation or invalid comparisons cannot enter fitting')
     if model_type in ("latent_jepa", "cpu_jepa", "jepa"):
         model = LatentCodeDiffJEPA()
     elif model_type in ("ridge", "direct_code_diff_ridge"):
