@@ -35,9 +35,15 @@ complete bounded native dialogue. Full native originals/CAS are returned
 separately; they are neither deleted nor replaced by the model projection.
 Current selection comes only from compatible recorded advice; stale selection
 stays unavailable. This interface has no dispatch, assessment write or driver
-wiring. Four focused fixtures and read-only S18 comparison are pending.
-Comparison must preserve original requests/responses/ledgers and all frozen
-source pins; message bytes cannot establish token savings or agent efficacy.
+wiring. Four focused fixtures/two subtests passed. Read-only S18 comparison
+retains both receipts/eight artifact references, unchanged errors/costs/values
+and complete CAS report. Receipt-only JSON: 8989 to 4267 bytes, 52.53% smaller;
+complete current feedback: 10197 versus original two-tool 9135 bytes. Current
+native dialogue adds diagnostics absent from historical tool feedback; this is
+not prompt replay or a demonstrated total saving. Evidence under experiment
+root: acceptance-s19-original-feedback-20261015.json. All S18 original files,
+181 runtime pins and 988 protected old files remain unchanged; no paid call or
+dispatch. Message bytes cannot establish token savings or agent efficacy.
 Next prepare receipt-bound full-answer semantic-review inputs, then an unused
 task with matched tools and independently frozen evaluator before paid work.
 Do not replay the now-used plant task or either stopped scheduler. Deadline
