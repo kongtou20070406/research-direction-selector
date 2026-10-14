@@ -4,15 +4,16 @@ Date: 2026-10-14. Owner: this implementation chat. Starting public source:
 `445a1379b7fa383b2fdde7a0cbd039376e892a1a`, Draft PR #325.
 The existing checkout also has 75 dirty entries; they remain outside this work.
 
-## Latest authorization and running checkpoint
+## Latest authorization and runtime checkpoint
 
 This section supersedes the historical 40/1040-call budgets below. Latest human
 authorization: unlimited DeepSeek v4.1 calls within one fixed 24-hour window,
 ending **2026-10-15 18:02:08 Asia/Shanghai**. No training or GPU use. Existing
 per-request/tool and RDS admission bounds remain intact.
 
-Windows task `RDS-Memento-DeepSeek-24h-20261014` is registered and verified
-Running with actual API responses. Frozen development source: `f13a829`.
+At 20:04 Asia/Shanghai, Windows task `RDS-Memento-DeepSeek-24h-20261014`
+is Ready after exit code 0; no experiment runner remains. The frozen batch ended
+with ALL_TASKS_REQUIRE_REVIEW after every task was excluded. Source: `f13a829`.
 The RDS implementation under test is the committed #325 lineage at `445a137`,
 exported from `98321dc`; inherited dirty source is not included or certified.
 Frozen external manifest: `C:/Users/XU/Documents/Codex/2026-10-14/rds-deepseek-real-pair/background-manifest-24h.json`,
@@ -31,6 +32,42 @@ An hourly development heartbeat is ACTIVE only through the same deadline. It
 collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
+
+### S12: original receipt observations, no new paid study
+
+The final batch retained 60 pairs and 1,071 cumulative requests: 1,034 in this
+batch plus 37 earlier pilot/debug requests. Bare has 54 AGENT_FINISHED arms and
+six protocol stops; RDS has 53 finished, four protocol stops, two unknown tool
+feedback stops and one per-arm CALL_CAP. These are protocol completion counts,
+not accuracy scores. Survivors and repeated source groups remain selected.
+
+Original responses distinguish four length-truncated JSON tool arguments from
+six ordinary text answers without the required finish call. The latter are
+retained protocol stops, not proof of incorrect answers. Two RDS feedback stops
+retain CLI rejection stderr and syntactically invalid Python inputs; no usable
+receipt exists for those rejected attempts. Preserve every original denominator.
+
+Exact-head CI 38554880844 confirms the two S11 corrections passed; its remaining
+error is the inherited QUICK KeyError at test_rds_quick_coverage_admission.py:681.
+No all-green CI, kernel acceptance or whole-RDS efficacy claim follows.
+
+Scope: prototypes/memento_rds/observations.py, test_observations.py, README.md,
+this plan and the handoff. Reuse caller-supplied ProjectStore._db(readonly=True)
+and _receipt; validate supplied pins and every artifact's original bytes, retain
+FAILED/unstarted receipts and unknown costs, and never write or execute. Return
+observations only: domain before/action/after remains UNKNOWN. Focused checks:
+test_observations.py and test_model.py passed: five adapter checks plus four
+compiler/revision checks. Read-only acceptance inspected 401 original RDS
+receipts (164 SUCCEEDED, 237 FAILED), verified 1,102,381 artifact bytes with no
+inspection failures, and confirmed unchanged ledger hashes. The frozen manifest
+and every pinned source hash still match; no new API call or execution occurred.
+Evidence: external acceptance-s12-original-observations-20261014.json, adapter
+SHA-256 c3911cd94fc9fb546d67c835ddb9872eb36a0d8b0163a323738ae1a7d7e99e45.
+
+Revised next step: define receipt-bound domain projection and semantic-review
+inputs before any model adoption. Inspect terminal-content handling and declare
+a separate study with untouched tasks before new paid comparisons; do not
+restart excluded or uncertain attempts. The fixed deadline remains unchanged.
 
 ### S11: CI correction selected from original results
 
