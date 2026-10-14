@@ -33,6 +33,22 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S14: retained native Advisor view for a future real study
+
+Current measurements cover QUICK exec, not owned Advisor/project continuity.
+Reserve prototypes/rds_agent_eval/advisor_view.py and test_advisor_view.py, plus
+this plan and the handoff. Reuse rds_steering.plan(dialogue=True) and the native
+ledger-CAS report reader. Require the native plan snapshot pin; retain missing,
+stale and negative diagnostics; expand the full original compatible report and
+recheck the native view after expansion. No new collection, selection, ledger,
+admission, model call or automatic integration. Full report expansion preserves
+candidate/evidence denominators beyond the native display limits.
+Focused new-reader verification uses real CLI-created temporary software
+fixtures and native CAS/receipts. Pending for this cut. Fixture PASS will not
+measure DeepSeek, whole-RDS effects or scientific support. Then declare the
+native project policy/worker/domain inputs and untouched study tasks, freeze
+S13 terminal protocol equally for both arms, and retain independent verifiers.
+
 ### S13: complete terminal response protocol
 
 Original 1,034 responses contain 1,024 tool-call ends, six nonempty text/stop
