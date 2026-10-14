@@ -62,6 +62,8 @@ class ReviewInputTests(unittest.TestCase):
     def test_tampered_pin_cross_attempt_and_mismatched_summary_reject_without_repair(self):
         self.fixture.prepare()
         self.write_sources()
+        alias = {**self.pins, "response": {**self.pins["response"], "path": "audit/../audit/response-0.json"}}
+        self.assertEqual(adapter.read_answer(self.store.root, pins=alias)["final_text"], self.final)
         for name in ("request", "response", "summary", "task"):
             with self.subTest(name=name):
                 changed = {**self.pins, name: {**self.pins[name], "sha256": "0" * 64}}

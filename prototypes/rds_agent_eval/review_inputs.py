@@ -36,9 +36,9 @@ def read_answer(root, *, pins):
                 "Original review source missing/tampered; no repair")
         originals[name] = {"pin": pin, "bytes": raw, "value": json.loads(raw)}
     turn = pins["turn"]
-    require(all((root / pins[n]["path"]).resolve() == root / "audit" / f"{n}-{turn}.json"
+    require(all((root / pins[n]["path"]).resolve() == (root / "audit" / f"{n}-{turn}.json").resolve()
                 for n in ("request", "response"))
-            and (root / pins["summary"]["path"]).resolve() == root / "audit/summary.json",
+            and (root / pins["summary"]["path"]).resolve() == (root / "audit/summary.json").resolve(),
             "Terminal files do not identify the declared attempt")
     request, response, summary = (originals[n]["value"] for n in ("request", "response", "summary"))
     require(request["model"] == pins["requested_model"] and summary["calls"] == turn + 1,
