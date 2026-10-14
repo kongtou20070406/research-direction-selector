@@ -21,8 +21,20 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S12 | [341](https://github.com/kongtou20070406/research-direction-selector/pull/341) | 8081d41 | Read-only native receipt/byte observations |
 | S13 | [342](https://github.com/kongtou20070406/research-direction-selector/pull/342) | 401632c | Complete terminal responses, retained old results |
 | S14 | [343](https://github.com/kongtou20070406/research-direction-selector/pull/343) | 6791645 | Original retained native Advisor view |
+| S15 | [344](https://github.com/kongtou20070406/research-direction-selector/pull/344) | cfe9e00 | Matched native preflight and untouched plant inputs |
 
 ## Accepted engineering scope
+
+S16 reserves two shared finite plant methods and an independent original-byte
+numeric verifier under prototypes/rds_agent_eval. Both methods use the same
+declared TSV data and emit measured counts; gold stays outside agent inputs.
+Independent parsing checks structured claims only, including all main periods
+and earliest observed bin. Precise-year and causal claims fail this scope.
+Full final-answer semantic review is UNKNOWN, and native receipt binding must
+be supplied by the future study bridge. No paid call or original task rerun.
+Next: focused domain verification and offline output evidence, then the bridge.
+S15 exact-head CI 38590645812 fails only the inherited QUICK test at line 681;
+original log is retained as ci-38590645812-original-failed.log externally.
 
 S11 correction: exact-head CI `38547449833` retained three original findings:
 the new contract test imported missing pytest, the new module had UNKNOWN layer,
