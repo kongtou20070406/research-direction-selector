@@ -131,9 +131,11 @@ def run(args):
               "loop_sha256": sha(__file__), "response_model": args.response_model,
               "max_calls": args.max_calls, "deadline_epoch": deadline,
               "total_wall_seconds": 2700, "per_arm_calls": args.max_calls // 2,
-              "arms": ["Bare", "RDS"], "tool_timeout_seconds": 30,
+              "arms": getattr(args, "arms", ["Bare", "RDS"]), "tool_timeout_seconds": 30,
               "comparison_scope": "RDS_EXEC_ONLY", "scientific_benefit": "UNKNOWN"}
     save(root / "frozen.json", frozen)
+    if len(frozen["arms"]) != 2 or set(frozen["arms"]) != {"Bare", "RDS"}:
+        raise ValueError("Comparison requires exactly one Bare and one RDS arm")
     started, calls, reports = time.monotonic(), 0, []
     for arm in frozen["arms"]:
         folder = root / arm

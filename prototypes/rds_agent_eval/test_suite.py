@@ -19,21 +19,28 @@ def test_prior_unknown_request_is_charged_once_without_response(tmp_path):
 
 def test_partial_paid_pair_cannot_be_restarted(tmp_path, monkeypatch):
     root = tmp_path / "batch"
-    (root / "pair-001").mkdir(parents=True)
+    (root / "cycle-0000-pair-001").mkdir(parents=True)
     manifest = tmp_path / "manifest.json"
-    suite.loop.save(manifest, {"output_root": str(root), "total_call_cap": 1040,
+    suite.loop.save(manifest, {"output_root": str(root), "total_call_cap": None,
+        "started_epoch": suite.time.time(), "deadline_epoch": suite.time.time() + 86400,
         "per_pair_calls": 30, "frozen_source": {}, "tasks": [{"id": "original"}]})
     def forbidden(*a):
         raise AssertionError("Uncertain paid pair was repeated")
     monkeypatch.setattr(suite.loop, "run", forbidden)
+    monkeypatch.setattr(suite.time, "time", lambda: 1)
+    data = suite.json.loads(manifest.read_text())
+    data.update(started_epoch=0, deadline_epoch=86400)
+    suite.loop.save(manifest, data)
     with pytest.raises(ValueError, match="Unfinished"):
         suite.main(manifest)
 
 
-def test_exhausted_aggregate_cap_prevents_next_model_call(tmp_path, monkeypatch):
+def test_exact_24_hour_deadline_prevents_next_model_call(tmp_path, monkeypatch):
     manifest = tmp_path / "manifest.json"
-    suite.loop.save(manifest, {"output_root": str(tmp_path / "batch"), "total_call_cap": 1040,
+    suite.loop.save(manifest, {"output_root": str(tmp_path / "batch"), "total_call_cap": None,
+        "started_epoch": 0, "deadline_epoch": 86400,
         "per_pair_calls": 30, "frozen_source": {}, "prior_roots": [], "tasks": [{"id": "next"}]})
     monkeypatch.setattr(suite, "used_calls", lambda *a: 1040)
-    monkeypatch.setattr(suite.loop, "run", lambda *a: pytest.fail("Call exceeded aggregate cap"))
-    assert suite.main(manifest)["used_calls"] == 1040
+    monkeypatch.setattr(suite.time, "time", lambda: 86400)
+    monkeypatch.setattr(suite.loop, "run", lambda *a: pytest.fail("Call exceeded original deadline"))
+    assert suite.main(manifest)["status"] == "DEADLINE_REACHED"
