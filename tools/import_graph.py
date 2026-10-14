@@ -29,7 +29,7 @@ GROUPS = {
           "broker_hook host_broker host_hook conversation_hook dashboard dialogue "
           "hypergraph_readable hypergraph_view obelisk session capabilities model_export "
           "outputs research_note usage wheel",
-    "SHARED": "core project_values reference_values output_values admission_values feasibility_values scalar_values project_records run_records verify_types "
+    "SHARED": "core guard_values project_values reference_values output_values admission_values feasibility_values scalar_values project_records run_records verify_types "
               "plugin_registry unit_disk_voronoi_core",
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}

@@ -114,7 +114,7 @@ def _checkpoint_route(prior, checkpoint_id, directory, checked_witnesses, same_q
     _require(route is not None, "Checkpoint decision needs a structured candidate: " + checkpoint_id)
     # Declared domains prune only within their own question, so only that question checks the witness.
     if same_question and prior['outcome'] == 'rejected' and 'rejected_domain' in prior:
-        from rds_guard import validate_domain, MAX_BYTES
+        from rds_guard_values import validate_domain, MAX_BYTES
         validate_domain(prior['rejected_domain'], prior['candidate'])
         witness = prior.get('falsification', {})
         witness_sha = witness.get('sha256')

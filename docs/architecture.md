@@ -57,6 +57,13 @@ This removes the direct `rds_checkpoints -> rds_advisor` dependency, not all
 upper-layer callbacks. QUICK choice/lifecycle preparation and the guard's
 bounded theory execution still need their separate admission/composition cuts.
 
+The checkpoint validator obtains bounded numeric/domain predicates from
+`rds_guard_values` (SHARED), rather than importing the mixed `rds_guard`
+execution module. Rejected-domain CAS checks therefore do not cold-load
+ProjectStore or Advisor. `rds_guard` re-exports the same predicates and byte
+limit; numeric formats, domain refusal rules and evidence checks are unchanged.
+Guard execution and its upper-layer theory callback remain separate work.
+
 Workspace admission now opens its committed identity/progress reads through
 `rds_sqlite.readonly_connection` rather than `ProjectStore._db`. Ancestor
 discovery and paid QUICK scope checks use the same connection boundary; effective
