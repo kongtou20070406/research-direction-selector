@@ -75,3 +75,20 @@ def test_whitelisted_csv_import_and_column_lookup(tmp_path, monkeypatch):
         "emit({'max':max(float(r['x']) for r in rows)})", encoding="utf-8")
     worker.run("analysis.py", "out/result.json")
     assert worker.json.loads((tmp_path / "out/result.json").read_text())["max"] == 3
+
+
+def test_broken_post_execution_receipt_cannot_rebuy_attempt(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("retained_loop", Path(__file__).with_name("loop.py"))
+    loop = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loop)
+    calls = []
+    def completed(*args, **kwargs):
+        calls.append(args)
+        return loop.subprocess.CompletedProcess([], 0, stdout=b"invalid receipt", stderr=b"")
+    monkeypatch.setattr(loop.subprocess, "run", completed)
+    code = "emit({'x':1})"
+    with pytest.raises(ValueError):
+        loop.execute(tmp_path, "RDS", tmp_path / "cli.py", code, 1)
+    retained = loop.execute(tmp_path, "RDS", tmp_path / "cli.py", code, 2)
+    assert len(calls) == 1 and retained["reused_original_attempt"]
+    assert retained["feedback_assurance"] == "UNVERIFIED"
