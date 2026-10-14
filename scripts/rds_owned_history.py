@@ -131,22 +131,6 @@ def history_cut(store, db, *, pending_choice=None, pending_completion=None):
     return cut
 
 
-def prepare_decision(store, report, contract):
-    """Retain the actual selected candidate and its decision-time evidence."""
-    from rds_quick import choice
-    manifest = report.get('selected_manifest')
-    require(report.get('status') == 'REVIEWED' and isinstance(manifest, dict),
-            'Owned history needs a reviewed selected manifest')
-    route = next((r for r in contract['advisor_policy']['routes'] if r['manifest'] == manifest), None)
-    require(route is not None, 'Owned history manifest is not an authorized policy route')
-    record = choice(report['advice'], report['context'], route['candidate'])
-    identity = method_identity(store, contract, manifest)
-    require(record['candidate']['action'].get('owned_execution_identity') == identity,
-            'Owned history candidate lacks its program-derived method identity')
-    record['owned_history'] = {'run_id': manifest['id'], 'manifest_sha256': digest(manifest),
-                             'effective_contract_sha256': digest(contract), 'method_sha256': identity,
-                             'dependency_snapshot_sha256': report.get('snapshot_sha256')}
-    return record
 
 
 def checkpoint_id(stage, run):

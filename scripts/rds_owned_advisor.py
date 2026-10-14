@@ -469,7 +469,7 @@ def review(store, persist=True):
     """Collect owned evidence, update its TMS subgraph, and propose one route."""
     from rds_tms_store import current, save
     from rds_cas import cas_json
-    from rds_quick import choice
+    from rds_advisor_choice import choice
     from rds_advisor import RDSAdvisor
     from rds_advisor_search import evaluate_condition
     with store._db(True) as db:
@@ -721,12 +721,30 @@ def review(store, persist=True):
     return result
 
 
+def prepare_decision(store, report, contract):
+    """Retain the actual selected candidate and its decision-time evidence."""
+    from rds_advisor_choice import choice
+    from rds_owned_history import method_identity
+    manifest = report.get('selected_manifest')
+    require(report.get('status') == 'REVIEWED' and isinstance(manifest, dict),
+            'Owned history needs a reviewed selected manifest')
+    route = next((r for r in contract['advisor_policy']['routes'] if r['manifest'] == manifest), None)
+    require(route is not None, 'Owned history manifest is not an authorized policy route')
+    record = choice(report['advice'], report['context'], route['candidate'])
+    identity = method_identity(store, contract, manifest)
+    require(record['candidate']['action'].get('owned_execution_identity') == identity,
+            'Owned history candidate lacks its program-derived method identity')
+    record['owned_history'] = {'run_id': manifest['id'], 'manifest_sha256': digest(manifest),
+                             'effective_contract_sha256': digest(contract), 'method_sha256': identity,
+                             'dependency_snapshot_sha256': report.get('snapshot_sha256')}
+    return record
+
+
 def prepare_admission(store, spec):
     report = review(store)
     require(report['status'] == 'REVIEWED' and report['selected_run'] == spec.get('id')
             and report.get('analysis_coverage', {}).get('full') is True
             and report['selected_manifest'] == spec, 'Owned Advisor did not select this frozen manifest; inspect project next')
-    from rds_owned_history import prepare_decision
     with store._db(True) as db:
         contract = store._contract(db)
     return {'fingerprint': report['fingerprint'], 'selected_run': report['selected_run'],

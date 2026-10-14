@@ -64,6 +64,13 @@ ProjectStore or Advisor. `rds_guard` re-exports the same predicates and byte
 limit; numeric formats, domain refusal rules and evidence checks are unchanged.
 Guard execution and its upper-layer theory callback remain separate work.
 
+Selected-route validation lives in `rds_advisor_choice` (L3). QUICK keeps
+`choice` as a compatible re-export; owned Advisor and history preparation
+consume the decision service directly. This removes their imports of the
+QUICK entrypoint. The internal `prepare_decision` function belongs to owned
+Advisor; the history writer no longer imports route-selection policy. QUICK
+admission still needs its lock-boundary cut.
+
 Workspace admission now opens its committed identity/progress reads through
 `rds_sqlite.readonly_connection` rather than `ProjectStore._db`. Ancestor
 discovery and paid QUICK scope checks use the same connection boundary; effective

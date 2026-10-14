@@ -21,7 +21,7 @@ GROUPS = {
           "continuous_confirmation polynomial_confirmation domain_confirmation advancement guard",
     "L2": "hypergraph hypergraph_blockers hypergraph_input bus_adapter accelerator trajectory "
           "context_compact compress dynamics_probe discrimination",
-    "L3": "advisor advisor_coverage advisor_search advisor_workset owned_advisor autonomy "
+    "L3": "advisor advisor_choice advisor_coverage advisor_search advisor_workset owned_advisor autonomy "
           "continuation experiments feasibility frontier frontier_proposals global_planning graph_ranker "
           "jump jump_search math_router meta methods operators resources result_tools rsi "
           "adversary search_allocation search_neighborhood structure theory_tools",
