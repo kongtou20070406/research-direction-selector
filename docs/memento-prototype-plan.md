@@ -32,6 +32,21 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S11: CI correction selected from original results
+
+Original exact-head run `38547449833` on `e43d004` failed: this slice introduced
+an unavailable pytest import and omitted the world-model contract's layer label.
+Use the repository's existing unittest discovery, preserving all nine contract
+cases; declare the new pure policy contract L3 beside `rds_predictor_contract`.
+No old label, assertion, workflow or timeout is changed. Original QUICK failure
+at `tests/test_rds_quick_coverage_admission.py:681` remains out of scope.
+
+The 19:06 checkpoint had 43 settled pairs and 785 total requests. Eleven distinct
+first-pass questions have mixed completion/cost outcomes; eight questions were
+excluded after later non-completion. Repeated survivors cannot establish a
+general gain. The original frozen experiment continues unchanged. Next remains
+a receipt/history adapter or semantic-review interface after this CI seam passes.
+
 ## Goal and boundaries
 
 Reserve minimal bus/plugin contracts, develop a separate prototype, and test
@@ -77,7 +92,7 @@ paired task supplies a feasibility signal, not a general gain estimate.
 ## Iteration 0 and next action
 
 Baseline: this contract is absent at the frozen source; 0 new obligations pass.
-S1 verify: `uv run --with pytest --no-project python -m pytest tests/test_rds_world_model_contract.py -q`.
+S1 verify: `python -B -m unittest discover -s tests -p test_rds_world_model_contract.py -v`.
 Guard: `git diff --check`; net additions below 300 per feature slice.
 Read/admission/composition work on PR #325 remains unfinished. Inspect exact
 live owner and file scope before changing any existing bus implementation.

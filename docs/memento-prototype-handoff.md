@@ -19,6 +19,15 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
+S11 correction: exact-head CI `38547449833` retained three original findings:
+the new contract test imported missing pytest, the new module had UNKNOWN layer,
+and QUICK coverage admission raised `KeyError: registered` at line 681. S11 only
+converts the nine existing contract cases to standard-library unittest and adds
+the truthful L3 label. The QUICK finding is out of scope; do not claim all-green
+CI or kernel acceptance after these two corrections. Frozen paid sources stay
+unchanged, and original logs are retained in `ci-38547449833-original-failed.log`
+under the external experiment root.
+
 Contract: 9 focused checks passed. Isolated compiler: 4 focused checks passed.
 Current driver/batch: 10 focused checks passed. PowerShell syntax passed and
 each scoped diff check passed. No local full-suite acceptance is claimed.
