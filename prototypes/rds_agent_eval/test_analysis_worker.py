@@ -1,4 +1,5 @@
 import importlib.util
+import io
 from pathlib import Path
 
 import pytest
@@ -92,3 +93,63 @@ def test_broken_post_execution_receipt_cannot_rebuy_attempt(tmp_path, monkeypatc
     retained = loop.execute(tmp_path, "RDS", tmp_path / "cli.py", code, 2)
     assert len(calls) == 1 and retained["reused_original_attempt"]
     assert retained["feedback_assurance"] == "UNVERIFIED"
+
+
+def terminal_loop():
+    spec = importlib.util.spec_from_file_location("terminal_loop", Path(__file__).with_name("loop.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_complete_text_and_function_answers_preserve_native_content():
+    loop = terminal_loop()
+    answer = "证据与限制\nOriginal measured answer."
+    assert loop.response_turn({"finish_reason": "stop", "message": {"content": answer}}) == ([], answer)
+    call = {"id": "finish-1", "function": {"name": "finish", "arguments": loop.json.dumps({"answer": answer})}}
+    batch, text = loop.response_turn({"finish_reason": "tool_calls", "message": {"tool_calls": [call]}})
+    assert text is None and batch == [("finish-1", {"tool": "finish", "answer": answer})]
+
+
+def test_truncated_unknown_empty_or_contradictory_terminal_never_dispatches():
+    loop = terminal_loop()
+    call = {"id": "execute-1", "function": {"name": "execute", "arguments": '{"code":"emit({})"}'}}
+    for reason in ("length", None, "content_filter", "stop"):
+        with pytest.raises(ValueError, match="finish_reason"):
+            loop.response_turn({"finish_reason": reason, "message": {"tool_calls": [call], "content": "partial"}})
+    with pytest.raises(ValueError, match="empty"):
+        loop.response_turn({"finish_reason": "stop", "message": {"content": "  "}})
+    call["function"] = {"name": "finish", "arguments": '{}'}
+    with pytest.raises(ValueError, match="empty"):
+        loop.response_turn({"finish_reason": "tool_calls", "message": {"tool_calls": [call]}})
+
+
+def test_driver_retains_terminal_response_and_charged_request_without_dispatch(tmp_path, monkeypatch):
+    loop = terminal_loop()
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "data.csv").write_text("x\n1\n", encoding="utf-8")
+    (inputs / "task.json").write_text('{"query":"fixture only"}', encoding="utf-8")
+    cli = tmp_path / "cli.py"
+    cli.write_text("# no execution", encoding="utf-8")
+    monkeypatch.setattr(loop, "execute", lambda *a: pytest.fail("Terminal response dispatched execution"))
+    for mode in ("TEXT", "FUNCTION", "TRUNCATED"):
+        choice = {"finish_reason": "stop", "message": {"content": "unverified fixture answer"}}
+        if mode != "TEXT":
+            choice = {"finish_reason": "tool_calls" if mode == "FUNCTION" else "length", "message": {
+                "tool_calls": [{"id": "f1", "function": {"name": "finish", "arguments": '{"answer":"fixture"}'}}]}}
+        raw = loop.json.dumps({"model": "fixture-deepseek", "choices": [choice]}).encode()
+        monkeypatch.setattr(loop.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(raw))
+        args = type("Args", (), dict(workspace=str(tmp_path / mode), inputs=str(inputs), cli=str(cli),
+            max_calls=2, deadline=loop.time.time()+120, model="fixture-deepseek", response_model="fixture-deepseek",
+            endpoint="http://fixture.invalid/v1"))()
+        reports = loop.run(args)
+        frozen = loop.json.loads((Path(args.workspace) / "frozen.json").read_text())
+        assert frozen["completion_protocol"] == "finish-function-or-stop-text-v2"
+        for report in reports:
+            folder = Path(args.workspace) / report["arm"]
+            assert report["calls"] == 1 and report["attempts"] == 0
+            assert len(list(folder.glob("request-*.json"))) == 1 and (folder / "response-0.json").read_bytes() == raw
+            assert report["scientific_benefit"] == "UNKNOWN"
+            assert report["completion_mode"] == (None if mode == "TRUNCATED" else mode)
+            assert report["stop_reason"] == ("REQUEST_OR_PARSE_FAILURE_NO_RETRY" if mode == "TRUNCATED" else "AGENT_FINISHED")

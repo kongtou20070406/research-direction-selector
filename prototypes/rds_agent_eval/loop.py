@@ -31,6 +31,23 @@ def commands(message):
             for a in actions]
 
 
+def response_turn(choice):
+    """Accept complete terminal forms; truncated/unknown replies never dispatch."""
+    message, reason = choice["message"], choice.get("finish_reason")
+    if reason == "stop" and not message.get("tool_calls"):
+        answer = message.get("content")
+        if type(answer) is not str or not answer.strip():
+            raise ValueError("Terminal text answer is empty")
+        return [], answer
+    if reason != "tool_calls":
+        raise ValueError("Incomplete or unsupported finish_reason: " + str(reason))
+    batch = commands(message)
+    if any(cmd["tool"] == "finish" and (type(cmd.get("answer")) is not str or not cmd["answer"].strip())
+           for _, cmd in batch):
+        raise ValueError("Terminal function answer is empty")
+    return batch, None
+
+
 def bound_artifacts(job, receipt, output):
     """Read only contained files whose original receipt hashes and sizes match."""
     values = {}
@@ -132,6 +149,7 @@ def run(args):
               "max_calls": args.max_calls, "deadline_epoch": deadline,
               "total_wall_seconds": 2700, "per_arm_calls": args.max_calls // 2,
               "arms": getattr(args, "arms", ["Bare", "RDS"]), "tool_timeout_seconds": 30,
+              "completion_protocol": "finish-function-or-stop-text-v2",
               "comparison_scope": "RDS_EXEC_ONLY", "scientific_benefit": "UNKNOWN"}
     save(root / "frozen.json", frozen)
     if len(frozen["arms"]) != 2 or set(frozen["arms"]) != {"Bare", "RDS"}:
@@ -150,7 +168,8 @@ def run(args):
                 ("execute", "code", "Run CSV analysis Python; no imports; emit one evidence object"),
                 ("finish", "answer", "Finish with an evidence-backed answer and limitations"))]
         instruction = ("You are a data analysis research agent. Solve the given real task with measured CSV evidence. "
-            "Use the provided function tools; multiple calls are executed serially. Do not write tool markup or JSON as text. "
+            "Use the provided function tools; multiple calls are executed serially. Do not write tool-call markup as text. "
+            "Finish with the finish tool or an ordinary text answer with evidence and limitations. "
             "The execute tool provides csv,json,math,statistics,read(name),emit(dict) "
             "and ordinary numeric/list builtins. Only csv/json/math/statistics imports are permitted. Emit exactly one evidence JSON object. "
             f"read(name) returns UTF-8 CSV TEXT, not rows. Code has a 30s wall limit; {frozen['per_arm_calls']} model calls available. Keep failures and revise methods. "
@@ -160,7 +179,7 @@ def run(args):
                 "bounded admitted execution and retained operational receipts. Read its failure/UNKNOWN evidence; "
                 "operational success is not scientific support. No automatic uncertain retry.")
         messages = [{"role": "system", "content": instruction}]
-        attempts, reason, final, arm_start_calls = 0, "CALL_CAP", None, calls
+        attempts, reason, final, completion_mode, arm_start_calls = 0, "CALL_CAP", None, None, calls
         for turn in range(frozen["per_arm_calls"]):
             remaining = deadline - time.time()
             if remaining <= 0 or calls >= args.max_calls:
@@ -181,18 +200,23 @@ def run(args):
                     raise ValueError("Response model identity is missing or differs from DeepSeek")
                 if frozen["response_model"] != response["model"]:
                     raise ValueError("Frozen resolved model identity changed")
-                message = response["choices"][0]["message"]
+                choice = response["choices"][0]
+                message = choice["message"]
                 messages.append(message)
-                batch = commands(message)
+                batch, text_answer = response_turn(choice)
             except Exception as exc:
                 save(folder / f"failure-{turn}.json", {"type": type(exc).__name__, "error": str(exc),
                     "call": calls, "wall_seconds": time.monotonic() - began, "paid_cost": "UNKNOWN"})
                 reason = "REQUEST_OR_PARSE_FAILURE_NO_RETRY"
                 break
+            if text_answer is not None:
+                final, reason, completion_mode = text_answer, "AGENT_FINISHED", "TEXT"
+                break
             for action_id, command in batch:
                 tool = command.get("tool")
                 if tool == "finish":
                     final, reason = command.get("answer"), "AGENT_FINISHED"
+                    completion_mode = "FUNCTION"
                     break
                 try:
                     if tool == "read":
@@ -224,6 +248,7 @@ def run(args):
             if reason != "CALL_CAP":
                 break
         report = {"arm": arm, "stop_reason": reason, "final_answer": final, "attempts": attempts,
+                  "completion_mode": completion_mode,
                   "calls": calls - arm_start_calls, "scientific_benefit": "UNKNOWN"}
         save(folder / "summary.json", report)
         reports.append(report)
