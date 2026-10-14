@@ -23,6 +23,24 @@ def save(path, value):
     Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
 
 
+def bound_artifacts(job, receipt, output):
+    """Read only contained files whose original receipt hashes and sizes match."""
+    values = {}
+    for item in receipt["artifacts"]:
+        if item["kind"] not in {"stdout.bin", "stderr.bin"} and item["path"] != output:
+            continue
+        path = (job / item["path"]).resolve()
+        if not path.is_relative_to(job.resolve()):
+            raise ValueError("Receipt artifact escapes original job")
+        raw = path.read_bytes()
+        if len(raw) != item["size"] or hashlib.sha256(raw).hexdigest() != item["sha256"]:
+            raise ValueError("Original receipt artifact is missing or tampered")
+        values[item["kind"]] = raw
+    if not {"stdout.bin", "stderr.bin"} <= values.keys():
+        raise ValueError("Original process stream bindings are missing")
+    return values
+
+
 def execute(root, arm, cli, code, attempt):
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
     for retained in root.glob("tool-*.json"):
@@ -50,6 +68,28 @@ def execute(root, arm, cli, code, attempt):
                   "stderr": (exc.stderr or b"").decode("utf-8", errors="replace")}
     report.update(attempt=attempt, argv=argv, code_sha256=sha(code_path),
                   wall_seconds=time.monotonic() - started, cost_status="UNKNOWN")
+    if arm == "RDS" and report["status"] == "FINISHED":
+        quick = json.loads(report["stdout"])
+        if "receipt" in quick:
+            job = Path(quick["job_root"]).resolve()
+            if not job.is_relative_to((root / ".rds/exec").resolve()):
+                raise ValueError("RDS returned an unrelated job root")
+            sys.path.insert(0, str(cli.parent))
+            from rds_project import ProjectStore
+            store = ProjectStore(job)
+            with store._db(True) as db:
+                row = db.execute("SELECT run_id,sha256,body FROM receipts WHERE run_id=?",
+                                 (quick["receipt"]["run_id"],)).fetchone()
+                receipt = store._receipt(row)
+            if receipt["sha256"] != quick["receipt"]["sha256"]:
+                raise ValueError("CLI receipt differs from original retained receipt")
+            artifacts = bound_artifacts(job, receipt, out)
+            report["cli_stdout"] = report["stdout"]
+            report["stdout"] = artifacts["stdout.bin"].decode("utf-8", errors="replace")
+            report["stderr"] += artifacts["stderr.bin"].decode("utf-8", errors="replace")
+            report["rds"] = {k: receipt[k] for k in ("run_id", "attempt_id", "run_status", "sha256", "errors")}
+            if "project_output" in artifacts:
+                report["artifact"] = json.loads(artifacts["project_output"])
     if (root / out).is_file():
         report["artifact"] = json.loads((root / out).read_text(encoding="utf-8"))
         report["artifact_sha256"] = sha(root / out)
@@ -86,12 +126,14 @@ def run(args):
         for name in inputs:
             shutil.copyfile(source / name, folder / name)
         shutil.copyfile(Path(__file__).with_name("analysis_worker.py"), folder / "analysis_worker.py")
-        examples = [{"tool": "read", "file": "capital.csv"},
-                    {"tool": "execute", "code": "emit({'example': 1})"},
-                    {"tool": "finish", "answer": "Your evidence-backed answer"}]
+        tools = [{"type": "function", "function": {"name": name, "description": desc,
+            "parameters": {"type": "object", "properties": {field: {"type": "string"}},
+                           "required": [field], "additionalProperties": False}}}
+            for name, field, desc in (("read", "file", "Preview one declared CSV file"),
+                ("execute", "code", "Run CSV analysis Python; no imports; emit one evidence object"),
+                ("finish", "answer", "Finish with an evidence-backed answer and limitations"))]
         instruction = ("You are a data analysis research agent. Solve the given real task with measured CSV evidence. "
-            "Respond with ONE valid JSON object, double-quoted keys/string values, escaped code newlines, "
-            "no commentary and no fences. Allowed command examples: " + json.dumps(examples) + ". "
+            "Use exactly one of the provided function tools per turn. Do not write tool markup or JSON as text. "
             "The execute tool provides csv,json,math,statistics,read(name),emit(dict) "
             "and ordinary numeric/list builtins. No imports. Emit exactly one evidence JSON object. "
             f"read(name) returns UTF-8 CSV TEXT, not rows. Code has a 30s wall limit; {frozen['per_arm_calls']} model calls available. Keep failures and revise methods. "
@@ -108,7 +150,7 @@ def run(args):
                 reason = "TOTAL_CAP"
                 break
             calls += 1
-            request = {"model": args.model, "messages": messages, "max_tokens": 3000}
+            request = {"model": args.model, "messages": messages, "tools": tools, "max_tokens": 3000}
             save(folder / f"request-{turn}.json", request)
             began = time.monotonic()
             try:
@@ -120,9 +162,13 @@ def run(args):
                 response = json.loads(raw)
                 if "deepseek" not in response.get("model", "").lower():
                     raise ValueError("Response model identity is missing or differs from DeepSeek")
-                content = response["choices"][0]["message"]["content"]
-                messages.append({"role": "assistant", "content": content})
-                command = json.loads(content.strip().removeprefix("```json").removesuffix("```").strip())
+                message = response["choices"][0]["message"]
+                messages.append(message)
+                actions = message.get("tool_calls", [])
+                if len(actions) != 1:
+                    raise ValueError("Expected exactly one structured function call")
+                action = actions[0]
+                command = {**json.loads(action["function"]["arguments"]), "tool": action["function"]["name"]}
             except Exception as exc:
                 save(folder / f"failure-{turn}.json", {"type": type(exc).__name__, "error": str(exc),
                     "call": calls, "wall_seconds": time.monotonic() - began, "paid_cost": "UNKNOWN"})
@@ -153,7 +199,9 @@ def run(args):
                     raise ValueError("Unsupported tool")
             except (ValueError, KeyError) as exc:
                 result = {"tool_error": str(exc)}
-            messages.append({"role": "user", "content": json.dumps(result, ensure_ascii=False)[:16000]})
+            feedback = {k: v for k, v in result.items() if k != "cli_stdout"} if type(result) is dict else result
+            messages.append({"role": "tool", "tool_call_id": action["id"],
+                             "content": json.dumps(feedback, ensure_ascii=False)[:16000]})
         report = {"arm": arm, "stop_reason": reason, "final_answer": final, "attempts": attempts,
                   "calls": calls - arm_start_calls, "scientific_benefit": "UNKNOWN"}
         save(folder / "summary.json", report)

@@ -40,3 +40,19 @@ def test_repeated_analysis_returns_original_attempt_without_execution(tmp_path, 
     monkeypatch.setattr(loop.subprocess, "run", forbidden)
     report = loop.execute(tmp_path, "RDS", tmp_path / "cli.py", code, 2)
     assert report["status"] == "TIMEOUT_UNKNOWN" and report["reused_original_attempt"]
+
+
+def test_bound_streams_preserve_error_and_reject_tampering(tmp_path):
+    spec = importlib.util.spec_from_file_location("feedback_loop", Path(__file__).with_name("loop.py"))
+    loop = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loop)
+    items = []
+    for name, content in (("stdout.bin", b""), ("stderr.bin", b"original failure")):
+        path = tmp_path / name
+        path.write_bytes(content)
+        items.append({"kind": name, "path": name, "size": len(content), "sha256": loop.sha(path)})
+    receipt = {"artifacts": items}
+    assert loop.bound_artifacts(tmp_path, receipt, "out/result.json")["stderr.bin"] == b"original failure"
+    (tmp_path / "stderr.bin").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="tampered"):
+        loop.bound_artifacts(tmp_path, receipt, "out/result.json")
