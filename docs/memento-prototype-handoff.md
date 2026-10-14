@@ -156,9 +156,22 @@ matched arm cap, S13 completion protocol and fixed authorization deadline.
 It returns the original compiled contract/protocol and identical Bare manifests,
 without initialization, persistence or dispatch. This freezes declared inputs;
 it does not certify scientific independence, semantic gold exclusion or benefit.
-Focused controlled-software verification is pending for this cut.
+Four focused controlled-software checks passed, including real FULL CLI
+initialization and owned review without dispatch. Original used-task rejection,
+unchanged sources/results and fixed deadline are retained in
+acceptance-s15-original-authorization-20261014.json; preflight SHA-256
+c48fc1ffe9363fef95df3203009327a6910a114843af660045aea8b1e1845716.
 Parent CI 38579521253 retains only the inherited QUICK KeyError at line 681;
 original failed log retained as ci-38579521253-original-failed.log.
+
+Next input candidate: holdout-s15-inputs/task.json plus
+temporal_trends_contingency_table.csv for introduction_pathways_non-native_plants
+metadata_0 qid 0. Hashes/provenance/exclusions: holdout-s15-input-freeze.json.
+Raw bytes are TSV despite the csv filename; 12 rows cover four periods and three
+pathways. Original metadata and numeric inspection remain outside agent inputs.
+The native domain recipe and paid study are still unprepared. Next declare shared
+finite analysis methods and independent verification over original measured
+outputs; period resolution does not justify an exact crossover date.
 
 Next: collect independent numerical/claim checks for the new task groups, then
 choose one concrete interface slice. Candidate work is a receipt-bound adapter

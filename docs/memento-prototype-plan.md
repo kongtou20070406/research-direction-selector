@@ -44,9 +44,25 @@ and preserve model IDs, matched per-arm cap, S13 terminal protocol and original
 deadline. Derive Bare manifests from the same compiled native routes/budget.
 No initialization, provider call, dispatch or sidecar state occurs in preflight.
 New task IDs do not prove independent sources; scientific status stays UNKNOWN.
-Focused software checks: test_study_preflight.py; pending for this cut. Then
+Focused software checks: test_study_preflight.py passed four cases, including
+real FULL CLI initialization/owned review without dispatch. Original authorization
+review rejects a used task before recipe reading and confirms unchanged frozen
+sources/results. Evidence: acceptance-s15-original-authorization-20261014.json;
+preflight SHA-256 c48fc1ffe9363fef95df3203009327a6910a114843af660045aea8b1e1845716.
+Then
 prepare actual untouched task data and domain methods/evaluation declarations,
 inspect their frozen identities and run a separately hosted matched study.
+
+An untouched input candidate is now frozen outside the repo: DiscoveryBench
+introduction_pathways_non-native_plants metadata_0 qid 0 at the same pinned
+upstream commit. Agent inputs contain only task.json and the original temporal
+table; hypotheses/intermediate/domain_knowledge stay outside that directory.
+The csv filename holds tab-separated bytes: 12 rows, four periods, three pathways.
+Initial comma-parsing and raw-download failures are retained in the candidate
+records; source bytes were not repaired. See holdout-s15-input-freeze.json and
+private numeric inspection. No native domain recipe or paid study exists yet.
+Next: shared finite analysis methods and a frozen independent task verifier;
+preserve coarse period bins rather than inventing an exact crossover year.
 
 ### S14: retained native Advisor view for a future real study
 
