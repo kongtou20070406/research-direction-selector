@@ -32,7 +32,18 @@ Independent parsing checks structured claims only, including all main periods
 and earliest observed bin. Precise-year and causal claims fail this scope.
 Full final-answer semantic review is UNKNOWN, and native receipt binding must
 be supplied by the future study bridge. No paid call or original task rerun.
-Next: focused domain verification and offline output evidence, then the bridge.
+Four focused cases/ten subtests passed after fixing csv.Error normalization,
+including the lazy-header branch. Both original failure logs remain outside
+the repository (s16-initial-format-failure.log, s16-header-format-failure.log);
+assertions and caps are unchanged. Two real CPU CLI outputs over the frozen
+original TSV pass separate arithmetic parsing and private count comparison.
+Evidence: acceptance-s16-offline-domain-20261015.json. Domain source/input pins
+are frozen in holdout-s16-domain-freeze.json; worker SHA-256
+ca0eed3787c48b2fcec39c1cd33ec182c43a57004a6af931063a81a110b894cb;
+verifier SHA-256 3422f3594ca7918547ae5b107630dc6c300be0c2471386d2240573a6b2d587aa.
+Original manifest, engine, ledger, batch-summary and input pins match; offline
+claim provenance is supplied, not DeepSeek. Agent correctness remains pending.
+Next: declare the native owned study bridge and receipt-bound output projection.
 S15 exact-head CI 38590645812 fails only the inherited QUICK test at line 681;
 original log is retained as ci-38590645812-original-failed.log externally.
 
@@ -181,9 +192,8 @@ temporal_trends_contingency_table.csv for introduction_pathways_non-native_plant
 metadata_0 qid 0. Hashes/provenance/exclusions: holdout-s15-input-freeze.json.
 Raw bytes are TSV despite the csv filename; 12 rows cover four periods and three
 pathways. Original metadata and numeric inspection remain outside agent inputs.
-The native domain recipe and paid study are still unprepared. Next declare shared
-finite analysis methods and independent verification over original measured
-outputs; period resolution does not justify an exact crossover date.
+The native domain recipe and paid study are still unprepared. S16 freezes the
+methods/verifier separately; period resolution does not justify an exact date.
 
 Next: collect independent numerical/claim checks for the new task groups, then
 choose one concrete interface slice. Candidate work is a receipt-bound adapter

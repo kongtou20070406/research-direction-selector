@@ -44,9 +44,22 @@ claims, rejects precise crossover years/causal scope, and leaves free-text
 review and scientific support UNKNOWN. Receipt decoding remains native;
 the future bridge must supply receipt-bound output bytes. No provider, new
 ledger, production route or native execution is introduced by these modules.
-Baseline: these domain obligations are absent; cumulative accepted engineering
-obligations remain 40 before verification. Next: run focused domain checks,
-freeze offline original-data evidence, then declare the owned native study bridge.
+Four focused cases and ten subtests passed; cumulative engineering obligations
+rise from 40 to 44, not a whole-suite rerun or scientific score. Two initial
+format-rejection subchecks failed on csv.Error, followed by one lazy-header
+failure; both original logs are retained. Parser causes now propagate behind
+ValueError without weakening assertions or changing caps. Offline execution of
+both finite methods over byte-identical frozen input agrees with the independent
+parser and private count inventory. Earliest observed main period is 1501-1900;
+later bins also have Gardening as the largest count. No exact year follows.
+Evidence: external acceptance-s16-offline-domain-20261015.json and
+holdout-s16-domain-freeze.json. Source/measurement byte pins are retained;
+original manifest, engine, ledgers, batch summary and input pins still match.
+This is offline method acceptance with a supplied structured claim, not an
+agent answer or native receipt-bound study. Zero new DeepSeek calls/old dispatch.
+Next: declare the owned native study bridge using these frozen methods and
+private verifier, shared budgets/tools and the S13 completion protocol; bind
+original outputs through native receipts before a separately inspected study.
 Parent exact-head CI 38590645812 still fails only the inherited QUICK KeyError
 at tests/test_rds_quick_coverage_admission.py:681; original failed log retained.
 
