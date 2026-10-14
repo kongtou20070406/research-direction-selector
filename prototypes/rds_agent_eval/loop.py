@@ -24,6 +24,11 @@ def save(path, value):
 
 
 def execute(root, arm, cli, code, attempt):
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    for retained in root.glob("tool-*.json"):
+        prior = json.loads(retained.read_text(encoding="utf-8"))
+        if prior["code_sha256"] == code_hash:
+            return {**prior, "reused_original_attempt": True}
     code_path, out = root / f"analysis-{attempt}.py", f"out/result-{attempt}.json"
     code_path.write_text(code, encoding="utf-8")
     argv = [sys.executable, "-B", "analysis_worker.py", code_path.name, out]
@@ -64,6 +69,8 @@ def run(args):
     task = (source / "task.json").read_text(encoding="utf-8")
     frozen = {"model": args.model, "model_weights": "UNKNOWN", "inputs": inputs,
               "task_sha256": sha(source / "task.json"), "cli_sha256": sha(cli),
+              "rds_source": {str(p.relative_to(cli.parent)): sha(p) for p in cli.parent.rglob("*.py")},
+              "worker_sha256": sha(Path(__file__).with_name("analysis_worker.py")),
               "max_calls": 40, "total_wall_seconds": 2700, "per_arm_calls": 20,
               "arms": ["Bare", "RDS"], "tool_timeout_seconds": 30,
               "comparison_scope": "RDS_EXEC_ONLY", "scientific_benefit": "UNKNOWN"}
@@ -86,7 +93,7 @@ def run(args):
                 "bounded admitted execution and retained operational receipts. Read its failure/UNKNOWN evidence; "
                 "operational success is not scientific support. No automatic uncertain retry.")
         messages = [{"role": "system", "content": instruction}]
-        attempts, reason, final = 0, "CALL_CAP", None
+        attempts, reason, final, arm_start_calls = 0, "CALL_CAP", None, calls
         for turn in range(20):
             remaining = 2700 - (time.monotonic() - started)
             if remaining <= 0 or calls >= 40:
@@ -103,6 +110,8 @@ def run(args):
                     raw = response.read()
                 (folder / f"response-{turn}.json").write_bytes(raw)
                 response = json.loads(raw)
+                if "deepseek" not in response.get("model", "").lower():
+                    raise ValueError("Response model identity is missing or differs from DeepSeek")
                 content = response["choices"][0]["message"]["content"]
                 messages.append({"role": "assistant", "content": content})
                 command = json.loads(content.strip().removeprefix("```json").removesuffix("```").strip())
@@ -122,6 +131,11 @@ def run(args):
                         raise ValueError("Undeclared input")
                     result = (folder / name).read_text(encoding="utf-8-sig")[:12000]
                 elif tool == "execute":
+                    if 2700 - (time.monotonic() - started) < 50:
+                        reason = "INSUFFICIENT_REMAINING_TOOL_BUDGET"
+                        break
+                    if arm == "RDS" and any(sha(cli.parent / p) != h for p, h in frozen["rds_source"].items()):
+                        raise ValueError("Frozen RDS source changed")
                     attempts += 1
                     result = execute(folder, arm, cli, command["code"], attempts)
                     if result["status"] == "TIMEOUT_UNKNOWN":
@@ -133,7 +147,7 @@ def run(args):
                 result = {"tool_error": str(exc)}
             messages.append({"role": "user", "content": json.dumps(result, ensure_ascii=False)[:16000]})
         report = {"arm": arm, "stop_reason": reason, "final_answer": final, "attempts": attempts,
-                  "calls": turn + 1, "scientific_benefit": "UNKNOWN"}
+                  "calls": calls - arm_start_calls, "scientific_benefit": "UNKNOWN"}
         save(folder / "summary.json", report)
         reports.append(report)
         save(root / "summary.json", {"calls": calls, "wall_seconds": time.monotonic() - started, "arms": reports})

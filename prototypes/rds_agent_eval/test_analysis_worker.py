@@ -26,3 +26,17 @@ def test_forbidden_execution_and_escaping_inputs(tmp_path, monkeypatch):
     (tmp_path / "analysis.py").write_text("emit({'x':read('../secret.csv')})", encoding="utf-8")
     with pytest.raises((ValueError, FileNotFoundError)):
         worker.run("analysis.py", "out/result.json")
+
+
+def test_repeated_analysis_returns_original_attempt_without_execution(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("agent_loop", Path(__file__).with_name("loop.py"))
+    loop = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loop)
+    code = "emit({'value':1})"
+    loop.save(tmp_path / "tool-1.json", {"code_sha256": loop.hashlib.sha256(code.encode()).hexdigest(),
+                                       "status": "TIMEOUT_UNKNOWN"})
+    def forbidden(*a, **kw):
+        raise AssertionError("Uncertain analysis was bought again")
+    monkeypatch.setattr(loop.subprocess, "run", forbidden)
+    report = loop.execute(tmp_path, "RDS", tmp_path / "cli.py", code, 2)
+    assert report["status"] == "TIMEOUT_UNKNOWN" and report["reused_original_attempt"]
