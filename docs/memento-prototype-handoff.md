@@ -36,9 +36,15 @@ All final text/JSON fields are preserved. Negative/unknown summaries remain
 inputs without a verified final; costs, errors, raw files and native/CAS evidence
 are retained. This verifies provenance only; semantic rubric is NOT_FROZEN,
 reviewer identity/free-text acceptance/scientific support stay UNKNOWN. No
-score, dispatch, persistence or new model call. Four focused checks are pending.
-Read-only original S18 packaging must not replace old results or certify its
-from1501-onward wording. Next freeze independent semantic-review criteria before
+score, dispatch, persistence or new model call. Four focused cases/six subtests
+passed; initial and final focused logs retained. Original S18 four-file terminal
+packages for both arms and full native evidence exported at review-s20-inputs
+with byte/CAS roundtrip checks. RDS evidence/limitations fields remain intact.
+Acceptance acceptance-s20-original-review-inputs-20261015.json pins exports and
+reader SHA256198fb099e714ab1b3c28be3a7ab7317333d8b5da3165a4fed8c45190c26bab5b.
+All 90 S18 originals, 181 runtime pins and 988 old files remain unchanged.
+Packaging does not replace old results or certify its from1501-onward wording.
+Next freeze independent semantic-review criteria before
 an unused-task comparison with identical tools/budgets and original deadline.
 Parent CI38623053985 failed only inherited QUICK test line681; original log kept.
 
