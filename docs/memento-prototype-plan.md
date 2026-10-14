@@ -44,7 +44,17 @@ recheck the native view after expansion. No new collection, selection, ledger,
 admission, model call or automatic integration. Full report expansion preserves
 candidate/evidence denominators beyond the native display limits.
 Focused new-reader verification uses real CLI-created temporary software
-fixtures and native CAS/receipts. Pending for this cut. Fixture PASS will not
+fixtures and native CAS/receipts. Four focused checks passed. The first run
+retained one failed fixture assertion: the CLI adds workflow display metadata
+outside the original CAS report (rds_cli.py:1907). Corrected acceptance compares
+the full CAS bytes/hash/decoded report and the CLI envelope separately; no
+native assertion or timeout changed. Original failure log remains retained.
+Read-only inspection of all 60 original RDS arm roots returns NO_CURRENT_ADVICE,
+with unchanged ledger hashes and frozen sources; no old dispatch or paid call.
+Evidence: acceptance-s14-original-advisor-views-20261014.json under the external
+experiment root; reader SHA-256
+7f1873effb1985545ec95eba9fea12f05c2f3850c6a2e53606065c7176fa7b02.
+Fixture PASS will not
 measure DeepSeek, whole-RDS effects or scientific support. Then declare the
 native project policy/worker/domain inputs and untouched study tasks, freeze
 S13 terminal protocol equally for both arms, and retain independent verifiers.

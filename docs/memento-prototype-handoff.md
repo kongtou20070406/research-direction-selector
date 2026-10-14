@@ -135,7 +135,16 @@ CAS report only for COMPATIBLE_RECORDED_ADVICE. Native view identity is rechecke
 after expansion. It does not collect new advice, persist a report, authorize or
 execute a candidate. Frozen experiments remain unchanged. Real CLI-created
 software fixtures cover read-only state, missing/stale advice, original-output
-and CAS damage, and a committed state change during reading; verification pending.
+and CAS damage, and a committed state change during reading. Four focused checks
+passed after correcting one fixture comparison of the CLI workflow envelope
+against original CAS contents. Full CAS byte/hash/decoded equality is asserted;
+the original failure is retained in s14-initial-fixture-failure.log.
+Read-only inspection of all 60 original RDS arm roots finds NO_CURRENT_ADVICE,
+with unchanged ledger hashes and frozen sources. This confirms the old study's
+exec-only scope, not a product failure. Evidence:
+acceptance-s14-original-advisor-views-20261014.json, reader SHA-256
+7f1873effb1985545ec95eba9fea12f05c2f3850c6a2e53606065c7176fa7b02.
+No new model call or original dispatch; controlled CPU fixtures are separate.
 Parent CI 38569498061 still fails only the inherited QUICK KeyError at line 681;
 its original failed log is ci-38569498061-original-failed.log. No all-green claim.
 
