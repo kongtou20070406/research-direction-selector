@@ -4,6 +4,34 @@ Date: 2026-10-14. Owner: this implementation chat. Starting public source:
 `445a1379b7fa383b2fdde7a0cbd039376e892a1a`, Draft PR #325.
 The existing checkout also has 75 dirty entries; they remain outside this work.
 
+## Latest authorization and running checkpoint
+
+This section supersedes the historical 40/1040-call budgets below. Latest human
+authorization: unlimited DeepSeek v4.1 calls within one fixed 24-hour window,
+ending **2026-10-15 18:02:08 Asia/Shanghai**. No training or GPU use. Existing
+per-request/tool and RDS admission bounds remain intact.
+
+Windows task `RDS-Memento-DeepSeek-24h-20261014` is registered and verified
+Running with actual API responses. Frozen development source: `f13a829`.
+The RDS implementation under test is the committed #325 lineage at `445a137`,
+exported from `98321dc`; inherited dirty source is not included or certified.
+Frozen external manifest: `C:/Users/XU/Documents/Codex/2026-10-14/rds-deepseek-real-pair/background-manifest-24h.json`,
+SHA-256 `f8563e2c977518cc37ff26e77aee2a5be80f4190b709f39003eeec575298500f`.
+Original outputs and old manifests remain intact. No automatic failure restart.
+
+The frozen batch covers 11 original questions from four source groups:
+meta-regression, NLS socioeconomic status, NLS incarceration, and World Bank
+education/GDP. Alternating arm order and conditional repeats are explicitly
+declared; same-source questions/repeats are not independent unseen confirmation.
+Non-completing tasks retain their first-pass failures and are excluded from
+automatic repetition. Freeze the current experiment version while implementing
+the next slice in a separate branch; new source requires a new inspected study.
+
+An hourly development heartbeat is ACTIVE only through the same deadline. It
+collects evidence, chooses one small in-scope slice, creates a draft PR and
+revises this plan. It does not restart unknown paid work or alter frozen tests.
+See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
+
 ## Goal and boundaries
 
 Reserve minimal bus/plugin contracts, develop a separate prototype, and test
