@@ -48,7 +48,9 @@ Four focused checks passed with mocked provider and actual native advance;
 runtime pins and next selected method are rechecked/returned before new calls.
 Both arms explicitly run both methods; this is finite owned-workflow feasibility,
 not independent source corroboration. Next freeze/inspect and schedule one pair.
-Scientific support stays UNKNOWN.
+Runtime frozen at external study-s18-frozen, source af5e323; 181 file pins,
+same commands, two required methods, 100s arm windows and original deadline.
+Inspection evidence: acceptance-s18-freeze-20261015.json. Scientific UNKNOWN.
 Parent CI38606130805 retains only the inherited QUICK KeyError; original log kept.
 
 ### S17: native owned-study output projection

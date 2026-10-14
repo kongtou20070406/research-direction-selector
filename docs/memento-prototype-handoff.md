@@ -33,6 +33,8 @@ S13 completion protocol, paid request retention before decoding, and no retries.
 Bare audit files are control evidence, not native receipts or an RDS ledger.
 Four focused checks passed; frozen source/asset pins and following native choice
 are checked before new requests/dispatch. Freeze/inspect before any paid launch.
+Full freeze: study-s18-frozen/study.json, source af5e323, 181 pins; evidence
+acceptance-s18-freeze-20261015.json. One fresh pair, 20 calls/100s per arm.
 
 S17 reserves a read-only native study bridge: effective contract identity,
 retained Advisor view, original receipt/artifact decoding, declared output
