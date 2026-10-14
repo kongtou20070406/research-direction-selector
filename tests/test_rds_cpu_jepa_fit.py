@@ -45,6 +45,15 @@ class FitConsistencyTests(unittest.TestCase):
         for value in prediction:
             self.assertAlmostEqual(value, 0.4, places=5)
 
+    def test_parameter_only_actions_survive_structural_fitting(self):
+        base = 'LR = 1\n' + BASE
+        low, high = base.replace('LR = 1', 'LR = 2'), base.replace('LR = 1', 'LR = 4')
+        rows = [{**record(), 'base_code': base, 'candidate_code': code, 'outcome_score': score}
+                for code, score in ((low, .2), (high, .8))]
+        model = LatentCodeDiffJEPA().fit(rows)
+        self.assertLess(model.predict(rows[0]['before_state'], base, low)['score'],
+                        model.predict(rows[0]['before_state'], base, high)['score'])
+
 
 if __name__ == "__main__":
     unittest.main()
