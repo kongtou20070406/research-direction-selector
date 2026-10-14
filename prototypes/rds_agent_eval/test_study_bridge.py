@@ -77,7 +77,8 @@ class StudyBridgeTests(unittest.TestCase):
     def test_failed_original_attempt_is_retained_unknown_without_verification_or_rebuy(self):
         self.recipe["routes"][0]["run"]["argv"][-2] = "invalid-method"
         self.initialize()
-        self.fixture.call("project", "advance")
+        failed = self.fixture.call("project", "advance", ok=False)
+        self.assertEqual(failed.returncode, 1)
         self.fixture.call("project", "next")
         before = file_sha(self.store.path)
         with patch.object(bridge, "verify", side_effect=AssertionError("Failed attempt verified")):
