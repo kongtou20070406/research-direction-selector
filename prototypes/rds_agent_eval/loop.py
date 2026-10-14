@@ -76,6 +76,9 @@ def execute(root, arm, cli, code, attempt):
                   "stderr": (exc.stderr or b"").decode("utf-8", errors="replace")}
     report.update(attempt=attempt, argv=argv, code_sha256=sha(code_path),
                   wall_seconds=time.monotonic() - started, cost_status="UNKNOWN")
+    report["feedback_assurance"] = "UNVERIFIED" if arm == "RDS" else "DIRECT_TOOL"
+    # Retain the paid attempt before decoding anything returned by the CLI.
+    save(root / f"tool-{attempt}.json", report)
     if arm == "RDS" and report["status"] == "FINISHED":
         quick = json.loads(report["stdout"])
         if "receipt" in quick:
@@ -98,6 +101,9 @@ def execute(root, arm, cli, code, attempt):
             report["rds"] = {k: receipt[k] for k in ("run_id", "attempt_id", "run_status", "sha256", "errors")}
             if "project_output" in artifacts:
                 report["artifact"] = json.loads(artifacts["project_output"])
+            report["feedback_assurance"] = "RECEIPT_BOUND"
+        else:
+            report["feedback_assurance"] = "CLI_REJECTION"
     if (root / out).is_file():
         report["artifact"] = json.loads((root / out).read_text(encoding="utf-8"))
         report["artifact_sha256"] = sha(root / out)
@@ -200,13 +206,16 @@ def run(args):
                             raise ValueError("Frozen RDS source changed")
                         attempts += 1
                         result = execute(folder, arm, cli, command["code"], attempts)
-                        if result["status"] == "TIMEOUT_UNKNOWN":
+                        if result["status"] == "TIMEOUT_UNKNOWN" or result.get("feedback_assurance") == "UNVERIFIED":
                             reason = "UNCERTAIN_TOOL_NO_RETRY"
                             break
                     else:
                         raise ValueError("Unsupported tool")
                 except (ValueError, KeyError) as exc:
                     result = {"tool_error": str(exc)}
+                    if tool == "execute":
+                        reason = "TOOL_FEEDBACK_UNKNOWN_NO_RETRY"
+                        break
                 feedback = {k: v for k, v in result.items() if k != "cli_stdout"} if type(result) is dict else result
                 messages.append({"role": "tool", "tool_call_id": action_id,
                                  "content": json.dumps(feedback, ensure_ascii=False)[:16000]})
