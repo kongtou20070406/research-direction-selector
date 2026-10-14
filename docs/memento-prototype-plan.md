@@ -33,6 +33,27 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S23: native survey verifier slot and explicit final fields
+
+Scope: domain_bridge.py, test_domain_bridge.py under prototypes/rds_agent_eval,
+this plan and handoff. Require the frozen S22 worker/evaluator source identities,
+exact native preflight contract/data and original terminal task/model pins.
+Reuse S20 full answer/terminal sources plus S19 original receipts/artifacts/CAS;
+preserve extra fields. Declare answer/top_roles/proportion_basis/bootstrap_ci
+fields and finite domain instruction; no driver wiring. Successful original
+outputs are independently checked; failed/unknown finals/receipts remain
+unassessed with original errors/costs. Recheck native view and verifier source.
+Four focused real FULL fixture checks passed: two successful receipts separately
+verified, actual failure/unknown terminal retained, implementation/output/final
+bindings rejected when wrong, changed native view rejected. Full task, prose and science UNKNOWN;
+no new paid call, dispatch, native assessment write or S18 reinterpretation.
+Survey native recipe is now PREPARED_NOT_INITIALIZED at holdout-s23-native-preflight.
+Twelve assets/162 native sources pinned in holdout-s23-native-freeze.json; task/data
+only agent inputs, numeric review/rubric/protocol excluded. Prior IDs include the
+original archaeological pilot and used plant task. Existing tool7.2/campaign100/
+per-arm20/model/deadline bounds retained; no candidate ledger or paid call. Evidence
+acceptance-s23-native-bridge-20261015.json. Next domain-aware driver/freeze inspection.
+
 ### S22: explicit survey-code inventory and fractions
 
 Scope: survey_methods.py, survey_verifier.py, test_survey_domain.py under

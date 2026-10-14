@@ -28,6 +28,29 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
+S23 ([Draft #352](https://github.com/kongtou20070406/research-direction-selector/pull/352),
+bridge source 9ed5c45) reserves domain_bridge.specification/parse_final/inspect for survey
+outputs. Required final fields are answer, top_roles, proportion_basis and
+bootstrap_ci; all extra fields stay intact. Native contract, worker/evaluator,
+data, terminal task/model and effective receipt contract identities must match.
+Reuses full S20 terminal/answer and S19 native byte/CAS/cost originals; invokes
+only the static S22 verifier with matching source bytes. Separate measurement,
+scoped claim and UNKNOWN whole-task/prose/scientific status. Failed receipts or
+unverified finals remain unassessed without rebuy. Recheck verifier/native view
+before returning. Four real FULL fixture checks passed: two SUCCEEDED original
+receipts plus an actual failed receipt/unknown final, no writes or rebuy. No driver integration,
+dispatch, ledger/TMS write or old S18 grading. Next exact survey native preflight,
+then separately inspect/freeze a new domain-aware driver before paid comparison.
+Actual survey dry preflight is PREPARED_NOT_INITIALIZED at holdout-s23-native-preflight,
+twelve assets/162 native sources pinned in holdout-s23-native-freeze.json. Models,
+per-arm20/tool7.2/campaign100/original deadline unchanged; no ledger or model call.
+Agent files are exactly task plus CSV; evaluation/rubric/numeric review excluded.
+Archaeological pilot ID from original S17 declaration and used plant ID retained.
+The new protocol declares S22 scoped arithmetic verifier identity only; reviewer,
+bootstrap/full-task/prose/scientific support stay UNKNOWN. Evidence
+acceptance-s23-native-bridge-20261015.json; all protected older originals unchanged.
+Parent CI38647672834 failed only inherited QUICK line681; original log retained.
+
 S22 ([Draft #351](https://github.com/kongtou20070406/research-direction-selector/pull/351),
 domain source b5fbe86) reserves role_inventory and quoted_fractions.
 All original rows/coded categories are retained; fractions have explicit binary
