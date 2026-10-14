@@ -28,6 +28,18 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
+S23 reserves domain_bridge.specification/parse_final/inspect for frozen survey
+outputs. Required final fields are answer, top_roles, proportion_basis and
+bootstrap_ci; all extra fields stay intact. Native contract, worker/evaluator,
+data, terminal task/model and effective receipt contract identities must match.
+Reuses full S20 terminal/answer and S19 native byte/CAS/cost originals; invokes
+only the static S22 verifier with matching source bytes. Separate measurement,
+scoped claim and UNKNOWN whole-task/prose/scientific status. Failed receipts or
+unverified finals remain unassessed without rebuy. Recheck verifier/native view
+before returning. Four real FULL fixture checks pending. No driver integration,
+dispatch, ledger/TMS write or old S18 grading. Next exact survey native preflight,
+then separately inspect/freeze a new domain-aware driver before paid comparison.
+
 S22 ([Draft #351](https://github.com/kongtou20070406/research-direction-selector/pull/351),
 domain source b5fbe86) reserves role_inventory and quoted_fractions.
 All original rows/coded categories are retained; fractions have explicit binary
