@@ -23,8 +23,15 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S14 | [343](https://github.com/kongtou20070406/research-direction-selector/pull/343) | 6791645 | Original retained native Advisor view |
 | S15 | [344](https://github.com/kongtou20070406/research-direction-selector/pull/344) | cfe9e00 | Matched native preflight and untouched plant inputs |
 | S16 | [345](https://github.com/kongtou20070406/research-direction-selector/pull/345) | f9de1fb | Shared finite TSV methods and independent arithmetic |
+| S17 | [346](https://github.com/kongtou20070406/research-direction-selector/pull/346) | e0a34ea | Owned native receipt-bound study projection |
 
 ## Accepted engineering scope
+
+S18 adds the isolated native agent driver: same finite methods and per-request
+limits, native next/advance/S12 receipts for RDS, ordinary raw tools for Bare,
+S13 completion protocol, paid request retention before decoding, and no retries.
+Bare audit files are control evidence, not native receipts or an RDS ledger.
+Freeze/inspect the full runtime and matched budgets before any paid launch.
 
 S17 reserves a read-only native study bridge: effective contract identity,
 retained Advisor view, original receipt/artifact decoding, declared output
