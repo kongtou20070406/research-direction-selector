@@ -19,6 +19,7 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S10 | [339](https://github.com/kongtou20070406/research-direction-selector/pull/339) | e43d004 | Bounded acceptance and handoff |
 | S11 | [340](https://github.com/kongtou20070406/research-direction-selector/pull/340) | 23734e2 | Native unittest collection and truthful L3 inventory |
 | S12 | [341](https://github.com/kongtou20070406/research-direction-selector/pull/341) | 8081d41 | Read-only native receipt/byte observations |
+| S13 | [342](https://github.com/kongtou20070406/research-direction-selector/pull/342) | 401632c | Complete terminal responses, retained old results |
 
 ## Accepted engineering scope
 
@@ -126,6 +127,26 @@ unchanged. Evidence: acceptance-s13-offline-terminal-20261014.json, parser
 SHA-256 f1999a06990d7b9c4d005b60244e2983074f6eeabb915d3af1d5a74a91806b04.
 Parent CI 38562837305 still fails the inherited QUICK test; original log retained
 as ci-38562837305-original-failed.log. Keep scientific status UNKNOWN.
+
+S14 reserves a retained-native-Advisor reader in the isolated agent evaluation
+directory. It consumes a caller-supplied native plan snapshot pin, keeps the
+native dialogue's missing/stale diagnostics, and expands the complete original
+CAS report only for COMPATIBLE_RECORDED_ADVICE. Native view identity is rechecked
+after expansion. It does not collect new advice, persist a report, authorize or
+execute a candidate. Frozen experiments remain unchanged. Real CLI-created
+software fixtures cover read-only state, missing/stale advice, original-output
+and CAS damage, and a committed state change during reading. Four focused checks
+passed after correcting one fixture comparison of the CLI workflow envelope
+against original CAS contents. Full CAS byte/hash/decoded equality is asserted;
+the original failure is retained in s14-initial-fixture-failure.log.
+Read-only inspection of all 60 original RDS arm roots finds NO_CURRENT_ADVICE,
+with unchanged ledger hashes and frozen sources. This confirms the old study's
+exec-only scope, not a product failure. Evidence:
+acceptance-s14-original-advisor-views-20261014.json, reader SHA-256
+7f1873effb1985545ec95eba9fea12f05c2f3850c6a2e53606065c7176fa7b02.
+No new model call or original dispatch; controlled CPU fixtures are separate.
+Parent CI 38569498061 still fails only the inherited QUICK KeyError at line 681;
+its original failed log is ci-38569498061-original-failed.log. No all-green claim.
 
 Next: collect independent numerical/claim checks for the new task groups, then
 choose one concrete interface slice. Candidate work is a receipt-bound adapter

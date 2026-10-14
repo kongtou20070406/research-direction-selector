@@ -33,6 +33,32 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S14: retained native Advisor view for a future real study
+
+Current measurements cover QUICK exec, not owned Advisor/project continuity.
+Reserve prototypes/rds_agent_eval/advisor_view.py and test_advisor_view.py, plus
+this plan and the handoff. Reuse rds_steering.plan(dialogue=True) and the native
+ledger-CAS report reader. Require the native plan snapshot pin; retain missing,
+stale and negative diagnostics; expand the full original compatible report and
+recheck the native view after expansion. No new collection, selection, ledger,
+admission, model call or automatic integration. Full report expansion preserves
+candidate/evidence denominators beyond the native display limits.
+Focused new-reader verification uses real CLI-created temporary software
+fixtures and native CAS/receipts. Four focused checks passed. The first run
+retained one failed fixture assertion: the CLI adds workflow display metadata
+outside the original CAS report (rds_cli.py:1907). Corrected acceptance compares
+the full CAS bytes/hash/decoded report and the CLI envelope separately; no
+native assertion or timeout changed. Original failure log remains retained.
+Read-only inspection of all 60 original RDS arm roots returns NO_CURRENT_ADVICE,
+with unchanged ledger hashes and frozen sources; no old dispatch or paid call.
+Evidence: acceptance-s14-original-advisor-views-20261014.json under the external
+experiment root; reader SHA-256
+7f1873effb1985545ec95eba9fea12f05c2f3850c6a2e53606065c7176fa7b02.
+Fixture PASS will not
+measure DeepSeek, whole-RDS effects or scientific support. Then declare the
+native project policy/worker/domain inputs and untouched study tasks, freeze
+S13 terminal protocol equally for both arms, and retain independent verifiers.
+
 ### S13: complete terminal response protocol
 
 Original 1,034 responses contain 1,024 tool-call ends, six nonempty text/stop
