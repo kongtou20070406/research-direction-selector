@@ -33,6 +33,31 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S18: isolated native agent driver
+
+Scope: prototypes/rds_agent_eval/native_driver.py, test_native_driver.py, this
+plan and handoff. Reuse S13 terminal handling, exact resolved model identity,
+20-call arm cap, max_tokens3000 and HTTP limit120. Both arms use declared finite
+commands and native recipe wall budget; require remaining50s before execution.
+RDS calls the original next/advance handler and S12 receipt reader; native
+timeouts/costs remain ledger-owned. Bare is ordinary subprocess tooling with
+the same command/timeout and raw audit output. Transcripts carry no execution
+authority. Preserve initial results before decoding, reject truncated requests,
+undeclared assets and pre-existing arm roots; never rerun uncertain attempts.
+Four focused checks passed with mocked provider and actual native advance;
+runtime pins and next selected method are rechecked/returned before new calls.
+Both arms explicitly run both methods; this is finite owned-workflow feasibility,
+not independent source corroboration. Next freeze/inspect and schedule one pair.
+Runtime frozen at external study-s18-frozen, source af5e323; 181 file pins,
+same commands, two required methods, 100s arm windows and original deadline.
+Inspection evidence: acceptance-s18-freeze-20261015.json. Scientific UNKNOWN.
+Original paid pair stopped exit0: Bare3 requests/5359 reported tokens, RDS4/13753;
+two methods each, two original native receipts, compatible retained Advice.
+Both structured numeric claims pass the frozen verifier; free-text review stays
+UNKNOWN (RDS says from1501 onward despite its bin-resolution limitation).
+Evidence acceptance-s18-original-pair-20261015.json; no stable efficacy claim.
+Parent CI38606130805 retains only the inherited QUICK KeyError; original log kept.
+
 ### S17: native owned-study output projection
 
 Scope: prototypes/rds_agent_eval/study_bridge.py, test_study_bridge.py, this plan

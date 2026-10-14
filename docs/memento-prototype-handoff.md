@@ -23,8 +23,21 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S14 | [343](https://github.com/kongtou20070406/research-direction-selector/pull/343) | 6791645 | Original retained native Advisor view |
 | S15 | [344](https://github.com/kongtou20070406/research-direction-selector/pull/344) | cfe9e00 | Matched native preflight and untouched plant inputs |
 | S16 | [345](https://github.com/kongtou20070406/research-direction-selector/pull/345) | f9de1fb | Shared finite TSV methods and independent arithmetic |
+| S17 | [346](https://github.com/kongtou20070406/research-direction-selector/pull/346) | e0a34ea | Owned native receipt-bound study projection |
 
 ## Accepted engineering scope
+
+S18 adds the isolated native agent driver: same finite methods and per-request
+limits, native next/advance/S12 receipts for RDS, ordinary raw tools for Bare,
+S13 completion protocol, paid request retention before decoding, and no retries.
+Bare audit files are control evidence, not native receipts or an RDS ledger.
+Four focused checks passed; frozen source/asset pins and following native choice
+are checked before new requests/dispatch. Freeze/inspect before any paid launch.
+Full freeze: study-s18-frozen/study.json, source af5e323, 181 pins; evidence
+acceptance-s18-freeze-20261015.json. One fresh pair, 20 calls/100s per arm.
+Paid pair completed: Bare3 calls/5359 reported tokens, RDS4/13753; both structured
+numeric checks PASS, two native SUCCEEDED receipts/current Advice. Final prose
+acceptance and efficacy UNKNOWN; acceptance-s18-original-pair-20261015.json.
 
 S17 reserves a read-only native study bridge: effective contract identity,
 retained Advisor view, original receipt/artifact decoding, declared output
