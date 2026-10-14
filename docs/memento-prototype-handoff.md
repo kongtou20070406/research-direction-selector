@@ -16,6 +16,8 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S7 | [336](https://github.com/kongtou20070406/research-direction-selector/pull/336) | a54f0a1 | Frozen batch and Windows host wrapper |
 | S8 | [337](https://github.com/kongtou20070406/research-direction-selector/pull/337) | 0b31fc0 | Save paid result before receipt decoding |
 | S9 | [338](https://github.com/kongtou20070406/research-direction-selector/pull/338) | f13a829 | Fixed 24-hour authorization and declared repetitions |
+| S10 | [339](https://github.com/kongtou20070406/research-direction-selector/pull/339) | e43d004 | Bounded acceptance and handoff |
+| S11 | [340](https://github.com/kongtou20070406/research-direction-selector/pull/340) | 23734e2 | Native unittest collection and truthful L3 inventory |
 
 ## Accepted engineering scope
 
@@ -27,6 +29,11 @@ the truthful L3 label. The QUICK finding is out of scope; do not claim all-green
 CI or kernel acceptance after these two corrections. Frozen paid sources stay
 unchanged, and original logs are retained in `ci-38547449833-original-failed.log`
 under the external experiment root.
+
+S11 exact-head run 38554880844 passed the nine contract cases and repository
+layer coverage. The Ubuntu 3.11 job failed only on the inherited QUICK test;
+other Python jobs were cancelled, native jobs and Lean passed. The original
+failed log is ci-38554880844-original-failed.log under the same experiment root.
 
 Contract: 9 focused checks passed. Isolated compiler: 4 focused checks passed.
 Current driver/batch: 10 focused checks passed. PowerShell syntax passed and
@@ -71,7 +78,7 @@ This is actual RDS exec use. It does not test program-owned Advisor, canonical
 research-project continuity or the entire RDS product. One valid pair cannot
 establish stable comparative efficacy or scientific benefit: both stay UNKNOWN.
 
-## Runtime and next iteration
+## Runtime and S12 iteration
 
 Windows task: `RDS-Memento-DeepSeek-24h-20261014`, priority 7, IgnoreNew, 24-hour
 execution limit. Deadline: 2026-10-15 18:02:08 Asia/Shanghai. Task XML, registration,
@@ -79,6 +86,23 @@ frozen manifests and original attempts are under
 `C:/Users/XU/Documents/Codex/2026-10-14/rds-deepseek-real-pair/`.
 Use its `background-24h/batch-summary.json`, original tool receipts and
 `REVISED-PLAN.md`; process reachability alone is not task acceptance.
+
+20:04 checkpoint: Ready, LastTaskResult=0, no experiment process; final batch
+state ALL_TASKS_REQUIRE_REVIEW. Sixty pairs retained 1,034 background requests;
+with 37 prior requests, cumulative calls are 1,071. All eleven task IDs were
+excluded after a protocol stop/cap. Bare finished 54/60 and RDS 53/60, before
+any correctness assessment. These source-correlated reliability repeats are
+not a stable comparative gain estimate. Four stops are truncated tool JSON,
+six are text answers without finish, two retain syntax-rejection stderr without
+a usable receipt, and one hits the unchanged per-arm cap. No paid restart.
+
+S12 adds an isolated read-only original-receipt observation adapter. The caller
+supplies native ProjectStore plus ordered receipt pins; native decoding and
+resolved-path/size/SHA-256 checks bind every retained artifact. All supplied
+negative observations and unknown costs remain; missing/tampered records fail
+without repair or execution. This is SUPPLIED_PINS_ONLY, not a complete project
+history or a research-state projection. No authority moves out of the kernel.
+Focused adapter/compiler verification is pending for this cut.
 
 Next: collect independent numerical/claim checks for the new task groups, then
 choose one concrete interface slice. Candidate work is a receipt-bound adapter
