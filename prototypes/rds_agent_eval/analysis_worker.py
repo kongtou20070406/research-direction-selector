@@ -13,10 +13,11 @@ import sys
 
 ATTRS = {"DictReader", "reader", "loads", "dumps", "mean", "median", "stdev", "pstdev",
          "correlation", "sqrt", "log", "log10", "exp", "replace", "strip", "split",
-         "splitlines", "items", "values", "keys", "append", "extend", "sort", "get"}
+         "splitlines", "items", "values", "keys", "append", "extend", "sort", "get", "index"}
 BUILTINS = {name: getattr(__import__("builtins"), name) for name in (
     "abs", "min", "max", "sum", "len", "float", "int", "str", "dict", "list", "tuple",
-    "set", "enumerate", "range", "zip", "sorted", "print", "round", "bool", "any", "all")}
+    "set", "enumerate", "range", "zip", "sorted", "print", "round", "bool", "any", "all",
+    "isinstance", "type", "repr", "Exception", "ValueError", "KeyError")}
 
 
 def validate(code):
