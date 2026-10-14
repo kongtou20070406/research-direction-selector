@@ -50,6 +50,19 @@ class BayesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fit(r)
 
+    def test_nonfinite_updates_and_task_variance_are_rejected(self):
+        for value in (float('nan'), float('inf'), float('-inf')):
+            with self.assertRaises(ValueError):
+                B.fit_blr(records(), task_variance=value)
+            for fit, update in ((B.fit_blr, B.update_blr), (B.fit_normal, B.update_normal)):
+                model = fit(records())
+                with self.assertRaises(ValueError):
+                    update(model, BEFORE, BASE, CODE, value)
+        damaged = B.task_posterior(B.fit_blr(records()))
+        damaged['covariance'][0][0] = float('nan')
+        with self.assertRaises(ValueError):
+            B.predict_blr(damaged, BEFORE, BASE, CODE)
+
 
 if __name__ == '__main__':
     unittest.main()

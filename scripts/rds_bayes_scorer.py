@@ -68,7 +68,7 @@ def fit_blr(records, diagnostics=(), task_variance=0.05):
                  roles=sorted({k for r in rows for k in _diff(r)['parameter_delta']['numeric_log10_ratios']}),
                  diagnostics=list(diagnostics), prior={'task_variance': task_variance, 'iterations': 100})
     X = [features(model, r['before_state'], r['base_code'], r['candidate_code']) for r in rows]
-    if not all(math.isfinite(v) for x in X for v in x) or task_variance < 0:
+    if not all(math.isfinite(v) for x in X for v in x) or not math.isfinite(task_variance) or task_variance < 0:
         raise ValueError('Non-finite features or negative task variance')
     n, p = len(X), len(X[0])
     columns = list(zip(*X))
@@ -98,7 +98,10 @@ def fit_blr(records, diagnostics=(), task_variance=0.05):
 def predict_blr(model, before, base, code):
     x = features(model, before, base, code)
     sx = [dot(row, x) for row in model['covariance']]
-    return float(before['score']) + dot(x, model['mean']), math.sqrt(max(0., 1. / model['beta'] + dot(x, sx)))
+    variance = 1. / model['beta'] + dot(x, sx)
+    if not math.isfinite(variance) or variance < 0:
+        raise ValueError('Invalid predictive variance')
+    return float(before['score']) + dot(x, model['mean']), math.sqrt(variance)
 
 
 def task_posterior(model):
@@ -115,6 +118,8 @@ def update_blr(model, before, base, code, outcome):
     sx = [dot(row, x) for row in model['covariance']]
     denominator = 1. / model['beta'] + dot(x, sx)
     residual = float(outcome) - float(before['score']) - dot(x, model['mean'])
+    if not math.isfinite(residual) or not math.isfinite(denominator) or denominator <= 0:
+        raise ValueError('Invalid posterior update observation or variance')
     out['mean'] = [m + v * residual / denominator for m, v in zip(model['mean'], sx)]
     out['covariance'] = [[v - sx[i] * sx[j] / denominator for j, v in enumerate(row)]
                          for i, row in enumerate(model['covariance'])]
@@ -157,6 +162,8 @@ def predict_normal(model, before, base, code):
 
 
 def update_normal(model, before, base, code, outcome):
+    if not math.isfinite(float(outcome)):
+        raise ValueError('Non-finite update observation')
     out = deepcopy(model)
     key = action_key(base, code)
     m, v = model['groups'].get(key, (model['prior']['mean'], model['prior']['variance']))
