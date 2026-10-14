@@ -43,8 +43,23 @@ bytes. Verify successful measured outputs with S16 arithmetic; retain failed
 receipts as UNKNOWN with every raw artifact and cost. Recheck the native view
 after projection. No initialization, advice collection, dispatch, assessment
 persistence or second ledger. Structured claims remain separate from free-text
-review and scientific support. Next verify controlled real FULL fixtures,
-then freeze a native domain recipe for an inspected new paid study.
+review and scientific support. Four focused FULL checks and two subtests passed:
+two original successful receipts project verified structured counts; an actual
+failed receipt stays UNKNOWN; bad pins/cross-route paths/source or output changes
+reject; a change after numeric reading rejects at the native view recheck.
+First fixture failure incorrectly required exit 0 from the intentionally failed
+advance; it now explicitly asserts exit 1. Original transcript/log retained.
+Actual candidate native recipe is PREPARED_NOT_INITIALIZED under external
+holdout-s17-native-preflight-v2, with identical Bare manifests and model caps.
+Native preflight first rejected a 7.2s reservation with a 10s timeout; retain the
+original source, log and partial directory. V2 reduces timeout to 7.2s without
+widening reservation or the declared 100s CPU/wall budgets. Ten recipe assets
+and 162 native source files are frozen; gold/verifier remain outside inputs.
+Evidence: acceptance-s17-native-bridge-20261015.json and
+holdout-s17-native-freeze.json. No candidate ledger, new DeepSeek call or old
+dispatch; 988 protected original pins match. The paid driver is not frozen yet.
+Next: a separately scoped native agent driver with matched tools/limits and
+S13 terminal handling, then inspect its full freeze before scheduling a new study.
 Parent CI 38597288014 still fails only the inherited QUICK KeyError at line 681;
 original log retained outside the repo. Baseline: cumulative obligations 44.
 

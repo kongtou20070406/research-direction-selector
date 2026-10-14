@@ -32,7 +32,22 @@ ownership and independently checked structured counts. Failed receipts remain
 UNKNOWN without verification or rebuy; all originals remain in the returned
 observation denominator. Native view recheck guards a mixed projection. No
 dispatch, new advice or scientific-truth write. Verify real FULL synthetic
-fixtures before freezing the actual candidate recipe; no new paid study yet.
+fixtures before freezing the actual candidate recipe. Four cases/two subtests
+passed with two original successful native receipts and an actual failed one.
+The initial fixture expected success exit 0 for intentional failure; corrected
+to explicitly assert exit 1, preserving its transcript/log externally. Copied
+fixture receipts keep their original cwd; archive inspection does not rebind
+them as new native projects. Intentional tamper archives remain negative.
+Actual recipe is prepared but uninitialized under holdout-s17-native-preflight-v2.
+An original native rejection of timeout 10 against reservation 7.2 is preserved
+with the original source/partial directory. V2 narrows timeout to 7.2, keeping
+reservation and declared 100s CPU/wall budgets. Agent files stay exactly task
+plus original TSV; evaluator and private count review are excluded. Ten assets
+and 162 native sources are pinned in holdout-s17-native-freeze.json. Evidence:
+acceptance-s17-native-bridge-20261015.json. Bridge SHA-256
+04aca4360c6b5c116e5c47ed775d75e1b516ce160c3fd16b4b0c681f42ea0997.
+Zero new DeepSeek calls/old dispatch, unchanged original pins, no candidate
+ledger. Next freeze the matched native agent driver before any new paid study.
 Parent exact-head CI 38597288014 retains only the inherited QUICK failure;
 ci-38597288014-original-failed.log is preserved under the experiment root.
 
