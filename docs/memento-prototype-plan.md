@@ -43,9 +43,18 @@ TEXT/FUNCTION separately from AGENT_FINISHED. This still says nothing about
 answer correctness. New studies freeze finish-function-or-stop-text-v2 for
 both arms; no original result is reclassified and no old paid attempt is rerun.
 Scope: loop.py, test_analysis_worker.py, this plan and the handoff. Focused
-verification: test_analysis_worker.py and test_suite.py; pending for this cut.
+verification: test_analysis_worker.py and test_suite.py passed 13 checks, with
+three new terminal-protocol cases. Offline inspection of all 1,034 original
+responses preserves six text candidates, rejects four truncated turns and
+keeps 1,024 tool batches. No original response or summary changed, no paid call
+or dispatch occurred, and all frozen source hashes match. Retained evidence:
+acceptance-s13-offline-terminal-20261014.json under the external experiment root.
+Parser SHA-256 f1999a06990d7b9c4d005b60244e2983074f6eeabb915d3af1d5a74a91806b04.
+Exact-head parent CI 38562837305 still fails only on the inherited QUICK
+KeyError at test_rds_quick_coverage_admission.py:681; its original log is retained.
 Next: retain a separate offline classification of original terminal responses,
 then define native Advisor/receipt-domain inputs and untouched study tasks.
+Prototype completion remains distinct from whole-RDS efficacy and science.
 
 ### S12: original receipt observations, no new paid study
 

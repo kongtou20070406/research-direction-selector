@@ -37,7 +37,7 @@ other Python jobs were cancelled, native jobs and Lean passed. The original
 failed log is ci-38554880844-original-failed.log under the same experiment root.
 
 Contract: 9 focused checks passed. Isolated compiler: 4 focused checks passed.
-Current driver/batch: 10 focused checks passed. PowerShell syntax passed and
+Current driver/batch: 13 focused checks passed. PowerShell syntax passed and
 each scoped diff check passed. No local full-suite acceptance is claimed.
 The default Python lacks pytest; verification used the isolated uv pytest
 environment. Original failure and subsequent correction remain in the records.
@@ -117,7 +117,15 @@ nonempty stop-text is retained verbatim; tool calls must end with tool_calls,
 and empty finish answers reject. Length/unknown/contradictory endings never
 dispatch. Reports keep completion_mode TEXT/FUNCTION and scientific UNKNOWN.
 Original responses/results stay unchanged. Only a separately frozen new study
-may use this protocol. Focused driver/batch verification is pending for this cut.
+may use this protocol. Thirteen focused driver/batch checks passed, including
+three new terminal cases and mocked full-loop request/response retention.
+Offline inspection: 1,024 tool batches, six text candidates, four rejected
+truncated responses. No original result reclassification, model call or tool
+dispatch; original response and summary hashes plus frozen sources remain
+unchanged. Evidence: acceptance-s13-offline-terminal-20261014.json, parser
+SHA-256 f1999a06990d7b9c4d005b60244e2983074f6eeabb915d3af1d5a74a91806b04.
+Parent CI 38562837305 still fails the inherited QUICK test; original log retained
+as ci-38562837305-original-failed.log. Keep scientific status UNKNOWN.
 
 Next: collect independent numerical/claim checks for the new task groups, then
 choose one concrete interface slice. Candidate work is a receipt-bound adapter
