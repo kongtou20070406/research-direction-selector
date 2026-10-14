@@ -13,10 +13,10 @@ PATHWAYS = ("AgriForest", "Gardening", "Unintentional")
 def measure(raw, method):
     if method not in {"period_counts", "gardening_dominance"} or len(raw) > 2097152:
         raise ValueError("Require a declared finite method and bounded original TSV")
-    reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")), delimiter="\t", strict=True)
-    if reader.fieldnames != ["introduction.period", "pathway", "n"]:
-        raise ValueError("Require the original three-column TSV header")
     try:
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")), delimiter="\t", strict=True)
+        if reader.fieldnames != ["introduction.period", "pathway", "n"]:
+            raise ValueError("Require the original three-column TSV header")
         rows = list(reader)
     except csv.Error as exc:
         raise ValueError("Invalid original TSV syntax") from exc
