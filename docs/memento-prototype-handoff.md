@@ -31,7 +31,8 @@ S18 adds the isolated native agent driver: same finite methods and per-request
 limits, native next/advance/S12 receipts for RDS, ordinary raw tools for Bare,
 S13 completion protocol, paid request retention before decoding, and no retries.
 Bare audit files are control evidence, not native receipts or an RDS ledger.
-Freeze/inspect the full runtime and matched budgets before any paid launch.
+Four focused checks passed; frozen source/asset pins and following native choice
+are checked before new requests/dispatch. Freeze/inspect before any paid launch.
 
 S17 reserves a read-only native study bridge: effective contract identity,
 retained Advisor view, original receipt/artifact decoding, declared output

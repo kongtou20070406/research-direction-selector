@@ -49,6 +49,10 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(opened.call_args.kwargs['timeout'], 100)
         with self.assertRaises(ValueError):
             driver.run_arm(self.root / 'arm', self.seed, 'Bare', self.declaration, self.recipe, 'http://fixture', self.pins)
+        with patch.object(driver.time, 'time', return_value=100), \
+             patch.object(driver.urllib.request, 'urlopen', side_effect=AssertionError('Unpinned driver requested')), self.assertRaises(ValueError):
+            driver.run_arm(self.root / 'bad-pin', self.seed, 'Bare', self.declaration, self.recipe,
+                           'http://fixture', {str(Path(driver.__file__).resolve()): '0' * 64})
 
     def test_truncated_turn_never_dispatches_and_counts_uncertain_request(self):
         choice = {'finish_reason': 'length', 'message': {'role': 'assistant', 'content': 'truncated'}}

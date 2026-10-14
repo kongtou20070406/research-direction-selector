@@ -99,7 +99,8 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins):
             ('execute', 'method', 'Execute one declared finite method'), ('finish', 'answer', 'Finish with evidence and limitations'))]
     instruction = ('Solve the task using measured evidence. Use function tools serially; ordinary stop-text also finishes. '
         'Methods: ' + json.dumps(list(routes)) + '. Inputs: ' + json.dumps(declaration['agent_files']) + '. Task: ' + task +
-        ' Finish with a JSON object containing answer, earliest_observed_main_period, main_periods, '
+        ' Run both declared methods before finishing; their shared source is not independent corroboration. '
+        'Finish with a JSON object containing answer, earliest_observed_main_period, main_periods, '
         'exact_crossover_year (null when unresolved), scope=RECORDED_PERIOD_COUNTS. Do not infer exact years or causal claims from bins.')
     if arm == 'RDS':
         from rds_cli import cmd_project

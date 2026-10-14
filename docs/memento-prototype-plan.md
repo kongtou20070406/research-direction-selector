@@ -44,8 +44,11 @@ timeouts/costs remain ledger-owned. Bare is ordinary subprocess tooling with
 the same command/timeout and raw audit output. Transcripts carry no execution
 authority. Preserve initial results before decoding, reject truncated requests,
 undeclared assets and pre-existing arm roots; never rerun uncertain attempts.
-Next verify mocked provider/real native fixtures, freeze the complete runtime,
-then schedule one new inspected matched pair. Scientific support stays UNKNOWN.
+Four focused checks passed with mocked provider and actual native advance;
+runtime pins and next selected method are rechecked/returned before new calls.
+Both arms explicitly run both methods; this is finite owned-workflow feasibility,
+not independent source corroboration. Next freeze/inspect and schedule one pair.
+Scientific support stays UNKNOWN.
 Parent CI38606130805 retains only the inherited QUICK KeyError; original log kept.
 
 ### S17: native owned-study output projection
