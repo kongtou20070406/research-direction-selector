@@ -33,6 +33,21 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S15: matched native study preflight
+
+The next paid study must declare an owned project, not relabel the old QUICK
+batch. Scope: prototypes/rds_agent_eval/study_preflight.py, test_study_preflight.py,
+this plan and the handoff. Reuse native compile_recipe without writes. Freeze
+task identity and exact agent assets (task plus data), exclude declared gold and
+native evaluator paths by resolved identity, retain the prior task inventory,
+and preserve model IDs, matched per-arm cap, S13 terminal protocol and original
+deadline. Derive Bare manifests from the same compiled native routes/budget.
+No initialization, provider call, dispatch or sidecar state occurs in preflight.
+New task IDs do not prove independent sources; scientific status stays UNKNOWN.
+Focused software checks: test_study_preflight.py; pending for this cut. Then
+prepare actual untouched task data and domain methods/evaluation declarations,
+inspect their frozen identities and run a separately hosted matched study.
+
 ### S14: retained native Advisor view for a future real study
 
 Current measurements cover QUICK exec, not owned Advisor/project continuity.

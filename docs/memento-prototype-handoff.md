@@ -20,6 +20,7 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S11 | [340](https://github.com/kongtou20070406/research-direction-selector/pull/340) | 23734e2 | Native unittest collection and truthful L3 inventory |
 | S12 | [341](https://github.com/kongtou20070406/research-direction-selector/pull/341) | 8081d41 | Read-only native receipt/byte observations |
 | S13 | [342](https://github.com/kongtou20070406/research-direction-selector/pull/342) | 401632c | Complete terminal responses, retained old results |
+| S14 | [343](https://github.com/kongtou20070406/research-direction-selector/pull/343) | 6791645 | Original retained native Advisor view |
 
 ## Accepted engineering scope
 
@@ -147,6 +148,17 @@ acceptance-s14-original-advisor-views-20261014.json, reader SHA-256
 No new model call or original dispatch; controlled CPU fixtures are separate.
 Parent CI 38569498061 still fails only the inherited QUICK KeyError at line 681;
 its original failed log is ci-38569498061-original-failed.log. No all-green claim.
+
+S15 adds an isolated matched-study preflight over native compile_recipe. It
+checks the explicitly supplied prior task inventory, exact task/data exposure,
+declared gold/evaluator isolation using resolved paths, model identities,
+matched arm cap, S13 completion protocol and fixed authorization deadline.
+It returns the original compiled contract/protocol and identical Bare manifests,
+without initialization, persistence or dispatch. This freezes declared inputs;
+it does not certify scientific independence, semantic gold exclusion or benefit.
+Focused controlled-software verification is pending for this cut.
+Parent CI 38579521253 retains only the inherited QUICK KeyError at line 681;
+original failed log retained as ci-38579521253-original-failed.log.
 
 Next: collect independent numerical/claim checks for the new task groups, then
 choose one concrete interface slice. Candidate work is a receipt-bound adapter
