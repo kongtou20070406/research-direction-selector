@@ -56,3 +56,22 @@ def test_bound_streams_preserve_error_and_reject_tampering(tmp_path):
     (tmp_path / "stderr.bin").write_bytes(b"changed")
     with pytest.raises(ValueError, match="tampered"):
         loop.bound_artifacts(tmp_path, receipt, "out/result.json")
+
+
+def test_native_multi_call_batch_preserves_ids_and_order():
+    spec = importlib.util.spec_from_file_location("batch_loop", Path(__file__).with_name("loop.py"))
+    loop = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loop)
+    calls = [{"id": str(i), "function": {"name": "read", "arguments": '{"file":"data.csv"}'}} for i in range(2)]
+    assert [key for key, cmd in loop.commands({"tool_calls": calls})] == ["0", "1"]
+    with pytest.raises(ValueError, match="distinct"):
+        loop.commands({"tool_calls": [calls[0], calls[0]]})
+
+
+def test_whitelisted_csv_import_and_column_lookup(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data.csv").write_text("x\n1\n3\n", encoding="utf-8")
+    (tmp_path / "analysis.py").write_text("import csv\nrows=list(csv.DictReader(read('data.csv').splitlines()))\n"
+        "emit({'max':max(float(r['x']) for r in rows)})", encoding="utf-8")
+    worker.run("analysis.py", "out/result.json")
+    assert worker.json.loads((tmp_path / "out/result.json").read_text())["max"] == 3

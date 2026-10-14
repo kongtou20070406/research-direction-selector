@@ -13,7 +13,7 @@ import sys
 
 ATTRS = {"DictReader", "reader", "loads", "dumps", "mean", "median", "stdev", "pstdev",
          "correlation", "sqrt", "log", "log10", "exp", "replace", "strip", "split",
-         "splitlines", "items", "values", "keys", "append", "extend", "sort", "get", "index"}
+         "splitlines", "items", "values", "keys", "append", "extend", "sort", "get", "index", "setdefault"}
 BUILTINS = {name: getattr(__import__("builtins"), name) for name in (
     "abs", "min", "max", "sum", "len", "float", "int", "str", "dict", "list", "tuple",
     "set", "enumerate", "range", "zip", "sorted", "print", "round", "bool", "any", "all",
@@ -25,8 +25,12 @@ def validate(code):
         raise ValueError("Analysis code exceeds 16 KiB")
     tree = ast.parse(code)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.AsyncFunctionDef)):
-            raise ValueError("Imports/classes/async are outside the analysis dialect")
+        if isinstance(node, (ast.ClassDef, ast.AsyncFunctionDef)):
+            raise ValueError("Classes/async are outside the analysis dialect")
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module]
+            if any(name not in {"csv", "json", "math", "statistics"} for name in modules):
+                raise ValueError("Import is outside the analysis dialect")
         if isinstance(node, ast.Name) and node.id.startswith("_"):
             raise ValueError("Private names are forbidden")
         if isinstance(node, ast.Attribute) and node.attr not in ATTRS:
@@ -51,7 +55,12 @@ def run(code_path, output_path):
     def emit(value):
         outputs.append(json.loads(json.dumps(value, allow_nan=False)))
 
-    scope = {"__builtins__": BUILTINS, "csv": csv, "json": json,
+    modules = {"csv": csv, "json": json, "math": math, "statistics": statistics}
+    def importer(name, *args, **kw):
+        if name not in modules:
+            raise ValueError("Undeclared import")
+        return modules[name]
+    scope = {"__builtins__": {**BUILTINS, "__import__": importer}, "csv": csv, "json": json,
              "math": math, "statistics": statistics, "read": read, "emit": emit}
     exec(compile(validate(code), str(code_path), "exec"), scope)
     if len(outputs) != 1 or type(outputs[0]) is not dict:
