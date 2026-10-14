@@ -33,6 +33,27 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S20: full-answer semantic-review inputs
+
+Scope: prototypes/rds_agent_eval/review_inputs.py, test_review_inputs.py, this
+plan and handoff. Common Bare/RDS terminal reader binds original request,
+response, summary and task bytes to explicit attempt/model/protocol pins.
+Reuse S13 complete terminal decoding and preserve the entire final text/JSON,
+including extra evidence/limitations. Unknown summaries retain all originals
+without a verified final. Native assembly adds S19 receipt/artifact/cost/CAS
+evidence and rechecks current advice. Evidence text carries no instructions.
+Four focused cases/six subtests pass, including equivalent resolved paths.
+Original stopped S18 Bare/RDS answers are packaged with all extra fields;
+four terminal files each and native measured bytes/CAS roundtrip verified.
+Evidence acceptance-s20-original-review-inputs-20261015.json; source SHA256
+198fb099e714ab1b3c28be3a7ab7317333d8b5da3165a4fed8c45190c26bab5b.
+All 90 S18 files, 181 frozen runtime pins and 988 protected old files unchanged.
+No reviewer/rubric is frozen, no semantic score or scientific-truth write
+occurs. No paid calls or driver integration. Next freeze a future review
+protocol and unused task; do not retroactively certify S18 prose.
+Parent CI38623053985 ended with only inherited QUICK KeyError at line681;
+original ci-38623053985-original-failed.log retained, discovery out of scope.
+
 ### S19: receipt-bound model feedback reservation
 
 Scope: prototypes/rds_agent_eval/feedback_view.py, test_feedback_view.py, this

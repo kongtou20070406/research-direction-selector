@@ -28,6 +28,27 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
+S20 ([Draft #349](https://github.com/kongtou20070406/research-direction-selector/pull/349),
+reader source fbac66c) reserves review_inputs.read_answer(root, pins) for matched Bare/RDS original
+terminal files, and prepare_review(store, expected_snapshot_sha256, outputs,
+answer_pins) for full native evidence. Pins include task/request/response/summary
+bytes, attempt index, requested/resolved model and unchanged S13 protocol.
+All final text/JSON fields are preserved. Negative/unknown summaries remain
+inputs without a verified final; costs, errors, raw files and native/CAS evidence
+are retained. This verifies provenance only; semantic rubric is NOT_FROZEN,
+reviewer identity/free-text acceptance/scientific support stay UNKNOWN. No
+score, dispatch, persistence or new model call. Four focused cases/six subtests
+passed; initial and final focused logs retained. Original S18 four-file terminal
+packages for both arms and full native evidence exported at review-s20-inputs
+with byte/CAS roundtrip checks. RDS evidence/limitations fields remain intact.
+Acceptance acceptance-s20-original-review-inputs-20261015.json pins exports and
+reader SHA256198fb099e714ab1b3c28be3a7ab7317333d8b5da3165a4fed8c45190c26bab5b.
+All 90 S18 originals, 181 runtime pins and 988 old files remain unchanged.
+Packaging does not replace old results or certify its from1501-onward wording.
+Next freeze independent semantic-review criteria before
+an unused-task comparison with identical tools/budgets and original deadline.
+Parent CI38623053985 failed only inherited QUICK test line681; original log kept.
+
 S19 ([Draft #348](https://github.com/kongtou20070406/research-direction-selector/pull/348),
 reader source 0265ed3) reserves feedback_view.read_feedback(store, expected_snapshot_sha256,
 outputs): native receipt/output ownership and original byte pins, unchanged
