@@ -16,8 +16,12 @@ def measure(raw, method):
     reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")), delimiter="\t", strict=True)
     if reader.fieldnames != ["introduction.period", "pathway", "n"]:
         raise ValueError("Require the original three-column TSV header")
+    try:
+        rows = list(reader)
+    except csv.Error as exc:
+        raise ValueError("Invalid original TSV syntax") from exc
     counts = {period: {} for period in PERIODS}
-    for row in reader:
+    for row in rows:
         period, pathway, number = row["introduction.period"], row["pathway"], row["n"]
         if (set(row) != set(reader.fieldnames) or period not in counts or pathway not in PATHWAYS
                 or pathway in counts[period] or number is None or not number.isascii() or not number.isdigit()):

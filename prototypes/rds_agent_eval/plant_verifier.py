@@ -19,7 +19,10 @@ def verify(source, measured, *, source_sha256, measured_sha256, claim):
             "earliest_observed_main_period", "main_periods", "exact_crossover_year", "scope"}:
         raise ValueError("Require the explicit structured period claim")
     # Independent positional parse and cell inventory; no shared worker helpers.
-    rows = list(csv.reader(io.StringIO(source.decode("utf-8-sig")), delimiter="\t", strict=True))
+    try:
+        rows = list(csv.reader(io.StringIO(source.decode("utf-8-sig")), delimiter="\t", strict=True))
+    except csv.Error as exc:
+        raise ValueError("Original TSV syntax cannot be verified") from exc
     periods = ["Before 1500", "1501-1900", "1901-1984", "1985-2019"]
     pathways = ["AgriForest", "Gardening", "Unintentional"]
     if len(rows) != 13 or rows[0] != ["introduction.period", "pathway", "n"]:
