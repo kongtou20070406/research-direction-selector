@@ -22,8 +22,34 @@ CI on a parent does not certify later changes or inherited dirty files.
 | S13 | [342](https://github.com/kongtou20070406/research-direction-selector/pull/342) | 401632c | Complete terminal responses, retained old results |
 | S14 | [343](https://github.com/kongtou20070406/research-direction-selector/pull/343) | 6791645 | Original retained native Advisor view |
 | S15 | [344](https://github.com/kongtou20070406/research-direction-selector/pull/344) | cfe9e00 | Matched native preflight and untouched plant inputs |
+| S16 | [345](https://github.com/kongtou20070406/research-direction-selector/pull/345) | f9de1fb | Shared finite TSV methods and independent arithmetic |
 
 ## Accepted engineering scope
+
+S17 reserves a read-only native study bridge: effective contract identity,
+retained Advisor view, original receipt/artifact decoding, declared output
+ownership and independently checked structured counts. Failed receipts remain
+UNKNOWN without verification or rebuy; all originals remain in the returned
+observation denominator. Native view recheck guards a mixed projection. No
+dispatch, new advice or scientific-truth write. Verify real FULL synthetic
+fixtures before freezing the actual candidate recipe. Four cases/two subtests
+passed with two original successful native receipts and an actual failed one.
+The initial fixture expected success exit 0 for intentional failure; corrected
+to explicitly assert exit 1, preserving its transcript/log externally. Copied
+fixture receipts keep their original cwd; archive inspection does not rebind
+them as new native projects. Intentional tamper archives remain negative.
+Actual recipe is prepared but uninitialized under holdout-s17-native-preflight-v2.
+An original native rejection of timeout 10 against reservation 7.2 is preserved
+with the original source/partial directory. V2 narrows timeout to 7.2, keeping
+reservation and declared 100s CPU/wall budgets. Agent files stay exactly task
+plus original TSV; evaluator and private count review are excluded. Ten assets
+and 162 native sources are pinned in holdout-s17-native-freeze.json. Evidence:
+acceptance-s17-native-bridge-20261015.json. Bridge SHA-256
+04aca4360c6b5c116e5c47ed775d75e1b516ce160c3fd16b4b0c681f42ea0997.
+Zero new DeepSeek calls/old dispatch, unchanged original pins, no candidate
+ledger. Next freeze the matched native agent driver before any new paid study.
+Parent exact-head CI 38597288014 retains only the inherited QUICK failure;
+ci-38597288014-original-failed.log is preserved under the experiment root.
 
 S16 reserves two shared finite plant methods and an independent original-byte
 numeric verifier under prototypes/rds_agent_eval. Both methods use the same
