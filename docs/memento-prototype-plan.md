@@ -51,6 +51,11 @@ not independent source corroboration. Next freeze/inspect and schedule one pair.
 Runtime frozen at external study-s18-frozen, source af5e323; 181 file pins,
 same commands, two required methods, 100s arm windows and original deadline.
 Inspection evidence: acceptance-s18-freeze-20261015.json. Scientific UNKNOWN.
+Original paid pair stopped exit0: Bare3 requests/5359 reported tokens, RDS4/13753;
+two methods each, two original native receipts, compatible retained Advice.
+Both structured numeric claims pass the frozen verifier; free-text review stays
+UNKNOWN (RDS says from1501 onward despite its bin-resolution limitation).
+Evidence acceptance-s18-original-pair-20261015.json; no stable efficacy claim.
 Parent CI38606130805 retains only the inherited QUICK KeyError; original log kept.
 
 ### S17: native owned-study output projection
