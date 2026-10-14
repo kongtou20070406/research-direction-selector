@@ -1,5 +1,10 @@
 """Explicit comparable-result guards and declared negative domains, not new proofs."""
 from fractions import Fraction
+import base64
+import os
+import signal
+import subprocess
+import sys
 import hashlib
 from pathlib import Path
 import re
@@ -7,6 +12,10 @@ import time
 
 from rds_project import require, file_sha
 from rds_guard_values import MAX_BYTES, exact, validate_domain, in_domain
+from rds_checkpoint_decision import _json
+from rds_artifacts import strict_json
+
+MAX_DOCUMENT_BYTES = MAX_BYTES
 
 
 def read(path):
@@ -20,7 +29,7 @@ def read(path):
 
 
 def same_family(first, second, parameter_names):
-    from rds_advisor import _loop_route
+    from rds_checkpoint_decision import _loop_route
     def family(candidate):
         action = candidate.get('action')
         if not isinstance(action, dict):
@@ -73,6 +82,53 @@ def policy_inputs(path, source_root):
     return policy, list(dict.fromkeys(paths))
 
 
+def _bounded_theory_gate(request, seconds):
+    """Bound generation and independent replay together, including native children."""
+    from rds_project import _Job
+    bootstrap = ("import json,sys; request=json.loads(sys.stdin.buffer.read()); "
+                 "sys.path.insert(0,sys.argv[1]); from rds_probe import declarative_probe; "
+                 "result=declarative_probe(request['formal'],request['committed']); "
+                 "sys.stdout.buffer.write(json.dumps(result,ensure_ascii=False,allow_nan=False).encode('utf-8'))")
+    deadline = time.monotonic() + seconds
+    process = job = None
+    output = errors = b""
+    try:
+        process = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(Path(__file__).resolve().parent)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   shell=False, start_new_session=os.name != "nt",
+                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        job = _Job(process)
+        output, errors = process.communicate(_json(request, cap=2 * MAX_DOCUMENT_BYTES).encode("utf-8"),
+                                            timeout=max(0, deadline - time.monotonic()))
+        if process.returncode or time.monotonic() > deadline:
+            raise ValueError(errors.decode("utf-8", errors="replace")[-1000:] or "Theory deadline exceeded")
+        gate = strict_json(output.decode("utf-8"))
+        _json(gate, cap=MAX_DOCUMENT_BYTES)
+        if time.monotonic() > deadline:
+            raise ValueError("Theory deadline exceeded")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        gate = {"status": "UNKNOWN", "assurance": "NONE", "reason": "Bounded theory check: " + str(exc)}
+    finally:
+        if process is not None:
+            if os.name != "nt":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            elif job is not None:
+                job.stop()
+            else:
+                process.kill()
+            output, errors = process.communicate()
+        if job is not None:
+            job.close()
+    worker = {name: {"base64": base64.b64encode(raw[:cap]).decode("ascii"), "truncated": len(raw) > cap}
+              for name, raw, cap in (("stdout", output, MAX_DOCUMENT_BYTES), ("stderr", errors, 65536))}
+    worker["exit_code"] = process.returncode if process is not None else None
+    return gate, worker
+
+
+
 def evaluate(path, candidate_root=None):
     """Compare matching observations; replay milestones with the existing strict gate."""
     path = Path(path).resolve()
@@ -98,7 +154,6 @@ def evaluate(path, candidate_root=None):
         except (OSError, ValueError, TypeError, KeyError, ZeroDivisionError) as exc:
             result['reason'] = str(exc)
         results.append(result)
-    from rds_advisor import _bounded_theory_gate
     for row in policy.get('milestones', []):
         try:
             spec, _ = read(path.parent / row['spec']['path'])

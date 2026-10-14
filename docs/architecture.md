@@ -75,6 +75,12 @@ stale preparation is refused before allowance or dispatch. Recovery uses the
 retained choice. The Store admission callback and lifecycle/composition
 boundaries remain to be removed.
 
+Guard reads route identities from the checkpoint kernel and owns the shared
+bounded theory worker. Advisor retains its worker export for compatibility;
+Guard no longer imports Advisor. Worker deadlines, process cleanup, raw output
+retention and the distinction between execution and scientific support remain
+unchanged.
+
 Workspace admission now opens its committed identity/progress reads through
 `rds_sqlite.readonly_connection` rather than `ProjectStore._db`. Ancestor
 discovery and paid QUICK scope checks use the same connection boundary; effective

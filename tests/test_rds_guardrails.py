@@ -15,6 +15,16 @@ from rds_project import ProjectStore
 
 
 class GuardTests(unittest.TestCase):
+    def test_guard_cold_import_and_route_check_do_not_load_advisor(self):
+        code = ("import sys; sys.path.insert(0,sys.argv[1]); import rds_guard; "
+                "assert not rds_guard.same_family({}, {}, set()); "
+                "assert 'rds_advisor' not in sys.modules; "
+                "import rds_advisor; "
+                "assert rds_advisor._bounded_theory_gate is rds_guard._bounded_theory_gate")
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(ROOT / 'scripts')],
+                                capture_output=True, text=True, encoding='utf-8', timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
