@@ -207,6 +207,20 @@ class DeclarationReviewTests(Campaign):
         self.assertEqual(result['workset']['handoff']['detail']['unknown_thresholds'], ['min_gain'])
         self.assertIsNone(result['verification']['improvement']['recommended'])
 
+    def test_sample_mismatch_is_not_a_settled_evaluation(self):
+        # The arm reports sample s only; the baseline reports s and t. No per-sample comparison exists.
+        path = fx.improve_campaign(self.root, {'base': {'s': 10, 't': 10}, 'odd': {'s': 12}})
+        initialize(self.root, path)
+        result = drive(self.root, publish=False)
+        self.assertEqual((result['status'], exit_code(result)), ('JUDGMENT_REQUIRED', 2))
+        self.assertEqual(result['workset']['handoff']['detail']['judgment_required'], ['odd'])
+        self.assertIsNone(result['verification']['improvement']['recommended'])
+
+    def test_negative_min_gain_is_rejected(self):
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'worse': {'s': 9}}, min_gain=-1)
+        with self.assertRaisesRegex(ValueError, 'min_gain must be at least 0'):
+            initialize(self.root, path)
+
     def test_string_direction_is_rejected(self):
         path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}})
         edit = lambda d: d['observables']['score'].update(higher_is_better='false')

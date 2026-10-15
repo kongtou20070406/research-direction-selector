@@ -146,8 +146,8 @@ def _derive(state):
         if any(state['tools'].get(sha, {}).get('status') != 'QUALIFIED' for sha in tools):
             hyp.update(status='RETRACTED', replay=None)
             continue
-        result = model.replay(hyp, rows, {k: tolerances[k] for k in hyp['predict'] if k in tolerances}
-                              | {k: (0, 0) for k in hyp['predict'] if k not in tolerances})
+        # An observable without a declared tolerance is never adjudicated: replay counts it UNKNOWN.
+        result = model.replay(hyp, rows, {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
         hyp.update(status=result['status'], replay=result)
     receipts = {row['id']: row['receipt_sha256'] for row in rows}
     for hyp in state['hypotheses'].values():
@@ -639,7 +639,7 @@ def validate_response(state, value, sealed, candidates):
 def _admit(state, hyp, extra):
     """Record filter for externally supplied rulebooks: replay first, then equivalence."""
     tolerances = _tolerances(state['plan'])
-    result = model.replay(hyp, measured(state), {k: tolerances.get(k, (0, 0)) for k in hyp['predict']})
+    result = model.replay(hyp, measured(state), {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
     if result['status'] == 'REFUTED':
         return {'admitted': False, 'reason': 'REFUTED_BY_RECORD', 'witness': result['counterexamples'][:1]}
     novelty = _novel(state, hyp, _points(state), tolerances, extra)
@@ -873,7 +873,7 @@ def _improve_verdicts(state, stale=()):
     accepted = sorted((a for a in arms if a['verdict'] == 'ACCEPT'), key=lambda a: -model.exact(a['profile']['mean_gain']))
     return {'baseline': profile['baseline'], 'status': 'EVALUATED', 'arms': arms,
             'recommended': accepted[0]['arm'] if accepted else None,
-            'rule': 'ACCEPT iff mean gain >= min_gain and worst per-sample degradation <= max_degradation'}
+            'rule': 'ACCEPT iff mean gain > 0 and >= min_gain and worst per-sample degradation <= max_degradation'}
 
 
 def _stale(store, state):

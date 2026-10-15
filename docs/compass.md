@@ -106,10 +106,10 @@ For one-input unconditional laws, Compass also builds the unique polynomial of d
 ## IMPROVE goals
 
 An IMPROVE declaration compares arms that report per-sample metrics. Mean gain alone never accepts an arm. An arm is `ACCEPT` only if:
-- its mean gain is at least `min_gain`, and
+- its mean gain is positive and at least `min_gain`, and
 - its worst per-sample degradation is at most `max_degradation`.
 
-A mean gain that masks one collapsed sample is `LOCAL_REGRESSION`. A missing threshold stays `UNKNOWN`. The arm's verdict is `JUDGMENT_REQUIRED`, and the drive ends with `JUDGMENT_REQUIRED`, naming the unknown thresholds. An unmeasured baseline ends the drive the same way. An arm whose receipt, or whose baseline's receipt, no longer verifies is `STALE_EVIDENCE`, never `ACCEPT`. Stale evidence ends the drive with `JUDGMENT_REQUIRED`.
+`min_gain` must be at least 0; a negative floor is rejected at `init`. A mean gain that masks one collapsed sample is `LOCAL_REGRESSION`. A missing threshold stays `UNKNOWN`. The arm's verdict is `JUDGMENT_REQUIRED`, and the drive ends with `JUDGMENT_REQUIRED`, naming the unknown thresholds. An unmeasured baseline ends the drive the same way, and so does an arm that is unmeasured or reports other samples than the baseline (`UNMEASURED_OR_SAMPLE_MISMATCH`). An arm whose receipt, or whose baseline's receipt, no longer verifies is `STALE_EVIDENCE`, never `ACCEPT`. Stale evidence ends the drive with `JUDGMENT_REQUIRED`.
 
 ## Interrupts, deadlines and resume (#207, #215)
 

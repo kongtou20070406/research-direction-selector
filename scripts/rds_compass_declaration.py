@@ -130,6 +130,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
         for key in ('max_degradation', 'min_gain'):
             if key not in profile:
                 unknown.append('profile.' + key)
+        # ACCEPT also needs a strictly positive mean gain, so a negative floor could never be honoured.
+        require('min_gain' not in profile or model.exact(profile['min_gain']) >= 0,
+                'profile.min_gain must be at least 0: an arm needs a positive mean gain to be accepted')
     experiment = declaration['experiment']
     _object(experiment, {'argv', 'files', 'timeout_seconds', 'wall_seconds'}, set(), 'experiment')
     require(isinstance(experiment['argv'], list) and 1 <= len(experiment['argv']) <= 64, 'Experiment argv required')

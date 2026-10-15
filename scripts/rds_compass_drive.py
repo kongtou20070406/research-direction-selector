@@ -84,8 +84,10 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
                 cstore.append(store, 'REPORT', body['sha256'][:32], body)
                 if verification['goal'] == 'IMPROVE':
                     improvement = verification['improvement']
-                    # An undeclared threshold or an unmeasured baseline is not a settled evaluation.
-                    judgment = [a['arm'] for a in improvement['arms'] if a['verdict'] == 'JUDGMENT_REQUIRED']
+                    # An undeclared threshold, an unmeasured baseline, or an arm that is unmeasured or
+                    # measured on other samples than the baseline is not a settled evaluation.
+                    judgment = [a['arm'] for a in improvement['arms']
+                                if a['verdict'] in ('JUDGMENT_REQUIRED', 'UNMEASURED_OR_SAMPLE_MISMATCH')]
                     settled = (verification['receipts_rechecked'] and improvement['status'] == 'EVALUATED'
                                and not judgment)
                     detail = None if settled else {

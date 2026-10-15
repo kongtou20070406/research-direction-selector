@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compass_fixture as fx
 import rds_compass as compass
+import rds_compass_model as model
 import rds_compass_rsi as rsi
 import rds_compass_store as cstore
 from rds_compass_declaration import initialize
@@ -23,6 +24,13 @@ from rds_project import ProjectStore
 QUAD = dict(law='x*x+1', xs=range(-4, 5), hypotheses=[('lin', 'x+1'), ('dbl', '2*x+1')])
 POP = dict(law='2*popcount(x)+1', xs=range(0, 17), hypotheses=[('lin', 'x+1')])
 TRAP = dict(law='0 if x in (11, 13) else 2*popcount(x)+1', xs=range(0, 17), hypotheses=[('lin', 'x+1')])
+# Reports a side observable z that the declaration leaves without a tolerance.
+SIDE = """import argparse, json, pathlib
+p = argparse.ArgumentParser(); p.add_argument('--x'); p.add_argument('--output', required=True)
+a = p.parse_args(); x = int(a.x)
+out = pathlib.Path(a.output); out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps({'outputs': {'y': x, 'z': x + 5}}), encoding='utf-8')
+"""
 
 
 class Campaign(unittest.TestCase):
@@ -49,6 +57,30 @@ class Campaign(unittest.TestCase):
 
 
 class LawTests(Campaign):
+    def test_observable_without_tolerance_is_never_adjudicated(self):
+        root = self.base / 'side'
+        path = fx.law_campaign(root, 'x', range(4))
+        fx.write(root / 'experiment.py', SIDE)
+        value = json.loads(path.read_text(encoding='utf-8'))
+        value['observables']['z'] = {}
+        value['hypotheses'] = [{'id': 'both', 'predict': {'y': 'x', 'z': 'x'}}]
+        fx.write(path, value)
+        self.assertIn('observables.z.tolerance', initialize(root, path)['plan']['unknown'])
+        store = cstore.store_for(root)
+        for ident in ('x0', 'x1'):
+            manifest = compass.manifest(compass.fold(store), ident)
+            store.register(manifest)
+            store.execute(manifest['id'])
+        state, _ = compass.ingest(store)
+        # z = x + 5 contradicts the rulebook's z = x, but z has no tolerance: UNKNOWN, never a refutation.
+        hyp = state['hypotheses']['both']
+        self.assertEqual((hyp['status'], hyp['replay']['tested'], hyp['replay']['unknown_measurements']),
+                         ('CONSISTENT', 2, 2))
+        # The invariant holds in replay itself, even for a row that carries the untolerated cell.
+        rows = [dict(row, outputs={**row['outputs'], 'z': model.exact(99)}) for row in compass.measured(state)]
+        result = model.replay(hyp, rows, {'y': (0, 0)})
+        self.assertEqual((result['status'], result['tested'], result['unknown_measurements']), ('CONSISTENT', 2, 2))
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)

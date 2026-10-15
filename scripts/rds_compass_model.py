@@ -303,7 +303,8 @@ def replay(hypothesis, observations, tolerances):
 
     UNDEFINED where the rulebook claims applicability counts against it: an
     explanation that cannot produce its own prediction does not explain the
-    observation. Missing measurements stay UNKNOWN and refute nothing.
+    observation. Missing measurements, and observables with no declared
+    tolerance, stay UNKNOWN and refute nothing.
     """
     counterexamples, tested, skipped, unknown = [], 0, 0, 0
     for row in observations:
@@ -313,7 +314,7 @@ def replay(hypothesis, observations, tolerances):
             continue
         for name in hypothesis['predict']:
             observed = row['outputs'].get(name)
-            if observed is None:
+            if observed is None or name not in tolerances:
                 unknown += 1
                 continue
             tested += 1
