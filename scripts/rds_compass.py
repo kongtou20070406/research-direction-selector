@@ -11,6 +11,7 @@ declared tolerance. ``scientific_support`` stays ``UNKNOWN``: Compass never
 certifies a law; uniqueness is reported only within a stated search bound.
 """
 from copy import deepcopy
+import hashlib
 import json
 import subprocess
 
@@ -558,16 +559,27 @@ def packet(state, items, trigger, notes):
     return {**body, 'sha256': digest(body)}
 
 
+def _streams(stdout, stderr):
+    """Raw-byte identities of the agent's streams, complete or cut off by a timeout."""
+    stdout, stderr = stdout or b'', stderr or b''
+    return {'stdout_sha256': hashlib.sha256(stdout).hexdigest(), 'stdout_bytes': len(stdout),
+            'stderr_sha256': hashlib.sha256(stderr).hexdigest(), 'stderr_bytes': len(stderr),
+            'stderr_tail': stderr[-512:].decode('utf-8', 'replace')}
+
+
 def _call_agent(store, agent, value):
     raw = canonical(value).encode('utf-8')
+    sent = {'argv': agent['argv'], 'input_sha256': hashlib.sha256(raw).hexdigest()}
     try:
         done = subprocess.run(agent['argv'], input=raw, capture_output=True, timeout=agent['timeout_seconds'],
                               cwd=store.root, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, {'status': 'AGENT_UNAVAILABLE', 'error': type(exc).__name__ + ': ' + str(exc)[:200]}
-    evidence = {'status': 'RETURNED', 'exit_code': done.returncode,
-                'stdout_sha256': digest(done.stdout.decode('utf-8', 'replace')),
-                'stderr_tail': done.stderr[-512:].decode('utf-8', 'replace'), 'argv': agent['argv']}
+    except subprocess.TimeoutExpired as exc:
+        return None, {'status': 'AGENT_TIMEOUT', 'phase': 'RUNNING', 'timeout_seconds': agent['timeout_seconds'],
+                      **sent, **_streams(exc.stdout, exc.stderr)}
+    except OSError as exc:
+        return None, {'status': 'AGENT_UNAVAILABLE', 'phase': 'LAUNCH', **sent,
+                      'error': type(exc).__name__ + ': ' + str(exc)[:200]}
+    evidence = {'status': 'RETURNED', 'exit_code': done.returncode, **sent, **_streams(done.stdout, done.stderr)}
     if done.returncode != 0 or len(done.stdout) > AGENT_BYTES:
         return None, {**evidence, 'status': 'AGENT_FAILED'}
     try:

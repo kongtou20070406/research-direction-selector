@@ -74,7 +74,7 @@ head it was computed from, then acts on it.
    Every fit reproduces every original measurement. A fit equivalent to a refuted or live rulebook is rejected as `REPEAT_OF_REFUTED` or `DUPLICATE` before it can cost an experiment.
 2. **Escalate.** If synthesis finds nothing within its bound, Compass escalates to RSI (below) and synthesizes again over the new feature.
 3. **Seal the packet.** Compass seals an `rds-jump-packet-v1` (status `CURRENT`, SHA-256, ≤32 KiB, explicit omissions) and writes it to the declared agent's stdin.
-4. **Validate the response.** The agent must address every item exactly once with `adopt`, `adapt`, `reject` or `defer`, plus substantive reasons and next steps. Adapted rulebooks and free proposals pass the same record filter, replay first and then equivalence. Any rulebook that reads a qualified tool feature is bound to that tool as a premise, whoever wrote it, so a tool retraction also retracts it. A malformed or failed response is recorded, and the unattended policy continues. If the Compass head or the receipt set changed while the agent worked, the response is `STALE_RESPONSE` and nothing from that jump is adopted. No agent means `COMPASS_AUTO` adoption of the already filtered fits.
+4. **Validate the response.** The agent must address every item exactly once with `adopt`, `adapt`, `reject` or `defer`, plus substantive reasons and next steps. Adapted rulebooks and free proposals pass the same record filter, replay first and then equivalence. Any rulebook that reads a qualified tool feature is bound to that tool as a premise, whoever wrote it, so a tool retraction also retracts it. A malformed or failed response is recorded, and the unattended policy continues. The `DISPOSITION` binds the agent's input and both output streams by raw-byte SHA-256. A timeout records `AGENT_TIMEOUT` with the hashes of the partial streams. If the Compass head or the receipt set changed while the agent worked, the response is `STALE_RESPONSE` and nothing from that jump is adopted. No agent means `COMPASS_AUTO` adoption of the already filtered fits.
 5. **Stop at the bound.** `escape.max_jumps` bounds the search, after which the drive ends `SEARCH_EXHAUSTED`. That exhaustion speaks only about the declared grammar and bound.
 
 ## Goal-bound RSI
@@ -139,7 +139,7 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
 
 Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification`,
 `agent` (`{argv, timeout_seconds}`), `library`, `protocol` (identity fields),
-and `profile` (IMPROVE). `higher_is_better` must be a JSON boolean. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. The experiment writes `{"outputs": {...},
+and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. The experiment writes `{"outputs": {...},
 "samples"?: {...}}` to `{output}`.
 
 ```bash

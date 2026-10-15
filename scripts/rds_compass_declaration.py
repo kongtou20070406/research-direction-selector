@@ -114,7 +114,8 @@ def compile_plan(store, declaration, source_sha256, source=None):
         for name, spec in sorted(declaration['inputs'].items()):
             model._name(name)
             _object(spec, set(), {'min', 'max', 'integer'}, 'input ' + name)
-            inputs[name] = {k: (model.text(v) if k != 'integer' else bool(v)) for k, v in spec.items()}
+            require(isinstance(spec.get('integer', False), bool), f'inputs.{name}.integer must be true or false')
+            inputs[name] = {k: (model.text(v) if k != 'integer' else v) for k, v in spec.items()}
     else:
         require('inputs' not in declaration and 'hypotheses' not in declaration,
                 'IMPROVE compares declared arms; it has no law inputs or rival rulebooks')
@@ -180,6 +181,11 @@ def compile_plan(store, declaration, source_sha256, source=None):
             'Budget wall_seconds must cover one experiment')
     if 'experiments' not in budget:
         defaulted.append('budget.experiments')
+    else:
+        count = budget['experiments']
+        # Every attempt, retries included, is one experiment: the cap never exceeds the declared slots.
+        require(type(count) is int and 0 <= count <= len(slots),
+                f'budget.experiments must be an integer from 0 to {len(slots)}')
     protocol = declaration.get('protocol', {})
     require(isinstance(protocol, dict) and set(protocol) <= set(PROTOCOL_FIELDS) | {'path', 'metrics'},
             'Protocol declares identity fields only: ' + ', '.join(PROTOCOL_FIELDS))

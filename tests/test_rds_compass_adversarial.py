@@ -3,6 +3,7 @@
 Each case reproduces a defect found by an independent Codex (gpt-6.1-sol, xhigh) red-team pass
 against the 6.0.0 candidate, or by the Codex review of PR #357. Every case failed before its fix.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -133,6 +134,27 @@ class JumpResponseTests(Campaign):
         self.assertEqual(next(iter(state['tools'].values()))['status'], 'RETRACTED')
         self.assertEqual(state['hypotheses']['agentlaw']['status'], 'RETRACTED', state['hypotheses']['agentlaw'])
 
+    def test_timed_out_agent_streams_are_bound_by_bytes(self):
+        path = fx.law_campaign(self.root, '0 if x < 2 else 1', range(3), grammar=GRAMMAR, rsi={'enabled': False},
+                               agent='adopt')
+        value = json.loads(path.read_text(encoding='utf-8'))
+        value['agent']['timeout_seconds'] = 1
+        fx.write(path, value)
+        initialize(self.root, path)
+        fx.write(self.root / 'agent.py', 'import sys, time\nsys.stdin.buffer.read()\n'
+                 "sys.stdout.buffer.write(b'partial-out'); sys.stdout.flush()\n"
+                 "sys.stderr.buffer.write(b'partial-err'); sys.stderr.flush()\ntime.sleep(20)\n")
+        store = cstore.store_for(self.root)
+        self.buy(store, 'x0', 'x1')
+        compass.ingest(store)
+        result = compass.escape(store, compass.fold(store), {'trigger': 'NO_RIVALS'})
+        self.assertIn('AGENT_TIMEOUT', result['errors'])
+        evidence = [e['value']['agent'] for e in cstore.events(store) if e['kind'] == cstore.PREFIX + 'DISPOSITION'][-1]
+        self.assertEqual((evidence['status'], evidence['phase'], evidence['timeout_seconds']), ('AGENT_TIMEOUT', 'RUNNING', 1))
+        self.assertEqual(evidence['stdout_sha256'], hashlib.sha256(b'partial-out').hexdigest())
+        self.assertEqual(evidence['stderr_sha256'], hashlib.sha256(b'partial-err').hexdigest())
+        self.assertEqual(len(evidence['input_sha256']), 64)
+
 
 class InterruptTests(Campaign):
     def test_sigterm_before_child_launch_settles_the_attempt(self):
@@ -202,6 +224,20 @@ class DeclarationReviewTests(Campaign):
         # The same rule binds agent adaptations and proposals.
         with self.assertRaisesRegex(ValueError, 'goal observable y'):
             model.compile_hypothesis({'id': 'p', 'predict': {'z': 'x'}}, ['x'], ['y', 'z'], goal='y')
+
+    def test_string_integer_domain_is_rejected(self):
+        path = fx.law_campaign(self.root, 'x', range(4))
+        with self.assertRaisesRegex(ValueError, 'inputs.x.integer must be true or false'):
+            initialize(self.root, self.declaration(path, lambda d: d['inputs']['x'].update(integer='false')))
+
+    def test_experiment_budget_must_be_a_bounded_integer(self):
+        for index, count in enumerate(('4', 2.5, -1, True, 9)):  # Four candidates hold eight attempt slots.
+            root = self.root / f'case{index}'
+            path = fx.law_campaign(root, 'x', range(4))
+            with self.subTest(count=count), self.assertRaisesRegex(ValueError, 'budget.experiments must be'):
+                initialize(root, self.declaration(path, lambda d: d['budget'].update(experiments=count)))
+        path = fx.law_campaign(self.root / 'valid', 'x', range(4))
+        initialize(self.root / 'valid', self.declaration(path, lambda d: d['budget'].update(experiments=8)))
 
 
 class ToolRunnerTests(Campaign):
