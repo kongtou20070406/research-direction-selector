@@ -574,6 +574,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 with ProjectStore(workspace)._db(True) as db:
                     event = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' ORDER BY id DESC LIMIT 1").fetchone()
                 guard_ref = json.loads(event['body'])['report'] if event is not None else None
+            if result.get('receipt') is None:
+                return result  # e.g. PENDING_MATERIALIZATION_RECOVERY: retained state, nothing to complete.
             _complete_prospective(workspace, request, result['receipt'], result.get('regression_review'), guard_ref)
             return result
         check_admission(workspace)

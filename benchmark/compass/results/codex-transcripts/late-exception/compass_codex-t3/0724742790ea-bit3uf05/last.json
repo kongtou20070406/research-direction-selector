@@ -1,0 +1,21 @@
+{
+  "decisions": [
+    {
+      "id": "j05-0",
+      "disposition": "adopt",
+      "reason": "The quadratic branch matches all five measurements through x=6, and the zero branch matches x=8 and x=9. This remains a viable candidate, although the receipts do not establish a cutoff specifically at 7 or permanent zero output thereafter.",
+      "next_step": "Measure x=7: this rule predicts 0, while the proposed cutoff at 8 predicts 50. Then measure x=10 to test whether zero output persists beyond the observed range.",
+      "hypothesis": null
+    }
+  ],
+  "proposals": [
+    {
+      "id": "cutoff_eight",
+      "predict": {
+        "y": "x**2 + 1 if x < 8 else 0"
+      },
+      "applies": null,
+      "statement": "An alternative cutoff at 8 fits every receipt and predicts y=50 at the unmeasured input x=7."
+    }
+  ]
+}

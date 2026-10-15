@@ -194,8 +194,9 @@ def _charged_quick_scope(child, owner, owner_pointer):
         event = json.loads(identity['body']) if identity else None
         max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
         anchor = owner_pointer.get('event_id')
+        from rds_path_identity import same
         require(_matching_identity(owner_pointer, event)
-                and event.get('root') == str(owner), 'Owning QUICK workspace identity does not match')
+                and same(event.get('root'), owner), 'Owning QUICK workspace identity does not match')
         require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,
                 'Owning QUICK workspace ledger was rolled back; accounting resets are refused')
         rows = db.execute(
@@ -665,7 +666,8 @@ def check_admission(root, supersedes=None, separate_project=False):
     # A copied workspace carries both the pointer and the ledger event with it,
     # so digest equality alone admits a clone. The event also records the bound
     # root; the original ledger serves only its own directory tree.
-    require(str(store.root) == event.get("root"),
+    from rds_path_identity import same
+    require(same(store.root, event.get("root")),
             "This workspace is a copy of a bound workspace; the recorded identity names "
             f"{event.get('root')}. A bound ledger serves exactly one workspace")
     # Restoring a ledger snapshot taken after the bind rolls budget and events
@@ -716,7 +718,8 @@ def _anchor_transaction(root, db):
             'Workspace ledger identity does not match; accounting resets are refused')
     require(binding_digest is None or binding_digest == event.get('event_digest'),
             'Workspace binding transaction identity does not match')
-    require(event.get('root') == str(Path(root).resolve()), 'Workspace ledger belongs to another root')
+    from rds_path_identity import same
+    require(same(event.get('root'), root), 'Workspace ledger belongs to another root')
     max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
     anchor = pointer.get('event_id')
     require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,

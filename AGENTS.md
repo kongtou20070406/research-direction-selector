@@ -16,15 +16,37 @@ You are operating inside `kongtou20070406/research-direction-selector`, an evide
    - First locate the exact existing functions, callers, and CLI entry points in `scripts/` and `tests/`. State the root cause or insertion point in <= 5 bullet lines citing `file:line` before touching code.
 2. **Strict File & LOC Budget**:
    - Edit ONLY the files explicitly named in the task scope. If an unlisted file appears broken, log `OUT_OF_SCOPE_DISCOVERY: <file:line> - <1 sentence>` and leave it untouched.
-   - Keep net additions under **150 LOC** for bug/CI fixes and **300 LOC** for feature slices.
+   - Keep every change at or under **250 net LOC** (bug, CI or feature slice). Split larger work into independently verified slices.
    - Do NOT write defensive guard-clause towers for impossible internal states. Prefer a single fail-closed assertion that preserves the full return object (`r`) for diagnostics.
 3. **Concurrency, Subprocess & Path Safety**:
-   - Do not introduce threads, async worker pools, or custom file locks unless explicitly instructed.
+   - Do not introduce threads, async worker pools, or custom file locks/concurrency primitives. Ledger writes already serialize through SQLite `BEGIN IMMEDIATE`; Compass records add a head guard, not a lock.
    - On `subprocess.run(..., timeout=...)`, always catch `TimeoutExpired` only to record partial `stdout`/`stderr`, current phase/attempt identity, and charged cost into the existing ledger before re-raising or returning a structured failure receipt.
    - On Windows/cross-platform path checks, compare `Path(...).resolve()` identities rather than raw lexical strings while preserving explicit `--root` containment checks.
 4. **Test-Fest Prohibition**:
-   - During implementation, run ONLY the 1–2 focused test modules directly covering your change (e.g., `pytest tests/test_rds_feasibility.py -k <test_name>`).
+   - During implementation, run ONLY the 1–2 focused test modules directly covering your change (e.g., `python -B -m unittest discover -s tests -p 'test_rds_compass_drive.py'`). Tests import sibling fixtures, so use `discover -s tests`.
+   - Never run the full suite redundantly; the release owner runs it once per candidate.
    - Never write unit tests for documentation, `AGENTS.md`, or unchanged helper functions.
    - If an environment/harness flake occurs, retry at most **ONCE**. Never loop on failing tests by weakening assertions or increasing timeouts.
 5. **No Diagnosis-Only Stopping**:
    - Do not stop after summarizing what should be changed. Execute the code edit, run the focused CLI/test verification, and output the final 6-line execution ledger.
+
+## III. Compass Architecture Map (6.0.0)
+Read [docs/compass.md](docs/compass.md) before touching these modules.
+- `scripts/rds_compass_model.py` (SHARED): exact Fraction AST dialect, EIG over rival partitions (UNDEFINED is its own class; `EQUIVALENT_PARTITION` is never bought twice), observational equivalence, counterexample-filtered synthesis, per-sample profiles.
+- `scripts/rds_compass_store.py` (L1): `COMPASS_*` rows in the existing `events` table, each a CAS-bound record in a parent-digest hash chain. State is folded from rows plus original receipts on every read.
+- `scripts/rds_compass_declaration.py` (L1): declaration to kernel contract, protocol and plan. Unknowns stay `UNKNOWN`; controller defaults are listed in `defaulted`; each candidate has one declared retry slot for interrupted attempts.
+- `scripts/rds_compass.py` (L3): ingest, basin, `decide` (pure), jump packet and agent stdin dispositions, verification (exact replay, Lean/closed-rational, `rds_math_router` polynomial certificate), working set, TMS mirror, report.
+- `scripts/rds_compass_rsi.py` (L3): goal-bound tools.
+  - Every tool passes the `extract_function` allowlist.
+  - Qualification uses a receipted holdout oracle triple: known positive, discriminating mutant, boundary/counterexample witness.
+  - Tools are never self-certified.
+  - The library is create-only, and provenance is re-verified on reuse.
+  - Tools are retracted when a later receipt contradicts their qualifying law.
+- `scripts/rds_compass_drive.py` (L3): the unattended loop. SIGTERM/SIGINT settle through `rds_interrupt`: the kernel records the in-flight attempt `INTERRUPTED` and re-raises.
+
+Compass invariants:
+- Measurements are `INPUT_REPORTED`; replay is `CONSISTENT`/`REFUTED`/`UNTESTED`; `scientific_support` is always `UNKNOWN`.
+- Never store a derived status as truth; recompute it.
+- Never weaken the oracle triple, the confirmation gate, the receipt re-check or the polynomial-rival handoff to make a campaign finish.
+- A missing tolerance or threshold stays `UNKNOWN` and becomes `JUDGMENT_REQUIRED`.
+

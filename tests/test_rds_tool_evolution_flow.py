@@ -305,6 +305,7 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         self.assertNotIn('real_forecast', verify)
         self.assertEqual(self.launches(), [])
         first = self.cli('project', 'advance')
+        self.assertIsNotNone(first.get('receipt'), first.get('launch'))
         self.assertEqual(first['receipt']['run_id'], 'pilot-verify')
         self.assertEqual(first['receipt']['run_status'], 'SUCCEEDED')
         store = ProjectStore(self.root)

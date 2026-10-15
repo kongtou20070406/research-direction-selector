@@ -1,0 +1,7 @@
+{
+  "status": "CLAIM",
+  "law_python": "def law(x):\n    return 2 * sum(x % d == 0 for d in range(1, x + 1)) + 1\n",
+  "accepted_arm": null,
+  "rationale": "The law is twice the number of positive divisors of x, plus one. All nine measurements agree: (1,3), (2,5), (3,5), (4,7), (7,5), (9,7), (15,9), (16,11), (20,13). These cover every divisor count occurring in the declared domain. Agreement on unmeasured candidates is inferred; any mismatch would overturn the claim.",
+  "confidence": 0.97
+}

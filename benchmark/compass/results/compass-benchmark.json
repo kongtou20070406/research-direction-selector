@@ -1,0 +1,778 @@
+{
+ "schema": "rds-compass-benchmark-v1",
+ "generated_at": "2026-10-15T08:50:56Z",
+ "environment": {
+  "python": "3.12.0",
+  "platform": "macOS-27.0-arm64-arm-64bit",
+  "git_head": "445a1379b7fa383b2fdde7a0cbd039376e892a1a"
+ },
+ "arms": {
+  "ratchet": "Greedy ratchet on a fixed 3-input visible check set (Karpathy autoresearch style)",
+  "bare_agent": "SIMULATED bare frontier-agent policy; no model was called",
+  "compass": "RDS v6 Compass drive (EIG, jumps, RSI, verification)",
+  "provider_agent": "NOT_RUN in this file: real-model arms are opt-in (--arms codex_agent compass_codex); see results/compass-benchmark-codex.json"
+ },
+ "shared": "Same kernel contract, receipts, grammar and synthesis bound for every arm",
+ "tasks": [
+  {
+   "id": "visible-check-trap",
+   "trap": "A simple law passes the first visible checks but not the declared space",
+   "xs": [
+    -1,
+    0,
+    1,
+    2,
+    -2,
+    3,
+    -3,
+    4
+   ],
+   "hypotheses": [
+    [
+     "linear",
+     "x+1"
+    ],
+    [
+     "linear_same",
+     "1+x"
+    ],
+    [
+     "square",
+     "x*x+1"
+    ]
+   ]
+  },
+  {
+   "id": "late-exception",
+   "trap": "A regime change sits away from the inputs an in-order agent buys first",
+   "xs": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+   ],
+   "hypotheses": [
+    [
+     "linear",
+     "x+1"
+    ]
+   ]
+  },
+  {
+   "id": "capability-gap",
+   "trap": "No law exists in the arithmetic grammar without a new feature tool",
+   "xs": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20
+   ],
+   "hypotheses": [
+    [
+     "linear",
+     "x+1"
+    ]
+   ],
+   "sessions": 2
+  },
+  {
+   "id": "mean-masking",
+   "trap": "The best mean hides a large per-sample regression",
+   "acceptable": [
+    "variant_2"
+   ],
+   "max_degradation": 1
+  }
+ ],
+ "ground_truth": "Sealed in the scorer; arms never read it",
+ "summary": {
+  "ratchet": {
+   "tasks": 4,
+   "runs": 4,
+   "verified_discoveries": 0,
+   "false_certifications": 3,
+   "contaminated": 0,
+   "repeat_refutation_waste": 0,
+   "experiments": 12
+  },
+  "bare_agent": {
+   "tasks": 4,
+   "runs": 4,
+   "verified_discoveries": 0,
+   "false_certifications": 3,
+   "contaminated": 0,
+   "repeat_refutation_waste": 0,
+   "experiments": 27
+  },
+  "compass": {
+   "tasks": 4,
+   "runs": 5,
+   "verified_discoveries": 5,
+   "false_certifications": 0,
+   "contaminated": 0,
+   "repeat_refutation_waste": 0,
+   "experiments": 29
+  }
+ },
+ "trials": 1,
+ "tool_compounding": [
+  {
+   "arm": "compass",
+   "trial": 1,
+   "session": 1,
+   "tools_tried": 16,
+   "library_offered": 0,
+   "qualified": [
+    [
+     "divisors",
+     "SYNTHESIZED",
+     null
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  },
+  {
+   "arm": "compass",
+   "trial": 1,
+   "session": 2,
+   "tools_tried": 1,
+   "library_offered": 1,
+   "qualified": [
+    [
+     "divisors",
+     "LIBRARY",
+     "ORIGIN_VERIFIED"
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  }
+ ],
+ "rows": [
+  {
+   "task": "visible-check-trap",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "basis": "ZERO_ERROR_ON_VISIBLE_CHECK_SET",
+   "law": "(1 + x)",
+   "score": {
+    "verified": false,
+    "disagrees_on": [
+     "x2",
+     "m2",
+     "x3",
+     "m3",
+     "x4"
+    ]
+   },
+   "claim": "SELF_CERTIFIED_SUPPORTED",
+   "arm": "ratchet",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "dbdad4ed8188437248b28212e68dc8c1d75e4ead17ac6b8f3935afe5db792ee0"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "1ebd749b70613284019880abf5d67d92c4ce7bd4f72e8452dff1bf234da3490d"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "23934aec5e02c51ae59779124c49486088a57a85f8b02bb1011958c8716d5f3c"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": true,
+   "contaminated": false,
+   "wall_seconds": 0.247
+  },
+  {
+   "task": "visible-check-trap",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "basis": "ONE_SUCCESSFUL_PREDICTION",
+   "repeat_refutation_waste": 0,
+   "law": "(1 + x)",
+   "score": {
+    "verified": false,
+    "disagrees_on": [
+     "x2",
+     "m2",
+     "x3",
+     "m3",
+     "x4"
+    ]
+   },
+   "claim": "SELF_CERTIFIED_SUPPORTED",
+   "arm": "bare_agent",
+   "experiments": 2,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "92518d582d37e77f0593fb2ade99c890d9ce57c8c8ca04f14aed340da9183256"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "4d621b32b6be45f5650b85e683691bff003b69e477a5b06ef3e12c621d0920b5"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": true,
+   "contaminated": false,
+   "wall_seconds": 0.156
+  },
+  {
+   "task": "visible-check-trap",
+   "trial": 1,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "(((x * x) * x) + 1)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 0,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 13,
+   "arm": "compass",
+   "experiments": 5,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "bb95393fee6ae3eeb46c814f7462430b28488836841ec0b40899b3c119aedc0d"
+    },
+    {
+     "run_id": "compass-m2",
+     "sha256": "f818491879605b0e1de3174f7282f7977e4a73189b84ed3976bdb748c6c96a92"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "e24b062da8af199c35157a7e85fc1b897acbaac0b8c1f5892546e6e5d6dd4049"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "cc55a9b6c9bdb034eadfd8a70fa60d9f24bf1a4a63a102ac53d369887cece9bf"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "5f9f259fa99854ddf30b69847a2b8662040ba42042b6b9c92cd07844d952f08c"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 2.274
+  },
+  {
+   "task": "late-exception",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "basis": "ZERO_ERROR_ON_VISIBLE_CHECK_SET",
+   "law": "((x * x) + 1)",
+   "score": {
+    "verified": false,
+    "disagrees_on": [
+     "x7",
+     "x8",
+     "x9"
+    ]
+   },
+   "claim": "SELF_CERTIFIED_SUPPORTED",
+   "arm": "ratchet",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "bfa849a899506835da485570775c090c4ef6748fc67149dd4cc63ac0bc9b0fe1"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "9f7f8d958041de986b6783e3a0560ad85ee97a06084281f77d38a09631261728"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "c3650be4c8c2823345c536d76c7500ebabed0819126d2e0cb46ed00774eacaad"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": true,
+   "contaminated": false,
+   "wall_seconds": 0.253
+  },
+  {
+   "task": "late-exception",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "basis": "ONE_SUCCESSFUL_PREDICTION",
+   "repeat_refutation_waste": 0,
+   "law": "(1 + x)",
+   "score": {
+    "verified": false,
+    "disagrees_on": [
+     "x2",
+     "x3",
+     "x4",
+     "x5",
+     "x6",
+     "x7",
+     "x8",
+     "x9"
+    ]
+   },
+   "claim": "SELF_CERTIFIED_SUPPORTED",
+   "arm": "bare_agent",
+   "experiments": 2,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "1f8172b6dc7188088ff4ad8839aa054beaa0cf3af9f54824589ce4b9d6e0940d"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "be7adb3d40be28eb13ae599f3c9988ba4938e40b0993e9d127fe85b51437b8e9"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": true,
+   "contaminated": false,
+   "wall_seconds": 0.166
+  },
+  {
+   "task": "late-exception",
+   "trial": 1,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "ite((x < 7), ((x * x) + 1), 0)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 57,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 15,
+   "arm": "compass",
+   "experiments": 9,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "f02888f8ed9dbfb2b0677aaa4c69f7cbf5b41e9f3937f6972a686dc9298484c2"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "0970918a9d62e1cf5ed334cbd9b88f85042e21fea54b57ae99f290e7900d72d8"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "c79f87aa87e8ad625bb80259eedb7ae25849aeeeaa221731f76ad8a2e7187b1a"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "baa9b54f889a448c48024d62cfa62c9b391a5112c7a6c1de4babec8b7e6c320d"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "cf5e1fb920e7dcf80c84043309b152e2bba1816630914e8a1c3784cca2b46452"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "65b2fe019279f584012280dbac6013d19c8eb90b0ad9bcdd623bb6d9b9a2f011"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "ce83fcac14b7bbddc2a584d7b9aab60daf45ad28c1a220bd42ab28a4646a8284"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "15b2c35713e4fe72d94c4c2709b8ffd9386790ea6a2e102271a3d2bc2e0bcea1"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "b5c896b15ffec330926021627ca995d241de09c4505ef7e0df76cf76480376cd"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 5.004
+  },
+  {
+   "task": "capability-gap",
+   "trial": 1,
+   "session": 1,
+   "status": "NO_CLAIM",
+   "basis": "NO_PROPOSAL_REACHED_ZERO_VISIBLE_ERROR",
+   "claim": "NO_CLAIM",
+   "arm": "ratchet",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "2692af9360f429f4223cd05f513a157884ee262b4e44e7e4c9b383e00e368842"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "374a6eb552fb08a3f583fd3e866e0335a46f79524846eb758c5c1c546f520af5"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "07b2738eb5a1f7332282b5a9db92b380eb98a057eb1eb9d77431f59ac04ae724"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 0.666
+  },
+  {
+   "task": "capability-gap",
+   "trial": 1,
+   "session": 1,
+   "status": "NO_CLAIM",
+   "basis": "CANDIDATES_EXHAUSTED",
+   "repeat_refutation_waste": 0,
+   "claim": "NO_CLAIM",
+   "arm": "bare_agent",
+   "experiments": 20,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "2c9446eae375f559abfc99f12ecf28ee32f8f7e68c695bef51b0fc756cd65c99"
+    },
+    {
+     "run_id": "compass-x10",
+     "sha256": "ca0ce8d10ac70fbbe2ba4ba14ee47d34532799b0155d29dbf149e64cfd7aeb31"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "5e7d84afb8a2c7563d5448ed8acc57f61a8b12732ffe240c37494b6db0f77914"
+    },
+    {
+     "run_id": "compass-x12",
+     "sha256": "d98953dec7b38890a0ba733818bec2353b719c1bc8ec3c956eb996d7f66f3d6e"
+    },
+    {
+     "run_id": "compass-x13",
+     "sha256": "2393511ab34554cf6623ebeb83f578caf07228c100a3d627f5cc48fdf78081d4"
+    },
+    {
+     "run_id": "compass-x14",
+     "sha256": "7274fd137e733c7d405455451853f76704786936d6651a549170ecaebca2a2bf"
+    },
+    {
+     "run_id": "compass-x15",
+     "sha256": "08c333d22073be065341da8a87b17fc8cd4154348389076eeda31724f071b609"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "74e8b8f61ad2a25143553f67659fa58bac9514eb9a26952aacbdca84670894a0"
+    },
+    {
+     "run_id": "compass-x17",
+     "sha256": "fa9f9bf8fe10f0557a9bde0d16f138bb614c21b5015a710f2c0e3ef7de47096c"
+    },
+    {
+     "run_id": "compass-x18",
+     "sha256": "34279bdc67a53114206986509e85b009f41e38e50238e4c4d65b015c433d4607"
+    },
+    {
+     "run_id": "compass-x19",
+     "sha256": "fc389db9e68ad306d3917906e1fcf5c885f8313d4283f37c9f217fa0bb4a455a"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "e0357ecbd4bf31a3046cec20389663906c5bb5ca51fd999b57a7686e6453281b"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "1212c98b6238528be38a16b5cc1f803c4b0880a0ef09f927054cf7a3d2c324a0"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "2eec8515a053d5e52390076e7979616db00cc0f491b8b22116a45f234eee521c"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "2e17902e97cc682e01b84531e61ab0c09abe53367d3368bd2ca442ec34e7a21d"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "13c10270a63e599265bc16634713c7c4695f5fcb4d0aea963fd061c4f08643d5"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "39c7a66b17f7f6c9360906fa28a6204824f58fec08ae6308235ee14d2c5bc5e9"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "a8301eb26c98999f3fe69997d8028d71df844378533568c374eb533b478a1898"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "ee8e12bf4805b71d1f07b8dc4a7cbb531576a83327736ff3c98d1f0bc543a2ae"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "26ca0f4deba8d9a3b30b68ae864fb55d143b77575ee1760d2b9f4e4ad23e3e03"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 11.761
+  },
+  {
+   "task": "capability-gap",
+   "trial": 1,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 16,
+    "library_offered": 0,
+    "qualified": [
+     [
+      "divisors",
+      "SYNTHESIZED",
+      null
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "arm": "compass",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "2aa974ceeb0c3c65fd8262c2f9053ce7934a393ceecb75f208c7893b36089cec"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "b6ab464be46d6a4b0f5f5133ac70369d90ab9ec4af43e328bf28ed3f568a1d11"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "97672b2b1fce5bf719c5b1b9df6b0b080e4b57ed0b1447bf304c18ec3953a7e2"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "2a6137b5cef44bb5409baa6e8e23e34b3ef688d4b62c6255fd814dc7c357de3e"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "dafde87029524a2fd432ce382e9a02e99d0562905634faa6b3cc65c6f59d3ef1"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "6bcc0956e889a350478b69c094f05dd373c7658acd7d13283caef68597991451"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 11.391
+  },
+  {
+   "task": "capability-gap",
+   "trial": 1,
+   "session": 2,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 1,
+    "library_offered": 1,
+    "qualified": [
+     [
+      "divisors",
+      "LIBRARY",
+      "ORIGIN_VERIFIED"
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "arm": "compass",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "7e70cc6464edad70e29a953688fc51411094e46c3f0d7c8e1d6e740579aa4a74"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "0491713bdee381d5ec035fb4dcc980a1ea42a71aa93db744a2ef0e6150dcf90e"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "8366a00537b2a22dc60254f25478e8df024829f009400bb436a954c351c73a1e"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "192bd2abd6b8a0f342d86137822cfe50b3c08005cd7db0013e69e35fe9f1057c"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "3500c553a1042e30100063d78115dced7e840f5a538c336095a7068a8c401a5b"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "86a9ce55560003714f5139d9f6a3895dab37f101c815b374a6ce5d16f9cdaa5c"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 10.855
+  },
+  {
+   "task": "mean-masking",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "accepted": "variant_1",
+   "basis": "BEST_MEAN_SCORE",
+   "claim": "SELF_CERTIFIED_SUPPORTED",
+   "score": {
+    "verified": false
+   },
+   "arm": "ratchet",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "7618bf0bd11ac6b2a24b02d1cee01fbb6b4700a7466219e72e213b209e5eae57"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "089b384d4e2677aa0ad68b26a153636f15cbb39e60c961bb016fefaf58b6d1e5"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "fa0f05a86e0616e7bdde0e1507689c6cb8d88167e2eef201ffa254105b292b6e"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": true,
+   "contaminated": false,
+   "wall_seconds": 0.245
+  },
+  {
+   "task": "mean-masking",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "accepted": "variant_1",
+   "basis": "HIGHEST_MEAN_AFTER_ONE_RUN_EACH",
+   "claim": "SELF_CERTIFIED_SUPPORTED",
+   "score": {
+    "verified": false
+   },
+   "arm": "bare_agent",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "b5dca377d0d7cb46df88908e66eb3a6f526355f424fccf985cf77d64bc97ae43"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "4bbfde5087bc79372cfe462eb8a8f99df0647f35f7dff8bf34cb8b16b2a856d0"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "b40160b46857fa7ff91846ab6b0d95d3dad4a3b7e6909fc1519c44927b589e12"
+    }
+   ],
+   "verified_discovery": false,
+   "false_certification": true,
+   "contaminated": false,
+   "wall_seconds": 0.249
+  },
+  {
+   "task": "mean-masking",
+   "trial": 1,
+   "session": 1,
+   "status": "IMPROVEMENT_EVALUATED",
+   "claim": "ARM_ACCEPTED_BY_PROFILE_RULE",
+   "accepted": "variant_2",
+   "verdicts": {
+    "variant_1": "LOCAL_REGRESSION",
+    "variant_2": "ACCEPT"
+   },
+   "score": {
+    "verified": true
+   },
+   "arm": "compass",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "b1ad02739971835a81f43f8a267e637bb4e0ae8a79b08ba158328dc7a65b3f6e"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "34b968b9f5e25b6726630a4740ca0cc1737de4625085801dda33396fc7a25175"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "c8ea3df954830d47c73f610a928e7796a0abccec637a35d917ae143a647522fd"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 0.286
+  }
+ ],
+ "scientific_support": "UNKNOWN",
+ "limits": "Synthetic toy worlds; N=1 run(s) per arm and task (deterministic arms repeat identically); mechanism evidence only",
+ "bundle_sha256": "9d93b28a5c41234387e3d0895b9a79df69104c7b200806fb8e7061108e3410a0"
+}

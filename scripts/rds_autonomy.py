@@ -203,7 +203,7 @@ def evidence_excerpts(store, state, ids):
             text = encoded[:limit].decode('utf-8', 'ignore')
         used += len(text.encode('utf-8'))
         return {'size': len(raw), 'truncated': len(raw) > limit or len(encoded) > limit, 'text': text}
-    inputs, outputs, withheld = [], [], []
+    inputs, outputs, withheld, unusable = [], [], [], []
     for binding in state['contract']['bindings']:
         if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL - reserved:
             continue
@@ -216,10 +216,17 @@ def evidence_excerpts(store, state, ids):
                              'reason': 'CONTINUOUS_CONFIRMATION_LABELS_WITHHELD'})
             continue
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_BYTES:
+            unusable.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
+                             'reason': 'INPUT_NOT_REGULAR_FILE' if path.is_symlink() or not path.is_file()
+                             else 'INPUT_EXCEEDS_BYTE_LIMIT'})
             continue
         raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != binding['sha256']:
-            continue  # Binding failures are reported by ordinary admission, not repaired here.
+        observed = hashlib.sha256(raw).hexdigest()
+        if observed != binding['sha256']:
+            # Never serialize drifted bytes as task content (#203); name the drift instead.
+            unusable.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
+                             'observed_sha256': observed, 'reason': 'INPUT_HASH_MISMATCH'})
+            continue
         inputs.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
                        **head(raw, EXCERPT_TOTAL - reserved)})
     for receipt, item in produced:
@@ -227,11 +234,13 @@ def evidence_excerpts(store, state, ids):
             break
         raw = _read_original(store, item, keep=True)
         if raw is None:
+            unusable.append({'run_id': receipt['run_id'], 'path': item['path'], 'sha256': item['sha256'],
+                             'reason': 'ORIGINAL_OUTPUT_UNAVAILABLE_OR_CHANGED'})
             continue
         outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
                         'path': item['path'], 'sha256': item['sha256'], **head(raw, EXCERPT_TOTAL)})
     result = {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
-              'frozen_inputs': inputs, 'original_outputs': outputs}
+              'frozen_inputs': inputs, 'original_outputs': outputs, 'unusable_evidence': unusable}
     if holdout:
         result['withheld_confirmation_inputs'] = withheld
         result['access_assurance'] = 'SERIALIZATION_FILTER_ONLY_NOT_FILESYSTEM_ISOLATION'
@@ -246,6 +255,14 @@ def _jump_evidence_cut(store, db):
         row = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
         snapshot = row['sha256'] if row else None
     return {'structure_events_sha256': digest(_events(store, db)), 'snapshot_sha256': snapshot}
+
+
+def _base_source(store, code_path, expected):
+    """The exact bytes the workbench bound; a file edited after preparation is refused (#203)."""
+    raw = store._path(code_path).read_bytes()
+    require(hashlib.sha256(raw).hexdigest() == expected,
+            'Bound code changed after workbench preparation; prepare again from the current binding')
+    return raw.decode('utf-8-sig')
 
 
 def request_repair(store, report):
@@ -299,7 +316,7 @@ def request_repair(store, report):
                'blocker_sha256': blocker, 'provider': deepcopy(config['provider']), 'response_path': slot['response_path'],
                'provider_timeout_seconds': route['timeout_seconds'] - 2,
                'workbench_id': identifier, 'workbench': read(bundle['request']), 'diagnostics': read(bundle['diagnostics']),
-               'base_source': store._path(slot['code_path']).read_text(encoding='utf-8-sig'),
+               'base_source': _base_source(store, slot['code_path'], read(bundle['request'])['base_code_sha256']),
                'policy': deepcopy(state['contract']['advisor_policy']), 'original_review': report,
                'rejected_methods': deepcopy(previous),
                'evidence_excerpts': evidence_excerpts(store, state, ids),
@@ -530,6 +547,8 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
                              'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'})
     started, worker_wall, executed = time.monotonic(), 0., []
     result = {'status': 'STEP_LIMIT', 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN', 'executed': executed}
+    from rds_interrupt import OuterInterrupt, install, restore
+    signals = install()
     try:
         for _ in range(max_steps * 4 + 8):
             require(time.monotonic() - started - worker_wall < allowance, 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
@@ -678,7 +697,13 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
         result.update(status='HUMAN_STEERING_REQUIRED', reason=str(exc), steering=steering_status(store)['steering'])
     except (ValueError, OSError, sqlite3.Error, KeyError, TypeError, UnicodeError) as exc:
         result.update(status='HANDOFF_REQUIRED', reason=str(exc))
+    except (OuterInterrupt, KeyboardInterrupt) as exc:
+        # Outer timeout (#215): settle the claim below and name the retained work;
+        # an in-flight original attempt is recovered by the next pass, never rerun.
+        result.update(status='INTERRUPTED', reason=str(exc) or type(exc).__name__,
+                      partial={'executed': deepcopy(executed), 'resume': 'project recover / project drive'})
     finally:
+        restore(signals)
         if until_judgment:
             # Projection is control work. It neither recollects evidence nor runs
             # after settlement; stale/absent reports remain explicitly unavailable.

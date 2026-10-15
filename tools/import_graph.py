@@ -57,6 +57,15 @@ LAYERS.update(
     rds_cas_read="L1",
     rds_code_diff="SHARED",
     rds_cpu_jepa="SHARED",
+    rds_interrupt="SHARED",
+    rds_path_identity="SHARED",
+    rds_compass_model="SHARED",
+    rds_compass_store="L1",
+    rds_compass_declaration="L1",
+    rds_compass="L3",
+    rds_compass_rsi="L3",
+    rds_compass_drive="L3",
+    rds_compass_cli="L4",
 )
 LOADERS = {"importlib.import_module", "__import__", "builtins.__import__", "runpy.run_module"}
 OPAQUE_LOADERS = {"importlib.util.spec_from_file_location", "importlib.util.module_from_spec",

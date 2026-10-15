@@ -4,12 +4,12 @@ import json
 import rds_core as _core
 
 # Keep the CLI build-version literal in sync without importing the facade.
-VERSION = "6.0.0-rc.1"
+VERSION = "6.0.0"
 # Reading an explicitly supported ledger does not grant execution admission;
 # the contract digest and engine binding are checked at their existing boundaries.
 READABLE_STATE_VERSIONS = frozenset({
     VERSION, "5.1.0", "5.2.0", "5.3.0", "5.4.0", "5.5.0-rc.1", "5.5.0-rc.2",
-    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1", "5.9.0-rc.2",
+    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1", "5.9.0-rc.2", "6.0.0-rc.1",
 })
 RESOURCES = {"runtime_ms", "runs"}
 

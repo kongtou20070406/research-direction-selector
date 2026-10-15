@@ -30,7 +30,7 @@ from rds_reference_values import (
 )
 from rds_state import RDSState
 
-VERSION = "6.0.0-rc.1"
+VERSION = "6.0.0"
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",
                "final_run_authorized", "matched_recipe", "matched_compute"}
 
@@ -1050,6 +1050,11 @@ def cmd_project(args):
     if args.action == "init":
         from rds_workspace import check_admission
         check_admission(store.root, supersedes=args.supersedes, separate_project=args.separate_project is not None)
+        if args.declaration:
+            require(args.supersedes is None and args.mode is None and args.separate_project is None,
+                    'A Compass declaration initializes its own campaign contract')
+            from rds_compass_cli import command as compass_command
+            return compass_command(argparse.Namespace(root=args.root, action='init', declaration=args.declaration))
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
             require(args.mode != 'quick', 'A recipe creates a FULL project with program-owned Advisor')
@@ -1070,7 +1075,11 @@ def cmd_project(args):
         return _project_result(store, store.execute(args.id, background=args.background))
     if args.action == "recover":
         return _project_result(store, store.recover(args.id))
+    if args.action == "drive" and args.compass:
+        from rds_compass_drive import drive as compass_drive
+        return compass_drive(args.root, max_steps=args.max_steps, wall_seconds=args.wall_seconds)
     if args.action == "drive":
+        require(args.wall_seconds is None, '--wall-seconds applies to project drive --compass')
         from rds_autonomy import drive
         return drive(store, args.max_steps, prepare_only=args.prepare_only,
                      until_judgment=args.until_judgment, controller_wall_seconds=args.controller_wall_seconds)
@@ -1081,7 +1090,11 @@ def cmd_project(args):
         advice = review(store)
         selected = advice.get('selected_manifest')
         if selected is None:
-            return advice
+            # A non-launch carries no receipt key; `launch` states why nothing started (#207).
+            return {**advice,
+                    'launch': {'status': 'NOT_LAUNCHED', 'advisor_status': advice.get('status'),
+                               'next_move': advice.get('next_move'), 'warnings': (advice.get('warnings') or [])[:8],
+                               'execution_started': False}}
         snapshot = store.snapshot()
         if not any(run['id'] == selected['id'] for run in snapshot['runs']):
             store.register(selected)
@@ -1472,6 +1485,7 @@ def parser():
     pr_source = pr_init.add_mutually_exclusive_group(required=True)
     pr_source.add_argument("--contract")
     pr_source.add_argument("--recipe", help="Compile explicit research declarations into an owned contract")
+    pr_source.add_argument("--declaration", help="Compile a Compass declaration (same as compass init)")
     pr_init.add_argument('--mode', choices=['full', 'quick'], help='New projects default to FULL with Advisor; QUICK is explicitly limited. Existing exact retries retain their mode')
     pr_init.add_argument('--separate-project', metavar='REASON', help='Explicitly declare an independent project; required under an existing research root')
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
@@ -1492,6 +1506,8 @@ def parser():
     pr_drive.add_argument("--prepare-only", action="store_true", help="Retain a reviewable model request and pause before its repair worker; ordinary work and recovery continue")
     pr_drive.add_argument("--until-judgment", action="store_true", help="Continue frozen owned routes and reconcile paid work, stopping before new model reasoning with an evidence-bound handoff")
     pr_drive.add_argument("--controller-wall-seconds", type=float, help="Explicit control allowance for an ordinary owned --until-judgment pass, taken from the existing wall budget; frozen autonomy allowance cannot be overridden")
+    pr_drive.add_argument("--compass", action="store_true", help="Drive a Compass campaign unattended (same as compass drive)")
+    pr_drive.add_argument("--wall-seconds", type=float, help="Compass controller deadline; ends with resumable partial evidence")
     pr_actions.add_parser("recover").add_argument("--id", required=True)
     pr_actions.add_parser("next", help="Print the single next actionable project step and its command").add_argument("--brief", "--digest", action="store_true")
     pr_actions.add_parser("compare", help="Compare recorded arms against the precommitted min_useful_delta")
@@ -1505,6 +1521,8 @@ def parser():
     pr_control.add_argument("--candidate", required=True)
     pr_control.add_argument("--current", required=True)
 
+    from rds_compass_cli import add_parser as add_compass
+    add_compass(commands)
     hook = commands.add_parser("host-hook", help="Bind host dispatch to ledger admission identities; coverage is not an OS sandbox")
     hook_actions = hook.add_subparsers(dest="action", required=True)
     hook_actions.add_parser("install").add_argument("--permissive", action="store_true",
@@ -1831,6 +1849,16 @@ def _main():
                 result = getattr(rds_structure, args.action)(args.root, args.id)
         elif args.command == "project":
             result = cmd_project(args)
+            if getattr(args, 'compass', False) or getattr(args, 'declaration', None):
+                # One exit contract for both Compass front doors: 0 only for a settled goal.
+                from rds_compass_cli import exit_code as compass_exit
+                print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+                return compass_exit(result)
+        elif args.command == "compass":
+            from rds_compass_cli import command as compass_command, exit_code as compass_exit
+            result = compass_command(args)
+            print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+            return compass_exit(result)
         elif args.command == "host-hook":
             from rds_host_hook import install, coverage, validate_request
             if args.action == "install":
@@ -1923,7 +1951,7 @@ def _main():
             return 1 if result['correctness'] == 'FAIL' else 2 if result['status'] == 'UNKNOWN' else 0
         if args.command == 'project' and args.action == 'compose-tools' and result['status'] == 'HANDOFF':
             return 2
-        if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and result.get('receipt', result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
+        if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and (result.get('receipt') or result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
         if result.get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'} or (result.get('advisor') or {}).get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'}:
             return 2  # The receipt is retained; collection needs attention, never a training retry.

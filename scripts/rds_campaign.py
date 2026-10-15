@@ -57,8 +57,9 @@ def _shape(value):
     for name in ('workspace_root', 'project_root'):
         require(isinstance(value[name], str) and 0 < len(value[name]) <= 4096,
                 'Invalid campaign binding path')
-        require(os.path.normcase(str(_path(value[name]))) == os.path.normcase(value[name]),
-                'Campaign binding paths must be canonical')
+        _path(value[name])
+        from rds_path_identity import canonical_spelling
+        require(canonical_spelling(value[name]), 'Campaign binding paths must be canonical')
     workspace, project = _path(value['workspace_root']), _path(value['project_root'])
     require(workspace.is_dir() and project.is_dir() and project.is_relative_to(workspace),
             'Campaign workspace/project is missing or outside its workspace')

@@ -442,6 +442,26 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(self.calls(), ['repair1'])
         self.assertEqual(self.events('CAMPAIGN_STARTED'), [start])
 
+    def test_outer_sigterm_settles_the_controller_claim_and_names_partial_work(self):
+        # #215: an outer harness timeout arrives as SIGTERM mid-pass. The claim is
+        # released, measured overhead charged, and the next pass is admitted.
+        import signal
+        import rds_owned_advisor
+        self.build(baseline=True)
+        previous = signal.getsignal(signal.SIGTERM)
+        def terminated(*args, **kwargs):
+            signal.raise_signal(signal.SIGTERM)
+        with patch.object(rds_owned_advisor, 'review', side_effect=terminated):
+            result = autonomy.drive(self.store, max_steps=1)
+        self.assertEqual(result['status'], 'INTERRUPTED')
+        self.assertEqual(result['reason'], 'SIGTERM')
+        self.assertEqual(result['partial']['executed'], [])
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        released = self.events('AUTONOMY_DRIVE_RELEASED')
+        self.assertEqual([e['reason'] for e in released], ['INTERRUPTED'])
+        self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+        self.assertNotEqual(autonomy.drive(self.store, max_steps=1)['status'], 'CONTROLLER_ADMISSION_BLOCKED')
+
     def test_request_carries_hash_checked_task_inputs_and_original_outputs(self):
         # A wrong value that exits 0 leaves no stderr tail; the model needs the task content itself.
         self.build(baseline=True)
@@ -475,6 +495,20 @@ class AutonomyTests(unittest.TestCase):
             self.assertLessEqual(len(entry['text']), 4)
             self.assertEqual(entry['truncated'], entry['size'] > 4)
         self.assertTrue(excerpts['original_outputs'][0]['truncated'])
+        # The drift is named, never silently dropped or serialized as task content (#203).
+        drift = [e for e in excerpts['unusable_evidence'] if e['path'] == 'config.json']
+        self.assertEqual([e['reason'] for e in drift], ['INPUT_HASH_MISMATCH'])
+        self.assertEqual(drift[0]['observed_sha256'], hashlib.sha256((self.root / 'config.json').read_bytes()).hexdigest())
+        self.assertNotEqual(drift[0]['observed_sha256'], drift[0]['sha256'])
+
+    def test_base_source_must_match_the_prepared_workbench_bytes(self):
+        path = self.root / 'base.py'
+        path.write_bytes(b'value = 0\n')
+        prepared = hashlib.sha256(b'value = 0\n').hexdigest()
+        self.assertEqual(autonomy._base_source(self.store, 'base.py', prepared), 'value = 0\n')
+        path.write_bytes(b'value = 1\n')  # Edited after preparation: not the bound base.
+        with self.assertRaisesRegex(Exception, 'changed after workbench preparation'):
+            autonomy._base_source(self.store, 'base.py', prepared)
 
     def test_inputs_and_outputs_share_the_aggregate_excerpt_allowance(self):
         self.build(baseline=True)

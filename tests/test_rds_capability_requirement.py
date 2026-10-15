@@ -6,6 +6,7 @@ it selects a bounded response, never a diagnosis, installation or new authorizat
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -377,9 +378,12 @@ class CapabilityRequirementCLITests(unittest.TestCase):
         ctx['obstructions'] = [obstruction(goal, 'UNSUPPORTED_OPERATION', requirement=REQUIREMENT,
                                            signals=['trajectory_degradation'])]
         # Keep the bare project path at 45 characters, independent of the runner's username.
-        parent = Path(tempfile.gettempdir()).resolve()
-        while len(str(parent)) + 9 > 45:
-            parent = parent.parent
+        # The shortest ancestor may not be writable (macOS /private/var/folders/<id>), so
+        # take the deepest short-enough writable ancestor, then the system /tmp.
+        temp = Path(tempfile.gettempdir()).resolve()
+        short = [p for p in (temp, *temp.parents, Path('/tmp').resolve()) if len(str(p)) + 9 <= 45]
+        parent = next((p for p in short if os.access(p, os.W_OK)), None)
+        self.assertIsNotNone(parent, 'No writable directory short enough for the 45-character project path')
         for base_length, suffix in ((45, ''), (46, ''), (45, 'p' * 80),
                                     (45, 'p' * 90 + '/' + 'p' * 90)):
             prefix = 'r' * (base_length - len(str(parent)) - 9)

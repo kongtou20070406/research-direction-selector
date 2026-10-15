@@ -24,6 +24,7 @@ import sys
 import time
 import uuid
 
+from rds_interrupt import OuterInterrupt
 from rds_mutation import mutation
 from rds_admission_read import StaleAdmission
 from rds_project_hooks import provider as lifecycle_provider
@@ -1505,44 +1506,55 @@ class ProjectStore:
                 self._save(db, run)
                 project_events.publish_started(self, db, run)
             contract = self._contract(db)
-        if admission_error is not None:
-            return self._finish(run_id, attempt_id, 'FAILED', None, time.monotonic() - attempt_start,
-                                False, [admission_error], stop_reason='CAMPAIGN_DEADLINE'
-                                if admission_error == 'Stop policy: CAMPAIGN_DEADLINE' else None)
-        before, errors = self._bindings(contract)
-        with self._db() as db:
-            current = self._run(db, run_id)
-            current["bindings_before"] = before
-            self._save(db, current)
         try:
-            if file_sha(run["executor"]) != run["executor_sha256"]:
-                errors.append("Command executable changed")
-            if any(self._path(p, True, contract).exists() for p in run["manifest"]["outpaths"]):
-                errors.append("Output already exists before start")
-        except (OSError, ValueError) as exc:
-            errors.append(str(exc))
-        work = self.artifact_dir / run_id
-        require(work.resolve().is_relative_to(self.root), "Artifact directory escapes root")
-        work.mkdir(parents=True, exist_ok=True)
-        manifest_path = work / "manifest.json"
-        manifest_path.write_text(canonical(run["manifest"]), encoding="utf-8")
-        if errors:
-            return self._finish(run_id, attempt_id, "FAILED", None, time.monotonic() - attempt_start, False, errors, before)
-        for p in run["manifest"]["outpaths"]:
-            self._path(p, True, contract).parent.mkdir(parents=True, exist_ok=True)
-        with self._db() as db:
-            db.execute("INSERT INTO exposures(run_id,body) VALUES (?,?)", (run_id, canonical({"run_id": run_id, "attempt_id": attempt_id, "at": time.time(), "kind": "declared_input_access", "data": [b for b in before if b["role"] == "data"], "eligibility_change": "none"})))
-        start = time.monotonic()
-        process = job = None
-        started = False
-        timeout = False
-        stop_reason = None
-        exit_code = None
-        progress = contract.get("stop_policy", {}).get("progress")
-        policy_deadline = None
-        stream_bytes = [(work / "stdout.bin").stat().st_size if (work / "stdout.bin").exists() else 0,
-                        (work / "stderr.bin").stat().st_size if (work / "stderr.bin").exists() else 0]
-        samples = [(start, sum(stream_bytes))]
+            if admission_error is not None:
+                return self._finish(run_id, attempt_id, 'FAILED', None, time.monotonic() - attempt_start,
+                                    False, [admission_error], stop_reason='CAMPAIGN_DEADLINE'
+                                    if admission_error == 'Stop policy: CAMPAIGN_DEADLINE' else None)
+            before, errors = self._bindings(contract)
+            with self._db() as db:
+                current = self._run(db, run_id)
+                current["bindings_before"] = before
+                self._save(db, current)
+            try:
+                if file_sha(run["executor"]) != run["executor_sha256"]:
+                    errors.append("Command executable changed")
+                if any(self._path(p, True, contract).exists() for p in run["manifest"]["outpaths"]):
+                    errors.append("Output already exists before start")
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
+            work = self.artifact_dir / run_id
+            require(work.resolve().is_relative_to(self.root), "Artifact directory escapes root")
+            work.mkdir(parents=True, exist_ok=True)
+            manifest_path = work / "manifest.json"
+            manifest_path.write_text(canonical(run["manifest"]), encoding="utf-8")
+            if errors:
+                return self._finish(run_id, attempt_id, "FAILED", None, time.monotonic() - attempt_start, False, errors, before)
+            for p in run["manifest"]["outpaths"]:
+                self._path(p, True, contract).parent.mkdir(parents=True, exist_ok=True)
+            with self._db() as db:
+                db.execute("INSERT INTO exposures(run_id,body) VALUES (?,?)", (run_id, canonical({"run_id": run_id, "attempt_id": attempt_id, "at": time.time(), "kind": "declared_input_access", "data": [b for b in before if b["role"] == "data"], "eligibility_change": "none"})))
+            start = time.monotonic()
+            process = job = None
+            started = False
+            timeout = False
+            stop_reason = None
+            exit_code = None
+            outer = None
+            progress = contract.get("stop_policy", {}).get("progress")
+            policy_deadline = None
+            stream_bytes = [(work / "stdout.bin").stat().st_size if (work / "stdout.bin").exists() else 0,
+                            (work / "stderr.bin").stat().st_size if (work / "stderr.bin").exists() else 0]
+            samples = [(start, sum(stream_bytes))]
+        except (KeyboardInterrupt, OuterInterrupt) as exc:
+            # #215: an outer stop after RUNNING committed but before the launch handler below still
+            # settles the attempt as INTERRUPTED; it never stays RUNNING without a receipt.
+            with self._db(True) as db:
+                unsettled = admission_error is None and self._run(db, run_id)["status"] == "RUNNING"
+            if unsettled:
+                self._finish(run_id, attempt_id, "INTERRUPTED", None, time.monotonic() - attempt_start, False,
+                             [f"Execution interrupted before launch: {type(exc).__name__}: {exc}"])
+            raise
         try:
             with (work / "stdout.bin").open("xb") as out, (work / "stderr.bin").open("xb") as err:
                 # JOB_LIST owns the child atomically at creation; suspension
@@ -1646,7 +1658,11 @@ class ProjectStore:
                 # Retain the attempt and unknown costs. Recovery can reconcile it
                 # after the damaged history is restored; this is no FAILED receipt.
                 raise
-            status = "INTERRUPTED" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "FAILED"
+            status = "INTERRUPTED" if isinstance(exc, (KeyboardInterrupt, SystemExit, OuterInterrupt)) else "FAILED"
+            if isinstance(exc, OuterInterrupt):
+                # #215: settle the paid partial attempt as INTERRUPTED (never a FAILED
+                # experiment), then hand the outer stop back to the controller.
+                outer = exc
             if str(exc) == 'Stop policy: CAMPAIGN_DEADLINE':
                 stop_reason = 'CAMPAIGN_DEADLINE'
             errors.append(f"Execution interrupted: {type(exc).__name__}: {exc}")
@@ -1655,8 +1671,11 @@ class ProjectStore:
                 job.close()
             if isinstance(process, _WindowsPopen):
                 process._owned_job.close()
-        return self._finish(run_id, attempt_id, status, exit_code, time.monotonic() - attempt_start,
-                            started, errors, before, timeout, stop_reason=stop_reason)
+        receipt = self._finish(run_id, attempt_id, status, exit_code, time.monotonic() - attempt_start,
+                               started, errors, before, timeout, stop_reason=stop_reason)
+        if outer is not None:
+            raise outer
+        return receipt
 
     def _finish(self, run_id, attempt_id, status, exit_code, wall, started, errors, before=None, timeout=False,
                 only_unstarted=False, recovering=False, stop_reason=None):
