@@ -29,7 +29,7 @@ post-adoption predictions (`verification.confirmations`, default 2). A
 measurement is novel for a rulebook only if its run started after the rulebook's
 ledger row was written (by write time), and its receipt settled after that row
 (by ledger event order). Ingestion order does not count: a receipt bought before
-adoption and ingested later is old evidence. A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
+adoption and ingested later is old evidence. Only a receipt that reports the goal observable confirms; a receipt with only side observables does not. A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
 - replay passes;
 - one live equivalence class remains;
 - every receipt binding re-checks;
@@ -139,7 +139,7 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
 
 Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification`,
 `agent` (`{argv, timeout_seconds}`), `library`, `protocol` (identity fields),
-and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. The experiment writes `{"outputs": {...},
+and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans, and every timeout and wall budget must be a JSON number, not a boolean. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. The experiment writes `{"outputs": {...},
 "samples"?: {...}}` to `{output}`.
 
 ```bash

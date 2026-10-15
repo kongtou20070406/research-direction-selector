@@ -262,13 +262,18 @@ def _novel_for(state, obs, hyp):
 
 
 def confirmations(state, hyp):
-    """Novel predictions: measurements bought after the rulebook entered and that it predicted."""
-    count = 0
+    """Novel predictions: measurements bought after the rulebook entered and that it predicted.
+
+    For IDENTIFY_LAW only a receipt that reports the goal observable confirms; a side
+    observable alone never stands in for the goal.
+    """
+    goal, count = _goal_observable(state['plan']), 0
     for ident, obs in state['observations'].items():
         if obs['status'] != 'MEASURED' or not _novel_for(state, obs, hyp):
             continue
         values, status = model.predict(hyp, env(state, candidate(state, ident)))
-        if status == 'PREDICTED' and any(k in obs['outputs'] for k in values):
+        keys = [goal] if goal is not None else list(values)
+        if status == 'PREDICTED' and any(k in obs['outputs'] and values.get(k) is not None for k in keys):
             count += 1
     return count
 

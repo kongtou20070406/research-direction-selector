@@ -37,6 +37,11 @@ DEFAULTS = {
 PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 
 
+def _seconds(value):
+    """A JSON number of seconds; booleans are not numbers here."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _object(value, required, optional, label):
     require(isinstance(value, dict) and set(required) <= set(value) <= set(required) | set(optional),
             f'Invalid {label} fields: expected {sorted(required)} plus optional {sorted(optional)}')
@@ -130,7 +135,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
     require(isinstance(experiment['argv'], list) and 1 <= len(experiment['argv']) <= 64, 'Experiment argv required')
     require('{output}' in ''.join(experiment['argv']), 'Experiment argv must write {output}')
     timeout, wall = experiment['timeout_seconds'], experiment['wall_seconds']
-    require(isinstance(timeout, (int, float)) and 0 < timeout <= 3600 and isinstance(wall, (int, float))
+    require(_seconds(timeout) and 0 < timeout <= 3600 and _seconds(wall)
             and wall >= timeout, 'Experiment wall_seconds must cover timeout_seconds')
     candidates, seen_inputs = [], set()
     rows = declaration['candidates']
@@ -177,7 +182,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
         defaulted.append('grammar')
     budget = declaration['budget']
     _object(budget, {'wall_seconds'}, {'experiments'}, 'budget')
-    require(isinstance(budget['wall_seconds'], (int, float)) and budget['wall_seconds'] >= wall,
+    require(_seconds(budget['wall_seconds']) and budget['wall_seconds'] >= wall,
             'Budget wall_seconds must cover one experiment')
     if 'experiments' not in budget:
         defaulted.append('budget.experiments')
@@ -204,7 +209,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
         _object(agent, {'argv', 'timeout_seconds'}, set(), 'agent')
         require(isinstance(agent['argv'], list) and agent['argv'] and all(isinstance(a, str) and a for a in agent['argv']),
                 'Agent argv must be a nonempty string list')
-        require(isinstance(agent['timeout_seconds'], (int, float)) and 0 < agent['timeout_seconds'] <= 600,
+        require(_seconds(agent['timeout_seconds']) and 0 < agent['timeout_seconds'] <= 600,
                 'Agent timeout must be in (0, 600] seconds')
         agent = {'argv': [sys.executable if a == '{python}' else a for a in agent['argv']],
                  'timeout_seconds': agent['timeout_seconds']}

@@ -225,6 +225,34 @@ class DeclarationReviewTests(Campaign):
         with self.assertRaisesRegex(ValueError, 'goal observable y'):
             model.compile_hypothesis({'id': 'p', 'predict': {'z': 'x'}}, ['x'], ['y', 'z'], goal='y')
 
+    def test_boolean_timeouts_are_rejected(self):
+        for index, edit in enumerate((lambda d: d['experiment'].update(timeout_seconds=True),
+                                      lambda d: d['agent'].update(timeout_seconds=True))):
+            root = self.root / f'case{index}'
+            path = fx.law_campaign(root, 'x', range(4), agent='adopt')
+            with self.subTest(case=index), self.assertRaises(ValueError):
+                initialize(root, self.declaration(path, edit))
+
+    def test_side_observable_receipts_do_not_confirm_the_goal(self):
+        path = fx.law_campaign(self.root, 'x', range(4))
+        fx.write(self.root / 'experiment.py', "import argparse, json, pathlib\np = argparse.ArgumentParser()\n"
+                 "p.add_argument('--x'); p.add_argument('--output', required=True)\na = p.parse_args(); x = int(a.x)\n"
+                 "body = {'outputs': {'z': x, **({'y': x} if x < 2 else {})}}\n"
+                 "out = pathlib.Path(a.output); out.parent.mkdir(parents=True, exist_ok=True)\n"
+                 "out.write_text(json.dumps(body), encoding='utf-8')\n")
+
+        def edit(value):
+            value['observables']['z'] = {'tolerance': {'abs': 0}}
+            value['hypotheses'] = [{'id': 'both', 'predict': {'y': 'x', 'z': 'x'}}]
+        initialize(self.root, self.declaration(path, edit))
+        store = cstore.store_for(self.root)
+        self.buy(store, 'x2', 'x3')  # Novel receipts that report only the side observable z.
+        state, _ = compass.ingest(store)
+        self.assertEqual(compass.confirmations(state, state['hypotheses']['both']), 0)
+        self.buy(store, 'x0')
+        state, _ = compass.ingest(store)
+        self.assertEqual(compass.confirmations(state, state['hypotheses']['both']), 1)
+
     def test_string_integer_domain_is_rejected(self):
         path = fx.law_campaign(self.root, 'x', range(4))
         with self.assertRaisesRegex(ValueError, 'inputs.x.integer must be true or false'):
