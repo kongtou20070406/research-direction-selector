@@ -581,6 +581,10 @@ def _substantive(text):
         text.strip().casefold() not in {'ok', 'okay', 'ack', 'acknowledged', 'received', 'noted', '收到'}
 
 
+def _goal_observable(plan):
+    return plan['goal']['observable'] if plan['goal']['kind'] == 'IDENTIFY_LAW' else None
+
+
 def validate_response(state, value, sealed, candidates):
     """Every delivered item exactly once; adapted/proposed rulebooks pass the record filter."""
     require(isinstance(value, dict) and value.get('schema') == 1 and value.get('packet_sha256') == sealed['sha256'],
@@ -605,13 +609,13 @@ def validate_response(state, value, sealed, candidates):
             base = candidates[row['id']]
             clean['hypothesis'] = _tool_premises(state, model.compile_hypothesis(
                 {**spec, 'id': row['id'] + '-adapted', 'origin': 'agent-adapt', 'parent': row['id'],
-                 'premises': base['premises']}, variables(state), plan['observables']))
+                 'premises': base['premises']}, variables(state), plan['observables'], goal=_goal_observable(plan)))
         out.append(clean)
     proposals = []
     for spec in value.get('proposals', []):
         require(isinstance(spec, dict) and len(proposals) < 8, 'At most 8 agent proposals')
         proposals.append(_tool_premises(state, model.compile_hypothesis(
-            {**spec, 'origin': 'agent-proposal'}, variables(state), plan['observables'])))
+            {**spec, 'origin': 'agent-proposal'}, variables(state), plan['observables'], goal=_goal_observable(plan))))
     return out, proposals
 
 

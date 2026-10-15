@@ -96,6 +96,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
     for name, spec in sorted(observables.items()):
         model._name(name)
         _object(spec, set(), {'tolerance', 'higher_is_better'}, 'observable ' + name)
+        # A direction is a JSON boolean; truthiness would read "false" as higher-is-better.
+        require(isinstance(spec.get('higher_is_better', True), bool),
+                f'observables.{name}.higher_is_better must be true or false')
         if 'tolerance' not in spec:
             # Refutation needs a stated tolerance; a missing one is not exact.
             unknown.append(f'observables.{name}.tolerance')
@@ -161,7 +164,8 @@ def compile_plan(store, declaration, source_sha256, source=None):
     hypotheses = []
     for value in declaration.get('hypotheses', []):
         require(len(hypotheses) < MAX_HYPOTHESES, 'Too many declared hypotheses')
-        hypotheses.append(model.compile_hypothesis({**value, 'origin': 'declared'}, list(inputs), list(observables)))
+        hypotheses.append(model.compile_hypothesis({**value, 'origin': 'declared'}, list(inputs), list(observables),
+                                                   goal=goal.get('observable') if goal['kind'] == 'IDENTIFY_LAW' else None))
     require(len({h['id'] for h in hypotheses}) == len(hypotheses), 'Duplicate hypothesis ids')
     if goal['kind'] == 'IDENTIFY_LAW' and not hypotheses:
         unknown.append('hypotheses')  # The first escape synthesizes rivals from evidence.
@@ -248,7 +252,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
             'experiment': {'timeout_seconds': timeout, 'wall_seconds': wall}, 'protocol': protocol_ref,
             'agent': agent, 'library': library, 'unknown': sorted(set(unknown)),
             'defaulted': sorted(set(defaulted)), 'declaration_sha256': source_sha256,
-            'higher_is_better': {k: bool(v.get('higher_is_better', True)) for k, v in observables.items()}}
+            'higher_is_better': {k: v.get('higher_is_better', True) for k, v in observables.items()}}
     if goal['kind'] == 'IMPROVE':
         plan['profile'] = {k: (model.text(v) if k in ('max_degradation', 'min_gain') else v)
                            for k, v in declaration['profile'].items()}

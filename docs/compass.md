@@ -82,7 +82,7 @@ head it was computed from, then acts on it.
 Compass treats a gap the grammar cannot close as a missing capability and closes it in-campaign:
 
 1. **Extract.** Library offers come first, then bounded generated families: digit folds, valuations, divisors, sigma, primality, Fibonacci.
-2. **Validate.** Each source passes the existing `rds_tools.extract_function` allowlist and runs in an isolated `python -I -B` subprocess with a step budget. This is labeled `SUBPROCESS_ISOLATED_NOT_OS_SANDBOX`.
+2. **Validate.** Each source passes the existing `rds_tools.extract_function` allowlist and runs in an isolated `python -I -B` subprocess with a step budget and a 60-second timeout. This is labeled `SUBPROCESS_ISOLATED_NOT_OS_SANDBOX`. A runner timeout or non-zero exit is recorded as `TOOL_REJECTED` (`TOOL_RUNNER_TIMEOUT` or `TOOL_RUNNER_FAILED`). The record carries the phase, the stream hashes and the wall time. The drive continues instead of aborting, and the same tools are re-tried only after the evidence grows.
 3. **Qualify** against an independent oracle triple. Expected values come only from original receipts, never from the tool:
    - **known positive**: a law fitted without the holdout receipts, using the tool, predicts every holdout measurement;
    - **discriminating negative**: a mutant of the tool, substituted into that law, is contradicted by a receipt;
@@ -109,7 +109,7 @@ An IMPROVE declaration compares arms that report per-sample metrics. Mean gain a
 - its mean gain is at least `min_gain`, and
 - its worst per-sample degradation is at most `max_degradation`.
 
-A mean gain that masks one collapsed sample is `LOCAL_REGRESSION`. A missing threshold stays `UNKNOWN` and yields `JUDGMENT_REQUIRED`. An arm whose receipt, or whose baseline's receipt, no longer verifies is `STALE_EVIDENCE`, never `ACCEPT`. Stale evidence ends the drive with `JUDGMENT_REQUIRED`.
+A mean gain that masks one collapsed sample is `LOCAL_REGRESSION`. A missing threshold stays `UNKNOWN`. The arm's verdict is `JUDGMENT_REQUIRED`, and the drive ends with `JUDGMENT_REQUIRED`, naming the unknown thresholds. An unmeasured baseline ends the drive the same way. An arm whose receipt, or whose baseline's receipt, no longer verifies is `STALE_EVIDENCE`, never `ACCEPT`. Stale evidence ends the drive with `JUDGMENT_REQUIRED`.
 
 ## Interrupts, deadlines and resume (#207, #215)
 
@@ -139,7 +139,7 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
 
 Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification`,
 `agent` (`{argv, timeout_seconds}`), `library`, `protocol` (identity fields),
-and `profile` (IMPROVE). The experiment writes `{"outputs": {...},
+and `profile` (IMPROVE). `higher_is_better` must be a JSON boolean. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. The experiment writes `{"outputs": {...},
 "samples"?: {...}}` to `{output}`.
 
 ```bash

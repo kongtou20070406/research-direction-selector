@@ -258,8 +258,11 @@ def matches(predicted, observed, tol):
     return abs(predicted - observed) <= absolute + relative * abs(observed)
 
 
-def compile_hypothesis(value, inputs, observables):
-    """Freeze one rival rulebook; identity covers only its executable content."""
+def compile_hypothesis(value, inputs, observables, *, goal=None):
+    """Freeze one rival rulebook; identity covers only its executable content.
+
+    ``goal`` names the observable an IDENTIFY_LAW rulebook must predict.
+    """
     require(isinstance(value, dict) and {'id', 'predict'} <= set(value)
             and set(value) <= {'id', 'statement', 'predict', 'applies', 'premises', 'origin', 'parent'},
             'Hypothesis requires id and predict')
@@ -269,6 +272,7 @@ def compile_hypothesis(value, inputs, observables):
     predict = value['predict']
     require(isinstance(predict, dict) and predict and set(predict) <= set(observables),
             'Hypothesis must predict declared observables only')
+    require(goal is None or goal in predict, f'Hypothesis must predict the goal observable {goal}')
     rules = {name: parse(predict[name], set(inputs)) for name in sorted(predict)}
     applies = value.get('applies')
     applies = parse(applies, set(inputs)) if applies is not None else None

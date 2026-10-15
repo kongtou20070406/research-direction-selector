@@ -25,6 +25,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import rds_compass_model as model
@@ -36,6 +37,7 @@ TOOL_SCHEMA = 'rds-compass-tool-v1'
 TOOL_DIR = '.rds/tools/compass'
 MAX_POOL = 48
 STEP_LIMIT = 200000
+RUNNER_SECONDS = 60
 RUNNER = r'''
 import json, sys
 from fractions import Fraction
@@ -145,13 +147,37 @@ def mutants(code, entry, limit):
     return out
 
 
-def evaluate_tools(tools, inputs, *, timeout=60):
+class ToolRunnerError(ValueError):
+    """The bounded tool runner timed out or exited non-zero; ``detail`` is its settlement record."""
+
+    def __init__(self, reason, detail):
+        super().__init__(f"{reason}: {detail['stderr_tail']}")
+        self.reason, self.detail = reason, detail
+
+
+def _runner_detail(tools, timeout, started, stdout, stderr, code):
+    stdout, stderr = stdout or b'', stderr or b''
+    return {'runner_sha256': _sha(RUNNER.encode('utf-8')), 'tools': [t['sha256'] for t in tools],
+            'timeout_seconds': timeout, 'wall_seconds': round(time.monotonic() - started, 3), 'exit_code': code,
+            'stdout_sha256': _sha(stdout), 'stdout_bytes': len(stdout), 'stderr_sha256': _sha(stderr),
+            'stderr_tail': stderr[-300:].decode('utf-8', 'replace'), 'assurance': 'SUBPROCESS_ISOLATED_NOT_OS_SANDBOX'}
+
+
+def evaluate_tools(tools, inputs, *, timeout=None):
     """Run tool sources over integer inputs in an isolated interpreter (not an OS sandbox)."""
+    timeout = RUNNER_SECONDS if timeout is None else timeout
     request = {'tools': [{'source': t['source'], 'entry': t['entry'], 'sha256': t['sha256']} for t in tools],
                'inputs': inputs, 'steps': STEP_LIMIT}
-    done = subprocess.run([sys.executable, '-I', '-B', '-c', RUNNER], input=json.dumps(request).encode('utf-8'),
-                          capture_output=True, timeout=timeout, check=False)
-    require(done.returncode == 0, 'Tool runner failed: ' + done.stderr[-300:].decode('utf-8', 'replace'))
+    started = time.monotonic()
+    try:
+        done = subprocess.run([sys.executable, '-I', '-B', '-c', RUNNER], input=json.dumps(request).encode('utf-8'),
+                              capture_output=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        raise ToolRunnerError('TOOL_RUNNER_TIMEOUT',
+                              _runner_detail(tools, timeout, started, exc.stdout, exc.stderr, None)) from None
+    if done.returncode != 0:
+        raise ToolRunnerError('TOOL_RUNNER_FAILED',
+                              _runner_detail(tools, timeout, started, done.stdout, done.stderr, done.returncode))
     values = json.loads(done.stdout.decode('utf-8'))
     evidence = {'runner_sha256': _sha(RUNNER.encode('utf-8')), 'output_sha256': _sha(done.stdout),
                 'assurance': 'SUBPROCESS_ISOLATED_NOT_OS_SANDBOX'}
@@ -354,9 +380,25 @@ def escalate(store, state, gap):
         seen.add(tool['sha256'])
         pool.append(tool)
     pool = pool[:MAX_POOL]
+    if not pool:
+        return {**report, 'status': 'NO_TOOL_CANDIDATES'}
     inputs = [int(model.exact(c['inputs'][integer[0]])) for c in plan['candidates']]
     var = integer[0]
-    values, evidence = evaluate_tools(pool, inputs)
+
+    def settle(tool, failure, phase):
+        # A runner failure is recorded per tool at this evidence count, so a resumed drive does not
+        # pay for the same qualification again; it is re-tried only once evidence grows.
+        cstore.append(store, 'TOOL_REJECTED', f"{tool['sha256'][:16]}-{len(rows)}", {
+            'name': tool['name'], 'sha256': tool['sha256'], 'origin': tool['origin'], 'measurements': len(rows),
+            'reason': failure.reason, 'phase': phase, 'runner': failure.detail})
+        report['rejected'].append({'name': tool['name'], 'reason': failure.reason, 'phase': phase})
+
+    try:
+        values, evidence = evaluate_tools(pool, inputs)
+    except ToolRunnerError as failure:
+        for tool in pool:
+            settle(tool, failure, 'POOL')
+        return {**report, 'tried': len(pool), 'status': failure.reason, 'runner': failure.detail}
     for tool in pool:
         report['tried'] += 1
         result = values.get(tool['sha256'], {})
@@ -373,7 +415,11 @@ def escalate(store, state, gap):
         def run_mutants(tool=tool):
             listed = mutants(tool['source'], tool['entry'], rsi['max_mutants'])
             return listed, (evaluate_tools(listed, inputs)[0] if listed else {})
-        record, rejection = _qualify(state, tool, result['values'], rows, var, run_mutants)
+        try:
+            record, rejection = _qualify(state, tool, result['values'], rows, var, run_mutants)
+        except ToolRunnerError as failure:
+            settle(tool, failure, 'MUTANTS')
+            continue
         if rejection is not None:
             if rejection['reason'] in ('HOLDOUT_REFUTED', 'ORACLE_NON_DISCRIMINATING'):
                 value = {'name': tool['name'], 'sha256': tool['sha256'], 'origin': tool['origin'],

@@ -83,9 +83,17 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
                 body = compass.report(store)
                 cstore.append(store, 'REPORT', body['sha256'][:32], body)
                 if verification['goal'] == 'IMPROVE':
-                    settled = verification['receipts_rechecked']
-                    return finish('IMPROVEMENT_EVALUATED' if settled else 'JUDGMENT_REQUIRED',
-                                  None if settled else {'stale': verification['stale'][:8]},
+                    improvement = verification['improvement']
+                    # An undeclared threshold or an unmeasured baseline is not a settled evaluation.
+                    judgment = [a['arm'] for a in improvement['arms'] if a['verdict'] == 'JUDGMENT_REQUIRED']
+                    settled = (verification['receipts_rechecked'] and improvement['status'] == 'EVALUATED'
+                               and not judgment)
+                    detail = None if settled else {
+                        'stale': verification['stale'][:8], 'improvement_status': improvement['status'],
+                        'judgment_required': judgment[:8],
+                        'unknown_thresholds': [k for k in ('min_gain', 'max_degradation')
+                                               if k not in state['plan']['profile']]}
+                    return finish('IMPROVEMENT_EVALUATED' if settled else 'JUDGMENT_REQUIRED', detail,
                                   verification=verification, report_sha256=body['sha256'])
                 rival = (verification.get('polynomial') or {}).get('status') == 'POLYNOMIAL_RIVAL_DISAGREES'
                 unique = (verification['claim'] == 'CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS' and not rival

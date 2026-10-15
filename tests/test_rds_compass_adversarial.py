@@ -1,7 +1,7 @@
 """Adversarial regressions for Compass invariants.
 
 Each case reproduces a defect found by an independent Codex (gpt-6.1-sol, xhigh) red-team pass
-against the 6.0.0 candidate. Every case failed before its fix.
+against the 6.0.0 candidate, or by the Codex review of PR #357. Every case failed before its fix.
 """
 import json
 import os
@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import compass_fixture as fx
 import rds_compass as compass
+import rds_compass_model as model
 import rds_compass_rsi as rsi
 import rds_compass_store as cstore
 from rds_compass_cli import exit_code
@@ -167,6 +168,67 @@ class HashChainTests(Campaign):
         store.path.write_bytes(original.replace(raw.encode('utf-8'), damaged))
         with self.assertRaises(cstore.CompassIntegrityError):
             compass.report(store)
+
+
+class DeclarationReviewTests(Campaign):
+    def declaration(self, path, edit):
+        value = json.loads(path.read_text(encoding='utf-8'))
+        edit(value)
+        fx.write(path, value)
+        return path
+
+    def test_unknown_improvement_threshold_is_not_a_settled_evaluation(self):
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}})
+        initialize(self.root, self.declaration(path, lambda d: d['profile'].pop('min_gain')))
+        result = drive(self.root, publish=False)
+        self.assertEqual((result['status'], exit_code(result)), ('JUDGMENT_REQUIRED', 2))
+        self.assertEqual(result['workset']['handoff']['detail']['unknown_thresholds'], ['min_gain'])
+        self.assertIsNone(result['verification']['improvement']['recommended'])
+
+    def test_string_direction_is_rejected(self):
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}})
+        edit = lambda d: d['observables']['score'].update(higher_is_better='false')
+        with self.assertRaisesRegex(ValueError, 'higher_is_better must be true or false'):
+            initialize(self.root, self.declaration(path, edit))
+
+    def test_hypothesis_must_predict_the_goal_observable(self):
+        path = fx.law_campaign(self.root, 'x', range(4))
+
+        def edit(value):
+            value['observables']['z'] = {'tolerance': {'abs': 0}}
+            value['hypotheses'] = [{'id': 'other', 'predict': {'z': 'x'}}]
+        with self.assertRaisesRegex(ValueError, 'goal observable y'):
+            initialize(self.root, self.declaration(path, edit))
+        # The same rule binds agent adaptations and proposals.
+        with self.assertRaisesRegex(ValueError, 'goal observable y'):
+            model.compile_hypothesis({'id': 'p', 'predict': {'z': 'x'}}, ['x'], ['y', 'z'], goal='y')
+
+
+class ToolRunnerTests(Campaign):
+    def test_runner_timeout_is_settled_and_not_paid_again(self):
+        store = self.law('2*popcount(x)+1', range(6))
+        self.buy(store, 'x0', 'x1', 'x2', 'x3', 'x4')
+        state, _ = compass.ingest(store)
+        with patch.object(rsi, 'RUNNER_SECONDS', 0.0001):
+            report = rsi.escalate(store, state, {'trigger': 'TEST'})
+        self.assertEqual(report['status'], 'TOOL_RUNNER_TIMEOUT')
+        rejections = compass.fold(store)['tool_rejections']
+        self.assertEqual({(r['reason'], r['phase']) for r in rejections}, {('TOOL_RUNNER_TIMEOUT', 'POOL')})
+        self.assertEqual(len(rejections), report['tried'])
+        self.assertTrue(all(r['runner']['timeout_seconds'] == 0.0001 and r['runner']['exit_code'] is None
+                            for r in rejections))
+        # Resuming at the same evidence runs nothing again.
+        with patch.object(rsi.subprocess, 'run', side_effect=AssertionError('runner re-executed')):
+            self.assertEqual(rsi.escalate(store, compass.fold(store), {'trigger': 'TEST'})['status'],
+                             'NO_TOOL_CANDIDATES')
+
+    def test_runner_timeout_does_not_abort_the_drive(self):
+        self.law('2*popcount(x)+1', range(6))
+        with patch.object(rsi, 'RUNNER_SECONDS', 0.0001):
+            result = drive(self.root, publish=False)
+        self.assertNotIn(result['status'], ('GOAL_IDENTIFIED', 'INTERRUPTED'), result['steps'])
+        store = cstore.store_for(self.root)
+        self.assertIn('TOOL_RUNNER_TIMEOUT', {r['reason'] for r in compass.fold(store)['tool_rejections']})
 
 
 if __name__ == '__main__':
