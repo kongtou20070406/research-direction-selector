@@ -28,8 +28,9 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
-S25 routes native_driver execution feedback through model_feedback after full
-original evidence is retained. Fixed fields keep complete measurement values,
+S25 ([Draft #354](https://github.com/kongtou20070406/research-direction-selector/pull/354))
+routes execution feedback through native_driver.model_feedback after full original
+evidence is retained. Fixed fields keep complete measurement values,
 errors, unknown costs/resources/assessment, original receipt reference and next
 native method. Full command/binding/artifact metadata stays program-side; no
 truncation or inference. Both arms retain one tool argument with enumerated
