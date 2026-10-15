@@ -43,9 +43,22 @@ unknown costs/resources/assessment, receipt reference and subsequent advice.
 No summarizer, truncation, authority change or new execution path. Keep the
 single argument per tool, enumerate admitted inputs/methods and remove their
 duplicate prompt lists. Original completion/no-rebuy/budget gates remain.
-Focused checks and fixed-original request-byte inspection pending. This is
-engineering context reduction, not measured token/latency/correctness gain.
-Do not change frozen S18/S24 studies; paid testing needs a fresh inspected freeze.
+Thirteen focused cases/ten subtests pass (nine existing, four new), including
+actual native/Bare request payloads, failed native cost preservation, complete
+Unicode measurements and a projection failure after original settlement.
+Sandbox uv cache failure retained as observed tool output; one system-cache
+baseline retry passed, then the changed module passed first try. No assertion,
+freshness or timeout change. Source81d2deb, projection SHA-256
+9f4fa6dd41b607f5d441bdb51b6b7ed57040861679b020dc2f001cda3cdf1417.
+All seven original S18 requests inspected offline on fixed actions/replies:
+complete candidate wire bytes Bare17694->17245 (-2.5376%), RDS48460->37015
+(-23.6174%). Enums add schema bytes; duplicate prompt removal offsets that.
+This is offline request transformation, not a new model response/token/call/
+latency/correctness gain. Evidence under D:/Myfile/work space/RDS/_artifacts/
+memento-s25-20261015/acceptance-s25-original-request-bytes-20261015.json.
+No new model call; protected old/source/candidate/S24 pins unchanged. S24 is
+still unexecuted and must not be launched for this changed implementation.
+Next freeze/inspect a new S25 runtime before a fresh unused-task paid study.
 
 ### S24: domain-aware driver and original method completion
 

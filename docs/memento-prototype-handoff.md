@@ -34,10 +34,24 @@ errors, unknown costs/resources/assessment, original receipt reference and next
 native method. Full command/binding/artifact metadata stays program-side; no
 truncation or inference. Both arms retain one tool argument with enumerated
 allowed methods/inputs; duplicate prompt lists are removed. No native authority,
-completion gate, retry or budget changes. Acceptance pending. Compare actual
-serialized request bytes on fixed original trajectories; offline byte savings
-do not establish paid token/call/latency/efficacy gains. Frozen S18/S24 unchanged;
-next paid study requires a new inspected source/task/evaluator/runtime freeze.
+completion gate, retry or budget changes. Thirteen focused cases/ten subtests
+pass, including complete actual request feedback/finite argument choices,
+actual negative receipt/cost preservation, no measurement truncation and a
+projection error after original receipt settlement without another call.
+Source81d2deb; driver SHA-256
+9f4fa6dd41b607f5d441bdb51b6b7ed57040861679b020dc2f001cda3cdf1417.
+One sandbox-cache baseline retry via system cache passed; changed checks passed
+first try. Observed cache failure and unavailable recall diagnostics retained.
+Fixed-original offline wire-byte totals (all7 S18 requests): Bare17694->17245,
+RDS48460->37015; candidate reductions2.5376%/23.6174%. Complete measurements,
+errors, unknown costs/assessment remain equal; schema enums themselves add bytes.
+Evidence D:/Myfile/work space/RDS/_artifacts/memento-s25-20261015/
+acceptance-s25-original-request-bytes-20261015.json. No online token/call/time/
+correctness/efficacy gain established. All old/candidate/S24 protected pins
+unchanged; actual calls still1078. S24 is unexecuted and not the runtime for
+this changed implementation. Next paid study needs a new S25 inspected freeze.
+Parent exact-head CI38661027673 failed only inherited QUICK KeyError line681;
+original failed log retained in the same S25 evidence directory, out of scope.
 
 S24 ([Draft #353](https://github.com/kongtou20070406/research-direction-selector/pull/353))
 reserves an explicitly pinned static survey domain in native_driver.run_arm.
