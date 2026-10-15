@@ -28,7 +28,8 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
-S24 reserves an explicitly pinned static survey domain in native_driver.run_arm.
+S24 ([Draft #353](https://github.com/kongtou20070406/research-direction-selector/pull/353))
+reserves an explicitly pinned static survey domain in native_driver.run_arm.
 Both ordinary Bare tools and owned native RDS routes use the same domain schema.
 Before either complete terminal form is accepted, every declared method must
 already have original successful feedback. The completion reader never executes
