@@ -37,8 +37,20 @@ rechecks Bare original output bytes. Early/missing/failed/tampered evidence or
 wrong final JSON is retained as UNKNOWN_NO_RETRY without a new request/dispatch.
 Full answer/extras and original failed/unknown costs are preserved; no second
 ledger, dynamic plugin loader or production wiring. S18 actual originals remain
-unchanged and are not retrospectively graded. Focused acceptance pending.
-Next freeze/inspect the fresh survey runtime and evaluator before any paid run,
+unchanged and are not retrospectively graded. Nine focused cases/eight subtests
+pass, including actual failed native receipt/cost preservation without rebuy.
+First shared-temp-arm fixture failure is retained in
+s24-original-shared-fixture-failure.log; one retry with owned isolated roots
+passed without relaxing assertions or caps. Current development source81b67cf.
+Fresh runtime study-s24-frozen freezes 185 files (9 prototype sources/12 seed
+assets/162 native sources/2 hosts); manifest SHA-256
+bee0aa4c595f3528e820923c951be296777cd0c39e5749a3a4944e544ba64139.
+Read-only import confirms static slot/verifier identity and explicit domain host
+call. Status INSPECTED_NOT_SCHEDULED, no output root, ledger, model request or
+Windows task. Evidence acceptance-s24-freeze-20261015.json; all originals match.
+Parent CI38655320825 still fails only inherited QUICK KeyError line681; original
+ci-38655320825-original-failed.log retained. Foreign PR325/75 dirty entries untouched.
+Next recheck the fresh runtime and evaluator before a separate paid run,
 with original tool7.2/campaign100/per-arm20/HTTP120/max_tokens3000/remaining50/
 S13 protocol/deadline; full task/reviewer/bootstrap/scientific support UNKNOWN.
 
