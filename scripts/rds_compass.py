@@ -936,7 +936,11 @@ def _improve_verdicts(state, stale=()):
     stale = {row['candidate'] for row in stale}
     arms = []
     for ident, runs in sorted(_replicates(plan).items()):
-        if ident == profile['baseline'] or not any(r in state['observations'] for r in runs):
+        if ident == profile['baseline']:
+            continue
+        if not any(r in state['observations'] for r in runs):
+            # A declared arm the budget never reached was not evaluated: it stays unsettled.
+            arms.append({'arm': ident, 'verdict': 'UNMEASURED_OR_SAMPLE_MISMATCH'})
             continue
         results = [_run_verdict(state, r, base, stale) for r in runs if r in state['observations']]
         failed = next((r for kind in UNSETTLED for r in results if r['verdict'] == kind), None) or \

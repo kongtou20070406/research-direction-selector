@@ -50,6 +50,11 @@ def _object(value, required, optional, label):
             f'Invalid {label} fields: expected {sorted(required)} plus optional {sorted(optional)}')
 
 
+# Device names Windows reserves in any directory and with any extension: CON.json is the console.
+WINDOWS_RESERVED = frozenset(['CON', 'PRN', 'AUX', 'NUL'] +
+                             [f'{port}{n}' for port in ('COM', 'LPT') for n in '123456789\u00b9\u00b2\u00b3'])
+
+
 def _ident(value, label):
     require(isinstance(value, str) and 0 < len(value) <= 60
             and all(c.isalnum() or c in '-_' for c in value), 'Invalid ' + label + ': ' + repr(value))
@@ -184,6 +189,10 @@ def compile_plan(store, declaration, source_sha256, source=None):
     # that differ only in case would share an output file there. Rejected on every platform.
     outputs = [path.casefold() for c in candidates for path in (c['output'], c['retry']['output'])]
     require(len(set(outputs)) == len(outputs), 'Candidate outputs collide on a case-insensitive filesystem')
+    # Likewise rejected everywhere: on Windows the experiment could not write CON.json, and the
+    # paid run would leave no measurement.
+    reserved = sorted(c['id'] for c in candidates if c['id'].upper() in WINDOWS_RESERVED)
+    require(not reserved, 'Candidate id names a Windows reserved device: ' + ', '.join(reserved))
     hypotheses = []
     for value in declaration.get('hypotheses', []):
         require(len(hypotheses) < MAX_HYPOTHESES, 'Too many declared hypotheses')

@@ -326,6 +326,25 @@ class DeclarationReviewTests(Campaign):
         with self.assertRaisesRegex(ValueError, 'case-insensitive'):
             initialize(self.root, self.declaration(path, edit))
 
+    def test_an_arm_never_measured_is_not_an_evaluation(self):
+        # The budget buys the baseline only: no improvement was evaluated.
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}})
+        initialize(self.root, self.declaration(path, lambda d: d['budget'].update(experiments=1)))
+        result = drive(self.root, publish=False)
+        self.assertEqual((result['status'], exit_code(result)), ('JUDGMENT_REQUIRED', 2))
+        self.assertEqual(result['workset']['handoff']['detail']['judgment_required'], ['better'])
+        self.assertEqual([(a['arm'], a['verdict']) for a in result['verification']['improvement']['arms']],
+                         [('better', 'UNMEASURED_OR_SAMPLE_MISMATCH')])
+
+    def test_windows_reserved_candidate_ids_are_rejected(self):
+        # outputs/compass/CON.json names a device on Windows, so the paid run could write no output.
+        for name in ('CON', 'nul', 'COM1', 'lpt9'):
+            with self.subTest(name=name):
+                root = self.root / ('r-' + name)
+                path = fx.law_campaign(root, 'x', range(2))
+                with self.assertRaisesRegex(ValueError, 'Windows reserved device'):
+                    initialize(root, self.declaration(path, lambda d: d['candidates'][0].update(id=name)))
+
     def test_hypothesis_must_predict_the_goal_observable(self):
         path = fx.law_campaign(self.root, 'x', range(4))
 
