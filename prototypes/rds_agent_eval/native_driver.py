@@ -124,13 +124,12 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins, *, domain=None
                        'required': [field], 'additionalProperties': False}}}
         for name, field, description in (('read', 'file', 'Read one declared task/data input'),
             ('execute', 'method', 'Execute one declared finite method'), ('finish', 'answer', 'Finish with evidence and limitations'))]
-    instruction = ('Solve the task using measured evidence. Use function tools serially; ordinary stop-text also finishes. '
-        'Methods: ' + json.dumps(list(routes)) + '. Inputs: ' + json.dumps(declaration['agent_files']) + '. Task: ' + task +
-        ' Run both declared methods before finishing; their shared source is not independent corroboration. '
+    final_instruction = slot['final_instruction'] if slot is not None else (
         'Finish with a JSON object containing answer, earliest_observed_main_period, main_periods, '
         'exact_crossover_year (null when unresolved), scope=RECORDED_PERIOD_COUNTS. Do not infer exact years or causal claims from bins.')
-    if slot is not None:
-        instruction = instruction[:instruction.index('Finish with a JSON object')] + slot['final_instruction']
+    instruction = ('Solve the task using measured evidence. Use function tools serially; ordinary stop-text also finishes. '
+        'Methods: ' + json.dumps(list(routes)) + '. Inputs: ' + json.dumps(declaration['agent_files']) + '. Task: ' + task +
+        ' Run both declared methods before finishing; their shared source is not independent corroboration. ' + final_instruction)
     if arm == 'RDS':
         from rds_cli import cmd_project
         advice = cmd_project(SimpleNamespace(root=str(root), action='next'))

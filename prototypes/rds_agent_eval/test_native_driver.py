@@ -104,6 +104,7 @@ class SurveyDriverTests(unittest.TestCase):
             route['run']['resource_estimates'] = {'wall_seconds': 7.2, 'cpu_seconds': 7.2, 'gpu_seconds': 0}
         self.fixture.native.write_json('recipe.json', self.recipe)
         self.pins = {str(Path(p).resolve()): driver.sha(p) for p in (driver.__file__, domain_bridge.__file__)}
+        self.fixture.native.write('task.json', '{"query":"Finish with a JSON object; retain this task suffix."}')
         self.final = self.fixture.fixture.final
         self.domain = domain_bridge.specification()['domain']
 
@@ -141,6 +142,7 @@ class SurveyDriverTests(unittest.TestCase):
                     self.assertEqual(result['scientific_support'], 'UNKNOWN')
                     instruction = calls[0]['messages'][0]['content']
                     self.assertIn('bootstrap_ci', instruction)
+                    self.assertIn('retain this task suffix', instruction)
                     self.assertNotIn('earliest_observed_main_period', instruction)
                     self.assertNotIn('PRIVATE_GOLD', json.dumps(calls))
                     self.assertEqual(opened.call_count, 3)
@@ -186,3 +188,23 @@ class SurveyDriverTests(unittest.TestCase):
         self.assertEqual((result['status'], opened.call_count), ('UNKNOWN_NO_RETRY', 3))
         self.assertIsNone(result['final_answer'])
         self.assertTrue((root/'audit/response-2.json').is_file())
+
+    def test_actual_failed_native_receipt_cannot_supply_completion_or_be_rebought(self):
+        self.recipe['routes'][0]['run']['argv'][-2] = 'invalid-method'
+        self.fixture.native.write_json('recipe.json', self.recipe)
+        with patch.object(driver.time, 'time', return_value=100):
+            from rds_project import ProjectStore
+            from rds_project_assembly import initialize
+            initialize(self.fixture.store, self.seed/'recipe.json')
+        with self.fixture.store._db(readonly=True) as db:
+            manifest = ProjectStore._contract(db)['advisor_policy']['routes'][0]['manifest']
+        result = driver.tool(self.seed, 'RDS', manifest)
+        self.assertEqual(result['status'], 'FAILED')
+        before = file_sha(self.fixture.store.path)
+        with patch.object(ProjectStore, 'execute', side_effect=AssertionError('Rebought')), self.assertRaises(ValueError):
+            driver.completed_methods(self.seed, 'RDS', {'invalid-method': manifest})
+        self.assertEqual(file_sha(self.fixture.store.path), before)
+        original = driver.read_observations(self.fixture.store, [{'run_id': result['receipt']['run_id'],
+            'receipt_sha256': result['receipt']['sha256']}])['observations'][0]['receipt']
+        self.assertTrue(original['errors'])
+        self.assertTrue(original['resources']['cpu_seconds']['unknown'])
