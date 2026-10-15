@@ -180,6 +180,10 @@ def compile_plan(store, declaration, source_sha256, source=None):
     require(len({c['id'] for c in candidates}) == len(candidates), 'Duplicate candidate ids')
     slots = [run for c in candidates for run in (c['run_id'], c['retry']['run_id'])]
     require(len(set(slots)) == len(slots), 'Candidate ids collide with retry slots (avoid an -a2 suffix)')
+    # Output files are claimed by path, and Windows and default macOS volumes ignore case, so ids
+    # that differ only in case would share an output file there. Rejected on every platform.
+    outputs = [path.casefold() for c in candidates for path in (c['output'], c['retry']['output'])]
+    require(len(set(outputs)) == len(outputs), 'Candidate outputs collide on a case-insensitive filesystem')
     hypotheses = []
     for value in declaration.get('hypotheses', []):
         require(len(hypotheses) < MAX_HYPOTHESES, 'Too many declared hypotheses')

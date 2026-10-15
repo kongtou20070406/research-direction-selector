@@ -493,7 +493,9 @@ def equivalent(left, right, points, tolerances):
     for env in points:
         a, sa = predict(left, env)
         b, sb = predict(right, env)
-        if (sa == 'PREDICTED') != (sb == 'PREDICTED'):
+        # Replay keeps a NOT_APPLICABLE rulebook and refutes an UNDEFINED one on any measurement,
+        # so the two statuses separate rulebooks as surely as differing values do.
+        if sa != sb:
             return None
         if sa != 'PREDICTED':
             continue

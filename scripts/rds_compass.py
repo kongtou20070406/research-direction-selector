@@ -666,8 +666,15 @@ def validate_response(state, value, sealed, candidates):
     return out, proposals
 
 
+def _taken(state, hyp, extra):
+    """A recorded id names one rulebook forever: reuse would overwrite or conflict in the ledger."""
+    return hyp['id'] in state['hypotheses'] or any(h['id'] == hyp['id'] for h in extra)
+
+
 def _admit(state, hyp, extra):
-    """Record filter for externally supplied rulebooks: replay first, then equivalence."""
+    """Record filter for externally supplied rulebooks: a fresh id, replay, then equivalence."""
+    if _taken(state, hyp, extra):
+        return {'admitted': False, 'reason': 'ID_TAKEN'}
     tolerances = _tolerances(state['plan'])
     result = model.replay(hyp, measured(state), {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
     if result['status'] == 'REFUTED':
@@ -761,7 +768,8 @@ def escape(store, state, diagnosis):
     for row in decisions:
         if row['disposition'] in ('adopt', 'adapt'):
             hyp = hyps[row['id']] if row['disposition'] == 'adopt' else row['hypothesis']
-            verdict = _admit(state, hyp, adopted) if row['disposition'] == 'adapt' else {'admitted': True}
+            verdict = _admit(state, hyp, adopted) if row['disposition'] == 'adapt' else \
+                {'admitted': False, 'reason': 'ID_TAKEN'} if _taken(state, hyp, adopted) else {'admitted': True}
             outcomes.append({'id': row['id'], 'disposition': row['disposition'], **verdict})
             if verdict['admitted']:
                 adopted.append(hyp)
@@ -959,7 +967,7 @@ def _improve_verdicts(state, stale=()):
                     'worst per-sample degradation <= max_degradation'}
 
 
-def _stale(store, state):
+def stale_bindings(store, state):
     """Every measurement's receipt, re-read now: the declared output and every other bound artifact."""
     receipts, stale = cstore.receipts(store), []
     for ident, obs in sorted(state['observations'].items()):
@@ -981,7 +989,7 @@ def _stale(store, state):
 def verify(store, state):
     """Re-derive every measurement from receipts, replay exactly, and check closed relations."""
     plan = state['plan']
-    stale = _stale(store, state)
+    stale = stale_bindings(store, state)
     if plan['goal']['kind'] == 'IMPROVE':
         value = {'goal': 'IMPROVE', 'receipts_rechecked': not stale, 'stale': stale,
                  'improvement': _improve_verdicts(state, stale), 'scientific_support': 'UNKNOWN'}
@@ -1121,7 +1129,7 @@ def _rechecked(store, state):
     """
     if not state['verifications']:
         return None
-    stored, now = state['verifications'][-1], _stale(store, state)
+    stored, now = state['verifications'][-1], stale_bindings(store, state)
     value = {**stored, 'receipts_rechecked': stored['receipts_rechecked'] and not now,
              'stale': stored['stale'] + [row for row in now if row not in stored['stale']],
              'report_recheck': {'status': 'STALE' if now else 'BOUND', 'stale': now}}

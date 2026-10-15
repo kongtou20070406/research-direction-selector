@@ -59,6 +59,10 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
             if deadline is not None and time.monotonic() >= deadline:
                 return finish('CONTROLLER_DEADLINE', _partial(store, steps, None, None))
             step = compass.decide(state)
+            if step['action'] not in ('RECOVER', 'VERIFY', 'HANDOFF') and compass.stale_bindings(store, state):
+                # Ingested evidence is re-bound before it steers a rival, a ranking or a purchase:
+                # changed or missing receipt bytes end the drive through VERIFY, which records them.
+                step = {'action': 'VERIFY', 'reason': 'STALE_EVIDENCE'}
             action = step['action']
             steps.append({'action': action, 'candidate': step.get('candidate'), 'head': state['head'][:16],
                           'trigger': (step.get('basin') or {}).get('trigger')})
@@ -104,7 +108,8 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
                           and verification['distinct_live_classes'] == 1 and verification['receipts_rechecked'])
                 return finish('GOAL_IDENTIFIED' if unique else 'JUDGMENT_REQUIRED',
                               None if unique else {'distinct_live_classes': verification['distinct_live_classes'],
-                                                   'polynomial': verification.get('polynomial')},
+                                                   'polynomial': verification.get('polynomial'),
+                                                   'stale': verification['stale'][:8]},
                               verification=verification, report_sha256=body['sha256'])
             elif action == 'HANDOFF':
                 return finish(step['reason'], step.get('detail') or step.get('basin'))

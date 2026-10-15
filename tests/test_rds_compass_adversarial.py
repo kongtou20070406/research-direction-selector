@@ -119,6 +119,26 @@ class ReceiptBindingTests(Campaign):
         self.assertIn({'candidate': 'x0', 'binding': 'RECEIPT_MISSING'}, verification['stale'])
         self.assertNotEqual(drive(self.root, publish=False)['status'], 'GOAL_IDENTIFIED')
 
+    def test_stale_ingested_evidence_stops_the_drive_before_another_purchase(self):
+        store = self.law(hypotheses=[('identity', 'x')])
+        self.buy(store, 'x0', 'x1')
+        compass.ingest(store)
+        fx.write(self.root / 'outputs/compass/x0.json', {'outputs': {'y': 999}})
+        result = drive(self.root, publish=False)
+        self.assertEqual(len(cstore.receipts(store)), 2)  # Nothing was bought on the strength of changed bytes.
+        self.assertEqual(result['status'], 'JUDGMENT_REQUIRED')
+        self.assertIn({'candidate': 'x0', 'binding': 'OUTPUT_HASH_MISMATCH'}, result['verification']['stale'])
+
+
+class EquivalenceTests(unittest.TestCase):
+    def test_inapplicable_and_undefined_are_not_equivalent(self):
+        guarded = model.compile_hypothesis({'id': 'g', 'predict': {'y': '1'}, 'applies': 'x > 0'}, ['x'], ['y'])
+        partial = model.compile_hypothesis({'id': 'p', 'predict': {'y': 'x / x'}}, ['x'], ['y'])
+        points = [{'x': model.exact(0)}, {'x': model.exact(1)}]
+        # At x=0 replay keeps g (not applicable) but refutes p (undefined): that input separates them.
+        self.assertIsNone(model.equivalent(guarded, partial, points, {'y': (0, 0)}))
+        self.assertEqual(model.equivalent(guarded, partial, points[1:], {'y': (0, 0)}), 'OBSERVATIONALLY_EQUIVALENT')
+
 
 class NoveltyTests(Campaign):
     def test_pre_adoption_receipts_are_not_novel_confirmations(self):
@@ -179,6 +199,23 @@ class JumpResponseTests(Campaign):
         self.assertEqual(evidence['stdout_sha256'], hashlib.sha256(b'partial-out').hexdigest())
         self.assertEqual(evidence['stderr_sha256'], hashlib.sha256(b'partial-err').hexdigest())
         self.assertEqual(len(evidence['input_sha256']), 64)
+
+
+class AgentIdentityTests(Campaign):
+    def test_agent_rulebooks_need_fresh_ids(self):
+        store = self.law('0 if x < 2 else 1', range(3), hypotheses=[('a', '0')], grammar=GRAMMAR,
+                         rsi={'enabled': False}, agent='adopt')
+        self.agent('', 'reject', "[{'id': 'a', 'predict': {'y': '0 if x < 2 else 3'}},"
+                                 " {'id': 'p', 'predict': {'y': '0 if x < 2 else 1'}},"
+                                 " {'id': 'p', 'predict': {'y': '0 if x < 2 else 2'}}]")
+        self.buy(store, 'x0', 'x1')
+        compass.ingest(store)
+        result = compass.escape(store, compass.fold(store), {'trigger': 'NO_RIVALS'})
+        proposals = [(o['id'], o['admitted'], o.get('reason')) for o in result['outcomes'] if o['disposition'] == 'proposal']
+        self.assertEqual(proposals, [('a', False, 'ID_TAKEN'), ('p', True, None), ('p', False, 'ID_TAKEN')])
+        # The declared a and the first p keep their rulebooks: at x=2 they predict 0 and 1.
+        hyps = compass.fold(store)['hypotheses']
+        self.assertEqual([model.predict(hyps[i], {'x': model.exact(2)})[0]['y'] for i in ('a', 'p')], [0, 1])
 
 
 class InterruptTests(Campaign):
@@ -281,6 +318,13 @@ class DeclarationReviewTests(Campaign):
         improvement = result['verification']['improvement']
         self.assertEqual([a['verdict'] for a in improvement['arms']], ['JUDGMENT_REQUIRED'])
         self.assertIsNone(improvement['recommended'])
+
+    def test_candidate_ids_that_differ_only_in_case_are_rejected(self):
+        # Windows and default macOS volumes map outputs/compass/x0.json and X0.json to one file.
+        path = fx.law_campaign(self.root, 'x', range(2))
+        edit = lambda d: d['candidates'][1].update(id=d['candidates'][0]['id'].upper())
+        with self.assertRaisesRegex(ValueError, 'case-insensitive'):
+            initialize(self.root, self.declaration(path, edit))
 
     def test_hypothesis_must_predict_the_goal_observable(self):
         path = fx.law_campaign(self.root, 'x', range(4))
