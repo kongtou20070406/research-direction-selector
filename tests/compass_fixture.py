@@ -21,7 +21,8 @@ out.write_text(json.dumps(body), encoding='utf-8')
 
 AGENT = '''import json, sys
 packet = json.loads(sys.stdin.read())
-mode = json.loads(open('agent-mode.json', encoding='utf-8').read())['mode']
+config = json.loads(open('agent-mode.json', encoding='utf-8').read())
+mode = config['mode']
 with open('agent-calls.jsonl', 'a', encoding='utf-8') as log:
     log.write(json.dumps({'packet_sha256': packet['sha256'], 'items': [i['id'] for i in packet['items']]}) + '\\n')
 if mode == 'crash':
@@ -31,7 +32,7 @@ decisions = [{'id': item['id'], 'disposition': 'reject' if mode == 'reject' else
               'reason': 'Reviewed the counterexample-filtered rival against the refuted basin',
               'next_step': 'Discriminate with the highest expected-information experiment'} for item in packet['items']]
 response = {'schema': 1, 'packet_sha256': sealed, 'decisions': decisions,
-            'proposals': [{'id': 'agent-guess', 'predict': {'y': 'x+100'}}]}
+            'proposals': [{'id': 'agent-guess', 'predict': {'y': config.get('proposal', 'x+100')}}]}
 sys.stdout.write(json.dumps(response))
 '''
 

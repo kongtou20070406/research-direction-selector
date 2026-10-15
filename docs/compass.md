@@ -29,7 +29,11 @@ post-adoption predictions (`verification.confirmations`, default 2). A
 measurement is novel for a rulebook only if its run started after the rulebook's
 ledger row was written (by write time), and its receipt settled after that row
 (by ledger event order). Ingestion order does not count: a receipt bought before
-adoption and ingested later is old evidence. Only a receipt that reports the goal observable confirms; a receipt with only side observables does not. A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
+adoption and ingested later is old evidence. Only a receipt that reports the goal observable confirms; a receipt with only side observables does not.
+
+Two novel predictions cannot rule out a sparse exception. A law that is wrong at one unmeasured input passes them as easily as the true law. So by default (`verification.spend_budget: true`) Compass keeps buying confirmation points while the experiment budget lasts, and every one of them is a chance to refute the leader. The verification reports `coverage`: measured inputs, declared inputs, and that unmeasured inputs are `PREDICTED_NOT_MEASURED`. A declaration that prefers economy sets `spend_budget: false` and stops after the minimum confirmations, accepting that risk.
+
+A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
 - replay passes;
 - one live equivalence class remains;
 - every receipt binding re-checks;
@@ -59,10 +63,14 @@ head it was computed from, then acts on it.
   - `NON_DISCRIMINATING` candidates, where every rival predicts the same outcome;
   - `EQUIVALENT_PARTITION` candidates, which split the rivals exactly like a better-ranked candidate. Equivalent predictions are never bought twice.
 
+  Equal EIG per cost is broken by coverage: the candidate farthest (per-input range normalized L1) from every observed input wins, then the candidate id. An id tie-break once bought `x10` in a 999-input domain, where a digit-dependent law happens to agree with `x+5`.
+
   An UNDEFINED prediction is its own outcome class, because replay counts it as a counterexample.
   A FAILED or INTERRUPTED purchase yields no measurement, so its partition was never observed and an equivalent candidate stays eligible.
 - `PROBE` / `ESCAPE`: a basin trigger (`NO_RIVALS`, `ALL_REFUTED`, `REFUTED_STREAK`, `RESIDUAL_STAGNATION`) first buys spread probe points when evidence is thin, then escapes.
-- `RIVALS`, `CONFIRM`, `VERIFY`, `HANDOFF`.
+- `RIVALS`: synthesize consistent rivals at new evidence.
+- `CONFIRM`: buy the spread point farthest from the evidence, a prediction the leader did not see. The reason is `MINIMUM_CONFIRMATIONS` or `SPEND_BUDGET_ON_REFUTATION`.
+- `VERIFY`, `HANDOFF`.
 
 ## Basin escape: abductive jump
 
@@ -73,7 +81,7 @@ head it was computed from, then acts on it.
 
    Every fit reproduces every original measurement. A fit equivalent to a refuted or live rulebook is rejected as `REPEAT_OF_REFUTED` or `DUPLICATE` before it can cost an experiment.
 2. **Escalate.** If synthesis finds nothing within its bound, Compass escalates to RSI (below) and synthesizes again over the new feature.
-3. **Seal the packet.** Compass seals an `rds-jump-packet-v1` (status `CURRENT`, SHA-256, ≤32 KiB, explicit omissions) and writes it to the declared agent's stdin.
+3. **Seal the packet.** Compass seals an `rds-jump-packet-v1` (status `CURRENT`, SHA-256, ≤32 KiB, explicit omissions) and writes it to the declared agent's stdin. With fits, the packet's `request` is `DISPOSITIONS`. With none, and an agent declared, the request is `PROPOSALS` with empty `items`, and the jump is recorded `PROPOSALS_REQUESTED`: the agent is asked exactly when Compass's own bounded search has nothing. Without an agent the jump is `NO_RIVAL_WITHIN_BOUND`. A proposal request that admitted nothing is not repeated until new evidence arrives.
 4. **Validate the response.** The agent must address every item exactly once with `adopt`, `adapt`, `reject` or `defer`, plus substantive reasons and next steps. Adapted rulebooks and free proposals pass the same record filter, replay first and then equivalence. Any rulebook that reads a qualified tool feature is bound to that tool as a premise, whoever wrote it, so a tool retraction also retracts it. A malformed or failed response is recorded, and the unattended policy continues. The `DISPOSITION` binds the agent's input and both output streams by raw-byte SHA-256. A timeout records `AGENT_TIMEOUT` with the hashes of the partial streams. If the Compass head or the receipt set changed while the agent worked, the response is `STALE_RESPONSE` and nothing from that jump is adopted. No agent means `COMPASS_AUTO` adoption of the already filtered fits.
 5. **Stop at the bound.** `escape.max_jumps` bounds the search, after which the drive ends `SEARCH_EXHAUSTED`. That exhaustion speaks only about the declared grammar and bound.
 
@@ -109,6 +117,8 @@ An IMPROVE declaration compares arms that report per-sample metrics. Mean gain a
 - its mean gain is positive and at least `min_gain`, and
 - its worst per-sample degradation is at most `max_degradation`.
 
+An arm may declare independent re-runs: a candidate with `replicates: <arm>` is one more run of that arm, never an arm of its own. With replicates declared, the arm is `ACCEPT` only if the rule holds on every declared run. If a declared run was never bought, the arm is `UNREPLICATED`, never `ACCEPT`. Compass screens every first run, then buys re-runs only for arms whose every bought run passes, best minimum mean gain first. An arm that failed a run is never re-run. If the budget leaves only `UNREPLICATED` arms, the drive ends `JUDGMENT_REQUIRED` and names them.
+
 `min_gain` must be at least 0; a negative floor is rejected at `init`. A mean gain that masks one collapsed sample is `LOCAL_REGRESSION`. A missing threshold stays `UNKNOWN`. The arm's verdict is `JUDGMENT_REQUIRED`, and the drive ends with `JUDGMENT_REQUIRED`, naming the unknown thresholds. An unmeasured baseline ends the drive the same way, and so does an arm that is unmeasured or reports other samples than the baseline (`UNMEASURED_OR_SAMPLE_MISMATCH`). An arm whose receipt, or whose baseline's receipt, no longer verifies is `STALE_EVIDENCE`, never `ACCEPT`. Stale evidence ends the drive with `JUDGMENT_REQUIRED`.
 
 ## Interrupts, deadlines and resume (#207, #215)
@@ -137,9 +147,9 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
  "budget": {"wall_seconds": 900}}
 ```
 
-Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification`,
+Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification` (`confirmations`, `spend_budget`),
 `agent` (`{argv, timeout_seconds}`), `library`, `protocol` (identity fields),
-and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans, and every timeout and wall budget must be a JSON number, not a boolean. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. The experiment writes `{"outputs": {...},
+and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans, and every timeout and wall budget must be a JSON number, not a boolean. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. A rulebook may have up to 64 AST nodes (`MAX_RULEBOOK_NODES`); synthesis builds each part within `synthesis.max_nodes` (at most 15). An IMPROVE candidate may declare `replicates: <arm>`. The experiment writes `{"outputs": {...},
 "samples"?: {...}}` to `{output}`.
 
 ```bash
@@ -158,6 +168,14 @@ python -B scripts/rds_cli.py --root <project> compass report
 
 It reports verified discovery, false certification, repeat-refutation waste, contamination and tool compounding, with a sealed bundle SHA-256.
 
-In the recorded N=3 run, the real agent matched Compass on correctness, with 12 of 12 runs verified and no false certification. It got there by measuring almost every declared input. Compass used fewer experiments. The toy worlds cannot separate the two on correctness; the README states the numbers and limits.
+In the recorded N=3 run, the real agent matched Compass on correctness, with 12 of 12 runs verified and no false certification. It got there by measuring almost every declared input. That run used the earlier stopping rule, which stopped after two novel predictions and so used fewer experiments. Under `spend_budget`, Compass also spends the budget on these small domains. The toy worlds cannot separate the two on correctness; the README states the numbers and limits.
+
+A pre-registered hard tier then exposed four Compass defects, each now fixed with a regression in `tests/test_rds_compass_hard_followup.py`:
+- the id tie-break;
+- the stopping rule;
+- the jump agent was never asked when synthesis had nothing, so the Compass-with-Codex arm never called the model;
+- IMPROVE had no replication.
+
+The release notes give the hard tier's unpatched outcomes.
 
 `tests/test_rds_compass_adversarial.py` holds the reproductions from an independent red-team pass against these invariants. Each one failed before its fix.

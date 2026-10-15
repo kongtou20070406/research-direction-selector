@@ -32,8 +32,11 @@ DEFAULTS = {
     'synthesis': {'max_nodes': 7, 'max_candidates': 20000},
     'escape': {'refuted_streak': 2, 'stagnation_rounds': 2, 'max_jumps': 6, 'probe_points': 2},
     'rsi': {'enabled': True, 'max_tools': 3, 'max_mutants': 24},
-    'verification': {'confirmations': 2},
+    # spend_budget: before a claim, the unspent experiment budget buys coverage points that try to
+    # refute the leader. A minimum of confirmations cannot rule out sparse exceptions on its own.
+    'verification': {'confirmations': 2, 'spend_budget': True},
 }
+FLAGS = frozenset(('enabled', 'spend_budget'))
 PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 
 
@@ -60,8 +63,8 @@ def _tuned(declaration, key, defaulted):
         defaulted.append(key + '.' + name)
     out = {**DEFAULTS[key], **supplied}
     for name, value in out.items():
-        if name == 'enabled':
-            require(type(value) is bool, key + '.enabled must be boolean')
+        if name in FLAGS:
+            require(type(value) is bool, f'{key}.{name} must be boolean')
         else:
             require(type(value) is int and 0 <= value <= model.MAX_SYNTH_CANDIDATES, f'{key}.{name} out of range')
     return out
@@ -144,7 +147,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
     rows = declaration['candidates']
     require(isinstance(rows, list) and 1 <= len(rows) <= MAX_CANDIDATES, f'Declare 1..{MAX_CANDIDATES} candidates')
     for row in rows:
-        _object(row, {'id'}, {'inputs', 'cost', 'description'}, 'candidate')
+        _object(row, {'id'}, {'inputs', 'cost', 'description', 'replicates'}, 'candidate')
         ident = _ident(row['id'], 'candidate id')
         values = row.get('inputs', {})
         require(isinstance(values, dict) and set(values) == set(inputs), 'Candidate inputs must match declared inputs')
@@ -161,6 +164,10 @@ def compile_plan(store, declaration, source_sha256, source=None):
         candidate = {'id': ident, 'run_id': 'compass-' + ident, 'inputs': exact,
                      'cost': model.text(row.get('cost', 1)), 'output': output}
         require(model.exact(candidate['cost']) > 0, 'Candidate cost must be positive')
+        if 'replicates' in row:
+            # An independent re-run of another arm: its samples are judged as one more run of that arm.
+            require(goal['kind'] == 'IMPROVE', 'Only IMPROVE candidates declare replicates')
+            candidate['replicates'] = _ident(row['replicates'], 'candidate replicates')
         candidate['argv'] = _argv(experiment['argv'], candidate, output)
         # One retry slot, used only after an outer interruption left no measurement (#215).
         retry = f'{OUTPUT_ROOT}/{ident}-a2.json'
@@ -271,6 +278,13 @@ def compile_plan(store, declaration, source_sha256, source=None):
         plan['profile'] = {k: (model.text(v) if k in ('max_degradation', 'min_gain') else v)
                            for k, v in declaration['profile'].items()}
         require(plan['profile']['baseline'] in {c['id'] for c in candidates}, 'Profile baseline must be a candidate')
+        arms = {c['id']: c for c in candidates}
+        for c in candidates:
+            target = arms.get(c.get('replicates'))
+            require('replicates' not in c or (target is not None and target['id'] != c['id']
+                                              and target['id'] != plan['profile']['baseline']
+                                              and 'replicates' not in target),
+                    f"Candidate {c['id']} must replicate another declared, non-baseline, original arm")
     plan['contract_sha256'] = digest(contract)
     return contract, protocol_raw, plan
 

@@ -1,10 +1,10 @@
 {
  "schema": "rds-compass-benchmark-v1",
- "generated_at": "2026-10-15T08:50:56Z",
+ "generated_at": "2026-10-15T20:42:28Z",
  "environment": {
   "python": "3.12.0",
   "platform": "macOS-27.0-arm64-arm-64bit",
-  "git_head": "445a1379b7fa383b2fdde7a0cbd039376e892a1a"
+  "git_head": "26004a16b598c6c9c5160d3003fabc523116331f"
  },
  "arms": {
   "ratchet": "Greedy ratchet on a fixed 3-input visible check set (Karpathy autoresearch style)",
@@ -133,7 +133,7 @@
    "false_certifications": 0,
    "contaminated": 0,
    "repeat_refutation_waste": 0,
-   "experiments": 29
+   "experiments": 61
   }
  },
  "trials": 1,
@@ -151,7 +151,7 @@
      null
     ]
    ],
-   "experiments": 6,
+   "experiments": 20,
    "status": "GOAL_IDENTIFIED"
   },
   {
@@ -167,7 +167,7 @@
      "ORIGIN_VERIFIED"
     ]
    ],
-   "experiments": 6,
+   "experiments": 20,
    "status": "GOAL_IDENTIFIED"
   }
  ],
@@ -195,21 +195,21 @@
    "receipts": [
     {
      "run_id": "compass-m1",
-     "sha256": "dbdad4ed8188437248b28212e68dc8c1d75e4ead17ac6b8f3935afe5db792ee0"
+     "sha256": "2bcb5cf9e2a882a82a4648d507d7ad11720d16af4e4fc1619c77cdd5fff7b6fc"
     },
     {
      "run_id": "compass-x0",
-     "sha256": "1ebd749b70613284019880abf5d67d92c4ce7bd4f72e8452dff1bf234da3490d"
+     "sha256": "478b6e501aff68772d13aad4e1128f6dea539a280bce26c73b885e31c600fa31"
     },
     {
      "run_id": "compass-x1",
-     "sha256": "23934aec5e02c51ae59779124c49486088a57a85f8b02bb1011958c8716d5f3c"
+     "sha256": "3e2bd1ad2c5779f4d4bf89b6bd7f28fb4d92cb49e942c6537fced20910a287b3"
     }
    ],
    "verified_discovery": false,
    "false_certification": true,
    "contaminated": false,
-   "wall_seconds": 0.247
+   "wall_seconds": 0.24
   },
   {
    "task": "visible-check-trap",
@@ -235,17 +235,17 @@
    "receipts": [
     {
      "run_id": "compass-m1",
-     "sha256": "92518d582d37e77f0593fb2ade99c890d9ce57c8c8ca04f14aed340da9183256"
+     "sha256": "a0cf0ec71be29c08c02876265f0c98981bd603ece7e64edcf119e32ad66d1735"
     },
     {
      "run_id": "compass-x0",
-     "sha256": "4d621b32b6be45f5650b85e683691bff003b69e477a5b06ef3e12c621d0920b5"
+     "sha256": "69e78d1f6b355aa407841ae05ca0186cf035538baa334386c40a5913e9700caf"
     }
    ],
    "verified_discovery": false,
    "false_certification": true,
    "contaminated": false,
-   "wall_seconds": 0.156
+   "wall_seconds": 0.163
   },
   {
    "task": "visible-check-trap",
@@ -264,35 +264,47 @@
     "qualified": []
    },
    "repeat_refutation_waste": 0,
-   "equivalent_partitions_skipped": 13,
+   "equivalent_partitions_skipped": 17,
    "arm": "compass",
-   "experiments": 5,
+   "experiments": 8,
    "receipts": [
     {
      "run_id": "compass-m1",
-     "sha256": "bb95393fee6ae3eeb46c814f7462430b28488836841ec0b40899b3c119aedc0d"
+     "sha256": "e478ca1c2d2ecae09bae21a7df57d3fa7030e65f12b3540c838d5d0526002ceb"
     },
     {
      "run_id": "compass-m2",
-     "sha256": "f818491879605b0e1de3174f7282f7977e4a73189b84ed3976bdb748c6c96a92"
+     "sha256": "92671a420a41adf8102f418de2295ebbcf7dce9e5e5fe4343fb89115bcf5b606"
+    },
+    {
+     "run_id": "compass-m3",
+     "sha256": "7f0feb87d58539c92b54ea43b76db718491eebb1b5a730d7dd91d2d08dabc0fd"
     },
     {
      "run_id": "compass-x0",
-     "sha256": "e24b062da8af199c35157a7e85fc1b897acbaac0b8c1f5892546e6e5d6dd4049"
+     "sha256": "0a7182239fbb70aead1bacbff40cc33565446ca037bef7481c0af5fb7dd48775"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "75737c85a87b42dec686cb0c4c5123931555939fe0aceeb3524ca7560a4d64f3"
     },
     {
      "run_id": "compass-x2",
-     "sha256": "cc55a9b6c9bdb034eadfd8a70fa60d9f24bf1a4a63a102ac53d369887cece9bf"
+     "sha256": "0f5cf829e380c88c93d65e79bc978e88ea3d575fdb32da90965b679a9f6a6fb8"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "449abbc89892aecd4c7d4a9c72b039df875afec4daa36ab39d89b3b1c7b9a46b"
     },
     {
      "run_id": "compass-x4",
-     "sha256": "5f9f259fa99854ddf30b69847a2b8662040ba42042b6b9c92cd07844d952f08c"
+     "sha256": "7fd0883d87b9e786f9b46858708d189bcb64cdbf3ffa5550ca923a40a845150e"
     }
    ],
    "verified_discovery": true,
    "false_certification": false,
    "contaminated": false,
-   "wall_seconds": 2.274
+   "wall_seconds": 3.005
   },
   {
    "task": "late-exception",
@@ -315,21 +327,21 @@
    "receipts": [
     {
      "run_id": "compass-x0",
-     "sha256": "bfa849a899506835da485570775c090c4ef6748fc67149dd4cc63ac0bc9b0fe1"
+     "sha256": "7745a2e8a89d4b8e29c1521bab844ef1acae62ecfa1d8daf4b17e130d9a5dafe"
     },
     {
      "run_id": "compass-x1",
-     "sha256": "9f7f8d958041de986b6783e3a0560ad85ee97a06084281f77d38a09631261728"
+     "sha256": "efd6d32c34a590cb0cae9fba3bc4643f055b6be7d897e98547694d2e3d4e3e99"
     },
     {
      "run_id": "compass-x2",
-     "sha256": "c3650be4c8c2823345c536d76c7500ebabed0819126d2e0cb46ed00774eacaad"
+     "sha256": "2d2e54dfc8780d601cd739ff56f13e797f51adccad1126fa35d7077d96831b72"
     }
    ],
    "verified_discovery": false,
    "false_certification": true,
    "contaminated": false,
-   "wall_seconds": 0.253
+   "wall_seconds": 0.235
   },
   {
    "task": "late-exception",
@@ -358,17 +370,17 @@
    "receipts": [
     {
      "run_id": "compass-x0",
-     "sha256": "1f8172b6dc7188088ff4ad8839aa054beaa0cf3af9f54824589ce4b9d6e0940d"
+     "sha256": "91dd609ea11105a5b8ce9b6bbb6bbc15e0ab52ff8075d1f7ac446cd35943e3fa"
     },
     {
      "run_id": "compass-x1",
-     "sha256": "be7adb3d40be28eb13ae599f3c9988ba4938e40b0993e9d127fe85b51437b8e9"
+     "sha256": "fdd3e3fdb4c6433dc9750b50fd2a7a3c6fec4f85765644507498d01b18c26e4e"
     }
    ],
    "verified_discovery": false,
    "false_certification": true,
    "contaminated": false,
-   "wall_seconds": 0.166
+   "wall_seconds": 0.159
   },
   {
    "task": "late-exception",
@@ -376,62 +388,66 @@
    "session": 1,
    "status": "GOAL_IDENTIFIED",
    "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
-   "law": "ite((x < 7), ((x * x) + 1), 0)",
+   "law": "ite((x < (13/2)), ((x * x) + 1), 0)",
    "score": {
     "verified": true,
     "disagrees_on": []
    },
    "rsi": {
-    "tools_tried": 57,
+    "tools_tried": 38,
     "library_offered": 0,
     "qualified": []
    },
    "repeat_refutation_waste": 0,
-   "equivalent_partitions_skipped": 15,
+   "equivalent_partitions_skipped": 8,
    "arm": "compass",
-   "experiments": 9,
+   "experiments": 10,
    "receipts": [
     {
      "run_id": "compass-x0",
-     "sha256": "f02888f8ed9dbfb2b0677aaa4c69f7cbf5b41e9f3937f6972a686dc9298484c2"
+     "sha256": "de1436c0b0cb5fac1e41a9291ff5481315b4f2a0f6219373a324e3c3c27119b7"
     },
     {
      "run_id": "compass-x1",
-     "sha256": "0970918a9d62e1cf5ed334cbd9b88f85042e21fea54b57ae99f290e7900d72d8"
+     "sha256": "fc3bbc5325191fb77c3b84aad20275d60abc2157578df8a978dc7e633be246d7"
     },
     {
      "run_id": "compass-x2",
-     "sha256": "c79f87aa87e8ad625bb80259eedb7ae25849aeeeaa221731f76ad8a2e7187b1a"
+     "sha256": "46be4b588fd146714f7f033c6ce443ed7566b29602c68909caa7ab0ec5ec9c60"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "390e7c52499ca79e21389f4696b528c52cfe082d554eabd3ea64b0731bb0534f"
     },
     {
      "run_id": "compass-x4",
-     "sha256": "baa9b54f889a448c48024d62cfa62c9b391a5112c7a6c1de4babec8b7e6c320d"
+     "sha256": "e23d597ae9eca02ae2def947788d686c2c0da9f27f5373db25eb55c99969a5c2"
     },
     {
      "run_id": "compass-x5",
-     "sha256": "cf5e1fb920e7dcf80c84043309b152e2bba1816630914e8a1c3784cca2b46452"
+     "sha256": "54caf3c49064e225ea11ab71a62005f6e5157e629865cc71b4327534776d0f4f"
     },
     {
      "run_id": "compass-x6",
-     "sha256": "65b2fe019279f584012280dbac6013d19c8eb90b0ad9bcdd623bb6d9b9a2f011"
+     "sha256": "86e7949c61d4314d655c4d6ff1e59a5dbff32eb039babda9c3cab95e98c3cb3a"
     },
     {
      "run_id": "compass-x7",
-     "sha256": "ce83fcac14b7bbddc2a584d7b9aab60daf45ad28c1a220bd42ab28a4646a8284"
+     "sha256": "6b7ac118371427ff3cee947585c88a7dd4aa153c52466077da52b194a8e4850e"
     },
     {
      "run_id": "compass-x8",
-     "sha256": "15b2c35713e4fe72d94c4c2709b8ffd9386790ea6a2e102271a3d2bc2e0bcea1"
+     "sha256": "bef332fe327e5fea336159d00884bb645ba1fea3633f95b16ef6380fc0fec769"
     },
     {
      "run_id": "compass-x9",
-     "sha256": "b5c896b15ffec330926021627ca995d241de09c4505ef7e0df76cf76480376cd"
+     "sha256": "a139f97100bdb17e0ec9fee904a6bd52f27b83af2b36c0fea13a5e6101ef66bc"
     }
    ],
    "verified_discovery": true,
    "false_certification": false,
    "contaminated": false,
-   "wall_seconds": 5.004
+   "wall_seconds": 6.424
   },
   {
    "task": "capability-gap",
@@ -445,21 +461,21 @@
    "receipts": [
     {
      "run_id": "compass-x1",
-     "sha256": "2692af9360f429f4223cd05f513a157884ee262b4e44e7e4c9b383e00e368842"
+     "sha256": "2c34d02a8819d478a4d83c162e9f53f50157e6e4563b926f44273bf378847d2c"
     },
     {
      "run_id": "compass-x2",
-     "sha256": "374a6eb552fb08a3f583fd3e866e0335a46f79524846eb758c5c1c546f520af5"
+     "sha256": "a3d69f23ecddae7b3aeae192766cde944c3b59c4a7edd68fe84f713706e3cf85"
     },
     {
      "run_id": "compass-x3",
-     "sha256": "07b2738eb5a1f7332282b5a9db92b380eb98a057eb1eb9d77431f59ac04ae724"
+     "sha256": "d33f9d7d897ab3d15f473151daba0feea3d93f430e315c20405bb65f9795f422"
     }
    ],
    "verified_discovery": false,
    "false_certification": false,
    "contaminated": false,
-   "wall_seconds": 0.666
+   "wall_seconds": 0.665
   },
   {
    "task": "capability-gap",
@@ -474,89 +490,89 @@
    "receipts": [
     {
      "run_id": "compass-x1",
-     "sha256": "2c9446eae375f559abfc99f12ecf28ee32f8f7e68c695bef51b0fc756cd65c99"
+     "sha256": "765782016beaf5bdcd1c97d5d0b498402f22be1e8981e17e7bc2d5c2e17c7e2c"
     },
     {
      "run_id": "compass-x10",
-     "sha256": "ca0ce8d10ac70fbbe2ba4ba14ee47d34532799b0155d29dbf149e64cfd7aeb31"
+     "sha256": "6a25762e8a78ebdd63dbb56313c74b77fc4aea9a4b77128524d8d3e64fea426d"
     },
     {
      "run_id": "compass-x11",
-     "sha256": "5e7d84afb8a2c7563d5448ed8acc57f61a8b12732ffe240c37494b6db0f77914"
+     "sha256": "e6974047c1fed7fc0f826eeabb4b9c11f80cc88ccded8f65d859f18a60080be1"
     },
     {
      "run_id": "compass-x12",
-     "sha256": "d98953dec7b38890a0ba733818bec2353b719c1bc8ec3c956eb996d7f66f3d6e"
+     "sha256": "73618b71dcd0676ef10c8f202943e8f7c8ad0ccc5a3fa8aa152adfb532c7f00a"
     },
     {
      "run_id": "compass-x13",
-     "sha256": "2393511ab34554cf6623ebeb83f578caf07228c100a3d627f5cc48fdf78081d4"
+     "sha256": "5f7c609d24a925015f1c4712074bdf1668c16ffeee63b8916cbba5a6ba2caffd"
     },
     {
      "run_id": "compass-x14",
-     "sha256": "7274fd137e733c7d405455451853f76704786936d6651a549170ecaebca2a2bf"
+     "sha256": "7a9c33b342589fb6abc53e7bf5a4d4c6d762f4b2c7c23ee889ef619afa7f0bb9"
     },
     {
      "run_id": "compass-x15",
-     "sha256": "08c333d22073be065341da8a87b17fc8cd4154348389076eeda31724f071b609"
+     "sha256": "fd9bf1d7eefbba5bec4a1029662fb0c0b4e83d5c46a39be342cf409c41e1d059"
     },
     {
      "run_id": "compass-x16",
-     "sha256": "74e8b8f61ad2a25143553f67659fa58bac9514eb9a26952aacbdca84670894a0"
+     "sha256": "96afa8fe0199e4127a2f1ab2b66040a1c9a81e90e98c1c6520766e66a5031e31"
     },
     {
      "run_id": "compass-x17",
-     "sha256": "fa9f9bf8fe10f0557a9bde0d16f138bb614c21b5015a710f2c0e3ef7de47096c"
+     "sha256": "6972b239a4bbdf7df474b6f2ab50fcf11d526b159274c24da1f7bd554bedc62b"
     },
     {
      "run_id": "compass-x18",
-     "sha256": "34279bdc67a53114206986509e85b009f41e38e50238e4c4d65b015c433d4607"
+     "sha256": "99218c63add4400d3ec6aa03077c30b82dc278ce3b2e902a8e6f3e60ed2b477b"
     },
     {
      "run_id": "compass-x19",
-     "sha256": "fc389db9e68ad306d3917906e1fcf5c885f8313d4283f37c9f217fa0bb4a455a"
+     "sha256": "2821626e49d620fcdb5fad74964b879ead9d0a19d50d2dd4132343f745465856"
     },
     {
      "run_id": "compass-x2",
-     "sha256": "e0357ecbd4bf31a3046cec20389663906c5bb5ca51fd999b57a7686e6453281b"
+     "sha256": "b75054f8c504b743f36e012b02f14fe2a92916856aecbe443bc19bc54bd4c311"
     },
     {
      "run_id": "compass-x20",
-     "sha256": "1212c98b6238528be38a16b5cc1f803c4b0880a0ef09f927054cf7a3d2c324a0"
+     "sha256": "e3f442a1988368d1f0c61ea8bbc0b5bc961dba096497d93f0f5cb376cc5ba09b"
     },
     {
      "run_id": "compass-x3",
-     "sha256": "2eec8515a053d5e52390076e7979616db00cc0f491b8b22116a45f234eee521c"
+     "sha256": "7bc4b1a635a7bf9444a05d2f2c4204539c569ea64c1c8ef8555f8ae2de4f62af"
     },
     {
      "run_id": "compass-x4",
-     "sha256": "2e17902e97cc682e01b84531e61ab0c09abe53367d3368bd2ca442ec34e7a21d"
+     "sha256": "1bbabb54e96b7e5710dd8a34828d0bab175840a4a2c15af7a9243cfc1da9c58b"
     },
     {
      "run_id": "compass-x5",
-     "sha256": "13c10270a63e599265bc16634713c7c4695f5fcb4d0aea963fd061c4f08643d5"
+     "sha256": "088c3827aaf4c4f35dc38474ce0c7804f0533c71ebae7f2f762fedca6d90471d"
     },
     {
      "run_id": "compass-x6",
-     "sha256": "39c7a66b17f7f6c9360906fa28a6204824f58fec08ae6308235ee14d2c5bc5e9"
+     "sha256": "bc9c8fb3497ad6a2157f5f3fe037e880ee21a6fb5e80ebfa1aa0601fe285dc65"
     },
     {
      "run_id": "compass-x7",
-     "sha256": "a8301eb26c98999f3fe69997d8028d71df844378533568c374eb533b478a1898"
+     "sha256": "936411bc75fb81ce69b17fe2c6f4875d4a9619a2a87b255a757a050edf27b143"
     },
     {
      "run_id": "compass-x8",
-     "sha256": "ee8e12bf4805b71d1f07b8dc4a7cbb531576a83327736ff3c98d1f0bc543a2ae"
+     "sha256": "ebda2dcb94077260622d53c5898f667f4c75642438ef41beb55afa54896fb828"
     },
     {
      "run_id": "compass-x9",
-     "sha256": "26ca0f4deba8d9a3b30b68ae864fb55d143b77575ee1760d2b9f4e4ad23e3e03"
+     "sha256": "404e046cc2d7946c018313291f6df28156c6493cd3144d621af71622256aedff"
     }
    ],
    "verified_discovery": false,
    "false_certification": false,
    "contaminated": false,
-   "wall_seconds": 11.761
+   "wall_seconds": 11.555
   },
   {
    "task": "capability-gap",
@@ -583,37 +599,93 @@
    "repeat_refutation_waste": 0,
    "equivalent_partitions_skipped": 0,
    "arm": "compass",
-   "experiments": 6,
+   "experiments": 20,
    "receipts": [
     {
      "run_id": "compass-x1",
-     "sha256": "2aa974ceeb0c3c65fd8262c2f9053ce7934a393ceecb75f208c7893b36089cec"
+     "sha256": "41e92e7728e5f44afa9d3f5a4bf01a3137a6b2495a34feef7828f70412e39e5f"
+    },
+    {
+     "run_id": "compass-x10",
+     "sha256": "a0ded2dccd090ba0506153d9d6de75a339ab6583bc2b022071ceb454a2f2269c"
     },
     {
      "run_id": "compass-x11",
-     "sha256": "b6ab464be46d6a4b0f5f5133ac70369d90ab9ec4af43e328bf28ed3f568a1d11"
+     "sha256": "6b1f5c60ff6eb2cd1dc1760d58815694a093dfff72a0e722cf54054e3f82b634"
+    },
+    {
+     "run_id": "compass-x12",
+     "sha256": "8763ed0c15ff943af07784d4877f822b679bd7ae63c2a8eeb017ac73fa10643c"
+    },
+    {
+     "run_id": "compass-x13",
+     "sha256": "712efbb804e3897c5ca7d853d1773b66f39e0f21c9f4ca9d97193f682d53b611"
+    },
+    {
+     "run_id": "compass-x14",
+     "sha256": "39d8d46533b0f80bd9d80faa51b7314601027202ce4b3c579bcc8c64a0f3afe1"
+    },
+    {
+     "run_id": "compass-x15",
+     "sha256": "458a676d19e4286f0454af8c2815e105f4032d088fe00473c3e2424c61154d56"
     },
     {
      "run_id": "compass-x16",
-     "sha256": "97672b2b1fce5bf719c5b1b9df6b0b080e4b57ed0b1447bf304c18ec3953a7e2"
+     "sha256": "874938de6ed61e4f0602a56c9fc741746be647dd33389004c93452e1cfcaa6e1"
+    },
+    {
+     "run_id": "compass-x17",
+     "sha256": "761a0d192e1731c9276f0659135bbd53f520783b2da2a8995ff1ee4f0eba0859"
+    },
+    {
+     "run_id": "compass-x18",
+     "sha256": "2266647bbcdf7e8ff506b8115671deb81da6d7d7fbf89034a3fa703bbc287c64"
+    },
+    {
+     "run_id": "compass-x19",
+     "sha256": "54260b4471bdb71259d9094400a982b7ef74f631f0efd215e36b702f9b27b3df"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "8a9530e19cdba769c0dae624ceec4b2a5f8ec737fc7d1cd4ce8460d6ac4e8fbe"
     },
     {
      "run_id": "compass-x20",
-     "sha256": "2a6137b5cef44bb5409baa6e8e23e34b3ef688d4b62c6255fd814dc7c357de3e"
+     "sha256": "e096790baab5270b439741ad4d76c87eff8a923fdaa888addab59eda39aa8b48"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "122952931eeb998a13896081011c6ad20ddc611cd77f95f9033a93f74f7219e5"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "9941139fdc3493a20988763a94676409a7caa1cb1626963855dc0ce67cf2a315"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "1fc701f7bd60cb198e37c81eead5c1d3f4374c95f13811c8e010bc2f6c4d242e"
     },
     {
      "run_id": "compass-x6",
-     "sha256": "dafde87029524a2fd432ce382e9a02e99d0562905634faa6b3cc65c6f59d3ef1"
+     "sha256": "89b6c864c9fae59fdab2d5bd410164e11b83405b45c2fe7904c047b746f29d5c"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "f83355337f0034b38fe6dd3c009a89a5470026f6a23b823d244a3b2a30908ff4"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "0a3b7b61d37af8a75a4219625afc42d824fc1dacfd2392ae1517405102897b93"
     },
     {
      "run_id": "compass-x9",
-     "sha256": "6bcc0956e889a350478b69c094f05dd373c7658acd7d13283caef68597991451"
+     "sha256": "2f6174db10ec902e3ba80b9c5c1a0046aef6bac274419cf6c524e82cdafc02a0"
     }
    ],
    "verified_discovery": true,
    "false_certification": false,
    "contaminated": false,
-   "wall_seconds": 11.391
+   "wall_seconds": 40.529
   },
   {
    "task": "capability-gap",
@@ -640,37 +712,93 @@
    "repeat_refutation_waste": 0,
    "equivalent_partitions_skipped": 0,
    "arm": "compass",
-   "experiments": 6,
+   "experiments": 20,
    "receipts": [
     {
      "run_id": "compass-x1",
-     "sha256": "7e70cc6464edad70e29a953688fc51411094e46c3f0d7c8e1d6e740579aa4a74"
+     "sha256": "f6cc108fd0529e3d9ebfaf8fb41e8d0617cf074fd71c7697bf6195e46c001f3e"
+    },
+    {
+     "run_id": "compass-x10",
+     "sha256": "74f870ced96a267c75c3eeb945a87ff175aebebc90723ee75d1d7c02154c29ab"
     },
     {
      "run_id": "compass-x11",
-     "sha256": "0491713bdee381d5ec035fb4dcc980a1ea42a71aa93db744a2ef0e6150dcf90e"
+     "sha256": "3f9749a719d03b0bb244bf17440c0a37fff7b039fab4b47317d37d1644236f61"
+    },
+    {
+     "run_id": "compass-x12",
+     "sha256": "dfdf5e5644c59388240596bb5ff483c5d94962d02e6305b07dd5888c3a2d8111"
+    },
+    {
+     "run_id": "compass-x13",
+     "sha256": "a267ae0f01cfeda7ba7ff6a728802ab4aeb9587b27873b81f43dbf43694b668e"
+    },
+    {
+     "run_id": "compass-x14",
+     "sha256": "62af145a34c0dc1f3b598d84c29765950bf8c7c3901ccd1b99a13268391d9c67"
+    },
+    {
+     "run_id": "compass-x15",
+     "sha256": "a4e7f1c6707e1de2d86d18f77c32dbcfbe4111364dddfcedb78f78fdc0718a38"
     },
     {
      "run_id": "compass-x16",
-     "sha256": "8366a00537b2a22dc60254f25478e8df024829f009400bb436a954c351c73a1e"
+     "sha256": "f6c5b9f5590840c1c2a7a4371ee5018dc4bc9743eaa7d4f31551942f01c929cc"
+    },
+    {
+     "run_id": "compass-x17",
+     "sha256": "0e60a5c36e1084060bc0c280363a8ba1364a94da35a69605b455eeb6a550b926"
+    },
+    {
+     "run_id": "compass-x18",
+     "sha256": "c630b6296c7f6942b1fea57a429b3bb271a81969aeeeb8a084cd08bbce558a0a"
+    },
+    {
+     "run_id": "compass-x19",
+     "sha256": "1d648cc7a9c76c1c30c356ff0f86e8503295eae7f9538d104e0fa72a7b83ec89"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "ef3fef6e2b035b7b90bd3ab0f977bffb04c81b90e012ce6bea7915126e20f690"
     },
     {
      "run_id": "compass-x20",
-     "sha256": "192bd2abd6b8a0f342d86137822cfe50b3c08005cd7db0013e69e35fe9f1057c"
+     "sha256": "bb44fddd07a1a72c30256dd885062df141b2dbf15d6930904459e1f202ee7bf4"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "b1e2e0091ddd0e2709011d6b383381f2da3e322df26710c9c0aab2032c1231f7"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "896d768f8f72ff690afc9eeef10eebf3d854b44f5c66c18bded5c5dae96935fe"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "fac3f55592361590711be3726c100001e280c92f3e79d853be99e5a359cde745"
     },
     {
      "run_id": "compass-x6",
-     "sha256": "3500c553a1042e30100063d78115dced7e840f5a538c336095a7068a8c401a5b"
+     "sha256": "5ae4ddc929409aee1584b4d0a204e76b8d4f6c4d19bbb349967ad8ca4d832291"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "4fe04047bc798068809e99a9723094a6c7daa6fc818fb2aafce4d250fd4cc195"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "50a809ca7fe70f6e29bc86eb3f5180033c0a4bf742b074e14538810821ec5b8e"
     },
     {
      "run_id": "compass-x9",
-     "sha256": "86a9ce55560003714f5139d9f6a3895dab37f101c815b374a6ce5d16f9cdaa5c"
+     "sha256": "796233481e737b0855c8437c3c75cf2f1832d7443e71b1b3b52eb134b88589f0"
     }
    ],
    "verified_discovery": true,
    "false_certification": false,
    "contaminated": false,
-   "wall_seconds": 10.855
+   "wall_seconds": 40.081
   },
   {
    "task": "mean-masking",
@@ -688,21 +816,21 @@
    "receipts": [
     {
      "run_id": "compass-base",
-     "sha256": "7618bf0bd11ac6b2a24b02d1cee01fbb6b4700a7466219e72e213b209e5eae57"
+     "sha256": "7a8f75ca41ee3a5d92822558b4f06d9b0b6d843396277dd08f3991783a5803e0"
     },
     {
      "run_id": "compass-variant_1",
-     "sha256": "089b384d4e2677aa0ad68b26a153636f15cbb39e60c961bb016fefaf58b6d1e5"
+     "sha256": "262654f9d30062e57078a194ccc76389f4f4a24229a8e05f978653768cfeefaf"
     },
     {
      "run_id": "compass-variant_2",
-     "sha256": "fa0f05a86e0616e7bdde0e1507689c6cb8d88167e2eef201ffa254105b292b6e"
+     "sha256": "d35f463a9320f26279ce37e91e807a67ff532ddeb681c65536ce332a92256e52"
     }
    ],
    "verified_discovery": false,
    "false_certification": true,
    "contaminated": false,
-   "wall_seconds": 0.245
+   "wall_seconds": 0.23
   },
   {
    "task": "mean-masking",
@@ -720,21 +848,21 @@
    "receipts": [
     {
      "run_id": "compass-base",
-     "sha256": "b5dca377d0d7cb46df88908e66eb3a6f526355f424fccf985cf77d64bc97ae43"
+     "sha256": "7ab5e11ea7a0cfc63fc284d6e64c166006fcdb147087624d27ee9d7fe10af52d"
     },
     {
      "run_id": "compass-variant_1",
-     "sha256": "4bbfde5087bc79372cfe462eb8a8f99df0647f35f7dff8bf34cb8b16b2a856d0"
+     "sha256": "27a20edcfd37a7ccdbbf0532ee72eda1b71695dd812bbcb930d916ff5251763e"
     },
     {
      "run_id": "compass-variant_2",
-     "sha256": "b40160b46857fa7ff91846ab6b0d95d3dad4a3b7e6909fc1519c44927b589e12"
+     "sha256": "28267e8b95365ef359a95b018be48f8bd24ef73ccbd7652882890f8a200f85cf"
     }
    ],
    "verified_discovery": false,
    "false_certification": true,
    "contaminated": false,
-   "wall_seconds": 0.249
+   "wall_seconds": 0.24
   },
   {
    "task": "mean-masking",
@@ -755,24 +883,24 @@
    "receipts": [
     {
      "run_id": "compass-base",
-     "sha256": "b1ad02739971835a81f43f8a267e637bb4e0ae8a79b08ba158328dc7a65b3f6e"
+     "sha256": "8d9a850e2745ba49b661e4bd8b68e680a9d47a5d4d4fb4a7613cf6c6a83c346b"
     },
     {
      "run_id": "compass-variant_1",
-     "sha256": "34b968b9f5e25b6726630a4740ca0cc1737de4625085801dda33396fc7a25175"
+     "sha256": "6911ba5d3821a4fe4dea6a8711d2a04181e8b711d6d244e614635cad30913241"
     },
     {
      "run_id": "compass-variant_2",
-     "sha256": "c8ea3df954830d47c73f610a928e7796a0abccec637a35d917ae143a647522fd"
+     "sha256": "6f74e80459ab07e7e229f635740428fc76f75bb1ba7e7c6aa0aa709068aee6d1"
     }
    ],
    "verified_discovery": true,
    "false_certification": false,
    "contaminated": false,
-   "wall_seconds": 0.286
+   "wall_seconds": 0.275
   }
  ],
  "scientific_support": "UNKNOWN",
  "limits": "Synthetic toy worlds; N=1 run(s) per arm and task (deterministic arms repeat identically); mechanism evidence only",
- "bundle_sha256": "9d93b28a5c41234387e3d0895b9a79df69104c7b200806fb8e7061108e3410a0"
+ "bundle_sha256": "6a04a14b4639113a48d95f22998bfcb61292743e400d86c7256825650e5264e0"
 }

@@ -24,12 +24,16 @@ CODEX_SECONDS = 540  # Compass's agent timeout is 600 s; finish first so the fai
 PROMPT = '''You are the abductive-jump reviewer for an automated research campaign. `packet.json` in this
 directory is the sealed packet. Reason only from it.
 
-The campaign is stuck: `trigger` explains why. `items` are candidate rulebooks, each synthesized to
-reproduce every receipted measurement in `evidence`. `evidence.refuted` lists rulebooks already refuted,
-with a witness. Address every item id exactly once:
-- adopt: keep the item as stated.
-- adapt: replace it with your corrected rulebook in `hypothesis`.
-- reject or defer: drop it or postpone it.
+The campaign is stuck: `trigger` explains why. `evidence.refuted` lists rulebooks already refuted,
+with a witness. `request` says what is asked of you:
+- DISPOSITIONS: `items` are candidate rulebooks, each synthesized to reproduce every receipted
+  measurement in `evidence`. Address every item id exactly once:
+  - adopt: keep the item as stated.
+  - adapt: replace it with your corrected rulebook in `hypothesis`.
+  - reject or defer: drop it or postpone it.
+- PROPOSALS: `items` is empty because Compass's own bounded synthesis found no rulebook that
+  reproduces the evidence. Return no decisions. Propose rulebooks that reproduce every measurement
+  in `evidence`.
 
 `reason` and `next_step` must be substantive sentences of 8 to 2048 characters.
 

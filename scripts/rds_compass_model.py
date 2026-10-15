@@ -13,7 +13,10 @@ import math
 
 from rds_core import canonical, object_digest
 
-MAX_NODES = 15
+MAX_NODES = 15  # One synthesized expression.
+# A rulebook: a regime split or residual correction of synthesized parts (2 * MAX_NODES + 3),
+# or a declared or agent rulebook of the same order. Synthesis itself stays within MAX_NODES.
+MAX_RULEBOOK_NODES = 64
 MAX_BITS = 512
 MAX_POWER = 8
 MAX_POINTS = 256
@@ -196,7 +199,7 @@ def evaluate(node, env):
 def parse(source, variables=None):
     """Compile restricted infix text to the JSON AST; no names or calls leak."""
     if isinstance(source, dict):
-        return normalize(source, variables)
+        return normalize(source, variables, limit=MAX_RULEBOOK_NODES)
     require(isinstance(source, str) and 0 < len(source) <= 2048, 'Expression text required')
     tree = _pyast.parse(source.strip(), mode='eval')
     ops = {_pyast.Add: 'add', _pyast.Sub: 'sub', _pyast.Mult: 'mul', _pyast.Div: 'div',
@@ -228,7 +231,7 @@ def parse(source, variables=None):
             return {'op': 'ite', 'args': [visit(node.test), visit(node.body), visit(node.orelse)]}
         raise ValueError('Unsupported expression syntax: ' + type(node).__name__)
 
-    return normalize(visit(tree.body), variables)
+    return normalize(visit(tree.body), variables, limit=MAX_RULEBOOK_NODES)
 
 
 def render(node):
@@ -412,13 +415,32 @@ def signature(rows):
     return digest(sorted(sorted(row['hypotheses']) for row in rows))
 
 
+def _coverage(candidates, observed):
+    """Each candidate's L1 distance to the nearest observed input, per-input range normalized."""
+    observed = [{k: exact(v) for k, v in env.items()} for env in observed]
+    points = {item['id']: {k: exact(v) for k, v in item['inputs'].items()} for item in candidates}
+    names = sorted({k for point in points.values() for k in point})
+    span = {}
+    for name in names:
+        values = [p[name] for p in list(points.values()) + observed if name in p]
+        span[name] = (max(values) - min(values)) or Fraction(1)
+    out = {}
+    for ident, point in points.items():
+        distances = [sum(abs(point[n] - o[n]) / span[n] for n in names if n in o) for o in observed]
+        out[ident] = min(distances) if distances else Fraction(0)
+    return out
+
+
 def rank_experiments(hypotheses, candidates, tolerances, *, observed=(), weights=None, limit=8):
     """Rank candidate experiments by expected information gain per unit cost.
 
     Already-measured inputs are never repurchased; candidates whose partition
     equals a better-ranked one are retained as EQUIVALENT, not ranked twice.
+    Equal gain is broken by coverage: the input farthest from every observed
+    one, so a tie never concentrates purchases where the evidence already is.
     """
     seen_inputs = {canonical({k: text(v) for k, v in env.items()}) for env in observed}
+    coverage = _coverage(candidates, observed)
     scored, excluded = [], []
     for item in candidates:
         key = canonical({k: text(v) for k, v in item['inputs'].items()})
@@ -433,8 +455,9 @@ def rank_experiments(hypotheses, candidates, tolerances, *, observed=(), weights
                        'eig_per_cost': round(gain['eig_bits'] / float(cost), 9),
                        'discriminated_pairs': gain['discriminated_pairs'],
                        'classes': gain['classes'], 'undetermined': gain['undetermined'],
-                       'partition_sha256': signature(gain['classes'])})
-    scored.sort(key=lambda row: (-row['eig_per_cost'], -row['discriminated_pairs'], row['id']))
+                       'partition_sha256': signature(gain['classes']), 'coverage': text(coverage[item['id']])})
+    scored.sort(key=lambda row: (-row['eig_per_cost'], -row['discriminated_pairs'], -exact(row['coverage']),
+                                 row['id']))
     ranked, partitions = [], {}
     for row in scored:
         if row['eig_bits'] <= 0:

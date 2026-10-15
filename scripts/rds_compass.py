@@ -330,6 +330,16 @@ def _spread(state, count):
     return [c.pop('_id') for c in chosen]
 
 
+def _barren(state, jump):
+    """A jump that added no rival at its evidence: ask again only after new evidence."""
+    if jump['status'] == 'NO_RIVAL_WITHIN_BOUND':
+        return True
+    if jump['status'] != 'PROPOSALS_REQUESTED':
+        return False
+    disposition = state['dispositions'].get(jump['packet']['sha256'])
+    return disposition is not None and not any(o.get('admitted') for o in disposition['outcomes'])
+
+
 def decide(state):
     """Pure decision from the folded state; the caller records and executes it."""
     plan = state['plan']
@@ -351,7 +361,7 @@ def decide(state):
     diagnosis = basin(state)
     rows = live(state)
     last = state['jumps'][-1] if state['jumps'] else None
-    if (diagnosis['trigger'] and last and last['status'] == 'NO_RIVAL_WITHIN_BOUND'
+    if (diagnosis['trigger'] and last and _barren(state, last)
             and last.get('observations') == len(state['observations'])):
         # Same evidence, same bound: another synthesis pass cannot differ. Buy evidence or stop.
         if can_buy:
@@ -373,8 +383,10 @@ def decide(state):
         return {'action': 'ESCAPE', 'basin': diagnosis}
     if len(rows) >= 2 and can_buy:
         adjudicable = [{**h, 'predict': {k: v for k, v in h['predict'].items() if k in tolerances}} for h in rows]
+        seen = [env(state, candidate(state, i)) for i in state['observations']]
         ranking = model.rank_experiments(adjudicable, [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']}
-                                                       for c in pending], tolerances, weights=_weights(rows), limit=3)
+                                                       for c in pending], tolerances, observed=seen,
+                                         weights=_weights(rows), limit=3)
         if ranking['ranked']:
             top = ranking['ranked'][0]
             return {'action': 'EXPERIMENT', 'candidate': top['id'], 'leader': rows[0]['id'],
@@ -389,10 +401,15 @@ def decide(state):
     if rows and can_buy:
         leader = rows[0]
         done = confirmations(state, leader)
-        if done < plan['verification']['confirmations']:
-            # Falsification test: a fitted law must survive predictions it did not see.
+        # Plans compiled before spend_budget existed keep their recorded stopping rule.
+        spend = plan['verification'].get('spend_budget', False)
+        if done < plan['verification']['confirmations'] or spend:
+            # Falsification test: a fitted law must survive predictions it did not see. While budget
+            # remains, a leader is tested at the uncovered inputs before any claim is made.
             return {'action': 'CONFIRM', 'candidate': _spread(state, 1)[0], 'leader': leader['id'],
-                    'confirmations': done, 'required': plan['verification']['confirmations']}
+                    'confirmations': done, 'required': plan['verification']['confirmations'],
+                    'reason': 'MINIMUM_CONFIRMATIONS' if done < plan['verification']['confirmations']
+                    else 'SPEND_BUDGET_ON_REFUTATION'}
     if rows:
         return {'action': 'VERIFY', 'live': [h['id'] for h in rows]}
     return {'action': 'HANDOFF', 'reason': 'JUDGMENT_REQUIRED', 'basin': diagnosis}
@@ -403,13 +420,26 @@ def _decide_improve(state, spent, wall):
     can_buy = spent < plan['budget']['experiments'] and wall >= plan['experiment']['wall_seconds']
     baseline = plan['profile']['baseline']
     order = [baseline] + [c['id'] for c in sorted(plan['candidates'], key=lambda c: (model.exact(c['cost']), c['id']))
-                          if c['id'] != baseline]
+                          if c['id'] != baseline and 'replicates' not in c]
     for ident in order:
         if ident not in state['observations'] and next_attempt(state, candidate(state, ident)) is not None:
             if can_buy:
                 return {'action': 'EXPERIMENT', 'candidate': ident, 'leader': None,
                         'reason': 'BASELINE' if ident == baseline else 'ARM_PROFILE'}
-            break
+            return {'action': 'VERIFY', 'live': []}
+    # Replication: re-run only arms whose every bought run passes the rule, best first. An arm that
+    # failed a run cannot be accepted, so its replicates are never bought.
+    improvement = _improve_verdicts(state)
+    runs = _replicates(plan)
+    pending = sorted((a for a in improvement['arms'] if a['verdict'] == 'UNREPLICATED'),
+                     key=lambda a: (-model.exact(a['min_mean_gain']), a['arm']))
+    for arm in pending:
+        for ident in runs[arm['arm']]:
+            if ident not in state['observations'] and next_attempt(state, candidate(state, ident)) is not None:
+                if can_buy:
+                    return {'action': 'EXPERIMENT', 'candidate': ident, 'leader': None, 'reason': 'REPLICATION',
+                            'replicates': arm['arm']}
+                return {'action': 'VERIFY', 'live': []}
     return {'action': 'VERIFY', 'live': []}
 
 
@@ -547,7 +577,7 @@ def packet(state, items, trigger, notes):
     observable = state['plan']['goal']['observable']
     body = {'schema': PACKET_SCHEMA, 'status': 'CURRENT', 'kind': 'compass-abductive-jump',
             'trigger': trigger, 'head': state['head'], 'goal': state['plan']['goal']['statement'][:512],
-            'items': items,
+            'request': 'DISPOSITIONS' if items else 'PROPOSALS', 'items': items,
             'evidence': {'observations': [{'id': r['id'], 'inputs': {k: model.text(v) for k, v in r['inputs'].items()},
                                            observable: model.text(r['outputs'][observable]) if observable in r['outputs'] else None,
                                            'receipt_sha256': r['receipt_sha256']} for r in rows[-24:]],
@@ -690,16 +720,19 @@ def escape(store, state, diagnosis):
         items.append({'id': hyp['id'], 'kind': mode, 'parent': parent, 'statement': hyp['statement'],
                       'size': hyp['size'], 'sha256': hyp['sha256'], 'premises': hyp['premises'],
                       'fits_measurements': len(measured(state)), 'diverges_from_live_at': diverge})
-    if not items:
+    agent = state['plan'].get('agent')
+    if not items and not agent:
         cstore.append(store, 'JUMP', jump_id, {'trigger': diagnosis, 'packet': None, 'synthesis': notes,
                                                'rejected': rejected, 'rsi': rsi, 'status': 'NO_RIVAL_WITHIN_BOUND',
                                                'observations': len(state['observations'])})
         return {'status': 'NO_RIVAL_WITHIN_BOUND', 'jump': jump_id, 'rsi': rsi}
+    # With no machine rival left, a declared agent is asked for proposals: its rulebooks pass the
+    # same record filter as any other, so the agent adds candidates, never evidence or verdicts.
     sealed = packet(state, items, diagnosis, notes)
     cstore.append(store, 'JUMP', jump_id, {'trigger': diagnosis, 'packet': sealed, 'synthesis': notes,
-                                           'rejected': rejected, 'rsi': rsi, 'status': 'PACKET_DELIVERED',
+                                           'rejected': rejected, 'rsi': rsi,
+                                           'status': 'PACKET_DELIVERED' if items else 'PROPOSALS_REQUESTED',
                                            'observations': len(state['observations'])})
-    agent = state['plan'].get('agent')
     disposer, evidence, decisions, proposals, errors = 'COMPASS_AUTO', None, None, [], []
     if agent:
         delivered = _evidence_identity(store)
@@ -842,6 +875,38 @@ def _polynomial_check(state, best):
     return {**base, 'status': 'AGREES_WITH_UNIQUE_POLYNOMIAL_ON_DECLARED_EXPERIMENTS'}
 
 
+def _replicates(plan):
+    """Declared runs per original arm: the arm first, then its replicates by (cost, id)."""
+    runs = {c['id']: [c['id']] for c in plan['candidates'] if 'replicates' not in c}
+    for c in sorted(plan['candidates'], key=lambda c: (model.exact(c['cost']), c['id'])):
+        if 'replicates' in c:
+            runs[c['replicates']].append(c['id'])
+    return runs
+
+
+def _run_verdict(state, ident, base, stale):
+    plan, profile = state['plan'], state['plan']['profile']
+    obs = state['observations'][ident]
+    if obs['status'] != 'MEASURED' or set(obs['samples']) != set(base['samples']):
+        return {'run': ident, 'verdict': 'UNMEASURED_OR_SAMPLE_MISMATCH'}
+    if {ident, profile['baseline']} & stale:
+        # Recorded samples whose receipt bytes no longer verify are never evidence.
+        return {'run': ident, 'verdict': 'STALE_EVIDENCE', 'receipt_sha256': obs['receipt_sha256']}
+    higher = plan['higher_is_better'].get(profile['metric'], True)
+    prof = model.sample_profile(base['samples'], obs['samples'], higher_is_better=higher)
+    if 'max_degradation' not in profile or 'min_gain' not in profile:
+        verdict = 'JUDGMENT_REQUIRED'
+    elif model.exact(prof['mean_gain']) < model.exact(profile['min_gain']):
+        verdict = 'NO_MEAN_GAIN'
+    else:
+        verdict = model.profile_verdict(prof, profile['max_degradation'])
+    return {'run': ident, 'verdict': verdict, 'profile': prof, 'receipt_sha256': obs['receipt_sha256']}
+
+
+# A failed run decides its arm; the order says which failure is reported first.
+UNSETTLED = ('STALE_EVIDENCE', 'UNMEASURED_OR_SAMPLE_MISMATCH', 'JUDGMENT_REQUIRED')
+
+
 def _improve_verdicts(state, stale=()):
     plan = state['plan']
     profile = plan['profile']
@@ -849,31 +914,37 @@ def _improve_verdicts(state, stale=()):
     if base is None or base['status'] != 'MEASURED' or not base['samples']:
         return {'baseline': profile['baseline'], 'status': 'BASELINE_UNMEASURED', 'arms': []}
     stale = {row['candidate'] for row in stale}
-    higher = plan['higher_is_better'].get(profile['metric'], True)
     arms = []
-    for ident, obs in sorted(state['observations'].items()):
-        if ident == profile['baseline']:
+    for ident, runs in sorted(_replicates(plan).items()):
+        if ident == profile['baseline'] or not any(r in state['observations'] for r in runs):
             continue
-        if obs['status'] != 'MEASURED' or set(obs['samples']) != set(base['samples']):
-            arms.append({'arm': ident, 'verdict': 'UNMEASURED_OR_SAMPLE_MISMATCH'})
-            continue
-        if {ident, profile['baseline']} & stale:
-            # Recorded samples whose receipt bytes no longer verify are never evidence.
-            arms.append({'arm': ident, 'verdict': 'STALE_EVIDENCE', 'receipt_sha256': obs['receipt_sha256']})
-            continue
-        prof = model.sample_profile(base['samples'], obs['samples'], higher_is_better=higher)
-        if 'max_degradation' not in profile or 'min_gain' not in profile:
-            verdict = 'JUDGMENT_REQUIRED'
-        elif model.exact(prof['mean_gain']) < model.exact(profile['min_gain']):
-            verdict = 'NO_MEAN_GAIN'
+        results = [_run_verdict(state, r, base, stale) for r in runs if r in state['observations']]
+        failed = next((r for kind in UNSETTLED for r in results if r['verdict'] == kind), None) or \
+            next((r for r in results if r['verdict'] != 'ACCEPT'), None)
+        if failed is not None:
+            verdict = failed['verdict']
+        elif len(results) < len(runs):
+            verdict = 'UNREPLICATED'  # A declared re-run was never bought: one run is not the arm.
         else:
-            verdict = model.profile_verdict(prof, profile['max_degradation'])
-        arms.append({'arm': ident, 'verdict': verdict, 'profile': prof, 'receipt_sha256': obs['receipt_sha256'],
-                     'baseline_receipt_sha256': base['receipt_sha256']})
-    accepted = sorted((a for a in arms if a['verdict'] == 'ACCEPT'), key=lambda a: -model.exact(a['profile']['mean_gain']))
+            verdict = 'ACCEPT'
+        first = results[0]
+        entry = {'arm': ident, 'verdict': verdict, **{k: first[k] for k in ('profile', 'receipt_sha256') if k in first}}
+        if 'profile' in first:
+            entry['baseline_receipt_sha256'] = base['receipt_sha256']
+        if len(runs) > 1:
+            entry['runs'] = results
+            entry['declared_runs'] = runs
+            gains = [model.exact(r['profile']['mean_gain']) for r in results if 'profile' in r]
+            entry['min_mean_gain'] = model.text(min(gains)) if gains else None
+        arms.append(entry)
+
+    def gain(arm):
+        return model.exact(arm.get('min_mean_gain') or arm['profile']['mean_gain'])
+    accepted = sorted((a for a in arms if a['verdict'] == 'ACCEPT'), key=lambda a: (-gain(a), a['arm']))
     return {'baseline': profile['baseline'], 'status': 'EVALUATED', 'arms': arms,
             'recommended': accepted[0]['arm'] if accepted else None,
-            'rule': 'ACCEPT iff mean gain > 0 and >= min_gain and worst per-sample degradation <= max_degradation'}
+            'rule': 'ACCEPT iff, on every declared run of the arm, mean gain > 0 and >= min_gain and '
+                    'worst per-sample degradation <= max_degradation'}
 
 
 def _stale(store, state):
@@ -922,6 +993,8 @@ def verify(store, state):
                  'polynomial': _polynomial_check(state, best) if best else None,
                  'novel_confirmations': confirmations(state, best) if best else 0,
                  'required_confirmations': plan['verification']['confirmations'],
+                 'coverage': {'measured': len(measured(state)), 'declared': len(plan['candidates']),
+                              'unmeasured_inputs_are': 'PREDICTED_NOT_MEASURED'},
                  'claim': ('NOT_ESTABLISHED' if not replay or replay['status'] != 'CONSISTENT' else
                            'CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS'
                            if confirmations(state, best) >= plan['verification']['confirmations'] else

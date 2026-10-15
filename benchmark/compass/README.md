@@ -61,7 +61,16 @@ Row `status` is each arm's own outcome. For `ratchet`, `bare_agent` and
 |---|---|---|---|
 | ratchet | 0 / 4 | 3 | 12 |
 | bare_agent (simulated) | 0 / 4 | 3 | 27 |
-| compass | 5 / 5 runs | 0 | 29 |
+| compass | 5 / 5 runs | 0 | 61 |
+
+Compass now spends its experiment budget on refutation attempts before it
+claims (`verification.spend_budget`, default true; see
+[Compass](../../docs/compass.md)). Per run: 8, 10, 20, 20 and 3 experiments.
+On these small domains that is exhaustive or nearly so. The earlier rule
+stopped after two novel predictions and used 29 experiments. It also
+happened to buy the trap inputs only because equal-EIG ties were broken by
+candidate id. A coverage tie-break exposed that a sparse exception could
+then be certified away.
 
 On `capability-gap`, session 1 tried 16 generated tools before `divisors`
 qualified through the receipted holdout oracle triple. Session 2 tried 1: the
@@ -71,6 +80,10 @@ library offer, re-qualified against its own receipts.
 
 Codex CLI `gpt-6.1-sol`, `xhigh`, default tier, three independent trials per
 task. Bundle `3421f225193d84015178231ad39bf07859d1c71fdae2be85d51aff0378de6347`.
+This run was recorded at commit `5baa04a`, under the earlier stopping rule
+(two novel predictions) and before the jump agent was asked for proposals
+when synthesis finds nothing. It has not been re-run under the current
+policy.
 
 | Arm | Verified discoveries | False certifications | Contaminated | Experiments |
 |---|---|---|---|---|
@@ -96,10 +109,12 @@ What this does and does not show:
 - On these toy worlds the arms therefore do not separate on correctness. The
   simulated `bare_agent` row (0 / 4) is a stated policy and must not be read
   as a frontier-model result.
-- The measured difference is cost. Compass's first sessions used 23
-  experiments per trial; `codex_agent` used 41, 30 and 41 (mean 37.3). The
-  margin exists only because exhaustive measurement is affordable here; this
-  benchmark has no task where it is not.
+- The measured difference was cost, under the earlier stopping rule.
+  Compass's first sessions used 23 experiments per trial; `codex_agent` used
+  41, 30 and 41 (mean 37.3). That margin came from stopping after two novel
+  predictions, which is the rule the hard tier showed can certify a law that
+  a sparse exception refutes. Under `spend_budget`, Compass spends the budget
+  too, and this margin is not claimed.
 - Compass's experiment counts with Codex as the jump agent equal the
   deterministic arm's (5, 9, 6, 6, 3). Codex adopted the synthesized item in
   every one of the 12 jumps. The filter also admitted some of Codex's own
