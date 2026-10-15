@@ -84,9 +84,9 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
                 cstore.append(store, 'REPORT', body['sha256'][:32], body)
                 if verification['goal'] == 'IMPROVE':
                     improvement = verification['improvement']
-                    # An undeclared threshold, an unmeasured baseline, or an arm that is unmeasured or
-                    # measured on other samples than the baseline is not a settled evaluation. Nor is a
-                    # campaign whose only rule-passing arms still lack a declared re-run.
+                    # An undeclared threshold or metric direction, an unmeasured baseline, or an arm that
+                    # is unmeasured or measured on other samples than the baseline is not a settled
+                    # evaluation. Nor is a campaign whose only rule-passing arms still lack a declared re-run.
                     judgment = [a['arm'] for a in improvement['arms']
                                 if a['verdict'] in ('JUDGMENT_REQUIRED', 'UNMEASURED_OR_SAMPLE_MISMATCH')]
                     unreplicated = [a['arm'] for a in improvement['arms'] if a['verdict'] == 'UNREPLICATED']
@@ -96,7 +96,9 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
                         'stale': verification['stale'][:8], 'improvement_status': improvement['status'],
                         'judgment_required': judgment[:8], 'unreplicated': unreplicated[:8],
                         'unknown_thresholds': [k for k in ('min_gain', 'max_degradation')
-                                               if k not in state['plan']['profile']]}
+                                               if k not in state['plan']['profile']] +
+                                              (['higher_is_better'] if state['plan']['profile']['metric']
+                                               not in state['plan']['higher_is_better'] else [])}
                     return finish('IMPROVEMENT_EVALUATED' if settled else 'JUDGMENT_REQUIRED', detail,
                                   verification=verification, report_sha256=body['sha256'])
                 rival = (verification.get('polynomial') or {}).get('status') == 'POLYNOMIAL_RIVAL_DISAGREES'

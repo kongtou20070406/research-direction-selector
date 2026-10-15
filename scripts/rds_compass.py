@@ -892,7 +892,10 @@ def _run_verdict(state, ident, base, stale):
     if {ident, profile['baseline']} & stale:
         # Recorded samples whose receipt bytes no longer verify are never evidence.
         return {'run': ident, 'verdict': 'STALE_EVIDENCE', 'receipt_sha256': obs['receipt_sha256']}
-    higher = plan['higher_is_better'].get(profile['metric'], True)
+    higher = plan['higher_is_better'].get(profile['metric'])
+    if higher is None:
+        # No declared direction: the sign of every per-sample delta is unknown.
+        return {'run': ident, 'verdict': 'JUDGMENT_REQUIRED', 'receipt_sha256': obs['receipt_sha256']}
     prof = model.sample_profile(base['samples'], obs['samples'], higher_is_better=higher)
     if 'max_degradation' not in profile or 'min_gain' not in profile:
         verdict = 'JUDGMENT_REQUIRED'
@@ -953,7 +956,11 @@ def _stale(store, state):
     for ident, obs in sorted(state['observations'].items()):
         if obs['status'] != 'MEASURED':
             continue
-        receipt = receipts[obs['run_id']]
+        receipt = receipts.get(obs['run_id'])
+        if receipt is None:
+            # A retained observation whose receipt row is gone binds to nothing: never evidence.
+            stale.append({'candidate': ident, 'binding': 'RECEIPT_MISSING'})
+            continue
         _, binding = cstore.artifact(store, receipt, obs['artifact']['path'])
         if binding != 'BOUND' or receipt['sha256'] != obs['receipt_sha256']:
             stale.append({'candidate': ident, 'binding': binding})
@@ -985,7 +992,10 @@ def verify(store, state):
         replay = model.replay(best, measured(state), {k: tolerances[k] for k in best['predict'] if k in tolerances}) if best else None
         value = {'goal': 'IDENTIFY_LAW', 'receipts_rechecked': not stale, 'stale': stale,
                  'hypothesis': _compact_hyp(best) if best else None,
-                 'predict': {k: model.render(v) for k, v in best['predict'].items()} if best else None,
+                 # The claim states only what replay compared; an observable without a tolerance is
+                 # named, never asserted.
+                 'predict': {k: model.render(v) for k, v in best['predict'].items() if k in tolerances} if best else None,
+                 'unadjudicated': sorted(k for k in best['predict'] if k not in tolerances) if best else [],
                  'equivalence_class': [h['id'] for h in classes[0]] if classes else [],
                  'distinct_live_classes': len(classes),
                  'replay': {k: replay[k] for k in ('status', 'tested', 'not_applicable', 'unknown_measurements')} if replay else None,

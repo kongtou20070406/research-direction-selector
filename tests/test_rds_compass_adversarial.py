@@ -3,9 +3,9 @@
 Each case reproduces a defect found by an independent Codex (gpt-6.1-sol, xhigh) red-team pass
 against the 6.0.0 candidate, or by the Codex review of PR #357. Every case failed before its fix.
 """
+from contextlib import closing
 import hashlib
 import json
-import os
 from pathlib import Path
 import signal
 import sqlite3
@@ -94,6 +94,19 @@ class ReceiptBindingTests(Campaign):
         self.assertEqual(verification['improvement']['arms'][0]['verdict'], 'STALE_EVIDENCE')
         self.assertIsNone(verification['improvement']['recommended'])
 
+    def test_missing_receipt_row_is_stale_evidence(self):
+        store = self.law(hypotheses=[('identity', 'x')])
+        self.buy(store, 'x0', 'x1', 'x2', 'x3')
+        compass.ingest(store)
+        # Media damage drops a retained observation's receipt row; the append-only trigger cannot stop it.
+        with closing(sqlite3.connect(store.path)) as db, db:
+            db.execute('DROP TRIGGER receipts_no_delete')
+            db.execute("DELETE FROM receipts WHERE run_id='compass-x0'")
+        verification = compass.verify(store, compass.fold(store))
+        self.assertFalse(verification['receipts_rechecked'])
+        self.assertIn({'candidate': 'x0', 'binding': 'RECEIPT_MISSING'}, verification['stale'])
+        self.assertNotEqual(drive(self.root, publish=False)['status'], 'GOAL_IDENTIFIED')
+
 
 class NoveltyTests(Campaign):
     def test_pre_adoption_receipts_are_not_novel_confirmations(self):
@@ -164,7 +177,9 @@ class InterruptTests(Campaign):
         def interrupt_after_write(path, *args, **kwargs):
             result = write_text(path, *args, **kwargs)
             if path.name == 'manifest.json' and path.parent.parent.name == 'project-artifacts':
-                os.kill(os.getpid(), signal.SIGTERM)
+                # raise() reaches the installed handler on every platform; os.kill on Windows
+                # is TerminateProcess and would end the test runner itself.
+                signal.raise_signal(signal.SIGTERM)
             return result
 
         with patch.object(Path, 'write_text', interrupt_after_write):
@@ -178,16 +193,20 @@ class HashChainTests(Campaign):
     def test_tampered_terminal_sequence_is_detected(self):
         store = self.law()
         compass.handoff(store, 'JUDGMENT_REQUIRED')
-        with sqlite3.connect(store.path) as db:
+        with closing(sqlite3.connect(store.path)) as db:
             raw = db.execute('SELECT body FROM events ORDER BY id DESC LIMIT 1').fetchone()[0]
             self.assertEqual(json.loads(raw)['kind'], 'COMPASS_HANDOFF')
             db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        # Media tampering on the tail row: no successor row carries its digest.
+        # Media tampering on the tail row: no successor row carries its digest. The bytes are
+        # rewritten in place, same length, with no connection open (Windows refuses a truncate).
         damaged = raw.replace('"seq":2', '"seq":0').encode('utf-8')
         self.assertNotEqual(damaged, raw.encode('utf-8'))
+        self.assertEqual(len(damaged), len(raw.encode('utf-8')))
         original = store.path.read_bytes()
         self.assertEqual(original.count(raw.encode('utf-8')), 1)
-        store.path.write_bytes(original.replace(raw.encode('utf-8'), damaged))
+        with store.path.open('r+b') as media:
+            media.seek(original.index(raw.encode('utf-8')))
+            media.write(damaged)
         with self.assertRaises(cstore.CompassIntegrityError):
             compass.report(store)
 
@@ -226,6 +245,19 @@ class DeclarationReviewTests(Campaign):
         edit = lambda d: d['observables']['score'].update(higher_is_better='false')
         with self.assertRaisesRegex(ValueError, 'higher_is_better must be true or false'):
             initialize(self.root, self.declaration(path, edit))
+
+    def test_metric_direction_is_never_defaulted(self):
+        # For a loss, the arm reporting 12 is worse; a defaulted direction would recommend it.
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'worse': {'s': 12}})
+        edit = lambda d: d['observables']['score'].pop('higher_is_better')
+        plan = initialize(self.root, self.declaration(path, edit))['plan']
+        self.assertIn('observables.score.higher_is_better', plan['unknown'])
+        result = drive(self.root, publish=False)
+        self.assertEqual((result['status'], exit_code(result)), ('JUDGMENT_REQUIRED', 2))
+        self.assertIn('higher_is_better', result['workset']['handoff']['detail']['unknown_thresholds'])
+        improvement = result['verification']['improvement']
+        self.assertEqual([a['verdict'] for a in improvement['arms']], ['JUDGMENT_REQUIRED'])
+        self.assertIsNone(improvement['recommended'])
 
     def test_hypothesis_must_predict_the_goal_observable(self):
         path = fx.law_campaign(self.root, 'x', range(4))

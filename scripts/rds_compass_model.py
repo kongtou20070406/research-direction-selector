@@ -482,7 +482,11 @@ def behavior(hypothesis, points):
 
 
 def equivalent(left, right, points, tolerances):
-    """Executable equivalence on the available experiment space only."""
+    """Executable equivalence on the available experiment space only.
+
+    As in replay, an observable with no declared tolerance is never compared: no measurement
+    could separate two rulebooks on it. With nothing adjudicable, no equivalence is claimed.
+    """
     if left['sha256'] == right['sha256']:
         return 'IDENTICAL_EXECUTABLE'
     determinate = 0
@@ -493,9 +497,11 @@ def equivalent(left, right, points, tolerances):
             return None
         if sa != 'PREDICTED':
             continue
-        if set(a) != set(b) or any(not matches(a[k], b[k], tolerances[k]) for k in a):
+        compared = sorted(k for k in a if k in tolerances)
+        if compared != sorted(k for k in b if k in tolerances) or \
+                any(not matches(a[k], b[k], tolerances[k]) for k in compared):
             return None
-        determinate += 1
+        determinate += bool(compared)
     return 'OBSERVATIONALLY_EQUIVALENT' if determinate else None
 
 

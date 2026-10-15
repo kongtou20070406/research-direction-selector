@@ -81,6 +81,25 @@ class LawTests(Campaign):
         result = model.replay(hyp, rows, {'y': (0, 0)})
         self.assertEqual((result['status'], result['tested'], result['unknown_measurements']), ('CONSISTENT', 2, 2))
 
+    def test_rivals_that_differ_only_on_an_untoleranced_observable_share_a_class(self):
+        root = self.base / 'side-rivals'
+        path = fx.law_campaign(root, 'x', range(4))
+        fx.write(root / 'experiment.py', SIDE)
+        value = json.loads(path.read_text(encoding='utf-8'))
+        value['observables']['z'] = {}
+        value['hypotheses'] = [{'id': 'near', 'predict': {'y': 'x', 'z': 'x'}},
+                               {'id': 'far', 'predict': {'y': 'x', 'z': 'x + 9'}}]
+        fx.write(path, value)
+        initialize(root, path)
+        verification = drive(root, publish=False)['verification']
+        # z can neither refute nor separate the two; the claim names the observable it never compared.
+        self.assertEqual(sorted(verification['equivalence_class']), ['far', 'near'])
+        self.assertEqual((verification['predict'], verification['unadjudicated']), ({'y': 'x'}, ['z']))
+        self.assertEqual(verification['scientific_support'], 'UNKNOWN')
+        near, far = (model.compile_hypothesis(h, ['x'], ['y', 'z']) for h in value['hypotheses'])
+        self.assertEqual(model.equivalent(near, far, [{'x': 1}], {'y': (0, 0)}), 'OBSERVATIONALLY_EQUIVALENT')
+        self.assertIsNone(model.equivalent(near, far, [{'x': 1}], {}))  # Nothing adjudicable: never equivalent.
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)

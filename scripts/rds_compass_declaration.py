@@ -133,6 +133,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
         for key in ('max_degradation', 'min_gain'):
             if key not in profile:
                 unknown.append('profile.' + key)
+        if 'higher_is_better' not in observables[profile['metric']]:
+            # A loss and a score differ only here; the direction is goal semantics, never a default.
+            unknown.append(f"observables.{profile['metric']}.higher_is_better")
         # ACCEPT also needs a strictly positive mean gain, so a negative floor could never be honoured.
         require('min_gain' not in profile or model.exact(profile['min_gain']) >= 0,
                 'profile.min_gain must be at least 0: an arm needs a positive mean gain to be accepted')
@@ -273,7 +276,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
             'experiment': {'timeout_seconds': timeout, 'wall_seconds': wall}, 'protocol': protocol_ref,
             'agent': agent, 'library': library, 'unknown': sorted(set(unknown)),
             'defaulted': sorted(set(defaulted)), 'declaration_sha256': source_sha256,
-            'higher_is_better': {k: v.get('higher_is_better', True) for k, v in observables.items()}}
+            'higher_is_better': {k: v['higher_is_better'] for k, v in observables.items() if 'higher_is_better' in v}}
     if goal['kind'] == 'IMPROVE':
         plan['profile'] = {k: (model.text(v) if k in ('max_degradation', 'min_gain') else v)
                            for k, v in declaration['profile'].items()}
