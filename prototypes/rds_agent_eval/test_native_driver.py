@@ -40,9 +40,9 @@ class NativeDriverTests(unittest.TestCase):
             result = driver.run_arm(self.root / 'arm', self.seed, 'Bare', self.declaration, self.recipe, 'http://fixture', self.pins)
         return result, opened
 
-    def test_complete_text_retains_raw_request_response_and_private_gold_is_not_sent(self):
+    def test_early_complete_text_is_retained_without_acceptance_or_private_gold(self):
         result, opened = self.run_response({'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'answer'}})
-        self.assertEqual((result['calls'], result['status'], result['completion_mode']), (1, 'AGENT_FINISHED', 'TEXT'))
+        self.assertEqual((result['calls'], result['status'], result['final_answer']), (1, 'UNKNOWN_NO_RETRY', None))
         audit = self.root / 'arm/audit'
         self.assertTrue((audit / 'response-0.json').exists())
         self.assertNotIn('PRIVATE_GOLD', (audit / 'request-0.json').read_text(encoding='utf-8'))
@@ -87,3 +87,127 @@ class NativeDriverTests(unittest.TestCase):
         before = file_sha(fixture.store.path)
         self.assertTrue(driver.tool(fixture.store.root, 'RDS', manifest)['reused_original'])
         self.assertEqual(file_sha(fixture.store.path), before)
+
+
+class SurveyDriverTests(unittest.TestCase):
+    def setUp(self):
+        from prototypes.rds_agent_eval import test_domain_bridge as domain_fixtures, domain_bridge
+        self.fixture = domain_fixtures.DomainBridgeTests('runTest')
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.study = self.fixture.study
+        self.seed = self.fixture.store.root
+        self.arms_tmp = tempfile.TemporaryDirectory(prefix='rds-native-driver-arms-')
+        self.addCleanup(self.arms_tmp.cleanup)
+        self.arm_base = Path(self.arms_tmp.name).resolve()
+        self.recipe = self.study.recipe
+        self.recipe['budget'] = {'wall_seconds': 100, 'cpu_seconds': 100, 'gpu_seconds': 0}
+        for route in self.recipe['routes']:
+            route['run']['timeout_seconds'] = 7.2
+            route['run']['resource_estimates'] = {'wall_seconds': 7.2, 'cpu_seconds': 7.2, 'gpu_seconds': 0}
+        self.fixture.native.write_json('recipe.json', self.recipe)
+        self.pins = {str(Path(p).resolve()): driver.sha(p) for p in (driver.__file__, domain_bridge.__file__)}
+        self.fixture.native.write('task.json', '{"query":"Finish with a JSON object; retain this task suffix."}')
+        self.final = self.fixture.fixture.final
+        self.domain = domain_bridge.specification()['domain']
+
+    def choice(self, name, value):
+        if name == 'text':
+            return {'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': value}}
+        return {'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'tool_calls': [
+            {'id': name, 'function': {'name': name, 'arguments': json.dumps({
+                'method' if name == 'execute' else 'answer': value})}}]}}
+
+    def run_choices(self, arm, name, choices, mutate=None):
+        root = self.arm_base / name
+        calls = []
+        def response(req, **kwargs):
+            index = len(calls)
+            calls.append(json.loads(req.data))
+            if mutate is not None:
+                mutate(root, index)
+            return io.BytesIO(json.dumps({'model': 'resolved', 'choices': [choices[index]]}).encode())
+        with patch.object(driver.time, 'time', return_value=100), \
+             patch.object(driver.urllib.request, 'urlopen', side_effect=response) as opened:
+            result = driver.run_arm(root, self.seed, arm, self.study.declaration, self.recipe,
+                                    'http://fixture', self.pins, domain=self.domain)
+        return root, result, calls, opened
+
+    def test_both_original_methods_are_required_for_text_and_function_in_both_arms(self):
+        for arm in ('Bare', 'RDS'):
+            for mode in ('text', 'finish'):
+                with self.subTest(arm=arm, mode=mode):
+                    choices = [self.choice('execute', m) for m in ('role_inventory', 'quoted_fractions')]
+                    root, result, calls, opened = self.run_choices(arm, arm + mode, choices + [self.choice(mode, self.final)])
+                    self.assertEqual((result['status'], result['calls']), ('AGENT_FINISHED', 3))
+                    self.assertEqual(result['final_answer'], self.final)
+                    self.assertEqual({p['method'] for p in result['method_completion']}, {'role_inventory', 'quoted_fractions'})
+                    self.assertEqual(result['scientific_support'], 'UNKNOWN')
+                    instruction = calls[0]['messages'][0]['content']
+                    self.assertIn('bootstrap_ci', instruction)
+                    self.assertIn('retain this task suffix', instruction)
+                    self.assertNotIn('earliest_observed_main_period', instruction)
+                    self.assertNotIn('PRIVATE_GOLD', json.dumps(calls))
+                    self.assertEqual(opened.call_count, 3)
+                    self.assertEqual(len(list((root/'audit').glob('*-raw.json'))), 2)
+
+    def test_early_finish_or_only_one_method_stops_without_extra_dispatch_or_request(self):
+        for arm, mode, one in (('Bare', 'text', False), ('RDS', 'finish', True)):
+            with self.subTest(arm=arm):
+                choices = ([self.choice('execute', 'role_inventory')] if one else []) + [self.choice(mode, self.final)]
+                root, result, calls, opened = self.run_choices(arm, 'early' + arm, choices)
+                self.assertEqual(result['status'], 'UNKNOWN_NO_RETRY')
+                self.assertIsNone(result['final_answer'])
+                self.assertEqual(opened.call_count, len(choices))
+                self.assertEqual(len(list((root/'audit').glob('*-raw.json'))), int(one))
+                self.assertEqual(json.loads((root/'audit'/f'failure-{len(choices)-1}.json').read_text())['paid_cost'], 'UNKNOWN')
+
+    def test_changed_original_outputs_and_forged_native_status_cannot_complete(self):
+        for arm in ('Bare', 'RDS'):
+            def mutate(root, index):
+                if index != 2:
+                    return
+                if arm == 'Bare':
+                    (root/'outputs/baseline.json').write_bytes(b'changed')
+                else:
+                    p = root/'audit/baseline-tool.json'
+                    value = json.loads(p.read_text())
+                    value['status'] = 'FAILED'
+                    driver.save(p, value)
+            with self.subTest(arm=arm):
+                choices = [self.choice('execute', m) for m in ('role_inventory', 'quoted_fractions')]
+                root, result, _, opened = self.run_choices(arm, 'changed'+arm, choices+[self.choice('text', self.final)], mutate)
+                self.assertEqual(result['status'], 'UNKNOWN_NO_RETRY')
+                self.assertEqual(opened.call_count, 3)
+                self.assertTrue((root/'audit/response-2.json').is_file())
+
+    def test_unpinned_slot_rejects_before_request_and_wrong_final_keeps_original(self):
+        with patch.object(driver.time, 'time', return_value=100), \
+             patch.object(driver.urllib.request, 'urlopen', side_effect=AssertionError('Requested')), self.assertRaises(ValueError):
+            driver.run_arm(self.arm_base/'unpinned', self.seed, 'Bare', self.study.declaration,
+                self.recipe, 'http://fixture', {str(Path(driver.__file__).resolve()): driver.sha(driver.__file__)}, domain=self.domain)
+        choices = [self.choice('execute', m) for m in ('role_inventory', 'quoted_fractions')]
+        root, result, _, opened = self.run_choices('Bare', 'wrong-final', choices+[self.choice('finish', '{"answer":"missing fields"}')])
+        self.assertEqual((result['status'], opened.call_count), ('UNKNOWN_NO_RETRY', 3))
+        self.assertIsNone(result['final_answer'])
+        self.assertTrue((root/'audit/response-2.json').is_file())
+
+    def test_actual_failed_native_receipt_cannot_supply_completion_or_be_rebought(self):
+        self.recipe['routes'][0]['run']['argv'][-2] = 'invalid-method'
+        self.fixture.native.write_json('recipe.json', self.recipe)
+        with patch.object(driver.time, 'time', return_value=100):
+            from rds_project import ProjectStore
+            from rds_project_assembly import initialize
+            initialize(self.fixture.store, self.seed/'recipe.json')
+        with self.fixture.store._db(readonly=True) as db:
+            manifest = ProjectStore._contract(db)['advisor_policy']['routes'][0]['manifest']
+        result = driver.tool(self.seed, 'RDS', manifest)
+        self.assertEqual(result['status'], 'FAILED')
+        before = file_sha(self.fixture.store.path)
+        with patch.object(ProjectStore, 'execute', side_effect=AssertionError('Rebought')), self.assertRaises(ValueError):
+            driver.completed_methods(self.seed, 'RDS', {'invalid-method': manifest})
+        self.assertEqual(file_sha(self.fixture.store.path), before)
+        original = driver.read_observations(self.fixture.store, [{'run_id': result['receipt']['run_id'],
+            'receipt_sha256': result['receipt']['sha256']}])['observations'][0]['receipt']
+        self.assertTrue(original['errors'])
+        self.assertTrue(original['resources']['cpu_seconds']['unknown'])

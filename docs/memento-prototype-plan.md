@@ -33,6 +33,30 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S24: domain-aware driver and original method completion
+
+Scope: native_driver.py, test_native_driver.py under prototypes/rds_agent_eval,
+this plan and handoff. Reuse the pinned static S23 survey slot and frozen S22
+worker, with the same tools and bounds in both arms. Replace the plant-specific
+answer instruction only for the explicitly inspected survey domain; preserve
+full final strings and extras. All declared methods must have original successful
+feedback before either stop-text or finish-function acceptance. Completion only
+reads existing files/native receipts and cannot dispatch a missing method.
+Recheck native manifest/status and original Bare output identity; missing,
+failed, damaged or early final evidence stops UNKNOWN_NO_RETRY with paid response
+and unknown costs retained. Final JSON shape is not a correctness/science score.
+No S18 frozen-source/result edits or reinterpretation. Nine scoped checks and
+eight subtests pass (four existing and five new cases). Preserve the original
+shared-temp-root fixture failure; one retry with owned per-test roots passed,
+without changing assertions, freshness or budgets. Frozen survey runtime at
+study-s24-frozen binds 185 files: 9 prototype sources, 12 seed assets, 162 native
+sources and 2 host files. Source81b67cf; manifest SHA-256
+bee0aa4c595f3528e820923c951be296777cd0c39e5749a3a4944e544ba64139.
+Read-only runtime import/slot/host checks pass, no initialization/request/task
+registration. Evidence acceptance-s24-freeze-20261015.json; old pins unchanged.
+Next recheck the inspected fresh survey runtime before separate paid execution;
+reviewer/bootstrap/full-question correctness and scientific support UNKNOWN.
+
 ### S23: native survey verifier slot and explicit final fields
 
 Scope: domain_bridge.py, test_domain_bridge.py under prototypes/rds_agent_eval,
