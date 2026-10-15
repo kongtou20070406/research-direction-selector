@@ -33,6 +33,22 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S24: domain-aware driver and original method completion
+
+Scope: native_driver.py, test_native_driver.py under prototypes/rds_agent_eval,
+this plan and handoff. Reuse the pinned static S23 survey slot and frozen S22
+worker, with the same tools and bounds in both arms. Replace the plant-specific
+answer instruction only for the explicitly inspected survey domain; preserve
+full final strings and extras. All declared methods must have original successful
+feedback before either stop-text or finish-function acceptance. Completion only
+reads existing files/native receipts and cannot dispatch a missing method.
+Recheck native manifest/status and original Bare output identity; missing,
+failed, damaged or early final evidence stops UNKNOWN_NO_RETRY with paid response
+and unknown costs retained. Final JSON shape is not a correctness/science score.
+No S18 frozen-source/result edits or reinterpretation. Focused checks pending.
+Next inspect and freeze a fresh survey runtime before any paid execution;
+reviewer/bootstrap/full-question correctness and scientific support UNKNOWN.
+
 ### S23: native survey verifier slot and explicit final fields
 
 Scope: domain_bridge.py, test_domain_bridge.py under prototypes/rds_agent_eval,

@@ -19,11 +19,14 @@ def tool(root, arm, manifest):
     if done.exists():
         prior = json.loads(done.read_text(encoding='utf-8'))
         if arm == 'RDS':
-            from rds_project import ProjectStore
-            read_observations(ProjectStore(root), [{'run_id': prior['receipt']['run_id'],
-                'receipt_sha256': prior['receipt']['sha256']}])
-        elif prior['status'] == 'SUCCEEDED' and sha(root / manifest['outpaths'][0]) != prior['measurement_sha256']:
-            raise ValueError('Original Bare output changed')
+            from rds_project import ProjectStore, digest
+            original = read_observations(ProjectStore(root), [{'run_id': prior['receipt']['run_id'],
+                'receipt_sha256': prior['receipt']['sha256']}])['observations'][0]['receipt']
+            if original['manifest_sha256'] != digest(manifest) or original['run_status'] != prior['status']:
+                raise ValueError('Original native method/status differs', prior, original)
+        elif (prior['argv'] != manifest['argv'] or (prior['status'] == 'SUCCEEDED'
+                and sha(root / manifest['outpaths'][0]) != prior['measurement_sha256'])):
+            raise ValueError('Original Bare method/output changed', prior)
         return {**prior, 'reused_original': True}
     if raw_path.exists():
         raise ValueError('Prior attempt lacks verified feedback; no rerun')
@@ -67,7 +70,23 @@ def tool(root, arm, manifest):
     return result
 
 
-def run_arm(root, seed, arm, declaration, recipe, endpoint, pins):
+def completed_methods(root, arm, routes):
+    """Read existing originals only; a final answer cannot dispatch a missing method."""
+    proofs = []
+    for method, manifest in routes.items():
+        path = root / 'audit' / (manifest['id'] + '-tool.json')
+        if not path.is_file():
+            raise ValueError('Required method has no original feedback: ' + method)
+        result = tool(root, arm, manifest)
+        if result['status'] != 'SUCCEEDED':
+            raise ValueError('Required method did not succeed', result)
+        proofs.append({'method': method, 'feedback_sha256': sha(path),
+                       'receipt_sha256': result['receipt']['sha256'] if arm == 'RDS' else None,
+                       'measurement_sha256': result.get('measurement_sha256')})
+    return proofs
+
+
+def run_arm(root, seed, arm, declaration, recipe, endpoint, pins, *, domain=None):
     """One fresh arm, at most 20 requests; the host must inspect/freeze all sources."""
     root, seed = Path(root).resolve(), Path(seed).resolve()
     if arm not in {'Bare', 'RDS'} or declaration['per_arm_calls'] != 20 or root.exists():
@@ -77,12 +96,20 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins):
     end = min(declaration['deadline_epoch'], time.time() + recipe['budget']['wall_seconds'])
     if time.time() >= end or pins.get(str(Path(__file__).resolve())) != sha(__file__):
         raise ValueError('Deadline reached or driver lacks its inspected source pin')
+    routes = {r['run']['argv'][-2]: r['run'] for r in recipe['routes']}
+    slot = None
+    if domain is not None:
+        from prototypes.rds_agent_eval import domain_bridge
+        slot = domain_bridge.specification()
+        if (domain != slot['domain'] or pins.get(str(Path(domain_bridge.__file__).resolve())) != sha(domain_bridge.__file__)
+                or set(routes) != {'role_inventory', 'quoted_fractions'}
+                or not any(sha(seed / p) == slot['worker_sha256'] for p in recipe['files']['code'])):
+            raise ValueError('Require the inspected static survey slot and frozen worker')
     shutil.copytree(seed, root)
     audit = root / 'audit'
     audit.mkdir()
     assets = declaration['agent_files'] + sum(recipe['files'].values(), [])
     pins = {**pins, **{str(root / p): sha(seed / p) for p in assets}}
-    routes = {r['run']['argv'][-2]: r['run'] for r in recipe['routes']}
     if arm == 'RDS':
         from rds_project import ProjectStore
         from rds_project_assembly import initialize
@@ -102,6 +129,8 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins):
         ' Run both declared methods before finishing; their shared source is not independent corroboration. '
         'Finish with a JSON object containing answer, earliest_observed_main_period, main_periods, '
         'exact_crossover_year (null when unresolved), scope=RECORDED_PERIOD_COUNTS. Do not infer exact years or causal claims from bins.')
+    if slot is not None:
+        instruction = instruction[:instruction.index('Finish with a JSON object')] + slot['final_instruction']
     if arm == 'RDS':
         from rds_cli import cmd_project
         advice = cmd_project(SimpleNamespace(root=str(root), action='next'))
@@ -111,6 +140,15 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins):
     messages = [{'role': 'system', 'content': instruction}]
     report = {'arm': arm, 'calls': 0, 'status': 'IN_PROGRESS', 'final_answer': None,
               'arm_deadline_epoch': end, 'scientific_support': 'UNKNOWN'}
+    def accept_final(answer, mode):
+        if time.time() >= end or any(sha(p) != pin for p, pin in pins.items()):
+            raise ValueError('Deadline/source changed before final acceptance')
+        proofs = completed_methods(root, arm, routes)
+        if slot is not None:
+            domain_bridge.parse_final(answer)  # Shape only; correctness remains independently assessed.
+        report.update(status='AGENT_FINISHED', final_answer=answer, completion_mode=mode,
+                      method_completion=proofs)
+
     for turn in range(20):
         if time.time() >= end:
             report['status'] = 'DEADLINE'
@@ -134,13 +172,13 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins):
             messages.append(response['choices'][0]['message'])
             report['status'] = 'CALL_CAP'
             if final is not None:
-                report.update(status='AGENT_FINISHED', final_answer=final, completion_mode='TEXT')
+                accept_final(final, 'TEXT')
                 break
             for ident, command in actions:
                 if any(sha(p) != pin for p, pin in pins.items()):
                     raise ValueError('Frozen study source or asset changed before dispatch')
                 if command['tool'] == 'finish':
-                    report.update(status='AGENT_FINISHED', final_answer=command['answer'], completion_mode='FUNCTION')
+                    accept_final(command['answer'], 'FUNCTION')
                     break
                 if command['tool'] == 'read' and command['file'] in declaration['agent_files']:
                     feedback = (root / command['file']).read_text(encoding='utf-8-sig')[:12000]

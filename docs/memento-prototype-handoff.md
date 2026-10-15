@@ -28,6 +28,20 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
+S24 reserves an explicitly pinned static survey domain in native_driver.run_arm.
+Both ordinary Bare tools and owned native RDS routes use the same domain schema.
+Before either complete terminal form is accepted, every declared method must
+already have original successful feedback. The completion reader never executes
+missing methods, reuses native receipt decoding/manifest/status checks and
+rechecks Bare original output bytes. Early/missing/failed/tampered evidence or
+wrong final JSON is retained as UNKNOWN_NO_RETRY without a new request/dispatch.
+Full answer/extras and original failed/unknown costs are preserved; no second
+ledger, dynamic plugin loader or production wiring. S18 actual originals remain
+unchanged and are not retrospectively graded. Focused acceptance pending.
+Next freeze/inspect the fresh survey runtime and evaluator before any paid run,
+with original tool7.2/campaign100/per-arm20/HTTP120/max_tokens3000/remaining50/
+S13 protocol/deadline; full task/reviewer/bootstrap/scientific support UNKNOWN.
+
 S23 ([Draft #352](https://github.com/kongtou20070406/research-direction-selector/pull/352),
 bridge source 9ed5c45) reserves domain_bridge.specification/parse_final/inspect for survey
 outputs. Required final fields are answer, top_roles, proportion_basis and
