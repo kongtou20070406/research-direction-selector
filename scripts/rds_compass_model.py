@@ -669,18 +669,30 @@ def regime_split(observations, inputs, observable, tolerances, *, variable, gram
 
 # --- Per-sample profile: averages must not hide local regressions ----------
 
-def sample_profile(baseline, candidate, *, higher_is_better=True):
-    """Compare per-sample metrics; report mean gain and the worst degradation."""
+def sample_profile(baseline, candidate, *, higher_is_better=True, tolerance=(0, 0)):
+    """Compare per-sample metrics; report mean gain and the worst degradation.
+
+    Against the metric's declared tolerance the profile is one-sided: a sample's gain counts
+    only by what it exceeds the tolerance band around its baseline value, and a degradation
+    counts in full. A tolerance can make an arm harder to accept, never easier.
+    """
     require(isinstance(baseline, dict) and isinstance(candidate, dict) and baseline
             and set(baseline) == set(candidate), 'Per-sample metrics must cover the same samples')
     sign = 1 if higher_is_better else -1
-    deltas = {k: sign * (exact(candidate[k]) - exact(baseline[k])) for k in sorted(baseline)}
+    absolute, relative = tolerance
+    deltas, credited = {}, {}
+    for k in sorted(baseline):
+        base = exact(baseline[k])
+        deltas[k] = sign * (exact(candidate[k]) - base)
+        band = absolute + relative * abs(base)
+        credited[k] = max(Fraction(0), deltas[k] - band) if deltas[k] > 0 else deltas[k]
     worst_key = min(deltas, key=lambda k: (deltas[k], k))
-    mean = sum(deltas.values()) / len(deltas)
+    mean = sum(credited.values()) / len(credited)
     return {'samples': len(deltas), 'mean_gain': text(mean), 'worst_sample': worst_key,
             'worst_degradation': text(max(Fraction(0), -deltas[worst_key])),
             'degraded': sum(1 for v in deltas.values() if v < 0),
-            'improved': sum(1 for v in deltas.values() if v > 0)}
+            'improved': sum(1 for v in credited.values() if v > 0),
+            'within_tolerance': sum(1 for k in deltas if deltas[k] > 0 and credited[k] == 0)}
 
 
 def profile_verdict(profile, max_degradation):

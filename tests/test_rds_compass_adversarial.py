@@ -140,6 +140,18 @@ class EquivalenceTests(unittest.TestCase):
         self.assertEqual(model.equivalent(guarded, partial, points[1:], {'y': (0, 0)}), 'OBSERVATIONALLY_EQUIVALENT')
 
 
+class ClassTests(Campaign):
+    def test_tolerance_classes_are_pairwise_equivalent(self):
+        # Under abs tolerance 1, -1 ~ 0 and 0 ~ 1, yet -1 and 1 are separable: never one class.
+        store = self.law('0', hypotheses=[('a0', '0'), ('b', '-1'), ('c', '1')],
+                         observables={'y': {'tolerance': {'abs': 1}}})
+        self.buy(store, 'x0', 'x1', 'x2', 'x3')
+        state, _ = compass.ingest(store)
+        verification = compass.verify(store, state)
+        self.assertEqual(verification['distinct_live_classes'], 2)
+        self.assertFalse({'b', 'c'} <= set(verification['equivalence_class']))
+
+
 class NoveltyTests(Campaign):
     def test_pre_adoption_receipts_are_not_novel_confirmations(self):
         store = self.law(grammar=GRAMMAR, synthesis={'max_nodes': 1}, rsi={'enabled': False})
@@ -335,6 +347,19 @@ class DeclarationReviewTests(Campaign):
         self.assertEqual(result['workset']['handoff']['detail']['judgment_required'], ['better'])
         self.assertEqual([(a['arm'], a['verdict']) for a in result['verification']['improvement']['arms']],
                          [('better', 'UNMEASURED_OR_SAMPLE_MISMATCH')])
+
+    def test_improve_gain_counts_only_beyond_the_metric_tolerance(self):
+        # Tolerance abs 1: a gain is credited only beyond the band, a degradation in full.
+        arms = {'base': {'s1': 10, 's2': 10}, 'clear': {'s1': 13, 's2': 13},
+                'within': {'s1': 10.5, 's2': 10.5}, 'masked': {'s1': 14, 's2': 9.5}}
+        path = fx.improve_campaign(self.root, arms, max_degradation=0)
+        initialize(self.root, self.declaration(path, lambda d: d['observables']['score'].update(tolerance={'abs': 1})))
+        improvement = drive(self.root, publish=False)['verification']['improvement']
+        verdicts = {a['arm']: a['verdict'] for a in improvement['arms']}
+        self.assertEqual(verdicts, {'clear': 'ACCEPT', 'within': 'NO_MEAN_GAIN', 'masked': 'LOCAL_REGRESSION'})
+        clear = next(a for a in improvement['arms'] if a['arm'] == 'clear')
+        self.assertEqual(model.exact(clear['profile']['mean_gain']), 2)  # 3 per sample, less the band of 1.
+        self.assertEqual(improvement['recommended'], 'clear')
 
     def test_windows_reserved_candidate_ids_are_rejected(self):
         # outputs/compass/CON.json names a device on Windows, so the paid run could write no output.

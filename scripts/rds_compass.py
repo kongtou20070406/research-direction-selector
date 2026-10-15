@@ -913,7 +913,8 @@ def _run_verdict(state, ident, base, stale):
         # No declared direction or tolerance: neither the sign nor the size of a per-sample delta
         # is settled, and an untoleranced observable is never adjudicated.
         return {'run': ident, 'verdict': 'JUDGMENT_REQUIRED', 'receipt_sha256': obs['receipt_sha256']}
-    prof = model.sample_profile(base['samples'], obs['samples'], higher_is_better=higher)
+    prof = model.sample_profile(base['samples'], obs['samples'], higher_is_better=higher,
+                                tolerance=_tolerances(plan)[profile['metric']])
     if 'max_degradation' not in profile or 'min_gain' not in profile:
         verdict = 'JUDGMENT_REQUIRED'
     elif model.exact(prof['mean_gain']) < model.exact(profile['min_gain']):
@@ -968,7 +969,8 @@ def _improve_verdicts(state, stale=()):
     return {'baseline': profile['baseline'], 'status': 'EVALUATED', 'arms': arms,
             'recommended': accepted[0]['arm'] if accepted else None,
             'rule': 'ACCEPT iff, on every declared run of the arm, mean gain > 0 and >= min_gain and '
-                    'worst per-sample degradation <= max_degradation'}
+                    'worst per-sample degradation <= max_degradation; a sample gain counts only beyond '
+                    'the metric tolerance, a degradation in full'}
 
 
 def stale_bindings(store, state):
@@ -1004,7 +1006,9 @@ def verify(store, state):
         classes = []
         for hyp in rows:
             for group in classes:
-                if model.equivalent(hyp, group[0], points, tolerances):
+                # Tolerance equivalence is not transitive: a class holds only pairwise-equivalent
+                # rulebooks, so one class means no live rival is separable from any other.
+                if all(model.equivalent(hyp, member, points, tolerances) for member in group):
                     group.append(hyp)
                     break
             else:
