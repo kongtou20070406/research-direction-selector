@@ -33,6 +33,20 @@ collects evidence, chooses one small in-scope slice, creates a draft PR and
 revises this plan. It does not restart unknown paid work or alter frozen tests.
 See [handoff and acceptance](memento-prototype-handoff.md) for exact next work.
 
+### S25: compact model-facing execution feedback
+
+Scope: native_driver.py, test_native_driver.py under prototypes/rds_agent_eval,
+this plan and handoff. Keep complete original tool/receipt/CAS/measurement/cost
+evidence in existing native/audit storage. Send a fixed allowlist projection to
+the model after original settlement, retaining complete measurements, errors,
+unknown costs/resources/assessment, receipt reference and subsequent advice.
+No summarizer, truncation, authority change or new execution path. Keep the
+single argument per tool, enumerate admitted inputs/methods and remove their
+duplicate prompt lists. Original completion/no-rebuy/budget gates remain.
+Focused checks and fixed-original request-byte inspection pending. This is
+engineering context reduction, not measured token/latency/correctness gain.
+Do not change frozen S18/S24 studies; paid testing needs a fresh inspected freeze.
+
 ### S24: domain-aware driver and original method completion
 
 Scope: native_driver.py, test_native_driver.py under prototypes/rds_agent_eval,

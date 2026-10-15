@@ -211,3 +211,72 @@ class SurveyDriverTests(unittest.TestCase):
             'receipt_sha256': result['receipt']['sha256']}])['observations'][0]['receipt']
         self.assertTrue(original['errors'])
         self.assertTrue(original['resources']['cpu_seconds']['unknown'])
+
+    def test_real_request_feedback_is_compact_and_arguments_have_finite_choices(self):
+        for arm in ('Bare', 'RDS'):
+            with self.subTest(arm=arm):
+                choices = [self.choice('execute', m) for m in ('role_inventory', 'quoted_fractions')]
+                root, result, calls, opened = self.run_choices(arm, 'compact'+arm, choices+[self.choice('finish', self.final)])
+                self.assertEqual((result['status'], opened.call_count), ('AGENT_FINISHED', 3))
+                functions = {s['function']['name']: s['function']['parameters'] for s in calls[0]['tools']}
+                self.assertEqual(functions['execute']['properties']['method']['enum'], ['role_inventory', 'quoted_fractions'])
+                self.assertEqual(functions['read']['properties']['file']['enum'], self.study.declaration['agent_files'])
+                self.assertTrue(all(len(s['required']) == 1 for s in functions.values()))
+                sent = [json.loads(m['content']) for m in calls[-1]['messages'] if m['role']=='tool']
+                for run_id, feedback in zip(('baseline', 'repair'), sent):
+                    original = json.loads((root/'audit'/f'{run_id}-tool.json').read_text())
+                    self.assertEqual(feedback, driver.model_feedback(original, feedback['method']))
+                    self.assertEqual(feedback['measurement'], original['measurement'])
+                    self.assertNotIn('argv', feedback)
+                    if arm == 'RDS':
+                        self.assertEqual(feedback['receipt']['resources'], original['receipt']['resources'])
+                        self.assertNotIn('bindings_before', feedback['receipt'])
+                        self.assertIn('bindings_before', original['receipt'])
+                        self.assertLess(len(json.dumps(feedback)), len(json.dumps(original)))
+
+    def test_failed_original_projection_preserves_unknown_charges_errors_and_assessment(self):
+        self.recipe['routes'][0]['run']['argv'][-2] = 'invalid-method'
+        self.fixture.native.write_json('recipe.json', self.recipe)
+        from rds_project import ProjectStore
+        from rds_project_assembly import initialize
+        with patch.object(driver.time, 'time', return_value=100):
+            initialize(self.fixture.store, self.seed/'recipe.json')
+        with self.fixture.store._db(readonly=True) as db:
+            manifest = ProjectStore._contract(db)['advisor_policy']['routes'][0]['manifest']
+        original = driver.tool(self.seed, 'RDS', manifest)
+        before = file_sha(self.fixture.store.path)
+        with patch.object(ProjectStore, 'execute', side_effect=AssertionError('Projection dispatched')):
+            compact = driver.model_feedback(original, 'invalid-method')
+        self.assertEqual(compact['status'], 'FAILED')
+        for key in ('resources', 'errors', 'assessment', 'exit_code', 'timeout'):
+            self.assertEqual(compact['receipt'][key], original['receipt'][key])
+        self.assertTrue(compact['receipt']['errors'])
+        self.assertTrue(compact['receipt']['resources']['cpu_seconds']['unknown'])
+        self.assertEqual(compact['scientific_support'], 'UNKNOWN')
+        self.assertEqual(file_sha(self.fixture.store.path), before)
+
+    def test_full_unicode_measurement_and_unknown_control_fields_are_not_truncated(self):
+        original = {'status':'TIMEOUT_UNKNOWN', 'measurement':{'text':'测量'*10000, 'mask':None},
+            'cost_status':'UNKNOWN', 'phase':'BARE_TOOL', 'attempt':'baseline',
+            'exit_code':None, 'wall_seconds':7.2, 'reused_original':True, 'argv':['private-host-path']}
+        before = json.dumps(original)
+        compact = driver.model_feedback(original, 'role_inventory')
+        self.assertEqual(compact['measurement'], original['measurement'])
+        self.assertGreater(len(compact['measurement']['text']), 12000)
+        for key in ('status', 'cost_status', 'phase', 'attempt', 'exit_code', 'wall_seconds', 'reused_original'):
+            self.assertEqual(compact[key], original[key])
+        self.assertEqual(json.dumps(original), before)
+
+    def test_projection_failure_keeps_original_response_receipt_and_stops_without_rebuy(self):
+        with patch.object(driver, 'model_feedback', side_effect=ValueError('Projection failed')):
+            root, result, _, opened = self.run_choices('RDS', 'projection-failed', [self.choice('execute', 'role_inventory')])
+        self.assertEqual((result['status'], opened.call_count), ('UNKNOWN_NO_RETRY', 1))
+        self.assertTrue((root/'audit/response-0.json').is_file())
+        original = json.loads((root/'audit/baseline-tool.json').read_text())
+        self.assertEqual(original['receipt']['run_status'], 'SUCCEEDED')
+        from rds_project import ProjectStore
+        with patch.object(ProjectStore, 'execute', side_effect=AssertionError('Rebought')):
+            observed = driver.read_observations(ProjectStore(root), [{'run_id': original['receipt']['run_id'],
+                'receipt_sha256': original['receipt']['sha256']}])
+        self.assertEqual(observed['observations'][0]['receipt']['sha256'], original['receipt']['sha256'])
+        self.assertIsNone(result['final_answer'])

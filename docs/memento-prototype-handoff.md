@@ -28,6 +28,17 @@ CI on a parent does not certify later changes or inherited dirty files.
 
 ## Accepted engineering scope
 
+S25 routes native_driver execution feedback through model_feedback after full
+original evidence is retained. Fixed fields keep complete measurement values,
+errors, unknown costs/resources/assessment, original receipt reference and next
+native method. Full command/binding/artifact metadata stays program-side; no
+truncation or inference. Both arms retain one tool argument with enumerated
+allowed methods/inputs; duplicate prompt lists are removed. No native authority,
+completion gate, retry or budget changes. Acceptance pending. Compare actual
+serialized request bytes on fixed original trajectories; offline byte savings
+do not establish paid token/call/latency/efficacy gains. Frozen S18/S24 unchanged;
+next paid study requires a new inspected source/task/evaluator/runtime freeze.
+
 S24 ([Draft #353](https://github.com/kongtou20070406/research-direction-selector/pull/353))
 reserves an explicitly pinned static survey domain in native_driver.run_arm.
 Both ordinary Bare tools and owned native RDS routes use the same domain schema.
