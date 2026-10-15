@@ -97,6 +97,9 @@ class SurveyDriverTests(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.study = self.fixture.study
         self.seed = self.fixture.store.root
+        self.arms_tmp = tempfile.TemporaryDirectory(prefix='rds-native-driver-arms-')
+        self.addCleanup(self.arms_tmp.cleanup)
+        self.arm_base = Path(self.arms_tmp.name).resolve()
         self.recipe = self.study.recipe
         self.recipe['budget'] = {'wall_seconds': 100, 'cpu_seconds': 100, 'gpu_seconds': 0}
         for route in self.recipe['routes']:
@@ -116,7 +119,7 @@ class SurveyDriverTests(unittest.TestCase):
                 'method' if name == 'execute' else 'answer': value})}}]}}
 
     def run_choices(self, arm, name, choices, mutate=None):
-        root = self.seed.parent / name
+        root = self.arm_base / name
         calls = []
         def response(req, **kwargs):
             index = len(calls)
@@ -181,7 +184,7 @@ class SurveyDriverTests(unittest.TestCase):
     def test_unpinned_slot_rejects_before_request_and_wrong_final_keeps_original(self):
         with patch.object(driver.time, 'time', return_value=100), \
              patch.object(driver.urllib.request, 'urlopen', side_effect=AssertionError('Requested')), self.assertRaises(ValueError):
-            driver.run_arm(self.seed.parent/'unpinned', self.seed, 'Bare', self.study.declaration,
+            driver.run_arm(self.arm_base/'unpinned', self.seed, 'Bare', self.study.declaration,
                 self.recipe, 'http://fixture', {str(Path(driver.__file__).resolve()): driver.sha(driver.__file__)}, domain=self.domain)
         choices = [self.choice('execute', m) for m in ('role_inventory', 'quoted_fractions')]
         root, result, _, opened = self.run_choices('Bare', 'wrong-final', choices+[self.choice('finish', '{"answer":"missing fields"}')])
