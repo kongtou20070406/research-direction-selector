@@ -70,6 +70,18 @@ def tool(root, arm, manifest):
     return result
 
 
+def model_feedback(result, method):
+    """Project already-retained originals; no execution, truncation or assessment."""
+    value = {'method': method, 'status': result['status'], 'scientific_support': 'UNKNOWN'}
+    value.update({k: result[k] for k in ('measurement', 'native_advice', 'selected_run',
+        'exit_code', 'wall_seconds', 'cost_status', 'phase', 'attempt', 'reused_original') if k in result})
+    if 'receipt' in result:
+        receipt = result['receipt']
+        value['receipt'] = {k: receipt[k] for k in ('run_id', 'sha256', 'process_status',
+            'process_started', 'exit_code', 'timeout', 'resources', 'errors', 'assessment')}
+    return value
+
+
 def completed_methods(root, arm, routes):
     """Read existing originals only; a final answer cannot dispatch a missing method."""
     proofs = []
@@ -120,16 +132,18 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins, *, domain=None
         routes = {r['manifest']['argv'][-2]: r['manifest'] for r in contract['advisor_policy']['routes']}
     task = (root / declaration['task_file']).read_text(encoding='utf-8')
     schema = [{'type': 'function', 'function': {'name': name, 'description': description,
-        'parameters': {'type': 'object', 'properties': {field: {'type': 'string'}},
+        'parameters': {'type': 'object', 'properties': {field: {'type': 'string',
+            **({'enum': choices} if choices is not None else {})}},
                        'required': [field], 'additionalProperties': False}}}
-        for name, field, description in (('read', 'file', 'Read one declared task/data input'),
-            ('execute', 'method', 'Execute one declared finite method'), ('finish', 'answer', 'Finish with evidence and limitations'))]
+        for name, field, description, choices in (('read', 'file', 'Read one declared task/data input', declaration['agent_files']),
+            ('execute', 'method', 'Execute one declared finite method', list(routes)),
+            ('finish', 'answer', 'Finish with evidence and limitations', None))]
     final_instruction = slot['final_instruction'] if slot is not None else (
         'Finish with a JSON object containing answer, earliest_observed_main_period, main_periods, '
         'exact_crossover_year (null when unresolved), scope=RECORDED_PERIOD_COUNTS. Do not infer exact years or causal claims from bins.')
     instruction = ('Solve the task using measured evidence. Use function tools serially; ordinary stop-text also finishes. '
-        'Methods: ' + json.dumps(list(routes)) + '. Inputs: ' + json.dumps(declaration['agent_files']) + '. Task: ' + task +
-        ' Run both declared methods before finishing; their shared source is not independent corroboration. ' + final_instruction)
+        'Task: ' + task + ' Run all declared execute methods before finishing; '
+        'their shared source is not independent corroboration. ' + final_instruction)
     if arm == 'RDS':
         from rds_cli import cmd_project
         advice = cmd_project(SimpleNamespace(root=str(root), action='next'))
@@ -189,6 +203,7 @@ def run_arm(root, seed, arm, declaration, recipe, endpoint, pins, *, domain=None
                     if feedback['status'] in {'TIMEOUT_UNKNOWN', 'FAILED'}:
                         report['status'] = 'TOOL_FAILURE_NO_RETRY'
                         break
+                    feedback = model_feedback(feedback, command['method'])
                 else:
                     raise ValueError('Undeclared input or method')
                 messages.append({'role': 'tool', 'tool_call_id': ident, 'content': json.dumps(feedback, ensure_ascii=False)})
