@@ -83,6 +83,18 @@ class ReceiptBindingTests(Campaign):
         verification = compass.report(store)['verification']
         self.assertFalse(verification['receipts_rechecked'], verification)
         self.assertEqual(verification['report_recheck']['status'], 'STALE')
+        # The stored claim rested on that receipt; the report keeps it only as history.
+        self.assertEqual((verification['claim'], verification['claim_at_verification']),
+                         ('NOT_ESTABLISHED', 'CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS'))
+
+    def test_report_withdraws_a_recommendation_whose_evidence_went_stale(self):
+        initialize(self.root, fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}}))
+        store = cstore.store_for(self.root)
+        self.assertEqual(drive(self.root, publish=False)['verification']['improvement']['recommended'], 'better')
+        fx.write(self.root / 'outputs/compass/better.json', {'outputs': {'score': -100}, 'samples': {'s': -100}})
+        improvement = compass.report(store)['verification']['improvement']
+        self.assertEqual([a['verdict'] for a in improvement['arms']], ['STALE_EVIDENCE'])
+        self.assertEqual((improvement['recommended'], improvement['recommended_at_verification']), (None, 'better'))
 
     def test_improve_does_not_accept_a_stale_arm(self):
         initialize(self.root, fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}}))
@@ -255,6 +267,17 @@ class DeclarationReviewTests(Campaign):
         result = drive(self.root, publish=False)
         self.assertEqual((result['status'], exit_code(result)), ('JUDGMENT_REQUIRED', 2))
         self.assertIn('higher_is_better', result['workset']['handoff']['detail']['unknown_thresholds'])
+        improvement = result['verification']['improvement']
+        self.assertEqual([a['verdict'] for a in improvement['arms']], ['JUDGMENT_REQUIRED'])
+        self.assertIsNone(improvement['recommended'])
+
+    def test_metric_tolerance_is_never_defaulted(self):
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}})
+        plan = initialize(self.root, self.declaration(path, lambda d: d['observables']['score'].pop('tolerance')))['plan']
+        self.assertIn('observables.score.tolerance', plan['unknown'])
+        result = drive(self.root, publish=False)
+        self.assertEqual((result['status'], exit_code(result)), ('JUDGMENT_REQUIRED', 2))
+        self.assertIn('tolerance', result['workset']['handoff']['detail']['unknown_thresholds'])
         improvement = result['verification']['improvement']
         self.assertEqual([a['verdict'] for a in improvement['arms']], ['JUDGMENT_REQUIRED'])
         self.assertIsNone(improvement['recommended'])

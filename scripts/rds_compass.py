@@ -884,6 +884,14 @@ def _replicates(plan):
     return runs
 
 
+def unknown_improve_terms(plan):
+    """Terms of the declared IMPROVE rule that the declaration left unknown."""
+    profile, metric = plan['profile'], plan['profile']['metric']
+    return ([k for k in ('min_gain', 'max_degradation') if k not in profile] +
+            (['higher_is_better'] if metric not in plan['higher_is_better'] else []) +
+            (['tolerance'] if plan['tolerances'].get(metric) is None else []))
+
+
 def _run_verdict(state, ident, base, stale):
     plan, profile = state['plan'], state['plan']['profile']
     obs = state['observations'][ident]
@@ -893,8 +901,9 @@ def _run_verdict(state, ident, base, stale):
         # Recorded samples whose receipt bytes no longer verify are never evidence.
         return {'run': ident, 'verdict': 'STALE_EVIDENCE', 'receipt_sha256': obs['receipt_sha256']}
     higher = plan['higher_is_better'].get(profile['metric'])
-    if higher is None:
-        # No declared direction: the sign of every per-sample delta is unknown.
+    if higher is None or plan['tolerances'].get(profile['metric']) is None:
+        # No declared direction or tolerance: neither the sign nor the size of a per-sample delta
+        # is settled, and an untoleranced observable is never adjudicated.
         return {'run': ident, 'verdict': 'JUDGMENT_REQUIRED', 'receipt_sha256': obs['receipt_sha256']}
     prof = model.sample_profile(base['samples'], obs['samples'], higher_is_better=higher)
     if 'max_degradation' not in profile or 'min_gain' not in profile:
@@ -1104,13 +1113,24 @@ def publish_tms(store, state):
 
 
 def _rechecked(store, state):
-    """The latest verification, with its receipt bindings re-checked at report time (never trusted as stored)."""
+    """The latest verification, with its receipt bindings re-checked at report time (never trusted as stored).
+
+    Evidence that no longer verifies cannot carry a stored conclusion. A law claim falls to
+    NOT_ESTABLISHED; IMPROVE verdicts are recomputed on the current stale set and no arm is
+    recommended until a new verification. The stored conclusion stays under ``*_at_verification``.
+    """
     if not state['verifications']:
         return None
     stored, now = state['verifications'][-1], _stale(store, state)
-    return {**stored, 'receipts_rechecked': stored['receipts_rechecked'] and not now,
-            'stale': stored['stale'] + [row for row in now if row not in stored['stale']],
-            'report_recheck': {'status': 'STALE' if now else 'BOUND', 'stale': now}}
+    value = {**stored, 'receipts_rechecked': stored['receipts_rechecked'] and not now,
+             'stale': stored['stale'] + [row for row in now if row not in stored['stale']],
+             'report_recheck': {'status': 'STALE' if now else 'BOUND', 'stale': now}}
+    if now and stored['goal'] == 'IMPROVE':
+        value['improvement'] = {**_improve_verdicts(state, value['stale']), 'recommended': None,
+                                'recommended_at_verification': stored['improvement'].get('recommended')}
+    elif now:
+        value.update(claim='NOT_ESTABLISHED', claim_at_verification=stored['claim'])
+    return value
 
 
 def report(store):
