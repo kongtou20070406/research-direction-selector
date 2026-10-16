@@ -115,7 +115,9 @@ def load(runs):
     for path in sorted(runs.rglob('trial.json')):
         if any('.incomplete-' in part or '.superseded-' in part for part in path.parts):
             continue
-        rows.append(json.loads(path.read_text(encoding='utf-8')))
+        row = json.loads(path.read_text(encoding='utf-8'))
+        row['_dir'] = str(path.parent)
+        rows.append(row)
     # Every job a manifest scheduled counts: one with no trial.json at all is MISSING and scores as a failure.
     have = {(row['task_id'], row['arm'], row['trial']) for row in rows}
     manifests = runs / 'manifests.jsonl'
@@ -180,6 +182,74 @@ def paths(records):
             'certified_trials': sum(1 for r in strict if r['path'] == 'CERTIFIED'),
             'cells_with_a_rulebook_submission': len({r['cell'] for r in held}),
             'cells': len({r['cell'] for r in strict})}
+
+
+TOKEN_KEYS = ('input_tokens', 'cached_input_tokens', 'output_tokens', 'reasoning_output_tokens')
+
+
+def _sum_usage(calls):
+    """Sum Codex-reported usage; None if any call has no usage (never estimated)."""
+    total = dict.fromkeys(TOKEN_KEYS, 0)
+    for call in calls:
+        usage = (call or {}).get('usage')
+        if not usage:
+            return None
+        for key in TOKEN_KEYS:
+            total[key] += int(usage.get(key, 0))
+    return total
+
+
+def trial_tokens(row):
+    """Descriptive: agent-side and judge-side Codex usage of one trial, per submission."""
+    if row.get('status') in ('TIMEOUT', 'CRASHED', 'MISSING'):
+        return {'agent': None, 'fallback_extra': None, 'judge': None, 'agent_calls': None}
+    judge = _sum_usage(row.get('judge_calls') or [])
+    if row['arm'] != 'compass':
+        calls = row.get('agent_calls') or []
+        return {'agent': _sum_usage(calls), 'fallback_extra': None, 'judge': judge, 'agent_calls': len(calls)}
+    # Compass: every jump call of every attempt, read from its audit file; a jump directory without one is unknown.
+    calls = []
+    for jump_dir in sorted(Path(row['_dir']).glob('jumps-a*/*/')):
+        audit = jump_dir / 'audit.json'
+        calls.append(json.loads(audit.read_text(encoding='utf-8')) if audit.exists() else {})
+    fallback = [row['fallback_call']] if row.get('fallback_call') else []
+    return {'agent': _sum_usage(calls), 'fallback_extra': _sum_usage(fallback) if fallback else dict.fromkeys(TOKEN_KEYS, 0),
+            'judge': judge, 'agent_calls': len(calls) + len(fallback)}
+
+
+def token_report(rows, records):
+    """Per submission: Codex tokens per trial and per correct solution (descriptive, not pre-registered)."""
+    usage = {(row['task_id'], row['arm'], row['trial']): trial_tokens(row) for row in rows}
+    out = {}
+    for name in SUBMISSIONS:
+        mine = [r for r in records if r['submission'] == name]
+        known, correct_known, unknown = [], 0, 0
+        for r in mine:
+            u = usage[(r['task_id'], SOURCE[name], r['trial'])]
+            agent = u['agent']
+            if agent is not None and name == 'compass_fallback':
+                agent = None if u['fallback_extra'] is None else {k: agent[k] + u['fallback_extra'][k] for k in TOKEN_KEYS}
+            if agent is None:
+                unknown += 1
+                continue
+            known.append(agent)
+            correct_known += r['correct']
+        sums = {k: sum(a[k] for a in known) for k in TOKEN_KEYS}
+        out[name] = {
+            'trials': len(mine), 'trials_usage_unknown': unknown, 'trials_usage_known': len(known),
+            'total': sums if known else 'UNKNOWN',
+            'mean_per_trial': {k: sums[k] / len(known) for k in TOKEN_KEYS} if known else 'UNKNOWN',
+            'correct_among_known': correct_known,
+            'per_correct_solution': ({k: sums[k] / correct_known for k in TOKEN_KEYS} if correct_known else
+                                     'NO_CORRECT_SOLUTION' if known else 'UNKNOWN')}
+    judge = [u['judge'] for u in usage.values()]
+    out['_judge'] = {'trials': len(judge), 'trials_usage_unknown': sum(j is None for j in judge),
+                     'total': {k: sum(j[k] for j in judge if j) for k in TOKEN_KEYS}}
+    out['_note'] = ('Codex-reported usage summed over every agent-side call (all retries; for Compass, every jump call '
+                    'of every attempt; compass_fallback adds its fallback call). output_tokens include '
+                    'reasoning_output_tokens as reported. Judge calls are evaluation cost and are reported separately. '
+                    'A trial with any call lacking usage is UNKNOWN and excluded from sums; nothing is estimated.')
+    return out
 
 
 def per_unit(records, unit):
@@ -299,6 +369,7 @@ def main(argv=None):
                              for name, subset in subsets.items()}
         view_rows = rows if label == 'pooled' else [row for row in rows if stratum_of(row['task_id']) == label]
         desc[label] = descriptive(view_rows, view)
+        desc[label]['tokens'] = token_report(view_rows, view)
     # POST HOC sensitivity analysis (requested in review after the formal run had started; not pre-registered):
     # drop every unit in which any arm lost a trial to an uncaught simulator exception, then repeat the tests.
     sim_failed = [r for r in rows if simulator_exception(r)]
@@ -321,7 +392,9 @@ def main(argv=None):
                             for name, subset in subsets.items()}}
     task_table = per_unit(records, 'task_id')
     body = {'schema': 'rds-newtonbench-comparison-v2', 'generated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
-            'phase': args.phase, 'rds_commit': common.git_head(HERE),
+            'phase': args.phase, 'rds_commit_analysis': common.git_head(HERE),
+            'rds_commit_runs': sorted({json.loads(line)['rds_commit'] for line in
+                                       (runs / 'manifests.jsonl').read_text(encoding='utf-8').splitlines()}),
             'newtonbench': {'repository': 'https://github.com/HKUST-KnowComp/NewtonBench', 'license': 'MIT',
                             'commit': common.git_head(common.NEWTONBENCH)},
             'model': {'cli': 'codex', 'model': common.MODEL, 'reasoning_effort': common.EFFORT,
@@ -342,7 +415,8 @@ def main(argv=None):
             'trials': [{k: row.get(k) for k in ('arm', 'task_id', 'trial', 'status', 'compass_status', 'queries',
                                                 'wall_seconds', 'contaminated', 'row_sha256', 'ledger_head',
                                                 'report_sha256', 'query_chain_head', 'transcript_sha256')}
-                       | {'compass_path': compass_path(row), 'chosen': row.get('chosen'), 'receipts': row.get('receipts'),
+                       | {'compass_path': compass_path(row), 'chosen': row.get('chosen'), 'tokens': trial_tokens(row),
+                          'receipts': row.get('receipts'),
                           'submissions': {n: {'law': s.get('law'), 'certified': s.get('certified'),
                                               'fallback_used': s.get('fallback_used'),
                                               'evaluation': {k: (s.get('evaluation') or {}).get(k) for k in
@@ -352,6 +426,8 @@ def main(argv=None):
                        for row in sorted(rows, key=lambda r: (r['task_id'], r['arm'], r['trial']))],
             'scientific_support': 'UNKNOWN'}
     body['bundle_sha256'] = common.sha256_json(body)
+    for row in rows:
+        row.pop('_dir', None)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(body, indent=1, default=str) + '\n', encoding='utf-8')
     Path(args.table).write_text(render_table(task_table, rows), encoding='utf-8')
