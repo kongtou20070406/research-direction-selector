@@ -64,6 +64,25 @@ class Campaign(unittest.TestCase):
         fx.write(self.root / 'agent.py', source.replace('DISPOSITION', repr(disposition)).replace('PROPOSALS', proposals))
 
 
+class ConfirmationTests(unittest.TestCase):
+    def test_only_a_decided_agreement_confirms(self):
+        from fractions import Fraction
+        law = model.compile_hypothesis({'id': 'root2', 'predict': {'y': 'sqrt(2) * x'}}, ['x'], ['y'])
+        root2 = Fraction(model.evaluate(law['predict']['y'], {'x': Fraction(1)}))
+        outputs = {'x1': root2 + Fraction(1, 10 ** 9),  # straddles the band edge: undecided
+                   'x2': Fraction('2.8284271247'),      # 2*sqrt(2) within 1e-9: decided agreement
+                   'x3': Fraction(5)}                   # decided disagreement
+        state = {'plan': {'goal': {'kind': 'IDENTIFY_LAW', 'observable': 'y'}, 'tolerances': {'y': {'abs': '1e-9'}},
+                          'candidates': [{'id': k, 'inputs': {'x': int(k[1:])}} for k in outputs]},
+                 'observations': {k: {'status': 'MEASURED', 'outputs': {'y': str(v)}} for k, v in outputs.items()},
+                 'tools': {}}
+        tol = compass._tolerances(state['plan'])['y']
+        self.assertEqual([model.decide(model.predict(law, {'x': Fraction(int(k[1:]))})[0]['y'], v, tol)
+                          for k, v in outputs.items()], [None, True, False])
+        with patch.object(compass, '_novel_for', return_value=True):
+            self.assertEqual(compass.confirmations(state, law), 1)
+
+
 class ReceiptBindingTests(Campaign):
     def test_changed_stream_binding_blocks_goal_identification(self):
         store = self.law(hypotheses=[('identity', 'x')])

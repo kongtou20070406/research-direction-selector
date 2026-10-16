@@ -268,15 +268,19 @@ def confirmations(state, hyp):
     """Novel predictions: measurements bought after the rulebook entered and that it predicted.
 
     For IDENTIFY_LAW only a receipt that reports the goal observable confirms; a side
-    observable alone never stands in for the goal.
+    observable alone never stands in for the goal. A prediction confirms only when it is
+    decided within the declared tolerance: an undecided enclosure or an unadjudicated
+    observable confirms nothing.
     """
-    goal, count = _goal_observable(state['plan']), 0
+    goal, count, tolerances = _goal_observable(state['plan']), 0, _tolerances(state['plan'])
     for ident, obs in state['observations'].items():
         if obs['status'] != 'MEASURED' or not _novel_for(state, obs, hyp):
             continue
         values, status = model.predict(hyp, env(state, candidate(state, ident)))
         keys = [goal] if goal is not None else list(values)
-        if status == 'PREDICTED' and any(k in obs['outputs'] and values.get(k) is not None for k in keys):
+        if status == 'PREDICTED' and any(
+                k in obs['outputs'] and k in tolerances and values.get(k) is not None
+                and model.decide(values[k], model.exact(obs['outputs'][k]), tolerances[k]) is True for k in keys):
             count += 1
     return count
 
