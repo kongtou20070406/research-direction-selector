@@ -47,7 +47,7 @@ A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
 | `rds_compass_store` | L1 | Hash-chained `COMPASS_*` records in the existing ledger and CAS, written idempotently under `BEGIN IMMEDIATE`. |
 | `rds_compass_declaration` | L1 | Declaration compiler for the kernel contract, frozen protocol and plan. Every undeclared field stays `UNKNOWN`, and controller defaults are listed in `defaulted`. |
 | `rds_compass` | L3 | Advisor: receipt ingestion, basin detection, decisions, abductive jumps, verification, compact working set, TMS mirror, report. |
-| `rds_compass_rsi` | L3 | Goal-bound tool synthesis, oracle-triple qualification, cross-session library, retraction. |
+| `rds_compass_rsi` | L3 | Goal-bound tool synthesis from the base catalogue and recorded offers, oracle-triple qualification, cross-session library, retraction. |
 | `rds_compass_drive` | L3 | The unattended loop; SIGTERM and deadline handling. |
 | `rds_compass_cli` | L4 | `compass init/drive/status/decide/report/tools`, plus the `project init --declaration` and `project drive --compass` front doors. |
 | `rds_interrupt`, `rds_path_identity` | SHARED | Outer interrupt as a settled exit (#215); spelling-independent root identity (#207). |
@@ -99,11 +99,21 @@ head it was computed from, then acts on it.
 4. **Validate the response.** The agent must address every item exactly once with `adopt`, `adapt`, `reject` or `defer`, plus substantive reasons and next steps. Adapted rulebooks and free proposals pass the same record filter: a fresh id (one no retained or same-response rulebook holds, else `ID_TAKEN`), replay, then equivalence. Two rulebooks are equivalent only if, at every declared experiment, their values agree within tolerance or both share the same non-predicting status. Values agree only if each would survive the other as the measured value, because a relative band scales with the measurement; `NOT_APPLICABLE` and `UNDEFINED` separate them. Any rulebook that reads a qualified tool feature is bound to that tool as a premise, whoever wrote it, so a tool retraction also retracts it. A malformed or failed response is recorded, and the unattended policy continues. The `DISPOSITION` binds the agent's input and both output streams by raw-byte SHA-256. A timeout records `AGENT_TIMEOUT` with the hashes of the partial streams. If the Compass head or the receipt set changed while the agent worked, the response is `STALE_RESPONSE` and nothing from that jump is adopted. No agent means `COMPASS_AUTO` adoption of the already filtered fits.
 5. **Stop at the bound.** `escape.max_jumps` bounds the search, after which the drive ends `SEARCH_EXHAUSTED`. That exhaustion speaks only about the declared grammar and bound.
 
+### Agent token budget
+
+`agent.max_tokens` caps the agent's token spend. The agent reports each call's spend on stdout as `usage: {input_tokens, output_tokens, cached_input_tokens?}`, also when the call fails. Compass records the report with the call's `DISPOSITION` and labels the sum `INPUT_REPORTED`: it is the agent's own count, not a measurement. Before each call Compass adds `input_tokens + output_tokens` over every recorded call:
+- `AVAILABLE`: the call is made, and the packet carries `budget.agent_tokens` (`cap`, `spent`, `remaining`);
+- `EXHAUSTED`: the spend has reached the cap, so no further call is made;
+- `USAGE_UNREPORTED`: some call has no well-formed report, so no further call is made, because an unaccounted spend is never taken as zero;
+- `CAP_UNKNOWN`: no cap is declared. Calls are made, `agent.max_tokens` is listed under `unknown`, and the spend is still reported.
+
+A withheld call leaves the jump to the unattended policy, as a failed call does. The cap is checked between calls, so one call can overshoot it. With an agent declared, each `JUMP`, the working set and the report carry `agent_tokens`. The Codex bridge (`benchmark/compass/codex_jump.py`) forwards the usage counts from Codex's event stream.
+
 ## Goal-bound RSI
 
 Compass treats a gap the grammar cannot close as a missing capability and closes it in-campaign:
 
-1. **Extract.** Library offers come first, then bounded generated families: digit folds, valuations, divisors, sigma, primality, Fibonacci. A library record that does not parse, is not an object, lacks an object `scope` or fails its source hash is skipped, never repaired and never fatal.
+1. **Extract.** Library records come first, then recorded tool offers (below), then the base catalogue. The catalogue holds digit folds and decimal reversal, valuations, divisor count and sum, prime-factor functions (`totient`, `omega`, `bigomega`, `mobius`, `lpf`, `gpf`, `rad`), primality, `primepi`, `issquare`, Fibonacci and Collatz steps. `compass tools --catalogue` lists each tool with its SHA-256. A library record that does not parse, is not an object, lacks an object `scope` or fails its source hash is skipped, never repaired and never fatal.
 2. **Validate.** Each source passes the existing `rds_tools.extract_function` allowlist and runs in an isolated `python -I -B` subprocess with a step budget and a 60-second timeout. This is labeled `SUBPROCESS_ISOLATED_NOT_OS_SANDBOX`. A runner timeout or non-zero exit is recorded as `TOOL_REJECTED` (`TOOL_RUNNER_TIMEOUT` or `TOOL_RUNNER_FAILED`). The record carries the phase, the stream hashes and the wall time. The drive continues instead of aborting, and the same tools are re-tried only after the evidence grows.
 3. **Qualify** against an independent oracle triple. Expected values come only from original receipts, never from the tool:
    - **known positive**: a law fitted without the holdout receipts, using the tool, predicts every holdout measurement;
@@ -115,6 +125,16 @@ Compass treats a gap the grammar cannot close as a missing capability and closes
    - marks every dependent hypothesis `RETRACTED`;
    - turns the TMS node `CONTRADICTED`;
    - leaves a create-only `.retracted.json` marker beside the library record, so later sessions stop offering the tool.
+
+### Tool offers
+
+A researcher or the jump agent can offer a domain tool, for example a quantity from their field that the catalogue lacks:
+- `compass tools --propose tool.py` records the file's one-argument function;
+- a jump response may carry `tools: [{"source": ...}]`, at most 4 per response.
+
+The source passes the same allowlist at once. A bad source is refused, and in a jump response it voids the whole response. An accepted source is recorded as `TOOL_PROPOSED` with status `OFFER_NOT_QUALIFIED`, `self_certified: false` and origin `USER_PROPOSED` or `AGENT_PROPOSED`. It enters the pool at the next capability gap, ahead of the catalogue, and qualifies only through the oracle triple, like any other candidate. An offer made after a barren jump makes the next jump worth taking. `compass tools` lists the offers, and the report lists them under `tool_offers`.
+
+Tools take one integer input. A gap over real-valued inputs is not closed by tools: the dialect's `exp`, `log`, `sin`, `cos` and rational powers cover those laws.
 
 ## Verification
 
@@ -162,7 +182,7 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
 ```
 
 Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification` (`confirmations`, `spend_budget`),
-`agent` (`{argv, timeout_seconds}`), `library`, `protocol` (identity fields),
+`agent` (`{argv, timeout_seconds, max_tokens?}`; `max_tokens` is an integer from 1 to 10^10), `library`, `protocol` (identity fields),
 and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans. An IMPROVE profile metric must declare `higher_is_better` and a tolerance: without either, the plan lists it as unknown and every arm is `JUDGMENT_REQUIRED`. An observable without a tolerance is never compared, in replay, in equivalence or in the claim: the verification names it under `unadjudicated` and leaves it out of `predict`. Every timeout and wall budget must be a JSON number, not a boolean. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. A rulebook may have up to 64 AST nodes (`MAX_RULEBOOK_NODES`); synthesis builds each part within `synthesis.max_nodes`, an integer from 1 to 15, and tries at most `synthesis.max_candidates` expressions, an integer from 1 to 200000; `init` rejects other values. Agent `argv` items must be nonempty strings without NUL bytes. Candidate ids that differ only in case are rejected, since their output files would collide on a case-insensitive filesystem, and so are Windows reserved device names (`CON`, `NUL`, `COM1`, …), on every platform. A candidate output or retry path that names a bound experiment file or the protocol file, compared case-insensitively, is rejected at `init`; otherwise the kernel would refuse the purchase only after the ledger exists. An IMPROVE declaration needs at least one treatment arm besides the baseline that is not a replicate. An IMPROVE candidate may declare `replicates: <arm>`. The experiment writes `{"outputs": {...},
 "samples"?: {...}}` to `{output}`.
 
