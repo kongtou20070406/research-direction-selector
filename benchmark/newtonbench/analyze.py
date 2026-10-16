@@ -60,6 +60,13 @@ def compass_path(row):
     return 'LIVE_UNCERTIFIED' if row.get('chosen') else 'NO_LIVE_RULEBOOK'
 
 
+def simulator_exception(row):
+    """POST HOC: the trial failed because NewtonBench's simulator raised and the agent loop did not catch it."""
+    attempts = row.get('attempts') or []
+    return (row.get('status') == 'FAILED' and bool(attempts)
+            and 'run_experiment_for_module' in (attempts[-1].get('traceback') or ''))
+
+
 def origin_kind(row):
     origin = ((row.get('chosen') or {}).get('origin') or '')
     if not origin:
@@ -146,6 +153,7 @@ def scored(rows):
                         'contaminated': contaminated, 'failed': failed, 'queries': row.get('queries'),
                         'law': (sub or {}).get('law'), 'judge_msg': ev.get('symbolic_msg'),
                         'eval_error': ev.get('error'), 'path': compass_path(row), 'origin': origin_kind(row),
+                        'sim_exception': simulator_exception(row),
                         'origin_detail': (row.get('chosen') or {}).get('origin')})
     return out
 
@@ -291,6 +299,26 @@ def main(argv=None):
                              for name, subset in subsets.items()}
         view_rows = rows if label == 'pooled' else [row for row in rows if stratum_of(row['task_id']) == label]
         desc[label] = descriptive(view_rows, view)
+    # POST HOC sensitivity analysis (requested in review after the formal run had started; not pre-registered):
+    # drop every unit in which any arm lost a trial to an uncaught simulator exception, then repeat the tests.
+    sim_failed = [r for r in rows if simulator_exception(r)]
+    sensitivity = {'label': 'POST HOC, not pre-registered: units with an uncaught-simulator-exception trial removed',
+                   'simulator_exception_trials': {arm: sorted(f"{r['task_id']}#t{r['trial']}" for r in sim_failed
+                                                              if r['arm'] == arm)
+                                                  for arm in ('vanilla', 'code_assisted', 'compass')},
+                   'views': {}}
+    for label, view in views.items():
+        dropped = sorted({r['cell'] for r in view if r['sim_exception']})
+        kept_view = [r for r in view if r['cell'] not in dropped]
+        table = per_unit(kept_view, 'cell')
+        cells = sorted({r['cell'] for r in kept_view})
+        subsets = {'all': cells, 'expressible': [c for c in cells if c in EXPRESSIBLE],
+                   'not_expressible': [c for c in cells if c not in EXPRESSIBLE]}
+        sensitivity['views'][label] = {
+            'dropped_cells': dropped,
+            'comparisons': {name: {'cells': len(subset), 'primary': compare(table, *PRIMARY, subset),
+                                   'secondary': [compare(table, a, b, subset) for a, b in SECONDARY]}
+                            for name, subset in subsets.items()}}
     task_table = per_unit(records, 'task_id')
     body = {'schema': 'rds-newtonbench-comparison-v2', 'generated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
             'phase': args.phase, 'rds_commit': common.git_head(HERE),
@@ -307,6 +335,7 @@ def main(argv=None):
             'primary': comparisons['pooled']['all']['primary'],
             'registered_noise_free_primary': (comparisons.get('noise0') or {}).get('all', {}).get('primary'),
             'comparisons': comparisons, 'false_certification': fcr, 'compass_paths': path_stats,
+            'post_hoc_sensitivity': sensitivity,
             'official_style_rmsle': rmsle,
             'descriptive': desc,
             'per_task': [{'submission': n, 'task_id': t, **v} for (n, t), v in sorted(task_table.items())],
@@ -329,6 +358,8 @@ def main(argv=None):
     print(json.dumps({'primary': body['primary'], 'registered_noise_free_primary': body['registered_noise_free_primary'],
                       'false_certification': {k: v['all'] for k, v in fcr.items()},
                       'compass_paths': {k: v['all'] for k, v in path_stats.items()},
+                      'post_hoc_sensitivity': {'simulator_exception_trials': sensitivity['simulator_exception_trials'],
+                                               'pooled_primary': sensitivity['views']['pooled']['comparisons']['all']['primary']},
                       'bundle_sha256': body['bundle_sha256']}, indent=1))
     return 0
 
