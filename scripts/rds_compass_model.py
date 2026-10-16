@@ -651,7 +651,7 @@ def regime_split(observations, inputs, observable, tolerances, *, variable, gram
                   key=lambda r: exact(r['inputs'][variable]))
     values = sorted({exact(r['inputs'][variable]) for r in rows})
     if len(values) < 4:
-        return {'status': 'TOO_FEW_POINTS', 'fits': [], 'scientific_support': 'UNKNOWN'}
+        return {'status': 'TOO_FEW_POINTS', 'fits': [], 'attempted': 0, 'scientific_support': 'UNKNOWN'}
     cuts = [(a + b) / 2 for a, b in zip(values, values[1:])][1:-1]
     step = max(1, len(cuts) // max_splits)
     fits, attempted = [], 0

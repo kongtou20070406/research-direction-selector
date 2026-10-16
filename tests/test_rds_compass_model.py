@@ -99,6 +99,12 @@ class SynthesisTests(unittest.TestCase):
         self.assertIn(result['status'], ('NO_FIT', 'SEARCH_TRUNCATED'))
         self.assertEqual(result['limits'], {'max_nodes': 3, 'max_candidates': 500})
 
+    def test_regime_split_with_too_few_levels_reports_zero_attempts(self):
+        # Compass reads ``attempted`` from every regime split; a variable with < 4 measured levels must not crash it.
+        observed = rows(lambda x: x + 1, [0, 1, 2])
+        result = model.regime_split(observed, ['x'], 'y', EXACT, variable='x')
+        self.assertEqual((result['status'], result['attempted'], result['fits']), ('TOO_FEW_POINTS', 0, []))
+
 
 class PolynomialCertificateTests(unittest.TestCase):
     """#194: the router's independent checker replays a uniqueness certificate outside the synthesis bound."""
