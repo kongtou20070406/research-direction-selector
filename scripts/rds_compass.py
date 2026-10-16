@@ -876,7 +876,7 @@ def _polynomial_check(state, best):
         point = env(state, item)
         values, status = model.predict(best, point)
         interpolant = sum(c * point[names[0]] ** j for j, c in enumerate(solution))
-        if status != 'PREDICTED' or not model.matches(values[observable], interpolant, _tolerances(plan)[observable]):
+        if status != 'PREDICTED' or not model.agree(values[observable], interpolant, _tolerances(plan)[observable]):
             return {**base, 'status': 'POLYNOMIAL_RIVAL_DISAGREES',
                     'witness': {'candidate': item['id'], 'law': model.text(values[observable]) if status == 'PREDICTED'
                                 else None, 'polynomial': model.text(interpolant)}}

@@ -280,21 +280,24 @@ class CliTests(Campaign):
         root = self.base / 'sigterm'
         declaration = fx.law_campaign(root, QUAD['law'], QUAD['xs'], hypotheses=QUAD['hypotheses'], sleep=1.5)
         self.assertEqual(self.cli(root, 'compass', 'init', '--declaration', str(declaration))[0], 0)
+        # Windows cannot deliver SIGTERM (it is TerminateProcess); its settled stop is CTRL_BREAK_EVENT.
+        windows = os.name == 'nt'
         process = subprocess.Popen([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(root),
-                                    'compass', 'drive'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                    'compass', 'drive'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0)
         deadline, running = time.monotonic() + 60, None
         while running is None and time.monotonic() < deadline:
             running = next((r for r, s in self.runs(root).items() if s == 'RUNNING'), None)
             time.sleep(0.05)
         self.assertIsNotNone(running)
         time.sleep(0.3)
-        process.send_signal(signal.SIGTERM)
+        process.send_signal(signal.CTRL_BREAK_EVENT if windows else signal.SIGTERM)
         out, err = process.communicate(timeout=120)
         self.assertEqual(process.returncode, 2, err)
         value = json.loads(out)
         self.assertEqual(value['status'], 'INTERRUPTED')
         partial = value['workset']['handoff']['detail']
-        self.assertEqual((partial['signal'], partial['in_flight_run']), ('SIGTERM', running))
+        self.assertEqual((partial['signal'], partial['in_flight_run']), ('SIGBREAK' if windows else 'SIGTERM', running))
         self.assertEqual(self.runs(root)[running], 'INTERRUPTED')  # Settled, not a FAILED experiment.
         code, value = self.cli(root, 'compass', 'drive')
         self.assertEqual((code, value['status']), (0, 'GOAL_IDENTIFIED'))

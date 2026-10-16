@@ -261,6 +261,14 @@ def matches(predicted, observed, tol):
     return abs(predicted - observed) <= absolute + relative * abs(observed)
 
 
+def agree(left, right, tol):
+    """Two predictions agree only if each would survive the other as the measured value.
+
+    ``matches`` scales its relative band by the observed value, so it is directional;
+    comparing two predictions needs both directions."""
+    return matches(left, right, tol) and matches(right, left, tol)
+
+
 def compile_hypothesis(value, inputs, observables, *, goal=None):
     """Freeze one rival rulebook; identity covers only its executable content.
 
@@ -501,7 +509,7 @@ def equivalent(left, right, points, tolerances):
             continue
         compared = sorted(k for k in a if k in tolerances)
         if compared != sorted(k for k in b if k in tolerances) or \
-                any(not matches(a[k], b[k], tolerances[k]) for k in compared):
+                any(not agree(a[k], b[k], tolerances[k]) for k in compared):
             return None
         determinate += bool(compared)
     return 'OBSERVATIONALLY_EQUIVALENT' if determinate else None

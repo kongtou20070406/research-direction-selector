@@ -139,6 +139,15 @@ class EquivalenceTests(unittest.TestCase):
         self.assertIsNone(model.equivalent(guarded, partial, points, {'y': (0, 0)}))
         self.assertEqual(model.equivalent(guarded, partial, points[1:], {'y': (0, 0)}), 'OBSERVATIONALLY_EQUIVALENT')
 
+    def test_relative_tolerance_equivalence_is_symmetric(self):
+        high = model.compile_hypothesis({'id': 'high', 'predict': {'y': '100'}}, ['x'], ['y'])
+        low = model.compile_hypothesis({'id': 'low', 'predict': {'y': '90'}}, ['x'], ['y'])
+        points, tolerances = [{'x': model.exact(0)}], {'y': (model.exact(0), model.exact('0.1'))}
+        # The relative band scales with the measured value: a measured 90 refutes high (10 > 9),
+        # though a measured 100 keeps low (10 <= 10). A measurement separates them, so neither order merges.
+        self.assertIsNone(model.equivalent(high, low, points, tolerances))
+        self.assertIsNone(model.equivalent(low, high, points, tolerances))
+
 
 class ClassTests(Campaign):
     def test_tolerance_classes_are_pairwise_equivalent(self):
@@ -150,6 +159,18 @@ class ClassTests(Campaign):
         verification = compass.verify(store, state)
         self.assertEqual(verification['distinct_live_classes'], 2)
         self.assertFalse({'b', 'c'} <= set(verification['equivalence_class']))
+
+    def test_relative_tolerance_rivals_stay_separate_in_either_order(self):
+        # Live rulebooks are grouped in id order, so swapping the values tries both comparison orders.
+        for a, b in (('100', '90'), ('90', '100')):
+            with self.subTest(a=a, b=b):
+                self.setUp()  # A fresh campaign root for each order.
+                store = self.law('100', hypotheses=[('a', a), ('b', b)], observables={'y': {'tolerance': {'rel': '0.1'}}})
+                self.buy(store, 'x0', 'x1', 'x2', 'x3')
+                state, _ = compass.ingest(store)
+                # Both survive a measured 100, yet a measured 90 would refute the 100 rulebook: two classes.
+                self.assertEqual(compass.verify(store, state)['distinct_live_classes'], 2)
+                self.assertNotEqual(drive(self.root, publish=False)['status'], 'GOAL_IDENTIFIED')
 
 
 class NoveltyTests(Campaign):

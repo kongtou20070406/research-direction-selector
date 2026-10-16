@@ -258,11 +258,14 @@ def _jump_evidence_cut(store, db):
 
 
 def _base_source(store, code_path, expected):
-    """The exact bytes the workbench bound; a file edited after preparation is refused (#203)."""
+    """The exact bytes the workbench bound; a file edited after preparation is refused (#203).
+
+    The hash covers the raw bytes; the text handed on keeps the universal-newline reading
+    that ``read_text`` gave before, so a CRLF checkout yields the same source as an LF one."""
     raw = store._path(code_path).read_bytes()
     require(hashlib.sha256(raw).hexdigest() == expected,
             'Bound code changed after workbench preparation; prepare again from the current binding')
-    return raw.decode('utf-8-sig')
+    return raw.decode('utf-8-sig').replace('\r\n', '\n').replace('\r', '\n')
 
 
 def request_repair(store, report):

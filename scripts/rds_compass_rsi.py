@@ -430,7 +430,7 @@ def escalate(store, state, gap):
         path = store.root / TOOL_DIR / f"{tool['name']}-{tool['sha256'][:12]}.py"
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_text(tool['source'], encoding='utf-8')
+            path.write_bytes(tool['source'].encode('utf-8'))
         require(_sha(path.read_bytes()) == tool['sha256'], 'Registered tool bytes differ from qualified source')
         record.update(path=path.relative_to(store.root).as_posix(), source=tool['source'], runner=evidence,
                       boundary={'declared_candidates': len(plan['candidates']), 'defined_on_all': True})

@@ -41,7 +41,7 @@ def _partial(store, steps, in_flight, signal_name):
 def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
     store = cstore.store_for(root)
     deadline = None if wall_seconds is None else time.monotonic() + wall_seconds
-    previous = install(('SIGTERM', 'SIGINT'))
+    previous = install(('SIGTERM', 'SIGINT', 'SIGBREAK'))
     steps, in_flight = [], None
 
     def finish(reason, detail=None, **extra):
