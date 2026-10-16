@@ -130,7 +130,9 @@ def pilot_spend(job):
     Every attempt counts. A call without a usage report counts as ``PILOT_UNREPORTED_CALL``, never as zero.
     """
     job = Path(job)
-    usages = [json.loads(p.read_text(encoding='utf-8')).get('usage') for p in sorted(job.glob('jumps-a*/*/audit.json'))]
+    # One directory per jump call; a call whose wrapper never wrote its audit has no usage report.
+    usages = [json.loads((d / 'audit.json').read_text(encoding='utf-8')).get('usage') if (d / 'audit.json').exists()
+              else None for d in sorted(job.glob('jumps-a*/*')) if d.is_dir()]
     record = job / 'trial.json'
     fallback = json.loads(record.read_text(encoding='utf-8')).get('fallback_call') if record.exists() else None
     if fallback is not None:
