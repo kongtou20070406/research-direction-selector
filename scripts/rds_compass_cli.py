@@ -47,12 +47,12 @@ def command(args):
         import rds_compass_rsi as rsi
         with open(args.propose, encoding='utf-8') as stream:
             return {**rsi.propose(store, stream.read(), 'USER_PROPOSED'), 'scientific_support': 'UNKNOWN'}
-    if args.action == 'status':
+    if args.action in ('status', 'decide'):
         state = compass.fold(store)
-        return compass.workset(state, stale=compass.trend_stale(store, state))
-    if args.action == 'decide':
-        state = compass.fold(store)
-        return {'head': state['head'], 'decision': compass.decide(state), 'execution_started': False}
+        stale = compass.stale_bindings(store, state)
+        if args.action == 'status':
+            return compass.workset(state, stale=stale)
+        return {'head': state['head'], 'decision': compass.next_step(state, stale), 'execution_started': False}
     if args.action == 'report':
         return compass.report(store)
     state = compass.fold(store)

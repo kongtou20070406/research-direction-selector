@@ -59,11 +59,8 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
                 return finish('STEP_LIMIT', {'max_steps': max_steps})
             if deadline is not None and time.monotonic() >= deadline:
                 return finish('CONTROLLER_DEADLINE', _partial(store, steps, None, None))
-            step = compass.decide(state)
-            if step['action'] not in ('RECOVER', 'VERIFY', 'HANDOFF') and stale:
-                # Ingested evidence is re-bound before it steers a rival, a ranking or a purchase:
-                # changed or missing receipt bytes end the drive through VERIFY, which records them.
-                step = {'action': 'VERIFY', 'reason': 'STALE_EVIDENCE'}
+            # Stale evidence steers no purchase and ends the drive only through VERIFY.
+            step = compass.next_step(state, stale)
             action = step['action']
             steps.append({'action': action, 'candidate': step.get('candidate'), 'head': state['head'][:16],
                           'trigger': (step.get('basin') or {}).get('trigger')})

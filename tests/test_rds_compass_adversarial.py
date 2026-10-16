@@ -3,6 +3,7 @@
 Each case reproduces a defect found by an independent Codex (gpt-6.1-sol, xhigh) red-team pass
 against the 6.0.0 candidate, or by the Codex review of PR #357. Every case failed before its fix.
 """
+from argparse import Namespace
 from contextlib import closing
 import hashlib
 import json
@@ -22,7 +23,7 @@ import rds_compass as compass
 import rds_compass_model as model
 import rds_compass_rsi as rsi
 import rds_compass_store as cstore
-from rds_compass_cli import exit_code
+from rds_compass_cli import command, exit_code
 from rds_compass_declaration import initialize
 from rds_compass_drive import drive
 
@@ -147,6 +148,29 @@ class ReceiptBindingTests(Campaign):
         self.assertEqual(len(cstore.receipts(store)), 2)  # Nothing was bought on the strength of changed bytes.
         self.assertEqual(result['status'], 'JUDGMENT_REQUIRED')
         self.assertIn({'candidate': 'x0', 'binding': 'OUTPUT_HASH_MISMATCH'}, result['verification']['stale'])
+
+    def test_stale_evidence_ends_the_drive_only_through_verification(self):
+        # The sole observation refutes every rulebook and the budget is spent; its bytes then change.
+        store = self.law(hypotheses=[('five', '5')], budget={'wall_seconds': 900, 'experiments': 1})
+        self.buy(store, 'x0')
+        compass.ingest(store)
+        self.assertEqual(compass.decide(compass.fold(store))['reason'], 'BUDGET_EXHAUSTED')
+        fx.write(self.root / 'outputs/compass/x0.json', {'outputs': {'y': 5}})
+        result = drive(self.root, publish=False)
+        self.assertEqual(result['status'], 'JUDGMENT_REQUIRED')
+        self.assertIn({'candidate': 'x0', 'binding': 'OUTPUT_HASH_MISMATCH'}, result['verification']['stale'])
+
+    def test_status_and_decide_recheck_bindings_first(self):
+        store = self.law(hypotheses=[('identity', 'x')])
+        self.buy(store, 'x0', 'x1')
+        compass.ingest(store)
+        fx.write(self.root / 'outputs/compass/x0.json', {'outputs': {'y': 999}})
+        status = command(Namespace(root=self.root, action='status'))['next']
+        decision = command(Namespace(root=self.root, action='decide'))['decision']
+        self.assertEqual([(s['action'], s['reason']) for s in (status, decision)], [('VERIFY', 'STALE_EVIDENCE')] * 2)
+        self.assertEqual(decision['stale'], [{'candidate': 'x0', 'binding': 'OUTPUT_HASH_MISMATCH'}])
+        self.assertEqual(compass.workset(compass.fold(store))['next']['reason'], 'RECEIPTS_UNCHECKED')
+        self.assertEqual(len(cstore.receipts(store)), 2)
 
 
 class EquivalenceTests(unittest.TestCase):

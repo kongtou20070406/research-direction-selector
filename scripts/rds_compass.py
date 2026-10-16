@@ -424,6 +424,19 @@ def decide(state):
     return {'action': 'HANDOFF', 'reason': 'JUDGMENT_REQUIRED', 'basin': diagnosis}
 
 
+def next_step(state, stale):
+    """``decide``, gated on a fresh ``stale_bindings`` recheck (None: none was made).
+
+    Ingested evidence is re-bound before it steers a rival, a ranking, a purchase or a terminal
+    handoff: changed or missing receipt bytes, or no recheck at all, lead to VERIFY, which records them.
+    """
+    step = decide(state)
+    if step['action'] in ('RECOVER', 'VERIFY') or stale == []:
+        return step
+    return {'action': 'VERIFY', 'reason': 'RECEIPTS_UNCHECKED' if stale is None else 'STALE_EVIDENCE',
+            'stale': (stale or [])[:8], 'decided': step['action']}
+
+
 def _decide_improve(state, spent, wall):
     plan = state['plan']
     can_buy = spent < plan['budget']['experiments'] and wall >= plan['experiment']['wall_seconds']
@@ -1167,7 +1180,7 @@ def workset(state, reason=None, detail=None, stale=None):
     """Compact, hash-bound continuation state: enough for a fresh agent to resume."""
     plan = state['plan']
     rows = live(state)
-    decision = decide(state) if reason is None else None
+    decision = next_step(state, stale) if reason is None else None
     body = {'schema': WORKSET_SCHEMA, 'head': state['head'], 'goal': plan['goal'],
             'unknown': plan['unknown'], 'live': [_compact_hyp(h) for h in rows[:8]],
             'live_total': len(rows),
