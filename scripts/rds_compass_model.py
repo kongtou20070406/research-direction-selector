@@ -341,10 +341,10 @@ def replay(hypothesis, observations, tolerances):
 
 
 def _classes(predictions, tol):
-    """Group exact predictions whose values lie within tolerance of a class anchor."""
+    """Group exact predictions whose values agree, in both directions, with a class anchor."""
     groups = []
     for ident, value in sorted(predictions, key=lambda row: (row[1], row[0])):
-        if groups and matches(value, groups[-1][0], tol):
+        if groups and agree(value, groups[-1][0], tol):
             groups[-1][1].append(ident)
         else:
             groups.append((value, [ident]))
@@ -651,7 +651,8 @@ def regime_split(observations, inputs, observable, tolerances, *, variable, gram
                   key=lambda r: exact(r['inputs'][variable]))
     values = sorted({exact(r['inputs'][variable]) for r in rows})
     if len(values) < 4:
-        return {'status': 'TOO_FEW_POINTS', 'fits': [], 'attempted': 0, 'scientific_support': 'UNKNOWN'}
+        return {'status': 'TOO_FEW_POINTS', 'fits': [], 'attempted': 0, 'mode': 'REGIME_SPLIT',
+                'variable': variable, 'scientific_support': 'UNKNOWN'}
     cuts = [(a + b) / 2 for a, b in zip(values, values[1:])][1:-1]
     step = max(1, len(cuts) // max_splits)
     fits, attempted = [], 0

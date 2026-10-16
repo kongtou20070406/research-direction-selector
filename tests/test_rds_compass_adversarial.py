@@ -149,6 +149,16 @@ class EquivalenceTests(unittest.TestCase):
         self.assertIsNone(model.equivalent(low, high, points, tolerances))
 
 
+    def test_eig_partitions_use_symmetric_agreement(self):
+        low = model.compile_hypothesis({'id': 'low', 'predict': {'y': '-100'}}, ['x'], ['y'])
+        high = model.compile_hypothesis({'id': 'high', 'predict': {'y': '-90'}}, ['x'], ['y'])
+        tolerances = {'y': (model.exact(0), model.exact('0.1'))}
+        # A measured -90 refutes low (10 > 9), so this experiment separates the rivals.
+        ranking = model.rank_experiments([low, high], [{'id': 'x0', 'inputs': {'x': 0}}], tolerances)
+        self.assertEqual([row['id'] for row in ranking['ranked']], ['x0'], ranking['excluded'])
+        self.assertEqual(len(ranking['ranked'][0]['classes']), 2)
+
+
 class ClassTests(Campaign):
     def test_tolerance_classes_are_pairwise_equivalent(self):
         # Under abs tolerance 1, -1 ~ 0 and 0 ~ 1, yet -1 and 1 are separable: never one class.
@@ -171,6 +181,43 @@ class ClassTests(Campaign):
                 # Both survive a measured 100, yet a measured 90 would refute the 100 rulebook: two classes.
                 self.assertEqual(compass.verify(store, state)['distinct_live_classes'], 2)
                 self.assertNotEqual(drive(self.root, publish=False)['status'], 'GOAL_IDENTIFIED')
+
+
+class RegimeSplitTests(Campaign):
+    def test_an_input_with_too_few_levels_does_not_crash_the_escape(self):
+        # Six measurements, nothing fits, and z has only three levels: the z split has too few points.
+        fx.write(self.root / 'two.py', "import argparse, json, pathlib\np = argparse.ArgumentParser()\n"
+                 "p.add_argument('--x'); p.add_argument('--z'); p.add_argument('--output')\na = p.parse_args()\n"
+                 "pathlib.Path(a.output).parent.mkdir(parents=True, exist_ok=True)\n"
+                 "pathlib.Path(a.output).write_text(json.dumps({'outputs': {'y': int(a.x) ** 3 + 7 * int(a.z)}}))\n")
+        store = self.law(
+            inputs={'x': {'min': 0, 'max': 5, 'integer': True}, 'z': {'min': 0, 'max': 2, 'integer': True}},
+            candidates=[{'id': f'x{i}', 'inputs': {'x': i, 'z': i % 3}} for i in range(6)],
+            experiment={'argv': ['{python}', '-B', 'two.py', '--x', '{x}', '--z', '{z}', '--output', '{output}'],
+                        'files': {'code': ['two.py'], 'data': ['task.json'], 'evaluator': ['two.py']},
+                        'timeout_seconds': 20, 'wall_seconds': 25},
+            grammar={'variables': ['x', 'z'], 'constants': [0], 'operators': []}, rsi={'enabled': False})
+        self.buy(store, *[f'x{i}' for i in range(6)])
+        compass.ingest(store)
+        result = compass.escape(store, compass.fold(store), {'trigger': 'NO_RIVALS'})
+        self.assertEqual(result['status'], 'NO_RIVAL_WITHIN_BOUND')
+        notes = compass.fold(store)['jumps'][-1]['synthesis']
+        self.assertEqual(notes['REGIME_SPLIT:z'], {'status': 'TOO_FEW_POINTS', 'attempted': 0})
+
+
+class LibraryTests(Campaign):
+    def test_damaged_library_records_are_skipped_not_fatal(self):
+        name, entry, code, sha = rsi.extract('def twice(n):\n    return 2 * n\n')
+        good = {'schema': rsi.TOOL_SCHEMA, 'name': name, 'entry': entry, 'source': code, 'sha256': sha,
+                'scope': {'domain': 'D'}}
+        library = self.root / 'library'
+        damaged = {'scope-list': {**good, 'scope': []}, 'scope-missing': {k: v for k, v in good.items() if k != 'scope'},
+                   'not-an-object': [], 'source-not-text': {**good, 'source': 5}}
+        for stem, record in {'good': good, **damaged}.items():
+            fx.write(library / f'{stem}.json', record)
+        for scope in (None, {'domain': 'D'}):
+            with self.subTest(scope=scope):
+                self.assertEqual([t['library_record'] for t in rsi.library_tools(library, scope)], ['good.json'])
 
 
 class NoveltyTests(Campaign):
@@ -390,6 +437,44 @@ class DeclarationReviewTests(Campaign):
                 path = fx.law_campaign(root, 'x', range(2))
                 with self.assertRaisesRegex(ValueError, 'Windows reserved device'):
                     initialize(root, self.declaration(path, lambda d: d['candidates'][0].update(id=name)))
+
+    def test_improve_without_a_treatment_arm_is_rejected(self):
+        # With the baseline alone nothing is compared, so no evaluation can be reported.
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}})
+        with self.assertRaisesRegex(ValueError, 'treatment arm'):
+            initialize(self.root, path)
+        self.assertFalse((self.root / '.rds').exists())  # Refused before any ledger exists.
+
+    def test_output_that_is_a_bound_input_is_rejected_at_init(self):
+        # Registration would refuse the purchase only after the ledger exists; init refuses the campaign.
+        cases = {'data': lambda d: d['experiment']['files']['data'].append('outputs/compass/x0.json'),
+                 'protocol': lambda d: d.update(protocol={'path': 'outputs/compass/X1-a2.json'})}
+        for name, edit in cases.items():
+            with self.subTest(binding=name):
+                root = self.root / name
+                path = fx.law_campaign(root, 'x', range(2))
+                fx.write(root / 'outputs/compass/x0.json', {'frozen': True})
+                with self.assertRaisesRegex(ValueError, 'overwrites a bound input'):
+                    initialize(root, self.declaration(path, edit))
+                self.assertFalse((root / '.rds').exists())
+
+    def test_synthesis_bounds_the_model_refuses_are_rejected_at_init(self):
+        # The model accepts 1..MAX_NODES nodes and a positive candidate limit; anything else would
+        # initialize, buy probes, then fail at the first synthesis.
+        for name, value in (('max_nodes', 0), ('max_nodes', model.MAX_NODES + 1), ('max_candidates', 0)):
+            with self.subTest(name=name, value=value):
+                root = self.root / f'{name}-{value}'
+                path = fx.law_campaign(root, 'x', range(2), synthesis={name: value})
+                with self.assertRaisesRegex(ValueError, 'synthesis.' + name):
+                    initialize(root, path)
+                self.assertFalse((root / '.rds').exists())
+
+    def test_agent_argv_with_a_nul_byte_is_rejected_at_init(self):
+        # subprocess.run would raise ValueError mid-escape, outside the recorded agent failures.
+        path = fx.law_campaign(self.root, 'x', range(2), agent='adopt')
+        edit = lambda d: d['agent'].update(argv=['{python}', '-B', 'agent.py\x00'])
+        with self.assertRaisesRegex(ValueError, 'Agent argv'):
+            initialize(self.root, self.declaration(path, edit))
 
     def test_hypothesis_must_predict_the_goal_observable(self):
         path = fx.law_campaign(self.root, 'x', range(4))

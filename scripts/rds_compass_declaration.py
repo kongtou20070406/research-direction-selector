@@ -37,6 +37,9 @@ DEFAULTS = {
     'verification': {'confirmations': 2, 'spend_budget': True},
 }
 FLAGS = frozenset(('enabled', 'spend_budget'))
+# The synthesis bounds the model itself enforces; a plan outside them would fail only at its first jump.
+BOUNDS = {('synthesis', 'max_nodes'): (1, model.MAX_NODES),
+          ('synthesis', 'max_candidates'): (1, model.MAX_SYNTH_CANDIDATES)}
 PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 
 
@@ -71,7 +74,8 @@ def _tuned(declaration, key, defaulted):
         if name in FLAGS:
             require(type(value) is bool, f'{key}.{name} must be boolean')
         else:
-            require(type(value) is int and 0 <= value <= model.MAX_SYNTH_CANDIDATES, f'{key}.{name} out of range')
+            low, high = BOUNDS.get((key, name), (0, model.MAX_SYNTH_CANDIDATES))
+            require(type(value) is int and low <= value <= high, f'{key}.{name} must be an integer from {low} to {high}')
     return out
 
 
@@ -233,8 +237,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
     agent = declaration.get('agent')
     if agent is not None:
         _object(agent, {'argv', 'timeout_seconds'}, set(), 'agent')
-        require(isinstance(agent['argv'], list) and agent['argv'] and all(isinstance(a, str) and a for a in agent['argv']),
-                'Agent argv must be a nonempty string list')
+        require(isinstance(agent['argv'], list) and agent['argv']
+                and all(isinstance(a, str) and a and '\x00' not in a for a in agent['argv']),
+                'Agent argv must be a nonempty list of nonempty strings without NUL bytes')
         require(_seconds(agent['timeout_seconds']) and 0 < agent['timeout_seconds'] <= 600,
                 'Agent timeout must be in (0, 600] seconds')
         agent = {'argv': [sys.executable if a == '{python}' else a for a in agent['argv']],
@@ -264,6 +269,13 @@ def compile_plan(store, declaration, source_sha256, source=None):
             seen.add((resolved, role))
             bindings.append({'role': role, 'path': path, 'sha256': file_sha(resolved)})
     bindings.sort(key=lambda b: (b['role'], b['path']))
+    # The kernel refuses an output that is a bound input only at registration, after the ledger
+    # exists; a campaign whose outputs or retry slots name a frozen file is refused here. Compared
+    # case-insensitively, like the outputs themselves.
+    frozen = {str(store._path(b['path'])).casefold() for b in bindings} | {str(protocol_resolved).casefold()}
+    clashes = sorted(path for c in candidates for path in (c['output'], c['retry']['output'])
+                     if str(store._path(path)).casefold() in frozen)
+    require(not clashes, 'Candidate output overwrites a bound input or the protocol: ' + ', '.join(clashes))
     contract = {'schema': 1, 'output_roots': [OUTPUT_ROOT], 'budget': {'wall_seconds': budget['wall_seconds']},
                 'description': 'Compass campaign: ' + goal['statement'][:400]}
     for role in ('code', 'config', 'data'):
@@ -301,6 +313,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
                                               and target['id'] != plan['profile']['baseline']
                                               and 'replicates' not in target),
                     f"Candidate {c['id']} must replicate another declared, non-baseline, original arm")
+        # With the baseline alone nothing is compared, so no evaluation could be reported.
+        require(any(c['id'] != plan['profile']['baseline'] and 'replicates' not in c for c in candidates),
+                'An IMPROVE declaration needs a treatment arm besides the baseline')
     plan['contract_sha256'] = digest(contract)
     return contract, protocol_raw, plan
 
