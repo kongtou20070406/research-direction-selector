@@ -149,6 +149,16 @@ class EquivalenceTests(unittest.TestCase):
         self.assertIsNone(model.equivalent(low, high, points, tolerances))
 
 
+    def test_eig_partitions_use_symmetric_agreement(self):
+        low = model.compile_hypothesis({'id': 'low', 'predict': {'y': '-100'}}, ['x'], ['y'])
+        high = model.compile_hypothesis({'id': 'high', 'predict': {'y': '-90'}}, ['x'], ['y'])
+        tolerances = {'y': (model.exact(0), model.exact('0.1'))}
+        # A measured -90 refutes low (10 > 9), so this experiment separates the rivals.
+        ranking = model.rank_experiments([low, high], [{'id': 'x0', 'inputs': {'x': 0}}], tolerances)
+        self.assertEqual([row['id'] for row in ranking['ranked']], ['x0'], ranking['excluded'])
+        self.assertEqual(len(ranking['ranked'][0]['classes']), 2)
+
+
 class ClassTests(Campaign):
     def test_tolerance_classes_are_pairwise_equivalent(self):
         # Under abs tolerance 1, -1 ~ 0 and 0 ~ 1, yet -1 and 1 are separable: never one class.
@@ -390,6 +400,26 @@ class DeclarationReviewTests(Campaign):
                 path = fx.law_campaign(root, 'x', range(2))
                 with self.assertRaisesRegex(ValueError, 'Windows reserved device'):
                     initialize(root, self.declaration(path, lambda d: d['candidates'][0].update(id=name)))
+
+    def test_improve_without_a_treatment_arm_is_rejected(self):
+        # With the baseline alone nothing is compared, so no evaluation can be reported.
+        path = fx.improve_campaign(self.root, {'base': {'s': 10}})
+        with self.assertRaisesRegex(ValueError, 'treatment arm'):
+            initialize(self.root, path)
+        self.assertFalse((self.root / '.rds').exists())  # Refused before any ledger exists.
+
+    def test_output_that_is_a_bound_input_is_rejected_at_init(self):
+        # Registration would refuse the purchase only after the ledger exists; init refuses the campaign.
+        cases = {'data': lambda d: d['experiment']['files']['data'].append('outputs/compass/x0.json'),
+                 'protocol': lambda d: d.update(protocol={'path': 'outputs/compass/X1-a2.json'})}
+        for name, edit in cases.items():
+            with self.subTest(binding=name):
+                root = self.root / name
+                path = fx.law_campaign(root, 'x', range(2))
+                fx.write(root / 'outputs/compass/x0.json', {'frozen': True})
+                with self.assertRaisesRegex(ValueError, 'overwrites a bound input'):
+                    initialize(root, self.declaration(path, edit))
+                self.assertFalse((root / '.rds').exists())
 
     def test_hypothesis_must_predict_the_goal_observable(self):
         path = fx.law_campaign(self.root, 'x', range(4))

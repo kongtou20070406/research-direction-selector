@@ -264,6 +264,13 @@ def compile_plan(store, declaration, source_sha256, source=None):
             seen.add((resolved, role))
             bindings.append({'role': role, 'path': path, 'sha256': file_sha(resolved)})
     bindings.sort(key=lambda b: (b['role'], b['path']))
+    # The kernel refuses an output that is a bound input only at registration, after the ledger
+    # exists; a campaign whose outputs or retry slots name a frozen file is refused here. Compared
+    # case-insensitively, like the outputs themselves.
+    frozen = {str(store._path(b['path'])).casefold() for b in bindings} | {str(protocol_resolved).casefold()}
+    clashes = sorted(path for c in candidates for path in (c['output'], c['retry']['output'])
+                     if str(store._path(path)).casefold() in frozen)
+    require(not clashes, 'Candidate output overwrites a bound input or the protocol: ' + ', '.join(clashes))
     contract = {'schema': 1, 'output_roots': [OUTPUT_ROOT], 'budget': {'wall_seconds': budget['wall_seconds']},
                 'description': 'Compass campaign: ' + goal['statement'][:400]}
     for role in ('code', 'config', 'data'):
@@ -301,6 +308,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
                                               and target['id'] != plan['profile']['baseline']
                                               and 'replicates' not in target),
                     f"Candidate {c['id']} must replicate another declared, non-baseline, original arm")
+        # With the baseline alone nothing is compared, so no evaluation could be reported.
+        require(any(c['id'] != plan['profile']['baseline'] and 'replicates' not in c for c in candidates),
+                'An IMPROVE declaration needs a treatment arm besides the baseline')
     plan['contract_sha256'] = digest(contract)
     return contract, protocol_raw, plan
 

@@ -341,10 +341,10 @@ def replay(hypothesis, observations, tolerances):
 
 
 def _classes(predictions, tol):
-    """Group exact predictions whose values lie within tolerance of a class anchor."""
+    """Group exact predictions whose values agree, in both directions, with a class anchor."""
     groups = []
     for ident, value in sorted(predictions, key=lambda row: (row[1], row[0])):
-        if groups and matches(value, groups[-1][0], tol):
+        if groups and agree(value, groups[-1][0], tol):
             groups[-1][1].append(ident)
         else:
             groups.append((value, [ident]))
