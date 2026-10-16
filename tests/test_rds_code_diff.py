@@ -113,6 +113,30 @@ def treatment(x):
         diff = code_diff.encode_code_diff(base.replace("y=1", "*, y=1"), base.replace("y=1", "*, y=3"))
         self.assertEqual(diff["parameter_delta"]["changed_bindings"], {"fn:f.default:y": {"before": 1, "after": 3}})
 
+    def test_a_redefined_control_is_still_the_control(self):
+        redefined = BASE_NET + "\ndef control(x):\n    return x\n"
+        clean = code_diff.score_candidate_diff(BASE_NET, BASE_NET.replace("y = x + 1", "y = 2 * x + 1"))
+        for base, candidate, field in ((redefined, redefined[:-2] + "0\n", "functions_modified"),
+                                       (BASE_NET, redefined, "functions_added")):
+            scored = code_diff.score_candidate_diff(base, candidate)
+            diff = code_diff.encode_code_diff(base, candidate)
+            self.assertEqual(diff["ast_delta"][field], ["control#2"])
+            self.assertTrue(scored["obligation_signals"]["control_modified"], field)
+            self.assertLess(scored["score"], clean["score"])
+
+    def test_unbounded_integer_literals_stay_bounded_features(self):
+        huge = "1" + "0" * 400
+        candidate = BASE_NET.replace("LR = 0.001", "LR = " + huge) + f"\nRATE = {huge} / 3\n"
+        diff = code_diff.encode_code_diff(BASE_NET, candidate)
+        self.assertEqual(diff["parameter_delta"]["numeric_log10_ratios"]["module.LR"], 403.0)
+        self.assertNotIn("module.RATE", diff["parameter_delta"]["added_bindings"])  # Beyond float range.
+        scored = code_diff.score_candidate_diff(BASE_NET, candidate)
+        self.assertTrue(0.0 <= scored["score"] <= 1.0)
+        import rds_cpu_jepa as cpu_jepa
+        for model in (cpu_jepa.DirectCodeDiffRidge(), cpu_jepa.LatentCodeDiffJEPA(), cpu_jepa.BagOfNumbersBaseline()):
+            self.assertTrue(0.0 <= model.predict({}, BASE_NET, candidate)["score"] <= 1.0, model)
+        self.assertEqual(cpu_jepa._extract_sorted_numbers("", {"n": int(huge), "m": 2}), [2.0])
+
     def test_control_modification_is_flagged_and_penalized(self):
         clean_treatment = BASE_NET.replace("y = x + 1", "y = 2 * x + 1")
         tampered_control = BASE_NET.replace("def control(x):\n    return x", "def control(x):\n    return 0")

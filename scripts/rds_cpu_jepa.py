@@ -200,8 +200,13 @@ def _extract_sorted_numbers(code, parameters=None):
             pass
     if isinstance(parameters, dict):
         for v in parameters.values():
-            if isinstance(v, (int, float)) and math.isfinite(v):
-                found.append(float(v))
+            if isinstance(v, (int, float)):
+                try:
+                    v = float(v)
+                except OverflowError:  # An integer beyond float range is no summary number.
+                    continue
+                if math.isfinite(v):
+                    found.append(v)
     found.sort()
     return found
 

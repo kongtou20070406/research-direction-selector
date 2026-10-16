@@ -93,7 +93,10 @@ def _scalar_literal(node):
         left = _scalar_literal(node.left)
         right = _scalar_literal(node.right)
         if type(left) in (int, float) and type(right) in (int, float) and right != 0:
-            val = float(left) / float(right)
+            try:
+                val = left / right
+            except OverflowError:  # An unbounded integer quotient beyond float range is no scalar feature.
+                return None
             if math.isfinite(val):
                 return val
     return None
@@ -271,7 +274,8 @@ def encode_code_diff(base_code, candidate_code):
                 if (v0 > 0 and v1 < 0) or (v0 < 0 and v1 > 0):
                     sign_flips.append(k)
                 if v0 != 0 and v1 != 0 and (v0 > 0) == (v1 > 0):
-                    log_ratios[k] = round(math.log10(abs(float(v1)) / abs(float(v0))), 6)
+                    # log10 takes unbounded integers directly, so a 400-digit literal never overflows a float.
+                    log_ratios[k] = round(math.log10(abs(v1)) - math.log10(abs(v0)), 6)
 
     unified_lines = list(
         difflib.unified_diff(
@@ -316,7 +320,10 @@ def encode_code_diff(base_code, candidate_code):
     div_or_pow_added = (
         ops_added.get("Div", 0) + ops_added.get("FloorDiv", 0) + ops_added.get("Pow", 0)
     )
-    control_modified = "control" in functions_modified or "control" in functions_removed
+    # A same-scope redefinition (control#2) is the runtime-visible control, so any change to, removal of
+    # or addition of a module-level control definition is a control change.
+    control_modified = any(name == "control" or name.startswith("control#")
+                           for name in functions_modified + functions_removed + functions_added)
     arith_op_delta = sum(ops_added.values()) - sum(ops_removed.values())
     call_count_delta = sum(calls_added.values()) - sum(calls_removed.values())
     max_abs_log_ratio = max((abs(v) for v in log_ratios.values()), default=0.0)
