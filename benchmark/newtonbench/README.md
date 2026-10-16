@@ -16,10 +16,11 @@ commits, model settings, every trial with its receipt hashes and Codex usage). P
 
 **Compass is significantly worse than both NewtonBench baselines.** This holds in the pre-registered analysis and
 in the post-hoc corrected analysis that removes a harness defect against Compass (amendment 5, below). In the
-corrected analysis, on the 14 laws that Compass's exact-rational dialect can express, Compass ties the baselines
-(0.964 vs 1.000; the baselines are at ceiling) and never certified a wrong law. In both analyses, on the 22 laws
-it cannot express, Compass's own answer was never right: every time it certified one of them, the certified law
-was wrong.
+corrected analysis, on the 14 laws that Compass's exact-rational dialect can express, Compass shows no
+significant difference from the baselines (0.964 vs 1.000, sign test 0 / 1 / 13, 95% CI [-0.107, 0.000]; no
+equivalence test was run, and the baselines are at ceiling) and never certified a wrong law. In both analyses,
+on the 22 laws it cannot express, Compass's own answer was never right: every time it certified one of them, the
+certified law was wrong.
 
 | 36 cells, both noise strata (mean over cells of NewtonBench's judged symbolic accuracy) | Registered (formal run `a341289`, defect included) | Corrected, POST HOC (amendment 5) |
 |---|---|---|
@@ -57,8 +58,9 @@ xhigh，每次 40 次模拟器查询）上，RDS v6 Compass 的符号准确率�
 
 **为什么输。** 22/36 个规律含有 Compass 精确有理数方言表达不了的函数（exp、log、三角/反三角、非整数幂）。在
 这些规律上，Compass 自己的答案正确率是 0；它只要认证了，认证的就是错的（假认证率 51/51 = 100%）：一个在
-容差内拟合所有收据的有理函数近似。在 14 个可表达规律上，Compass 和基线持平（更正后 0.964 vs 1.000，13 个
-cell 打平，不显著），并且没有发生假认证（0/54）。基线本身已接近天花板，所以即便在可表达规律上也没有提升空间。
+容差内拟合所有收据的有理函数近似。在 14 个可表达规律上，Compass 与基线无显著差异（更正后 0.964 vs 1.000，
+0 胜 / 1 负 / 13 平，95% CI [-0.107, 0.000]；未做等价检验），并且没有发生假认证（0/54）。基线本身已接近
+天花板，所以即便在可表达规律上也没有提升空间。
 
 **Compass 真正贡献了什么。** 更正后，Compass 自己的答案正确 54 次（27 个 cell-层），全部在可表达规律上。所有
 被认证规律的文本都是 jump agent（同一个 LLM）提出的；Compass 负责选实验、记收据、反驳竞争假设和认证。
@@ -71,7 +73,7 @@ NO_LIVE_RULEBOOK 时的回退答案（34/34 正确）是同一模型基于 Compa
 上 4 次 trial 因 OverflowError 失败；Compass 把非有限输出记作无观测的收据并继续（更正后 12 次 trial、122 个
 非有限结果），没有失败。但这部分稳健性对主比较几乎没有贡献：去掉该 cell 后差值从 -0.562 变为 -0.564。
 code_assisted 本身没有失败；在 m8 hard v0 上 Compass 自己的答案也没有一次正确。实验选择与验证带来的收益：
-在可表达规律上为 0（与基线持平），整体为负。
+在可表达规律上与基线无显著差异（未做等价检验），整体为负。
 
 **成本。** 更正后，Compass 每次 trial 平均输入 507k token（其中缓存 420k）、输出 35.7k；code_assisted 分别是
 79k、6.1k，vanilla 是 42k、4.5k。按每个正确解计：Compass 输入 1.32M、输出 93k；code_assisted 85k、6.5k；
@@ -159,8 +161,9 @@ The robustness gain ("Compass records a failed or non-finite experiment as a rec
 but worth about nothing in accuracy here. code_assisted, the primary comparator, never failed. In the one cell
 where vanilla failed, Compass's own answer was never right (corrected: 3 of 4 trials SEARCH_EXHAUSTED, 1
 certified a wrong law); only the fallback answer written from its receipts was right (3 of 4 trials). The
-gain from experiment selection and verification, read off the cells where every arm ran cleanly, is zero on
-expressible laws (Compass ties the ceiling) and negative overall.
+gain from experiment selection and verification, read off the cells where every arm ran cleanly, shows no
+significant difference from zero on expressible laws (no equivalence test; the baselines are at ceiling) and is
+negative overall.
 
 ## Cost: Codex token usage (descriptive)
 
