@@ -209,5 +209,61 @@ in this directory and are part of what is evaluated.
 
 ## Amendments
 
-None yet. Any amendment made before the formal runs start (only for a pipeline defect found in the pilot) is
-dated and listed here; anything after that is a deviation in the report.
+Any amendment made before the formal runs start is dated and listed here; anything after that is a deviation in
+the report.
+
+### Amendment 1 - 2026-10-15T18:15-0700 - add a noisy stratum (ceiling effect)
+
+Made before any formal trial has run. Reason: the noise-free subset is likely to be at or near the baselines'
+ceiling, so a real Compass effect could not show as a difference.
+
+Evidence used, and nothing else:
+
+- Pilot, baseline arms only: `vanilla` 3/3 and `code_assisted` 3/3 judged correct on the three held-out pilot
+  tasks (noise-free, easy/medium/easy), RMSLE 0 or ~3e-16.
+- Published baseline accuracy (NewtonBench paper, arXiv:2510.07172, Table 2, GPT-5, symbolic accuracy on the
+  vanilla equation system, easy/medium/hard): vanilla agent 90.3 / 90.3 / 87.5, code-assisted 90.3 / 89.6 / 82.6.
+  The paper reports that accuracy drops 12-16% already at noise 0.0001 (GPT-5-mini) and keeps falling with more
+  noise, and that it also falls with system complexity.
+
+Not used: any Compass pilot output. When this amendment was written one Compass pilot trial had produced its
+result file and two were still running; no Compass end state, submission or score had been read. While checking
+that the pipeline ran, the author had seen the interim messages of the first jump of one Compass pilot trial
+(`m0_gravity/easy/v1`).
+
+Changes:
+
+1. **Second stratum.** The same 36 (module, difficulty, version) cells are also run at `noise_level` 0.01:
+   NewtonBench's own relative Gaussian noise (`utils.noise.inject_noise`, standard deviation 1% of the value,
+   or the module's absolute precision floor if that is larger), still on the `vanilla_equation` system. A noisy
+   task's id is `<module>/<difficulty>/<version>/noise0.01`; noise-free task ids and every evaluation seed are
+   unchanged, and a noisy task is scored on the same test points as its noise-free cell. NewtonBench's
+   evaluator scores every submission against the noise-free law, in both strata.
+   - Why noise and not `complex_system`: a Compass rulebook is a closed-form scalar prediction, and the simple
+     and complex systems return trajectories that have no closed form in the dialect (scoped out above).
+     Noise is the dimension NewtonBench provides on which every arm remains applicable.
+   - Why 0.01: it lies inside the published grid (1e-4 ... 1e-1), is large enough for the published
+     degradation, and is small enough that exponents stay identifiable over the design range. The level is
+     fixed here and is not revised after the noisy pilot.
+2. **Same noise information for every arm.** NewtonBench's noisy prompt says only that measurements carry
+   random noise. Compass must declare a measurement tolerance, so, to keep the information equal, one sentence
+   is appended to the task text that every arm sees (baseline task prompt, jump-agent background, fallback):
+   "Noise model: each returned value is the true value plus independent Gaussian noise with standard deviation
+   equal to 1% of the true value's magnitude, or <floor> if that is larger." `<floor>` is the module's NewtonBench
+   absolute precision constant for the vanilla-equation output: 1e-12 (m0, m1, m2), 1e-6 (m4), 1e-18 (m10),
+   1e-9 (all other modules). These are simulator constants, not properties of any law.
+3. **Compass tolerance in the noisy stratum:** `rel` 1/20 (5 standard deviations) and `abs` 5 x floor, the same
+   mechanical rule on every noisy task. The jump-agent prompt states the declared tolerance instead of a fixed
+   1e-6. Every other Compass setting is unchanged; the noise-free stratum is unchanged.
+4. **Pilot.** The noisy pipeline is checked on the same three held-out pilot tasks at noise 0.01, one trial per
+   arm, not counted. Pilot tasks stay outside the formal sample.
+5. **Analysis.** The unit of the primary test becomes the cell (module, difficulty, version), because its two
+   strata share one law. For each arm and cell, accuracy is the mean over the cell's 2N trials in both strata.
+   The primary comparison remains `compass` vs `code_assisted`, with the same sign test, bootstrap CI and
+   significance rule, over the 36 cells. Pre-specified secondary results: the same test within each stratum.
+   The noise-free stratum test is exactly the originally registered primary test, and is reported as such. The
+   secondary arm comparisons, the expressible/not-expressible split, RMSLE and the false certification rate are
+   reported for the pooled cells and for each stratum. Expressibility is a property of the law and is the same
+   in both strata.
+6. **Size.** 432 trials (216 per stratum, 144 per arm). N stays 2; if cost forces a smaller N before the formal
+   start, both strata shrink equally, and the change is recorded here.
