@@ -211,7 +211,9 @@ def declare(task, root, names, background, logs):
     (root / 'task.json').write_text(json.dumps({'newtonbench': str(common.NEWTONBENCH), 'module': task['module'],
                                                 'site_packages': site.getsitepackages(),
                                                 'difficulty': task['difficulty'], 'version': task['version'],
-                                                'noise': task['noise'], 'inputs': names}), encoding='utf-8')
+                                                'noise': task['noise'], 'inputs': names,
+                                                'simulator_names': {n: common.simulator_name(task['module'], n)
+                                                                    for n in names}}), encoding='utf-8')
     (logs / 'background.txt').write_text(background, encoding='utf-8')
     argv = ['{python}', '-B', 'experiment.py', '--id', '{id}']
     for name in names:

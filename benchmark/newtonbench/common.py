@@ -286,6 +286,22 @@ def _squares(roots):
     return [Fraction(r) ** 2 for r in roots]
 
 
+# Amendment 5: the vanilla_equation simulator of these modules reads its inputs under other keyword names than
+# the ``discovered_law`` signature, and silently falls back to a default for a name it does not read. The names
+# are those in each module's own ``prompts.py`` experiment format. Every other module reads the signature names.
+SIMULATOR_NAMES = {
+    'm4_snell_law': {'n1': 'refractive_index_1', 'n2': 'refractive_index_2', 'angle1': 'incidence_angle'},
+    'm6_underdamped_harmonic': {'k': 'k_constant', 'm': 'mass', 'b': 'b_constant'},
+    'm8_sound_speed': {'gamma': 'adiabatic_index', 'T': 'temperature', 'M': 'molar_mass'},
+    'm10_be_distribution': {'T': 'temperature'},
+}
+RERUN_MODULES = sorted(SIMULATOR_NAMES)
+
+
+def simulator_name(module, name):
+    return SIMULATOR_NAMES.get(module, {}).get(name, name)
+
+
 # Input kinds, read from each module's PARAM_DESCRIPTION. Every level is the square of a rational, so the Compass
 # dialect's exact ``sqrt`` is defined on every declared input.
 KINDS = {

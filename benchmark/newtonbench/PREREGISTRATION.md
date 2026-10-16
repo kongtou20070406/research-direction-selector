@@ -329,3 +329,42 @@ ended `GOAL_IDENTIFIED` with a rational function that stays within the 5-sd tole
 every receipt, and NewtonBench's judge scored it wrong (a false certification). The tolerance rule of amendment 1
 is not revised in response. `GOAL_IDENTIFIED` means only "consistent with every receipt within the declared
 tolerance", never "scientifically supported", and the report uses that wording.
+
+### Amendment 5 - 2026-10-15T23:24-0700 - AFTER the formal run: harness defect in the Compass experiment program
+
+This amendment is written after the formal run finished and after its registered analysis was computed. Nothing
+in it changes the registered analysis, which is reported exactly as run.
+
+Defect. The Compass experiment program (`nb_experiment.py`) passed each input to NewtonBench's
+`run_experiment_for_module` under its `discovered_law` parameter name. For four modules the vanilla_equation
+simulator reads other keyword names (those in the module's own `prompts.py` experiment format) and silently falls
+back to a default for a name it does not read:
+
+| Module | Signature name -> simulator keyword |
+|---|---|
+| `m4_snell_law` | n1 -> refractive_index_1, n2 -> refractive_index_2, angle1 -> incidence_angle |
+| `m6_underdamped_harmonic` | k -> k_constant, m -> mass, b -> b_constant |
+| `m8_sound_speed` | gamma -> adiabatic_index, T -> temperature, M -> molar_mass |
+| `m10_be_distribution` | T -> temperature (omega was read) |
+
+In those 12 cells (24 tasks, 48 Compass trials) every Compass receipt measured the law at the simulator's default
+inputs (except `omega` in m10), so the Compass arm, and the compass_fallback answer built from its receipts, saw a
+constant or one-input response. The baselines are unaffected: they call the simulator through NewtonBench's own
+agent with the names its prompt gives. It was found while checking why Compass certified wrong laws on
+expressible m6 and m8 cells (every noise-free receipt had the same value). The pilot modules (m0, m1, m7) read
+the signature names, so the pilot did not expose it. `audit_inputs.py` (output `results/input-audit.md`) lists,
+for every formal cell, the inputs the simulator ignores under the old and the amended harness; under the amended
+harness the only ignored inputs are those the ground-truth law does not depend on (m0 hard v1 `mass2`, m2 medium
+v2 `current1`, m8 easy v2 `gamma`).
+
+What is done, all POST HOC and labelled so:
+
+1. The registered primary analysis and every registered secondary analysis stay as computed on the formal run
+   (`a341289`), defect included. They are the pre-registered result.
+2. The experiment program passes each input under the simulator's keyword (`common.SIMULATOR_NAMES`). Nothing else
+   changes: same Compass code, design grid, tolerance rule, prompts, query budget, model and settings.
+3. The Compass arm is rerun on the 24 affected tasks, N = 2 (`run.py --phase formal-rerun --arms compass`, into
+   `runs/formal-rerun`). The original 48 trials are kept unchanged in `runs/formal`.
+4. A post-hoc corrected analysis replaces exactly those 48 Compass trials with the rerun ones, reuses every
+   baseline trial, and applies the registered analysis unchanged (both strata, expressible split, paths, FCR,
+   tokens). It is reported next to the registered result, never in place of it.

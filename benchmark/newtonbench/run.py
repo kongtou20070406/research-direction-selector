@@ -78,7 +78,7 @@ def run_job(runs, job):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--phase', required=True, choices=['pilot', 'formal'])
+    parser.add_argument('--phase', required=True, choices=['pilot', 'formal', 'formal-rerun'])
     parser.add_argument('--trials', type=int, required=True)
     parser.add_argument('--parallel', type=int, default=6)
     parser.add_argument('--arms', nargs='*', default=ARMS, choices=ARMS)
@@ -86,6 +86,9 @@ def main(argv=None):
                                                    'phase sample, both strata')
     args = parser.parse_args(argv)
     tasks = common.pilot_tasks() if args.phase == 'pilot' else common.formal_tasks()
+    if args.phase == 'formal-rerun':
+        # Amendment 5 (post hoc): the formal tasks whose simulator ignored the Compass harness's input names.
+        tasks = [t for t in tasks if t['module'] in common.RERUN_MODULES]
     if args.tasks:
         tasks = [t for t in tasks if common.task_key(t) in args.tasks]
     runs = common.EVAL / 'runs' / args.phase
