@@ -136,21 +136,32 @@ class CompassTrendTests(unittest.TestCase):
         full = compass.report(store)['fit_trend']
         self.assertEqual((full['status'], full['overfitting'], len(full['receipts'])),
                          ('DESCRIBED', {'status': 'OBSERVED', 'from': '4', 'to': '5'}, 12))
-        compact = compass.workset(state)['fit_trend']
+        compact = compass.workset(state, stale=[])['fit_trend']
         self.assertNotIn('receipts', compact)
         self.assertEqual(compact['best_test'], {'x': ['4'], 'position': 'INSIDE_RANGE'})
-        packet = compass.packet(state, [], {'trigger': 'TEST'}, {})
+        packet = compass.packet(state, [], {'trigger': 'TEST'}, {}, [])
         self.assertEqual(packet['evidence']['fit_trend']['overfitting']['status'], 'OBSERVED')
+
+    def test_a_receipt_that_fails_its_recheck_withdraws_the_trend(self):
+        store = self.campaign('stale', {'along': 'x', 'train': 'train', 'test': 'test', 'replicate': 'seed'})
+        self.buy(store)
+        state = compass.fold(store)
+        self.assertEqual(compass.workset(state)['fit_trend']['reason'], 'RECEIPTS_UNCHECKED')
+        (store.root / state['observations']['e5s1']['artifact']['path']).write_text(
+            json.dumps({'outputs': {'train': '0', 'test': '0'}}), encoding='utf-8')
+        for trend in (compass.report(store)['fit_trend'], compass.handoff(store, 'JUDGMENT_REQUIRED')['fit_trend']):
+            self.assertEqual((trend['status'], trend['stale']), ('STALE_EVIDENCE', ['e5s1']))
+            self.assertNotIn('overfitting', trend)
 
     def test_a_varying_factor_or_an_undeclared_direction_concludes_nothing(self):
         store = self.campaign('confounded', {'along': 'x', 'train': 'train', 'test': 'test'})
         self.buy(store)
-        self.assertEqual(compass.fit_trend(compass.fold(store))['varying_inputs'], ['seed'])
+        self.assertEqual(compass.fit_trend(compass.fold(store), stale=[])['varying_inputs'], ['seed'])
         store = self.campaign('direction', {'along': 'x', 'train': 'train', 'test': 'test', 'replicate': 'seed'},
                               direction=False)
         state = compass.fold(store)
         self.assertIn('observables.test.higher_is_better', state['plan']['unknown'])
-        self.assertEqual(compass.fit_trend(state)['reason'], 'DIRECTION_UNDECLARED')
+        self.assertEqual(compass.fit_trend(state, stale=[])['reason'], 'DIRECTION_UNDECLARED')
         for index, bad in enumerate(({'along': 'epochs', 'train': 'train', 'test': 'test'},
                                      {'along': 'x', 'train': 'test', 'test': 'test'},
                                      {'along': 'x', 'train': 'train', 'test': 'test', 'replicate': 'x'},

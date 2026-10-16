@@ -48,7 +48,8 @@ def command(args):
         with open(args.propose, encoding='utf-8') as stream:
             return {**rsi.propose(store, stream.read(), 'USER_PROPOSED'), 'scientific_support': 'UNKNOWN'}
     if args.action == 'status':
-        return compass.workset(compass.fold(store))
+        state = compass.fold(store)
+        return compass.workset(state, stale=compass.trend_stale(store, state))
     if args.action == 'decide':
         state = compass.fold(store)
         return {'head': state['head'], 'decision': compass.decide(state), 'execution_started': False}

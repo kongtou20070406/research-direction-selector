@@ -149,6 +149,30 @@ class LawTests(Campaign):
         self.assertEqual(nodes['owned:compass:hyp:lin']['status'], 'CONTRADICTED')
         self.assertIn('receipt', nodes['owned:compass:hyp:lin']['evidence'])
 
+    def test_tms_mirror_withdraws_evidence_that_fails_its_recheck(self):
+        from rds_tms_store import current
+        root = self.campaign('tms-stale', QUAD)
+        drive(root)
+        store = cstore.store_for(root)
+        state = compass.fold(store)
+        witnesses = [c['id'] for c in state['hypotheses']['lin']['replay']['counterexamples']]
+        self.assertGreater(len(witnesses), 1)
+        for count, status in ((1, 'CONTRADICTED'), (len(witnesses), 'UNKNOWN')):
+            for ident in witnesses[:count]:
+                (root / state['observations'][ident]['artifact']['path']).write_text('{"outputs": {"y": 999}}',
+                                                                                     encoding='utf-8')
+            compass.publish_tms(store, compass.fold(store))
+            graph = current(root)['dependency_map']
+            nodes = {n['id']: n for n in graph['nodes']}
+            self.assertEqual({nodes['owned:compass:obs:' + i]['status'] for i in witnesses[:count]}, {'UNKNOWN'})
+            lin = nodes['owned:compass:hyp:lin']
+            self.assertEqual(lin['status'], status)
+            # A refutation that stands cites a witness that still verifies, never the stale one.
+            self.assertEqual((lin.get('evidence') or {}).get('receipt', {}).get('sha256'),
+                             state['observations'][witnesses[1]]['receipt_sha256'] if count == 1 else None)
+            explains = next(e for e in graph['hyperedges'] if e['id'] == 'owned:compass:explains:lin')
+            self.assertEqual(explains['status'], 'CONTRADICTED' if count == 1 else 'PROPOSED')
+
     def test_changed_original_output_is_reported_stale_not_trusted(self):
         root = self.campaign('stale', QUAD)
         drive(root)
