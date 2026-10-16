@@ -17,6 +17,7 @@ import subprocess
 
 import rds_compass_model as model
 import rds_compass_store as cstore
+import rds_fit_trend as fit
 from rds_artifacts import strict_json
 from rds_project import canonical, digest, require
 
@@ -595,6 +596,8 @@ def packet(state, items, trigger, notes):
                          'tools': 'optional [{source}] (at most 4): one-argument integer feature functions, tried at '
                                   'the next capability gap and qualified only by the receipted oracle triple'},
             'scientific_support': 'UNKNOWN'}
+    if state['plan'].get('trend'):
+        body['evidence']['fit_trend'] = fit_trend(state, compact=True)
     tokens = agent_tokens(state)
     if tokens['cap'] is not None:
         body['budget'] = {'agent_tokens': {'cap': tokens['cap'], 'spent': tokens['spent'],
@@ -623,6 +626,37 @@ def _usage(stdout):
     ok = isinstance(usage, dict) and keys <= set(usage) <= keys | {'cached_input_tokens'} and \
         all(type(v) is int and 0 <= v < 10 ** 12 for v in usage.values())
     return dict(usage) if ok else None
+
+
+def fit_trend(state, compact=False):
+    """Train/test fit-trend conclusions recomputed from receipted measurements (``rds_fit_trend``)."""
+    plan = state['plan']
+    spec, tolerances, higher = plan.get('trend'), _tolerances(plan), plan['higher_is_better']
+    if spec is None:
+        return None
+    pair = {spec['train'], spec['test']}
+    rows = [r for r in measured(state) if pair <= set(r['outputs'])]
+    fixed = [k for k in plan['inputs'] if k not in (spec['along'], spec.get('replicate'))]
+    varying = sorted(k for k in fixed if len({r['inputs'].get(k) for r in rows}) > 1)
+    levels = len({r['inputs'].get(spec['along']) for r in rows})
+    if not pair <= set(tolerances) or not pair <= set(higher):
+        out = {'status': 'UNKNOWN', 'reason': 'TOLERANCE_UNDECLARED' if not pair <= set(tolerances)
+               else 'DIRECTION_UNDECLARED'}
+    elif varying:  # Another factor moved with x: no trend in x is concluded.
+        out = {'status': 'CONFOUNDED', 'varying_inputs': varying}
+    elif not 2 <= levels <= fit.MAX_LEVELS or len(rows) > fit.MAX_RUNS:
+        out = {'status': 'INSUFFICIENT_LEVELS' if levels < 2 else 'TOO_MANY_RUNS', 'levels': levels}
+    else:
+        runs = [{'x': r['inputs'][spec['along']], 'train': r['outputs'][spec['train']],
+                 'test': r['outputs'][spec['test']]} for r in rows]
+        out = {'status': 'DESCRIBED', **fit.analyze(runs, {'train': tolerances[spec['train']],
+                                                          'test': tolerances[spec['test']]}, not higher[spec['train']]),
+               'receipts': [r['receipt_sha256'] for r in rows]}
+    out = {**out, 'trend': spec, 'scientific_support': 'UNKNOWN'}
+    if compact:
+        out = {k: v for k, v in out.items() if k not in ('levels', 'receipts')}
+        out.update({'steps': out['steps'][-12:]} if 'steps' in out else {})
+    return out
 
 
 def agent_tokens(state):
@@ -1123,6 +1157,7 @@ def workset(state, reason=None, detail=None):
             'next': {k: decision[k] for k in ('action', 'candidate', 'eig_bits', 'reason') if k in decision} if decision else None,
             'handoff': {'reason': reason, 'detail': detail} if reason else None,
             **({'agent_tokens': agent_tokens(state)} if plan.get('agent') else {}),
+            **({'fit_trend': fit_trend(state, compact=True)} if plan.get('trend') else {}),
             'scientific_support': 'UNKNOWN'}
     require(reason is None or reason in HANDOFF_REASONS, 'Unknown handoff reason')
     return {**body, 'sha256': digest(body)}
@@ -1237,6 +1272,7 @@ def report(store):
             'handoff': state['handoffs'][-1] if state['handoffs'] else None,
             'interruptions': state['interruptions'], 'budget': state['budget'],
             **({'agent_tokens': agent_tokens(state)} if plan.get('agent') else {}),
+            **({'fit_trend': fit_trend(state)} if plan.get('trend') else {}),
             'interrupted_attempts': [{'candidate': v['candidate'], 'run_id': k, 'receipt_sha256': v['receipt_sha256']}
                                      for k, v in sorted(state['interrupted'].items())],
             'experiments': sum(1 for rid in state['runs'] if rid.startswith('compass-')),

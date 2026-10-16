@@ -29,4 +29,6 @@ A malformed model or request exits 2 with `status: INVALID` on stderr. Nothing i
 
 An experiment that builds one network per declared input can therefore let Compass identify a structural law, with each value receipted as `INPUT_REPORTED`. For example, linear regions against width, or the Lipschitz bound against depth. The Compass dialect now includes `log`, `exp` and rational powers, so such laws include scaling forms like `a * x ** (1/2)` or `log(x)`.
 
+An experiment that trains a network per level of an input and reports train and test metrics can declare a Compass `trend`, which turns the receipted runs into overfitting and plateau conclusions (see [Fit trends](compass.md#fit-trends-train-and-test)).
+
 These tools complement the certificates in [formal-verification.md](formal-verification.md). `rds_nn_verify` proves output bounds and margins, and `rds_scale_verify` proves scale equivariance. The analyses here measure structure: unit stability, sensitivity, region counts and ablation effects.

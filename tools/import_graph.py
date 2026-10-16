@@ -60,6 +60,7 @@ LAYERS.update(
     rds_interrupt="SHARED",
     rds_path_identity="SHARED",
     rds_compass_model="SHARED",
+    rds_fit_trend="SHARED",
     rds_compass_store="L1",
     rds_compass_declaration="L1",
     rds_compass="L3",

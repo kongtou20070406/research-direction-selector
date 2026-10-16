@@ -50,6 +50,7 @@ A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
 | `rds_compass_rsi` | L3 | Goal-bound tool synthesis from the base catalogue and recorded offers, oracle-triple qualification, cross-session library, retraction. |
 | `rds_compass_drive` | L3 | The unattended loop; SIGTERM and deadline handling. |
 | `rds_compass_cli` | L4 | `compass init/drive/status/decide/report/tools`, plus the `project init --declaration` and `project drive --compass` front doors. |
+| `rds_fit_trend` | SHARED | Train/test fit-trend conclusions over measured runs, decided per replicate pair against declared tolerances. |
 | `rds_interrupt`, `rds_path_identity` | SHARED | Outer interrupt as a settled exit (#215); spelling-independent root identity (#207). |
 
 ## Expression dialect
@@ -145,6 +146,37 @@ Tools take one integer input. A gap over real-valued inputs is not closed by too
 
 For one-input unconditional laws, Compass also builds the unique polynomial of degree `≤ m-2` through `m` receipted points (one spare equation). The independent `rds_math_router.check_certificate` replays that certificate (#194), and the result is compared with the law on every declared input. The two agree at an input only if each value would survive the other as the measurement. If they disagree (`POLYNOMIAL_RIVAL_DISAGREES`), some rival outside the synthesis bound fits every receipt, and the drive returns `JUDGMENT_REQUIRED` instead of `GOAL_IDENTIFIED`.
 
+## Fit trends (train and test)
+
+An experiment that trains a model at each level of an input (epochs, width, depth, data size, a regularization strength) and reports a metric on both the training and the test set can declare `"trend": {"along": "x", "train": "train_loss", "test": "test_loss", "replicate": "seed"}`. `replicate` is optional. Both observables need a tolerance and the same `higher_is_better`. A missing direction is listed as unknown and never defaulted.
+
+Compass then recomputes `fit_trend` from the receipted measurements whenever it builds a jump packet, the working set or the report, so a jump agent reads the conclusions without computing them. Between consecutive levels of `along`, each metric gets a step label, decided over every pair of runs at the two levels:
+- `IMPROVES` or `WORSENS`, if every pair moves that way beyond the tolerance;
+- `WITHIN_TOLERANCE`, if every pair agrees within it;
+- `UNRESOLVED`, otherwise.
+
+The pair of labels gives the step's diagnosis:
+
+| Train | Test | Diagnosis |
+|---|---|---|
+| `IMPROVES` | `WORSENS` | `OVERFITTING` |
+| `IMPROVES` | `IMPROVES` | `BOTH_IMPROVE` |
+| `WITHIN_TOLERANCE` | `WITHIN_TOLERANCE` | `PLATEAU` |
+| `WITHIN_TOLERANCE` | `WORSENS` | `TEST_WORSENS` |
+| `WITHIN_TOLERANCE` | `IMPROVES` | `TEST_IMPROVES` |
+| `IMPROVES` | `WITHIN_TOLERANCE` | `TRAIN_ONLY_IMPROVES` |
+| `WORSENS` | `WORSENS` | `BOTH_WORSEN` |
+| any other pair | | `UNRESOLVED` |
+
+The result also gives:
+- the first `OVERFITTING` step, or `NOT_OBSERVED_OVER_MEASURED_RANGE`;
+- the levels no other level beats on test, and whether they sit `AT_RANGE_EDGE` (the optimum may lie outside the measured range), `INSIDE_RANGE`, or no level is decidedly better (`NO_DECIDED_OPTIMUM`);
+- the train and test trends (`IMPROVING`, `WORSENING`, `MIXED`, `NO_DECIDED_CHANGE`);
+- the per-level gap (`test - train` for a lower-is-better metric);
+- `noise`: `REPLICATED`, or `UNREPLICATED`, in which case steps are decided against the tolerance alone.
+
+If any other declared input varies across the runs, the result is `CONFOUNDED` and names it. Underfitting needs a target that the declaration does not state, so it is not concluded. Labels: `DESCRIPTIVE_OVER_MEASURED_LEVELS`, `extrapolation: NONE`, values `INPUT_REPORTED`, `scientific_support: UNKNOWN`. Outside a campaign, `python -B scripts/rds_fit_trend.py --request runs.json` reads `{lower_is_better, tolerance: {train, test}, runs: [{x, train, test}]}`.
+
 ## IMPROVE goals
 
 An IMPROVE declaration compares arms that report per-sample metrics. Mean gain alone never accepts an arm. An arm is `ACCEPT` only if:
@@ -182,7 +214,7 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
 ```
 
 Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification` (`confirmations`, `spend_budget`),
-`agent` (`{argv, timeout_seconds, max_tokens?}`; `max_tokens` is an integer from 1 to 10^10), `library`, `protocol` (identity fields),
+`agent` (`{argv, timeout_seconds, max_tokens?}`; `max_tokens` is an integer from 1 to 10^10), `library`, `trend` (`{along, train, test, replicate?}`), `protocol` (identity fields),
 and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans. An IMPROVE profile metric must declare `higher_is_better` and a tolerance: without either, the plan lists it as unknown and every arm is `JUDGMENT_REQUIRED`. An observable without a tolerance is never compared, in replay, in equivalence or in the claim: the verification names it under `unadjudicated` and leaves it out of `predict`. Every timeout and wall budget must be a JSON number, not a boolean. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. A rulebook may have up to 64 AST nodes (`MAX_RULEBOOK_NODES`); synthesis builds each part within `synthesis.max_nodes`, an integer from 1 to 15, and tries at most `synthesis.max_candidates` expressions, an integer from 1 to 200000; `init` rejects other values. Agent `argv` items must be nonempty strings without NUL bytes. Candidate ids that differ only in case are rejected, since their output files would collide on a case-insensitive filesystem, and so are Windows reserved device names (`CON`, `NUL`, `COM1`, …), on every platform. A candidate output or retry path that names a bound experiment file or the protocol file, compared case-insensitively, is rejected at `init`; otherwise the kernel would refuse the purchase only after the ledger exists. An IMPROVE declaration needs at least one treatment arm besides the baseline that is not a replicate. An IMPROVE candidate may declare `replicates: <arm>`. The experiment writes `{"outputs": {...},
 "samples"?: {...}}` to `{output}`.
 
