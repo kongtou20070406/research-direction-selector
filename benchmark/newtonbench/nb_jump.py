@@ -7,7 +7,11 @@ validation and record filter unchanged. The wrapper adds only the transport fiel
 agents also receive. A failure or a contaminated transcript exits non-zero, so Compass records it and continues
 with its unattended policy.
 
-    python -B nb_jump.py --log-dir <dir> --background <file>
+    python -B nb_jump.py --log-dir <dir> --background <file> [--dialect transcendental]
+
+``--dialect transcendental`` (amendment 6, PILOT) changes only the dialect paragraph of the prompt, to the release
+dialect, and reports each call's token usage on stdout (also from a failed call), which ``agent.max_tokens`` needs.
+The registered mode is unchanged.
 """
 import argparse
 import json
@@ -20,6 +24,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import run_codex
 
 JUMP_SECONDS = 540  # Compass caps its agent at 600 s; finish first so the failure is ours to report.
+DIALECT = {'registered': '''Rulebook expressions use this exact-arithmetic dialect:
+- integer, decimal (for example 6.674e-5) and rational constants;
+- the input variables {variables}, plus any derived tool feature an item statement uses;
+- the operators + - * / % ** and the comparisons < <= == > >=;
+- abs, floor, ceil, sqrt, min, max, and `a if cond else b`.
+Restrictions: `**` takes only a literal integer exponent from 1 to 8 (write 1/x**2, not x**-2). sqrt is defined
+only where its result is an exact rational; every declared input value is the square of a rational, so sqrt of a
+single input is always defined. There is no exp, log or trigonometric function. A rulebook that is undefined at a
+measured input is refuted there.
+''',
+           'transcendental': '''Rulebook expressions use this dialect:
+- integer, decimal (for example 6.674e-5) and rational constants;
+- the input variables {variables}, plus any derived tool feature an item statement uses;
+- the operators + - * / % ** and the comparisons < <= == > >= (an exponent is a rational constant with
+  denominator at most 8, for example `x ** 1.5` or `x ** (2/3)`);
+- abs, floor, ceil, sqrt, exp, log, sin, cos, the constant pi, min, max, and `a if cond else b`.
+A rulebook that is undefined at a measured input is refuted there.
+'''}
 PROMPT = '''You are the abductive-jump reviewer for an automated research campaign that is trying to discover a
 physical law in a simulated universe. The laws there may differ from our own, in factor dependence, in exponents
 and in constant values.
@@ -43,16 +65,7 @@ rulebooks already refuted, with a witness. `request` says what is asked of you:
 
 `reason` and `next_step` must be substantive sentences of 8 to 2048 characters.
 
-Rulebook expressions use this exact-arithmetic dialect:
-- integer, decimal (for example 6.674e-5) and rational constants;
-- the input variables {variables}, plus any derived tool feature an item statement uses;
-- the operators + - * / % ** and the comparisons < <= == > >=;
-- abs, floor, ceil, sqrt, min, max, and `a if cond else b`.
-Restrictions: `**` takes only a literal integer exponent from 1 to 8 (write 1/x**2, not x**-2). sqrt is defined
-only where its result is an exact rational; every declared input value is the square of a rational, so sqrt of a
-single input is always defined. There is no exp, log or trigonometric function. A rulebook that is undefined at a
-measured input is refuted there.
-
+{dialect}
 {tolerance_text} `applies` is an optional guard expression; nonzero means the rulebook applies. Observable:
 {observable}.
 
@@ -102,6 +115,7 @@ def main(argv=None):
     parser.add_argument('--background', required=True)
     parser.add_argument('--tol-rel', help='noisy stratum: declared relative tolerance')
     parser.add_argument('--tol-abs', help='noisy stratum: declared absolute tolerance')
+    parser.add_argument('--dialect', default='registered', choices=sorted(DIALECT))
     args = parser.parse_args(argv)
     raw = sys.stdin.buffer.read()
     packet = json.loads(raw)
@@ -115,7 +129,8 @@ def main(argv=None):
     else:
         measurements = 'noisy measurements (see the noise model in the background)'
         tolerance_text = NOISY_TOLERANCE.format(rel=args.tol_rel, abs=args.tol_abs)
-    prompt = PROMPT.format(background=background, variables=', '.join(variables),
+    prompt = PROMPT.format(background=background, dialect=DIALECT[args.dialect].format(variables=', '.join(variables)),
+                           variables=', '.join(variables),
                            observable=', '.join(observables), measurements=measurements,
                            tolerance_text=tolerance_text)
     started = time.monotonic()
@@ -124,8 +139,13 @@ def main(argv=None):
     record.update(packet_sha256=packet['sha256'], request=packet['request'], items=len(packet['items']),
                   evidence_rows=len(rows), total_seconds=round(time.monotonic() - started, 1))
     (logs / 'audit.json').write_text(json.dumps(record, indent=1), encoding='utf-8')
+    usage = None
+    if args.dialect != 'registered' and record['usage']:
+        usage = {k: int(record['usage'].get(k, 0)) for k in ('input_tokens', 'cached_input_tokens', 'output_tokens')}
     if message is None or record['contaminated']:
         print(json.dumps(record), file=sys.stderr)
+        if usage:  # Compass reads a usage report even from a failed call, so the spend is accounted.
+            sys.stdout.write(json.dumps({'usage': usage}))
         return 3
     value = json.loads(message)
     decisions = []
@@ -135,7 +155,7 @@ def main(argv=None):
             clean['hypothesis'] = _strip(row['hypothesis'])
         decisions.append(clean)
     response = {'schema': 1, 'packet_sha256': packet['sha256'], 'decisions': decisions,
-                'proposals': [_strip(p) for p in value.get('proposals') or []]}
+                'proposals': [_strip(p) for p in value.get('proposals') or []], **({'usage': usage} if usage else {})}
     sys.stdout.write(json.dumps(response))
     return 0
 

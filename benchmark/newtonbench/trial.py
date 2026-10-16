@@ -168,8 +168,10 @@ def _py(node):
         return f'({args[0]} ** {args[1]})'
     if op == 'neg':
         return f'(-{args[0]})'
-    if op in ('sqrt', 'floor', 'ceil'):
+    if op in ('sqrt', 'floor', 'ceil', 'exp', 'log', 'sin', 'cos'):
         return f'math.{op}({args[0]})'
+    if op == 'pi':
+        return 'math.pi'
     if op in ('abs', 'min', 'max'):
         return f'{op}({", ".join(args)})'
     if op == 'ite':
@@ -201,7 +203,7 @@ def _tolerance_args(task):
     return ['--tol-rel', tol['rel'], '--tol-abs', tol['abs']] if 'abs' in tol else []
 
 
-def declare(task, root, names, background, logs):
+def declare(task, root, names, background, logs, dialect='registered', max_tokens=None):
     import rds_compass_store as cstore
     from rds_compass_declaration import initialize
     kinds, points = common.design(task['module'], names)
@@ -237,6 +239,13 @@ def declare(task, root, names, background, logs):
                            '--background', str(logs / 'background.txt')] + _tolerance_args(task),
                   'timeout_seconds': 600},
         'budget': {'wall_seconds': COMPASS_WALL, 'experiments': common.QUERY_BUDGET}}
+    if dialect == 'transcendental':  # Amendment 6 (PILOT): the only changes to the declaration.
+        declaration['grammar'] = common.PILOT_GRAMMAR
+        declaration['agent']['argv'] += ['--dialect', 'transcendental']
+        if max_tokens >= 1:
+            declaration['agent']['max_tokens'] = max_tokens
+        else:  # An earlier attempt of this trial spent the whole per-trial cap: run unattended.
+            del declaration['agent']
     (root / 'compass.json').write_text(json.dumps(declaration, indent=1), encoding='utf-8')
     initialize(root, root / 'compass.json')
     return cstore.store_for(root), kinds
@@ -265,7 +274,7 @@ def compass_fallback(module, rows, background, logs, noisy):
     return law, record
 
 
-def run_compass(task, out, chat, nb):
+def run_compass(task, out, chat, nb, dialect='registered'):
     import rds_compass as compass
     import rds_compass_store as cstore
     from rds_compass_drive import drive
@@ -280,7 +289,9 @@ def run_compass(task, out, chat, nb):
         logs.mkdir(parents=True)
         started = time.monotonic()
         try:
-            store, kinds = declare(task, root, names, background, logs)
+            # Amendment 6: the per-trial agent cap holds across attempts (a restarted attempt gets what is left).
+            remaining = common.PILOT_AGENT_MAX_TOKENS - common.pilot_spend(out)['tokens']
+            store, kinds = declare(task, root, names, background, logs, dialect, remaining)
             result = drive(root, max_steps=MAX_STEPS, wall_seconds=COMPASS_WALL, publish=False)
             attempts.append({'attempt': attempt + 1, 'status': result['status'],
                              'wall_seconds': round(time.monotonic() - started, 1)})
@@ -331,6 +342,8 @@ def run_compass(task, out, chat, nb):
                   'ledger_head': state['head'], 'report_sha256': result.get('report_sha256'),
                   'non_finite_measurements': sum(1 for o in state['observations'].values()
                                                  if o['status'] == 'MEASURED' and 'y' not in o['outputs'])}
+        if dialect != 'registered':
+            record['agent_tokens'] = compass.agent_tokens(state)
         if chosen is not None and law is None:
             record['untranslatable'] = True
     certified = record.get('compass_status') == 'GOAL_IDENTIFIED' and law is not None
@@ -376,6 +389,8 @@ def main(argv=None):
     parser.add_argument('--noise', type=float, default=0.0)
     parser.add_argument('--trial', type=int, required=True)
     parser.add_argument('--out', required=True)
+    parser.add_argument('--dialect', default='registered', choices=['registered', 'transcendental'],
+                        help='Compass arm only; transcendental = amendment 6 pilot')
     args = parser.parse_args(argv)
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -385,7 +400,7 @@ def main(argv=None):
     nb = common.load_newtonbench(chat)
     started = time.monotonic()
     if args.arm == 'compass':
-        body = run_compass(task, out, chat, nb)
+        body = run_compass(task, out, chat, nb, args.dialect)
     else:
         body = run_baseline(args.arm, task, out, chat, nb)
     row = {'schema': 'rds-newtonbench-trial-v1', 'arm': args.arm, 'trial': args.trial, 'task': task,
@@ -393,6 +408,7 @@ def main(argv=None):
            'model': {'cli': 'codex', 'model': common.MODEL, 'reasoning_effort': common.EFFORT,
                      'service_tier': common.TIER},
            'query_budget': common.QUERY_BUDGET, 'wall_seconds': round(time.monotonic() - started, 1), **body,
+           **({'dialect': args.dialect} if args.dialect != 'registered' else {}),
            'scientific_support': 'UNKNOWN'}
     row['row_sha256'] = common.sha256_json(row)
     (out / 'trial.json').write_text(json.dumps(row, indent=1, default=str), encoding='utf-8')

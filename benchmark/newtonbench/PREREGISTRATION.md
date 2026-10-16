@@ -368,3 +368,150 @@ What is done, all POST HOC and labelled so:
 4. A post-hoc corrected analysis replaces exactly those 48 Compass trials with the rerun ones, reuses every
    baseline trial, and applies the registered analysis unchanged (both strata, expressible split, paths, FCR,
    tokens). It is reported next to the registered result, never in place of it.
+
+### Amendment 6 - 2026-10-16T16:45-0700 - PILOT: the Compass arm with the transcendental dialect
+
+Written after the registered analysis and the Amendment 5 post-hoc analysis were reported, and before any trial
+of this pilot ran. The user approved the pilot in these words: "现在就让 Codex 在 newtonbench-compass 会话里跑这轮超越函数方言试点，先写预注册修正案，结果标为试点。"
+
+**Status.** PILOT, descriptive only. No hypothesis test is run and no significance is claimed. The pilot does not
+replace, amend or join the registered analysis or the Amendment 5 post-hoc analysis, and its trials are never
+pooled with theirs.
+
+**Question.** In the corrected (post-hoc) analysis Compass answered all 22 not-expressible cells wrong, and all 51
+of its certifications there were false. How many of those failures come from the registered dialect being unable
+to state the law?
+
+**Code.** `release/6.0.0-compass` at `0fb9e96`, merged into this branch as `54a18e1`. It includes `412cced`
+(transcendental dialect with rigorous enclosures). The Compass unit tests pass on the merge (106 tests). The
+harness is the Amendment 5 harness, with inputs under the simulator's keyword names. NewtonBench is unchanged: the
+pinned checkout, its simulator, its evaluator (`evaluate_law`: RMSLE plus the LLM judge on `gpt-6.1-sol`) and the
+noise model. The evaluator alone decides correctness, as registered.
+
+**What changes.** Only the Compass arm changes, in these four places:
+
+1. **Declaration grammar.** `grammar.operators` = add, sub, mul, div, pow, sqrt, exp, log, sin, cos, pi.
+   In this release `pi` is a nullary operator, so it goes in the operators, not the constants.
+   `grammar.constants` = 0, 1, 2, -1, 3, -2, 1/2, -1/2, 3/2, -3/2, 1/3, 2/3. These are Compass's default
+   constants plus generic small integers, halves and thirds; a `pow` exponent can only come from this list. They
+   are generic: none of the law-specific exponents is in the list (1.3, 1.8, 2.5, 2.6, 2.7, 3.4, 3.8, 3/7, e,
+   e + 1, e + 1.5). Disclosure: the ground-truth source was read before the run for the a-priori
+   classification, and again while debugging Amendment 5. 1/2 and 3/2 do occur in several ground-truth laws.
+   The registered design already supported them through exact `sqrt`.
+   The synthesis bound stays at its default: `max_nodes` 7, `max_candidates` 20000.
+2. **Jump prompt.** The registered dialect paragraph says "There is no exp, log or trigonometric function", so it
+   is replaced by the release's own dialect wording, taken from `benchmark/compass/codex_jump.py` at `0fb9e96`.
+   The new wording allows rational exponents with denominator up to 8 and the functions sqrt, exp, log, sin and
+   cos, plus pi. It gives no hint about any law. The rest of the prompt is byte-identical; this was checked by
+   comparing the registered mode's rendered prompt with the old one. The registered mode
+   (`nb_jump.py` without `--dialect`) is unchanged.
+3. **Token cap.** The cap is `agent.max_tokens` = 1,000,000 per trial: input plus output tokens, as the agent
+   reports them (`INPUT_REPORTED`). To enforce it, the jump wrapper reports each call's usage on stdout, as the
+   release's own wrapper does, including for a failed call.
+   - The per-trial cap holds across restarted attempts: attempt k is declared with the cap minus what earlier
+     attempts spent. With nothing left, it is declared without an agent.
+   - Consequences, disclosed in advance:
+     - Compass checks the cap between calls, so one call can overshoot it.
+     - A call with no usage report withholds every later agent call in that trial (`USAGE_UNREPORTED`,
+       fail-closed). A jump call stopped at 540 s is such a call. The registered run kept calling after a
+       timeout.
+     - In the registered run 19 of 144 Compass trials spent more than 1,000,000 jump tokens, so the cap would
+       have bound in about 13% of trials.
+4. **Law translator.** When a Compass rulebook is written as a NewtonBench Python law, `exp`, `log`, `sin` and
+   `cos` become `math.*` and `pi` becomes `math.pi`. This is needed to submit such a rulebook to the evaluator.
+   In the registered dialect these operators could not occur.
+
+Everything else is as registered:
+- design grid, tolerance rule, query budget (40), wall budget, escape settings, timeouts and retries;
+- model `gpt-6.1-sol`, `xhigh`, service tier `default` (no Fast, no priority);
+- the fallback call and its scoring (only as `compass_fallback`);
+- the contamination audit;
+- `scientific_support` UNKNOWN.
+
+**Scope.** 52 trials, all in the Compass arm only:
+- the 22 not-expressible cells, plus 4 expressible regression cells;
+- both strata (noise-free and noise 0.01);
+- one trial each.
+
+The regression cells check whether opening the dialect hurts laws Compass already states. The search space is
+larger and the cap is new. They were drawn before any pilot trial as
+`random.Random(20261016).sample(sorted(EXPRESSIBLE), 4)`: `m11_heat_transfer/easy/v1`,
+`m8_sound_speed/medium/v0`, `m6_underdamped_harmonic/easy/v1` and `m9_hooke_law/hard/v0`.
+
+N = 1 instead of 2 halves the cost. Results are therefore per trial, not per-cell means. The baselines are not
+rerun. For comparison, the pilot cites the registered baseline trials on the same tasks (same evaluator and
+judge), and the registered and corrected Compass trials. Trials are launched in a seeded shuffle (seed 20261016)
+of the 52 tasks, so a budget stop does not select by module.
+
+**Total cap and stop rule.**
+- **Total.** 54,937,698 tokens. This is the registered formal Compass arm's jump-call spend, input plus output,
+  over all attempts. Its jump plus fallback spend was 56,250,312.
+- **What counts against it.** Input plus output of every pilot jump call and every fallback call, in all
+  attempts. The smoke trial below counts too. A call without a usage report counts as 600,000, which is above
+  the largest registered single jump call (414,190).
+- **What does not count.** Judge calls (evaluation) and the orchestrating Codex session. They are reported
+  separately.
+- **Launch guard** (`run.py --phase pilot-dialect`). A trial is launched only if spent + 1,800,000 x (running
+  trials + 1) <= total. Here 1,800,000 per running trial covers the per-trial cap, one overshooting call and one
+  fallback call.
+- **Stop rule.** If the guard refuses while no trial is running, the run stops. Every trial not launched is
+  written as `NOT_RUN_BUDGET`, reported and not scored. A running trial is never stopped for budget. Total spend
+  is reported as measured.
+
+**Execution.** The Codex CLI (`codex exec`, `gpt-6.1-sol`, no Fast, no priority) launches
+`run.py --phase pilot-dialect --trials 1 --arms compass`, watches it and collects the output. Codex does not
+change code, trial data or the evaluator, and does not open NewtonBench's ground-truth source. Before the pilot,
+one smoke trial checks the harness. It runs on the held-out pilot task `m7_malus_law/easy/v0`, noise-free; that
+task is not among the 52, and its law uses sin and cos. The smoke trial writes to
+`runs/pilot-dialect/smoke` and is never counted in any result. Its tokens count toward the total cap.
+
+**Expressibility under the transcendental dialect (a priori, from the ground-truth source).** Expressible means
+the law can be written in the dialect, with an irrational constant written as a decimal or as `exp(1)`. It does
+not mean Compass's bounded synthesis can reach the law: most of these laws are larger than 7 nodes, so the jump
+agent has to propose them.
+
+| Cell | Ground-truth form | Transcendental dialect |
+|---|---|---|
+| m0_gravity/hard/v1 | C m1^1.3 / r^2.6 | expressible (`exp(1.3 * log(m1))`) |
+| m1_coulomb_force/hard/v0 | C q1 q2 (q1 + q2) / r^e | expressible (`exp(-exp(1) * log(r))`) |
+| m2_magnetic_force/medium/v2 | C I2 / r^3.8 | expressible (`r ** (19/5)`) |
+| m2_magnetic_force/hard/v0 | C (I1 + I2)^1.5 / r^3 | expressible |
+| m3_fourier_law/medium/v1 | k A^0.5 dT^2.7 / d | expressible (`exp(2.7 * log(dT))`) |
+| m3_fourier_law/hard/v1 | k A^0.5 dT^2.7 / d^(3/7) | expressible |
+| m4_snell_law/easy/v2, medium/v2, hard/v2 | atan(...) | **not expressible** (no inverse trigonometric function) |
+| m5_radioactive_decay/easy/v2, medium/v2 | N0^(1 or 1.8) exp(-(l t)^1.5) | expressible |
+| m5_radioactive_decay/hard/v2 | N0^1.8 exp(-(l t)^(e + 1.5)) | expressible (via `exp(... * log(l * t))`) |
+| m6_underdamped_harmonic/medium/v0 | sqrt(k/m - b/(2 m^2)) | expressible |
+| m7_malus_law/easy/v2, medium/v0, hard/v0 | trigonometric | expressible |
+| m8_sound_speed/hard/v0 | sqrt(exp(gamma) C T^2 / M^1.5) | expressible |
+| m9_hooke_law/easy/v2 | 2 k x^3.4 | expressible (`x ** (17/5)`) |
+| m10_be_distribution/easy/v1, medium/v2, hard/v0 | 1 / (exp(...) -/+ 1) | expressible |
+| m11_heat_transfer/hard/v1 | c / (m^2.5 dT^(e + 1)) | expressible (via `exp`, `log`) |
+
+19 of the 22 cells become expressible. The 3 `m4_snell_law/*/v2` cells stay not expressible, and on them Compass
+cannot submit a correct law.
+
+**Reported (descriptive only).** Everything is shown per trial, and aggregated by subset (the 19 newly
+expressible, the 3 still not expressible, the 4 regression cells) and by stratum:
+- **Compass accuracy:** the judge's `exact_accuracy` on Compass's own submission, strict as registered.
+- **Certification, counted separately from correctness:**
+  - certified (`GOAL_IDENTIFIED` with a translatable law);
+  - certified and correct;
+  - **false certifications** (certified but judged wrong).
+
+  A certification only says the law agrees with the receipts within tolerance. It does not say the law is
+  correct, and it is never counted as a correct answer.
+- Also:
+  - `compass_fallback` accuracy;
+  - submission paths;
+  - RMSLE;
+  - queries;
+  - wall time;
+  - tokens per trial: spend counted as for the cap, cached input, and `compass.agent_tokens` status;
+  - `NOT_RUN_BUDGET`, `TIMEOUT` and `CRASHED` counts.
+- **Side by side, on the same tasks:**
+  - the registered vanilla and code_assisted accuracy;
+  - the registered Compass accuracy and false certifications;
+  - the corrected (Amendment 5) Compass accuracy and false certifications.
+
+  Differences are descriptive only.

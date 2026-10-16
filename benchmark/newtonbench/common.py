@@ -107,6 +107,51 @@ def formal_tasks():
     return cells + [dict(t, noise=NOISE_LEVEL) for t in cells]
 
 
+# Amendment 6 (PILOT, descriptive only): the Compass arm with the transcendental dialect of release 0fb9e96.
+# Synthesis grammar: the dialect's operators; the default constants plus generic halves and thirds as exponents.
+PILOT_GRAMMAR = {'operators': ['add', 'sub', 'mul', 'div', 'pow', 'sqrt', 'exp', 'log', 'sin', 'cos', 'pi'],
+                 'constants': ['0', '1', '2', '-1', '3', '-2', '1/2', '-1/2', '3/2', '-3/2', '1/3', '2/3']}
+PILOT_AGENT_MAX_TOKENS = 1_000_000   # agent.max_tokens per trial (input + output, as Compass sums it)
+PILOT_TOTAL_TOKENS = 54_937_698      # the registered formal Compass arm's jump-call spend (input + output)
+PILOT_RESERVE = 1_800_000            # held per running trial: cap + one overshooting call + a fallback call
+PILOT_UNREPORTED_CALL = 600_000      # counted by the launch guard for a call without usage (above any observed)
+PILOT_SEED = 20261016
+# random.Random(PILOT_SEED).sample(sorted(analyze.EXPRESSIBLE), 4), drawn before any pilot trial.
+PILOT_REGRESSION = ['m11_heat_transfer/easy/v1', 'm8_sound_speed/medium/v0', 'm6_underdamped_harmonic/easy/v1',
+                    'm9_hooke_law/hard/v0']
+# A priori, from the ground-truth laws: of the 22 cells the registered dialect cannot express, these still need a
+# function the transcendental dialect lacks (atan). The other 19 are expressible, some only as exp(a * log(x)).
+NOT_EXPRESSIBLE_TRANSCENDENTAL = {'m4_snell_law/easy/v2', 'm4_snell_law/medium/v2', 'm4_snell_law/hard/v2'}
+
+
+def pilot_spend(job):
+    """Amendment 6: input + output tokens of every Compass jump call and fallback call in a pilot job directory.
+
+    Every attempt counts. A call without a usage report counts as ``PILOT_UNREPORTED_CALL``, never as zero.
+    """
+    job = Path(job)
+    usages = [json.loads(p.read_text(encoding='utf-8')).get('usage') for p in sorted(job.glob('jumps-a*/*/audit.json'))]
+    record = job / 'trial.json'
+    fallback = json.loads(record.read_text(encoding='utf-8')).get('fallback_call') if record.exists() else None
+    if fallback is not None:
+        usages.append(fallback.get('usage'))
+    elif (job / 'fallback' / 'events.jsonl').exists():
+        usages.append(None)  # A fallback call ran but no record of its usage survived.
+    known = [u for u in usages if u and 'input_tokens' in u and 'output_tokens' in u]
+    unreported = len(usages) - len(known)
+    return {'tokens': sum(u['input_tokens'] + u['output_tokens'] for u in known) + unreported * PILOT_UNREPORTED_CALL,
+            'calls': len(usages), 'unreported_calls': unreported}
+
+
+def pilot_dialect_tasks():
+    """Amendment 6: the 22 not-expressible cells and 4 regression cells, both strata, in a seeded launch order."""
+    from analyze import EXPRESSIBLE
+    cells = [c for c in formal_cells() if task_key(c) not in EXPRESSIBLE or task_key(c) in PILOT_REGRESSION]
+    tasks = cells + [dict(c, noise=NOISE_LEVEL) for c in cells]
+    random.Random(PILOT_SEED).shuffle(tasks)
+    return tasks
+
+
 def pilot_tasks():
     """Held-out pilot tasks: cells' versions that the formal sample did not draw, in both strata."""
     formal = {task_id(t['module'], t['difficulty'], t['version']) for t in formal_cells()}
