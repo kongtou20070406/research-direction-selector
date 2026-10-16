@@ -43,7 +43,7 @@ A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
 
 | Module | Layer | Responsibility |
 |---|---|---|
-| `rds_compass_model` | SHARED | Exact `Fraction` AST dialect, description-length prior `2^-size`, EIG over rival outcome partitions, observational equivalence, bottom-up synthesis with counterexample filtering, per-sample profiles. |
+| `rds_compass_model` | SHARED | Exact `Fraction` AST dialect with rigorous enclosures for irrational values, description-length prior `2^-size`, EIG over rival outcome partitions, observational equivalence, bottom-up synthesis with counterexample filtering, per-sample profiles. |
 | `rds_compass_store` | L1 | Hash-chained `COMPASS_*` records in the existing ledger and CAS, written idempotently under `BEGIN IMMEDIATE`. |
 | `rds_compass_declaration` | L1 | Declaration compiler for the kernel contract, frozen protocol and plan. Every undeclared field stays `UNKNOWN`, and controller defaults are listed in `defaulted`. |
 | `rds_compass` | L3 | Advisor: receipt ingestion, basin detection, decisions, abductive jumps, verification, compact working set, TMS mirror, report. |
@@ -51,6 +51,20 @@ A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
 | `rds_compass_drive` | L3 | The unattended loop; SIGTERM and deadline handling. |
 | `rds_compass_cli` | L4 | `compass init/drive/status/decide/report/tools`, plus the `project init --declaration` and `project drive --compass` front doors. |
 | `rds_interrupt`, `rds_path_identity` | SHARED | Outer interrupt as a settled exit (#215); spelling-independent root identity (#207). |
+
+## Expression dialect
+
+Rulebooks, adaptations, proposals and synthesis share one bounded dialect:
+- rationals and declared inputs;
+- `+ - * / %`, comparisons, `abs`, `floor`, `ceil`, `min`, `max`, `a if c else b`;
+- `x ** e` for a rational constant `e` with denominator at most 8 and `|e| <= 8`, such as `x ** 1.5` or `x ** (2/3)`;
+- `sqrt`, `exp`, `log`, `sin`, `cos` and the constant `pi`.
+
+Exact values stay exact Fractions. `exp(0)`, `sqrt(9/4)` and `4 ** 1.5` are points. An irrational value is never rounded into a point. Evaluation carries a rigorous rational enclosure through every operator: 40 significant digits, with outward rounding. `exp`, `log` and `sqrt` come from `decimal`'s correctly rounded functions, widened by one step. `sin` and `cos` use 60-digit Taylor sums after range reduction against an enclosure of pi.
+
+Replay counts a cell only when the whole enclosure lies inside the tolerance band (`CONSISTENT`) or outside it (`REFUTED`). If the enclosure straddles the band edge, the cell is `undecided` and refutes nothing. The same holds where an enclosure straddles a decision the exact value fixes: a branch test, an integer under `floor`, or zero under a divisor or `log`. Such a prediction is `UNDECIDED`, not `UNDEFINED`: it is never a counterexample, and EIG treats it as undetermined. Truly undefined values stay `UNDEFINED`, such as `log(-1)`, `sqrt(-1)` and `(-1) ** (1/2)`. The Lean obligation checks an irrational prediction as `|midpoint - observed| + radius <= band`, a bound on the exact value's gap.
+
+Synthesis uses only the operators a declaration lists in `grammar.operators`; the default stays `add, sub, mul, div`. A rational exponent enters synthesis only if it is among `grammar.constants`. Making a transcendental law expressible does not make a wrong one impossible. A rational stand-in for `sin(x)`, such as `x - x**3/6`, can match every measured point within a loose tolerance. Once `sin(x)` is a live rival, EIG skips the inputs where the two agree and buys the one that separates them.
 
 ## Advisor decisions
 

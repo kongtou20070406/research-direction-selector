@@ -805,10 +805,12 @@ def _lean(state, hyp, rows):
             if name not in values:
                 continue
             absolute, relative = tolerances[name]
-            if absolute == 0 and relative == 0:
+            # An irrational prediction is checked through its enclosure: |midpoint - observed| + radius bounds its gap.
+            radius = getattr(values[name], 'radius', 0)
+            if absolute == 0 and relative == 0 and not radius:
                 relations.append({'relation': 'eq', 'left': model.text(values[name]), 'right': model.text(observed)})
             else:
-                relations.append({'relation': 'le', 'left': model.text(abs(values[name] - observed)),
+                relations.append({'relation': 'le', 'left': model.text(abs(values[name] - observed) + radius),
                                   'right': model.text(absolute + relative * abs(observed))})
     if not relations:
         return {'status': 'NOT_APPLICABLE', 'reason': 'No predicted measured cells'}

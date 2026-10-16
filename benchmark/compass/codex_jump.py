@@ -40,8 +40,9 @@ with a witness. `request` says what is asked of you:
 Rulebook expressions use this dialect:
 - integers and rationals;
 - the input variables {variables}, plus any derived tool feature an item statement uses (for example `divisors_x`);
-- the operators + - * / % ** and the comparisons < <= == > >=;
-- abs, floor, ceil, sqrt, min, max, and `a if cond else b`.
+- the operators + - * / % ** and the comparisons < <= == > >= (an exponent is a rational constant
+  with denominator at most 8, for example `x ** 1.5` or `x ** (2/3)`);
+- abs, floor, ceil, sqrt, exp, log, sin, cos, the constant pi, min, max, and `a if cond else b`.
 
 `applies` is an optional guard expression; nonzero means the rulebook applies. Observables: {observables}.
 
