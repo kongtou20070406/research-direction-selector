@@ -102,6 +102,8 @@ def append(store, kind, ident, value, *, guard=None):
                 require(body['sha256'] == ref['sha256'],
                         f'Compass {kind} id {ident} already holds different content')
                 return {**body, 'reused': True}
+        # Refused before the write: a row past the cap would make every later read fail.
+        require(len(rows) < MAX_EVENTS, 'Compass event limit reached; start a successor campaign')
         if guard is not None:
             guard(db, [body for _, body in rows])
         parent = digest(rows[-1][1]) if rows else None

@@ -11,6 +11,9 @@ It adds no second ledger, scheduler or database. Every Compass fact is a
 SHA-256 and the digest of the previous Compass row, forming a hash chain. Each
 row also carries its own digest (`row_sha256`) and a consecutive `seq`, so a
 tampered tail row is detected even though no successor row binds it.
+A campaign holds at most 20,000 Compass rows. The append that would exceed this
+is refused (`start a successor campaign`), so the rows already written stay
+readable; an identical record is still reused.
 Hypothesis status, tool status and the next decision are recomputed from those
 rows plus the kernel's original run receipts on every read. A stored status is
 never trusted.
@@ -75,7 +78,7 @@ head it was computed from, then acts on it.
 - `RECOVER`: an original attempt is reserved or running. Compass finishes or recovers it and never starts a second attempt of the same run.
 - `EXPERIMENT`: buys the candidate with the highest EIG per cost among adjudicable rivals. `rank_experiments` excludes three kinds of candidate:
   - `ALREADY_OBSERVED` inputs;
-  - `NON_DISCRIMINATING` candidates, where every rival predicts the same outcome. Outcomes are grouped with the same two-way agreement as equivalence, so predictions that one measurement could separate are separate outcomes;
+  - `NON_DISCRIMINATING` candidates, where every rival predicts the same outcome. Outcomes are grouped with the same two-way agreement as equivalence, and, since agreement is not transitive, a prediction joins an outcome class only if it agrees with every member, so predictions that one measurement could separate are separate outcomes;
   - `EQUIVALENT_PARTITION` candidates, which split the rivals exactly like a better-ranked candidate. Equivalent predictions are never bought twice.
 
   Equal EIG per cost is broken by coverage: the candidate farthest (per-input range normalized L1) from every observed input wins, then the candidate id. An id tie-break once bought `x10` in a 999-input domain, where a digit-dependent law happens to agree with `x+5`.

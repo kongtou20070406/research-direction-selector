@@ -201,6 +201,16 @@ class EquivalenceTests(unittest.TestCase):
         self.assertEqual([row['id'] for row in ranking['ranked']], ['x0'], ranking['excluded'])
         self.assertEqual(len(ranking['ranked'][0]['classes']), 2)
 
+    def test_eig_classes_require_pairwise_agreement(self):
+        # Agreement is not transitive: -2/5 and 8/7 each agree with -3/2, not with each other.
+        rivals = [model.compile_hypothesis({'id': ident, 'predict': {'y': value}}, ['x'], ['y'])
+                  for ident, value in (('a', '-3/2'), ('b', '-2/5'), ('c', '8/7'))]
+        tolerances = {'y': (model.exact('2/5'), model.exact(2))}
+        self.assertFalse(model.agree(model.exact('-2/5'), model.exact('8/7'), tolerances['y']))
+        ranking = model.rank_experiments(rivals, [{'id': 'x0', 'inputs': {'x': 0}}], tolerances)
+        self.assertEqual([row['id'] for row in ranking['ranked']], ['x0'], ranking['excluded'])
+        self.assertEqual([row['hypotheses'] for row in ranking['ranked'][0]['classes']], [['a', 'b'], ['c']])
+
 
 class ClassTests(Campaign):
     def test_tolerance_classes_are_pairwise_equivalent(self):
@@ -381,6 +391,19 @@ class HashChainTests(Campaign):
             media.write(damaged)
         with self.assertRaises(cstore.CompassIntegrityError):
             compass.report(store)
+
+
+    def test_append_past_the_event_cap_is_refused_and_the_state_stays_readable(self):
+        store = self.law()
+        count = len(cstore.events(store, load=False))
+        with patch.object(cstore, 'MAX_EVENTS', count):
+            with self.assertRaisesRegex(ValueError, 'successor campaign'):
+                compass.handoff(store, 'JUDGMENT_REQUIRED')
+            self.assertEqual(compass.fold(store)['head'], cstore.head(store))
+            last = cstore.events(store)[-1]
+            # An identical record is still reused at the cap; nothing new is written.
+            self.assertTrue(cstore.append(store, last['kind'][len(cstore.PREFIX):], last['id'], last['value'])['reused'])
+            self.assertEqual(len(cstore.events(store, load=False)), count)
 
 
 class DeclarationReviewTests(Campaign):
