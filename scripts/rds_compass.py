@@ -17,6 +17,7 @@ import subprocess
 
 import rds_compass_model as model
 import rds_compass_store as cstore
+import rds_fit_trend as fit
 from rds_artifacts import strict_json
 from rds_project import canonical, digest, require
 
@@ -61,7 +62,7 @@ def fold(store):
     plan = evs[0]['value']
     state = {'plan': plan, 'head': digest({k: v for k, v in evs[-1].items() if k not in ('event_id', 'value')}),
              'events': len(evs), 'hypotheses': {}, 'observations': {}, 'refutations': {}, 'decisions': [],
-             'jumps': [], 'dispositions': {}, 'tools': {}, 'tool_rejections': [], 'verifications': [],
+             'jumps': [], 'dispositions': {}, 'tools': {}, 'tool_rejections': [], 'proposed_tools': {}, 'verifications': [],
              'handoffs': [], 'interruptions': [], 'interrupted': {}, 'reports': [], 'budget': budget,
              'runs': {rid: run['status'] for rid, run in runs.items()},
              'run_order': {rid: {'started_at': run.get('started_at'), 'settled_event': settled.get(rid)}
@@ -89,6 +90,8 @@ def fold(store):
                                               'record_sha256': event['sha256']}
         elif kind == 'TOOL_REJECTED':
             state['tool_rejections'].append(value)
+        elif kind == 'TOOL_PROPOSED':
+            state['proposed_tools'].setdefault(value['sha256'], {**value, 'seq': event['seq']})
         elif kind == 'TOOL_USED':
             state['tools'][value['tool']]['uses'].append(value['hypothesis'])
         elif kind == 'TOOL_RETRACTED':
@@ -265,15 +268,19 @@ def confirmations(state, hyp):
     """Novel predictions: measurements bought after the rulebook entered and that it predicted.
 
     For IDENTIFY_LAW only a receipt that reports the goal observable confirms; a side
-    observable alone never stands in for the goal.
+    observable alone never stands in for the goal. A prediction confirms only when it is
+    decided within the declared tolerance: an undecided enclosure or an unadjudicated
+    observable confirms nothing.
     """
-    goal, count = _goal_observable(state['plan']), 0
+    goal, count, tolerances = _goal_observable(state['plan']), 0, _tolerances(state['plan'])
     for ident, obs in state['observations'].items():
         if obs['status'] != 'MEASURED' or not _novel_for(state, obs, hyp):
             continue
         values, status = model.predict(hyp, env(state, candidate(state, ident)))
         keys = [goal] if goal is not None else list(values)
-        if status == 'PREDICTED' and any(k in obs['outputs'] and values.get(k) is not None for k in keys):
+        if status == 'PREDICTED' and any(
+                k in obs['outputs'] and k in tolerances and values.get(k) is not None
+                and model.decide(values[k], model.exact(obs['outputs'][k]), tolerances[k]) is True for k in keys):
             count += 1
     return count
 
@@ -332,6 +339,8 @@ def _spread(state, count):
 
 def _barren(state, jump):
     """A jump that added no rival at its evidence: ask again only after new evidence."""
+    if any(tool['seq'] > jump['seq'] for tool in state['proposed_tools'].values()):
+        return False  # A tool offered since this jump has not met the oracle yet.
     if jump['status'] == 'NO_RIVAL_WITHIN_BOUND':
         return True
     if jump['status'] != 'PROPOSALS_REQUESTED':
@@ -415,10 +424,29 @@ def decide(state):
     return {'action': 'HANDOFF', 'reason': 'JUDGMENT_REQUIRED', 'basin': diagnosis}
 
 
+def next_step(state, stale):
+    """``decide``, gated on a fresh ``stale_bindings`` recheck (None: none was made).
+
+    Ingested evidence is re-bound before it steers a rival, a ranking, a purchase or a terminal
+    handoff: changed or missing receipt bytes, or no recheck at all, lead to VERIFY, which records them.
+    """
+    step = decide(state)
+    if step['action'] in ('RECOVER', 'VERIFY') or stale == []:
+        return step
+    return {'action': 'VERIFY', 'reason': 'RECEIPTS_UNCHECKED' if stale is None else 'STALE_EVIDENCE',
+            'stale': (stale or [])[:8], 'decided': step['action']}
+
+
 def _decide_improve(state, spent, wall):
     plan = state['plan']
     can_buy = spent < plan['budget']['experiments'] and wall >= plan['experiment']['wall_seconds']
     baseline = plan['profile']['baseline']
+    base = state['observations'].get(baseline)
+    if (base['status'] != 'MEASURED' or not base['samples']) if base else \
+            next_attempt(state, candidate(state, baseline)) is None:
+        # Every arm is judged against the baseline: once it settled without a usable measurement
+        # (or has no slot left), a bought arm could never be evaluated, so nothing more is bought.
+        return {'action': 'VERIFY', 'live': [], 'reason': 'BASELINE_UNMEASURED'}
     order = [baseline] + [c['id'] for c in sorted(plan['candidates'], key=lambda c: (model.exact(c['cost']), c['id']))
                           if c['id'] != baseline and 'replicates' not in c]
     for ident in order:
@@ -572,7 +600,7 @@ def _compact_hyp(hyp):
             'status': hyp.get('status'), 'origin': hyp.get('origin')}
 
 
-def packet(state, items, trigger, notes):
+def packet(state, items, trigger, notes, stale=None):
     rows = measured(state)
     observable = state['plan']['goal']['observable']
     body = {'schema': PACKET_SCHEMA, 'status': 'CURRENT', 'kind': 'compass-abductive-jump',
@@ -586,8 +614,17 @@ def packet(state, items, trigger, notes):
             'synthesis': notes, 'omissions': {'items': 0, 'generation_results': False},
             'response': {'schema': 1, 'decisions': '[{id, disposition: adopt|adapt|reject|defer, reason, next_step, '
                                                     'hypothesis? (adapt: {predict: {obs: expr}})}]',
-                         'proposals': 'optional [{id, predict, applies?, statement?}]'},
+                         'proposals': 'optional [{id, predict, applies?, statement?}]',
+                         'usage': 'optional {input_tokens, output_tokens, cached_input_tokens?}: this call',
+                         'tools': 'optional [{source}] (at most 4): one-argument integer feature functions, tried at '
+                                  'the next capability gap and qualified only by the receipted oracle triple'},
             'scientific_support': 'UNKNOWN'}
+    if state['plan'].get('trend'):
+        body['evidence']['fit_trend'] = fit_trend(state, compact=True, stale=stale)
+    tokens = agent_tokens(state)
+    if tokens['cap'] is not None:
+        body['budget'] = {'agent_tokens': {'cap': tokens['cap'], 'spent': tokens['spent'],
+                                           'remaining': tokens['cap'] - tokens['spent']}}
     while len(canonical(body).encode('utf-8')) > PACKET_BYTES and body['evidence']['observations']:
         body['evidence']['observations'] = body['evidence']['observations'][1:]
         body['omissions'] = {'items': 0, 'generation_results': False, 'evidence_rows_trimmed': True}
@@ -602,6 +639,80 @@ def _streams(stdout, stderr):
             'stderr_tail': stderr[-512:].decode('utf-8', 'replace')}
 
 
+def _usage(stdout):
+    """The agent's own token report on stdout, even from a failed call; None unless well formed."""
+    try:
+        usage = strict_json(stdout.decode('utf-8')).get('usage') if len(stdout) <= AGENT_BYTES else None
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        return None
+    keys = {'input_tokens', 'output_tokens'}
+    ok = isinstance(usage, dict) and keys <= set(usage) <= keys | {'cached_input_tokens'} and \
+        all(type(v) is int and 0 <= v < 10 ** 12 for v in usage.values())
+    return dict(usage) if ok else None
+
+
+def fit_trend(state, compact=False, stale=None):
+    """Train/test fit-trend conclusions recomputed from receipted measurements (``rds_fit_trend``).
+
+    ``stale`` is a fresh ``stale_bindings`` result: without one the receipts are unchecked, and a
+    trend resting on any receipt that no longer verifies concludes nothing.
+    """
+    plan = state['plan']
+    spec, tolerances, higher = plan.get('trend'), _tolerances(plan), plan['higher_is_better']
+    if spec is None:
+        return None
+    pair = {spec['train'], spec['test']}
+    rows = [r for r in measured(state) if pair <= set(r['outputs'])]
+    fixed = [k for k in plan['inputs'] if k not in (spec['along'], spec.get('replicate'))]
+    varying = sorted(k for k in fixed if len({r['inputs'].get(k) for r in rows}) > 1)
+    levels = len({r['inputs'].get(spec['along']) for r in rows})
+    used = {row['candidate'] for row in stale or []} & {r['id'] for r in rows}
+    if not pair <= set(tolerances) or not pair <= set(higher):
+        out = {'status': 'UNKNOWN', 'reason': 'TOLERANCE_UNDECLARED' if not pair <= set(tolerances)
+               else 'DIRECTION_UNDECLARED'}
+    elif stale is None:
+        out = {'status': 'UNKNOWN', 'reason': 'RECEIPTS_UNCHECKED'}
+    elif used:
+        out = {'status': 'STALE_EVIDENCE', 'stale': sorted(used)}
+    elif varying:  # Another factor moved with x: no trend in x is concluded.
+        out = {'status': 'CONFOUNDED', 'varying_inputs': varying}
+    elif not 2 <= levels <= fit.MAX_LEVELS or len(rows) > fit.MAX_RUNS:
+        out = {'status': 'INSUFFICIENT_LEVELS' if levels < 2 else 'TOO_MANY_RUNS', 'levels': levels}
+    else:
+        runs = [{'x': r['inputs'][spec['along']], 'train': r['outputs'][spec['train']],
+                 'test': r['outputs'][spec['test']]} for r in rows]
+        out = {'status': 'DESCRIBED', **fit.analyze(runs, {'train': tolerances[spec['train']],
+                                                          'test': tolerances[spec['test']]}, not higher[spec['train']]),
+               'receipts': [r['receipt_sha256'] for r in rows]}
+    out = {**out, 'trend': spec, 'scientific_support': 'UNKNOWN'}
+    if compact:
+        out = {k: v for k, v in out.items() if k not in ('levels', 'receipts')}
+        out.update({'steps': out['steps'][-12:]} if 'steps' in out else {})
+    return out
+
+
+def trend_stale(store, state):
+    """Fresh receipt rechecks for a declared fit trend; None, and nothing re-read, without one."""
+    return stale_bindings(store, state) if state['plan'].get('trend') else None
+
+
+def agent_tokens(state):
+    """Token spend over every recorded agent call; the counts are the agent's report (INPUT_REPORTED).
+
+    With ``agent.max_tokens`` declared, a spent budget or any call without a usage report
+    withholds further calls: an unaccounted spend is never assumed to be zero.
+    """
+    cap = (state['plan'].get('agent') or {}).get('max_tokens')
+    calls = [d['agent'] for d in state['dispositions'].values() if d.get('agent')]
+    reported = [c['usage'] for c in calls if c.get('usage') is not None]
+    spent = sum(u['input_tokens'] + u['output_tokens'] for u in reported)
+    status = 'CAP_UNKNOWN' if cap is None else 'USAGE_UNREPORTED' if len(reported) < len(calls) else \
+        'EXHAUSTED' if spent >= cap else 'AVAILABLE'
+    return {'cap': cap, 'spent': spent, 'cached_input_tokens': sum(u.get('cached_input_tokens', 0) for u in reported),
+            'calls': len(calls), 'unreported_calls': len(calls) - len(reported), 'status': status,
+            'provenance': 'INPUT_REPORTED'}
+
+
 def _call_agent(store, agent, value):
     raw = canonical(value).encode('utf-8')
     sent = {'argv': agent['argv'], 'input_sha256': hashlib.sha256(raw).hexdigest()}
@@ -610,11 +721,12 @@ def _call_agent(store, agent, value):
                               cwd=store.root, check=False)
     except subprocess.TimeoutExpired as exc:
         return None, {'status': 'AGENT_TIMEOUT', 'phase': 'RUNNING', 'timeout_seconds': agent['timeout_seconds'],
-                      **sent, **_streams(exc.stdout, exc.stderr)}
-    except OSError as exc:
+                      **sent, **_streams(exc.stdout, exc.stderr), 'usage': None}
+    except OSError as exc:  # Never launched: nothing was spent.
         return None, {'status': 'AGENT_UNAVAILABLE', 'phase': 'LAUNCH', **sent,
-                      'error': type(exc).__name__ + ': ' + str(exc)[:200]}
-    evidence = {'status': 'RETURNED', 'exit_code': done.returncode, **sent, **_streams(done.stdout, done.stderr)}
+                      'error': type(exc).__name__ + ': ' + str(exc)[:200], 'usage': {'input_tokens': 0, 'output_tokens': 0}}
+    evidence = {'status': 'RETURNED', 'exit_code': done.returncode, **sent, **_streams(done.stdout, done.stderr),
+                'usage': _usage(done.stdout)}
     if done.returncode != 0 or len(done.stdout) > AGENT_BYTES:
         return None, {**evidence, 'status': 'AGENT_FAILED'}
     try:
@@ -636,7 +748,18 @@ def validate_response(state, value, sealed, candidates):
     """Every delivered item exactly once; adapted/proposed rulebooks pass the record filter."""
     require(isinstance(value, dict) and value.get('schema') == 1 and value.get('packet_sha256') == sealed['sha256'],
             'Jump response packet/schema mismatch')
-    require(set(value) <= {'schema', 'packet_sha256', 'decisions', 'proposals'}, 'Unknown jump response fields')
+    require(set(value) <= {'schema', 'packet_sha256', 'decisions', 'proposals', 'usage', 'tools'},
+            'Unknown jump response fields')
+    from rds_compass_rsi import extract
+    tools = value.get('tools', [])
+    require(isinstance(tools, list) and len(tools) <= 4 and all(
+        isinstance(t, dict) and set(t) == {'source'} and isinstance(t['source'], str) and len(t['source']) <= 16384
+        for t in tools), 'Jump response tools must be at most 4 {source} objects')
+    for tool in tools:
+        try:
+            extract(tool['source'])  # The same allowlist as every other tool, before anything is recorded.
+        except SyntaxError as exc:
+            raise ValueError('Jump response tool does not parse') from exc
     ids = [item['id'] for item in sealed['items']]
     decisions = value.get('decisions')
     require(isinstance(decisions, list) and len(decisions) == len(ids), 'Jump response must address every item once')
@@ -663,7 +786,7 @@ def validate_response(state, value, sealed, candidates):
         require(isinstance(spec, dict) and len(proposals) < 8, 'At most 8 agent proposals')
         proposals.append(_tool_premises(state, model.compile_hypothesis(
             {**spec, 'origin': 'agent-proposal'}, variables(state), plan['observables'], goal=_goal_observable(plan))))
-    return out, proposals
+    return out, proposals, [t['source'] for t in tools]
 
 
 def _taken(state, hyp, extra):
@@ -701,7 +824,7 @@ def _tool_premises(state, hyp):
 
 def escape(store, state, diagnosis):
     """Abductive jump: synthesize counterexample-filtered rivals, packetize, dispose."""
-    from rds_compass_rsi import escalate
+    from rds_compass_rsi import escalate, propose
     found, notes = _fits(state)
     rsi = None
     if not found and state['plan']['rsi']['enabled'] and state['plan']['inputs']:
@@ -728,19 +851,22 @@ def escape(store, state, diagnosis):
                       'size': hyp['size'], 'sha256': hyp['sha256'], 'premises': hyp['premises'],
                       'fits_measurements': len(measured(state)), 'diverges_from_live_at': diverge})
     agent = state['plan'].get('agent')
+    budget = {'agent_tokens': agent_tokens(state)} if agent else {}
+    if budget and budget['agent_tokens']['status'] in ('EXHAUSTED', 'USAGE_UNREPORTED'):
+        agent = None  # Fail closed: a spent or unaccounted token budget buys no further agent call.
     if not items and not agent:
         cstore.append(store, 'JUMP', jump_id, {'trigger': diagnosis, 'packet': None, 'synthesis': notes,
                                                'rejected': rejected, 'rsi': rsi, 'status': 'NO_RIVAL_WITHIN_BOUND',
-                                               'observations': len(state['observations'])})
-        return {'status': 'NO_RIVAL_WITHIN_BOUND', 'jump': jump_id, 'rsi': rsi}
+                                               'observations': len(state['observations']), **budget})
+        return {'status': 'NO_RIVAL_WITHIN_BOUND', 'jump': jump_id, 'rsi': rsi, **budget}
     # With no machine rival left, a declared agent is asked for proposals: its rulebooks pass the
     # same record filter as any other, so the agent adds candidates, never evidence or verdicts.
-    sealed = packet(state, items, diagnosis, notes)
+    sealed = packet(state, items, diagnosis, notes, trend_stale(store, state))
     cstore.append(store, 'JUMP', jump_id, {'trigger': diagnosis, 'packet': sealed, 'synthesis': notes,
                                            'rejected': rejected, 'rsi': rsi,
                                            'status': 'PACKET_DELIVERED' if items else 'PROPOSALS_REQUESTED',
-                                           'observations': len(state['observations'])})
-    disposer, evidence, decisions, proposals, errors = 'COMPASS_AUTO', None, None, [], []
+                                           'observations': len(state['observations']), **budget})
+    disposer, evidence, decisions, proposals, errors, offers = 'COMPASS_AUTO', None, None, [], [], []
     if agent:
         delivered = _evidence_identity(store)
         response, evidence = _call_agent(store, agent, sealed)
@@ -754,7 +880,7 @@ def escape(store, state, diagnosis):
                     'errors': ['STALE_RESPONSE'], 'rsi': rsi, 'outcomes': []}
         if response is not None:
             try:
-                decisions, proposals = validate_response(state, response, sealed, hyps)
+                decisions, proposals, offers = validate_response(state, response, sealed, hyps)
                 disposer = 'AGENT'
             except (ValueError, KeyError, TypeError) as exc:
                 errors.append('INVALID_RESPONSE: ' + str(exc)[:300])
@@ -787,8 +913,10 @@ def escape(store, state, diagnosis):
     for hyp in adopted:
         cstore.append(store, 'HYPOTHESIS', hyp['id'], {**hyp, 'origin': 'jump:' + jump_id + ':' + hyp['origin']})
         _note_tools(store, hyp)
+    offered = [propose(store, source, 'AGENT_PROPOSED') for source in offers]
     return {'status': 'ADOPTED' if adopted else 'NONE_ADOPTED', 'jump': jump_id, 'adopted': [h['id'] for h in adopted],
-            'disposer': disposer, 'errors': errors, 'rsi': rsi, 'outcomes': outcomes}
+            'disposer': disposer, 'errors': errors, 'rsi': rsi, 'outcomes': outcomes, **budget,
+            **({'tools_offered': offered} if offered else {})}
 
 
 # --- Verification, working set, report ---------------------------------------
@@ -805,10 +933,12 @@ def _lean(state, hyp, rows):
             if name not in values:
                 continue
             absolute, relative = tolerances[name]
-            if absolute == 0 and relative == 0:
+            # An irrational prediction is checked through its enclosure: |midpoint - observed| + radius bounds its gap.
+            radius = getattr(values[name], 'radius', 0)
+            if absolute == 0 and relative == 0 and not radius:
                 relations.append({'relation': 'eq', 'left': model.text(values[name]), 'right': model.text(observed)})
             else:
-                relations.append({'relation': 'le', 'left': model.text(abs(values[name] - observed)),
+                relations.append({'relation': 'le', 'left': model.text(abs(values[name] - observed) + radius),
                                   'right': model.text(absolute + relative * abs(observed))})
     if not relations:
         return {'status': 'NOT_APPLICABLE', 'reason': 'No predicted measured cells'}
@@ -1046,11 +1176,11 @@ def verify(store, state):
     return value
 
 
-def workset(state, reason=None, detail=None):
+def workset(state, reason=None, detail=None, stale=None):
     """Compact, hash-bound continuation state: enough for a fresh agent to resume."""
     plan = state['plan']
     rows = live(state)
-    decision = decide(state) if reason is None else None
+    decision = next_step(state, stale) if reason is None else None
     body = {'schema': WORKSET_SCHEMA, 'head': state['head'], 'goal': plan['goal'],
             'unknown': plan['unknown'], 'live': [_compact_hyp(h) for h in rows[:8]],
             'live_total': len(rows),
@@ -1063,6 +1193,8 @@ def workset(state, reason=None, detail=None):
             'basin': basin(state) if plan['goal']['kind'] == 'IDENTIFY_LAW' else None,
             'next': {k: decision[k] for k in ('action', 'candidate', 'eig_bits', 'reason') if k in decision} if decision else None,
             'handoff': {'reason': reason, 'detail': detail} if reason else None,
+            **({'agent_tokens': agent_tokens(state)} if plan.get('agent') else {}),
+            **({'fit_trend': fit_trend(state, compact=True, stale=stale)} if plan.get('trend') else {}),
             'scientific_support': 'UNKNOWN'}
     require(reason is None or reason in HANDOFF_REASONS, 'Unknown handoff reason')
     return {**body, 'sha256': digest(body)}
@@ -1070,45 +1202,65 @@ def workset(state, reason=None, detail=None):
 
 def handoff(store, reason, detail=None):
     state = fold(store)
-    value = workset(state, reason, detail)
+    value = workset(state, reason, detail, trend_stale(store, state))
     cstore.append(store, 'HANDOFF', 'h%03d' % (len(state['handoffs']) + 1), value)
     return value
 
 
-def publish_tms(store, state):
-    """Mirror Compass records into the program-owned TMS map (owned:compass:*)."""
+def publish_tms(store, state, stale=None):
+    """Mirror Compass records into the program-owned TMS map (owned:compass:*).
+
+    Receipts are re-checked first (or ``stale`` is a fresh ``stale_bindings`` result): a
+    measurement that no longer verifies is published UNKNOWN, and so is a refutation or a tool
+    retraction whose every recorded witness is such a measurement.
+    """
     from rds_tms_store import SnapshotConflict, current, save
     root = str(store.root)
+    stale = {row['candidate'] for row in (stale_bindings(store, state) if stale is None else stale)}
     nodes, edges = [], []
     goal = 'owned:compass:goal'
     nodes.append({'id': goal, 'status': 'UNKNOWN', 'source': {'locator': 'compass goal: ' + state['plan']['goal']['statement'][:200]}})
     for ident, obs in sorted(state['observations'].items()):
-        if obs['status'] == 'MEASURED':
+        if obs['status'] == 'MEASURED' and ident in stale:
+            nodes.append({'id': 'owned:compass:obs:' + ident, 'status': 'UNKNOWN',
+                          'source': {'locator': 'STALE_EVIDENCE: receipt binding failed recheck'}})
+        elif obs['status'] == 'MEASURED':
             nodes.append({'id': 'owned:compass:obs:' + ident, 'status': 'SUPPORTED',
                           'source': {'locator': 'INPUT_REPORTED measurement ' + canonical(obs['outputs'])[:200]},
                           'evidence': {'receipt': {'project_root': root, 'sha256': obs['receipt_sha256']}}})
+    unbound = lambda sha: ((state['tools'][sha].get('retraction') or {}).get('witness') or {}).get('id') in stale
     for sha, tool in sorted(state['tools'].items()):
-        node = {'id': 'owned:compass:tool:' + sha[:16], 'status': 'CONTRADICTED' if tool['status'] == 'RETRACTED' else 'UNKNOWN',
-                'source': {'locator': f"compass tool {tool['name']} ({tool['status']}; oracle {tool['oracle']['kind']})"}}
+        retracted = tool['status'] == 'RETRACTED' and not unbound(sha)
+        node = {'id': 'owned:compass:tool:' + sha[:16], 'status': 'CONTRADICTED' if retracted else 'UNKNOWN',
+                'source': {'locator': f"compass tool {tool['name']} ({tool['status']}"
+                                      f"{'; witness stale' if tool['status'] == 'RETRACTED' and not retracted else ''}; "
+                                      f"oracle {tool['oracle']['kind']})"}}
         witness = (tool.get('retraction') or {}).get('witness') or {}
-        if witness.get('receipt_sha256'):
+        if retracted and witness.get('receipt_sha256'):
             node['evidence'] = {'receipt': {'project_root': root, 'sha256': witness['receipt_sha256']}}
         nodes.append(node)
     for ident, hyp in sorted(state['hypotheses'].items()):
         node_id = 'owned:compass:hyp:' + ident
-        node = {'id': node_id, 'status': 'CONTRADICTED' if hyp['status'] == 'REFUTED' else 'UNKNOWN',
-                'source': {'locator': f"compass {hyp['status']}: {hyp['statement'][:180]}"}}
-        cx = (hyp['replay'] or {}).get('counterexamples') or []
-        if hyp['status'] == 'REFUTED' and cx and cx[0].get('receipt_sha256'):
+        # Replay keeps every counterexample, so a refutation stands while any of them still verifies.
+        cx = [c for c in (hyp['replay'] or {}).get('counterexamples') or [] if c['id'] not in stale]
+        refuted = hyp['status'] == 'REFUTED' and bool(cx)
+        tools = [p[5:] for p in hyp['premises'] if p.startswith('tool:')]
+        # Retracted with a premise tool that is unqualified on evidence that still verifies.
+        withdrawn = hyp['status'] == 'RETRACTED' and any(
+            sha not in state['tools'] or state['tools'][sha]['status'] != 'QUALIFIED' and not unbound(sha) for sha in tools)
+        label = hyp['status'] if refuted or hyp['status'] != 'REFUTED' else 'REFUTED_BY_STALE_EVIDENCE_ONLY'
+        node = {'id': node_id, 'status': 'CONTRADICTED' if refuted else 'UNKNOWN',
+                'source': {'locator': f"compass {label}: {hyp['statement'][:180]}"}}
+        if refuted and cx[0].get('receipt_sha256'):
             node['evidence'] = {'receipt': {'project_root': root, 'sha256': cx[0]['receipt_sha256']}}
         nodes.append(node)
         premises = ['owned:compass:tool:' + p[5:21] for p in hyp['premises'] if p.startswith('tool:')]
         if premises:
             edges.append({'id': 'owned:compass:uses:' + ident, 'premises': premises, 'conclusion': node_id,
-                          'status': 'CONTRADICTED' if hyp['status'] == 'RETRACTED' else 'PROPOSED',
+                          'status': 'CONTRADICTED' if withdrawn else 'PROPOSED',
                           'source': {'locator': 'hypothesis depends on qualified tool features'}})
         edges.append({'id': 'owned:compass:explains:' + ident, 'premises': [node_id], 'conclusion': goal,
-                      'status': 'CONTRADICTED' if hyp['status'] in ('REFUTED', 'RETRACTED') else 'PROPOSED',
+                      'status': 'CONTRADICTED' if refuted or withdrawn else 'PROPOSED',
                       'source': {'locator': 'rival explanation for the Compass goal'}})
     for _ in range(3):
         saved = current(store.root)
@@ -1128,7 +1280,7 @@ def publish_tms(store, state):
     raise RuntimeError('TMS publication kept conflicting; retry after concurrent writers settle')
 
 
-def _rechecked(store, state):
+def _rechecked(state, now):
     """The latest verification, with its receipt bindings re-checked at report time (never trusted as stored).
 
     Evidence that no longer verifies cannot carry a stored conclusion. A law claim falls to
@@ -1137,7 +1289,7 @@ def _rechecked(store, state):
     """
     if not state['verifications']:
         return None
-    stored, now = state['verifications'][-1], stale_bindings(store, state)
+    stored = state['verifications'][-1]
     value = {**stored, 'receipts_rechecked': stored['receipts_rechecked'] and not now,
              'stale': stored['stale'] + [row for row in now if row not in stored['stale']],
              'report_recheck': {'status': 'STALE' if now else 'BOUND', 'stale': now}}
@@ -1152,7 +1304,7 @@ def _rechecked(store, state):
 def report(store):
     """Auditable campaign report recomputed from ledger records and receipts."""
     state = fold(store)
-    plan = state['plan']
+    plan, now = state['plan'], stale_bindings(store, state)
     body = {'schema': REPORT_SCHEMA, 'head': state['head'], 'goal': plan['goal'], 'unknown': plan['unknown'],
             'defaulted': plan['defaulted'], 'contract_sha256': plan['contract_sha256'],
             'declaration_sha256': plan['declaration_sha256'],
@@ -1171,9 +1323,13 @@ def report(store):
             'tools': [{k: t.get(k) for k in ('name', 'sha256', 'status', 'oracle', 'scope', 'origin', 'retraction')}
                       for t in state['tools'].values()],
             'tool_rejections': state['tool_rejections'],
-            'verification': _rechecked(store, state),
+            **({'tool_offers': [{k: t[k] for k in ('name', 'sha256', 'origin', 'status')}
+                                for t in state['proposed_tools'].values()]} if state['proposed_tools'] else {}),
+            'verification': _rechecked(state, now),
             'handoff': state['handoffs'][-1] if state['handoffs'] else None,
             'interruptions': state['interruptions'], 'budget': state['budget'],
+            **({'agent_tokens': agent_tokens(state)} if plan.get('agent') else {}),
+            **({'fit_trend': fit_trend(state, stale=now)} if plan.get('trend') else {}),
             'interrupted_attempts': [{'candidate': v['candidate'], 'run_id': k, 'receipt_sha256': v['receipt_sha256']}
                                      for k, v in sorted(state['interrupted'].items())],
             'experiments': sum(1 for rid in state['runs'] if rid.startswith('compass-')),

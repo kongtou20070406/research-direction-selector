@@ -93,10 +93,52 @@ def _scalar_literal(node):
         left = _scalar_literal(node.left)
         right = _scalar_literal(node.right)
         if type(left) in (int, float) and type(right) in (int, float) and right != 0:
-            val = float(left) / float(right)
+            try:
+                val = left / right
+            except OverflowError:  # An unbounded integer quotient beyond float range is no scalar feature.
+                return None
             if math.isfinite(val):
                 return val
     return None
+
+
+def _qualified_names(tree):
+    """Scope-qualified identity of every function and class (``A.f``, ``outer.inner``).
+
+    Methods of different classes never share a key; a redefinition in the same scope gets
+    its source-order ordinal (``f#2``), so no definition's profile overwrites another's.
+    """
+    names, seen, stack = {}, {}, [(tree, "")]
+    while stack:
+        node, prefix = stack.pop()
+        children = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = prefix + child.name
+                seen[name] = seen.get(name, 0) + 1
+                name = name if seen[name] == 1 else f"{name}#{seen[name]}"
+                names[id(child)] = name
+                children.append((child, name + "."))
+            else:
+                children.append((child, prefix))
+        stack.extend(reversed(children))
+    return names
+
+
+def _signature(node):
+    """Every parameter's kind, name and annotation, which ones have defaults, and the return
+    annotation. Default values themselves are bindings, so changing one is a parameter delta."""
+    args = node.args
+    note = lambda a: ast.dump(a.annotation) if a.annotation is not None else None
+    return {
+        "positional_only": [[a.arg, note(a)] for a in args.posonlyargs],
+        "positional": [[a.arg, note(a)] for a in args.args],
+        "positional_defaults": len(args.defaults),
+        "var_positional": [args.vararg.arg, note(args.vararg)] if args.vararg else None,
+        "keyword_only": [[a.arg, note(a), d is not None] for a, d in zip(args.kwonlyargs, args.kw_defaults)],
+        "var_keyword": [args.kwarg.arg, note(args.kwarg)] if args.kwarg else None,
+        "returns": ast.dump(node.returns) if node.returns is not None else None,
+    }
 
 
 def _extract_profile(tree, nodes):
@@ -121,29 +163,33 @@ def _extract_profile(tree, nodes):
             if val is not None:
                 bindings[f"module.{node.target.id}"] = val
 
+    qualified = _qualified_names(tree)
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            arg_names = [a.arg for a in node.args.args]
-            functions[node.name] = ast.dump(node, include_attributes=False)
-            signatures[node.name] = arg_names
+            name = qualified[id(node)]
+            functions[name] = ast.dump(node, include_attributes=False)
+            signatures[name] = _signature(node)
+            positional = [a.arg for a in node.args.posonlyargs + node.args.args]
             n_defaults = len(node.args.defaults)
-            for arg, default_node in zip(arg_names[-n_defaults:] if n_defaults else [], node.args.defaults):
+            defaults = list(zip(positional[-n_defaults:] if n_defaults else [], node.args.defaults))
+            defaults += [(a.arg, d) for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults) if d is not None]
+            for arg, default_node in defaults:
                 val = _scalar_literal(default_node)
                 if val is not None:
-                    bindings[f"fn:{node.name}.default:{arg}"] = val
+                    bindings[f"fn:{name}.default:{arg}"] = val
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Assign):
                     val = _scalar_literal(sub.value)
                     if val is not None:
                         for target in sub.targets:
                             if isinstance(target, ast.Name):
-                                bindings[f"fn:{node.name}.var:{target.id}"] = val
+                                bindings[f"fn:{name}.var:{target.id}"] = val
                 elif isinstance(sub, ast.Return) and sub.value is not None:
                     val = _scalar_literal(sub.value)
                     if val is not None:
-                        bindings[f"fn:{node.name}.return"] = val
+                        bindings[f"fn:{name}.return"] = val
         elif isinstance(node, ast.ClassDef):
-            classes[node.name] = ast.dump(node, include_attributes=False)
+            classes[qualified[id(node)]] = ast.dump(node, include_attributes=False)
         elif isinstance(node, ast.Call):
             cname = _call_name(node)
             calls[cname] = calls.get(cname, 0) + 1
@@ -204,7 +250,8 @@ def encode_code_diff(base_code, candidate_code):
     functions_modified = sorted(
         name for name in (fns_0 & fns_1) if p0["functions"][name] != p1["functions"][name]
     )
-    signature_changed = any(
+    # Adding or removing a function changes the module's callable surface as much as editing a signature.
+    signature_changed = bool(functions_added or functions_removed) or any(
         p0["signatures"][name] != p1["signatures"][name] for name in (fns_0 & fns_1)
     )
 
@@ -227,7 +274,8 @@ def encode_code_diff(base_code, candidate_code):
                 if (v0 > 0 and v1 < 0) or (v0 < 0 and v1 > 0):
                     sign_flips.append(k)
                 if v0 != 0 and v1 != 0 and (v0 > 0) == (v1 > 0):
-                    log_ratios[k] = round(math.log10(abs(float(v1)) / abs(float(v0))), 6)
+                    # log10 takes unbounded integers directly, so a 400-digit literal never overflows a float.
+                    log_ratios[k] = round(math.log10(abs(v1)) - math.log10(abs(v0)), 6)
 
     unified_lines = list(
         difflib.unified_diff(
@@ -272,7 +320,10 @@ def encode_code_diff(base_code, candidate_code):
     div_or_pow_added = (
         ops_added.get("Div", 0) + ops_added.get("FloorDiv", 0) + ops_added.get("Pow", 0)
     )
-    control_modified = "control" in functions_modified or "control" in functions_removed
+    # A same-scope redefinition (control#2) is the runtime-visible control, so any change to, removal of
+    # or addition of a module-level control definition is a control change.
+    control_modified = any(name == "control" or name.startswith("control#")
+                           for name in functions_modified + functions_removed + functions_added)
     arith_op_delta = sum(ops_added.values()) - sum(ops_removed.values())
     call_count_delta = sum(calls_added.values()) - sum(calls_removed.values())
     max_abs_log_ratio = max((abs(v) for v in log_ratios.values()), default=0.0)

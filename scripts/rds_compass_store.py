@@ -18,7 +18,7 @@ MAX_RECORD = 256 * 1024
 MAX_EVENTS = 20000
 KINDS = frozenset(('DECLARED', 'HYPOTHESIS', 'OBSERVATION', 'REFUTATION', 'DECISION', 'JUMP',
                    'DISPOSITION', 'VERIFICATION', 'TOOL_QUALIFIED', 'TOOL_REJECTED', 'TOOL_USED',
-                   'TOOL_RETRACTED', 'HANDOFF', 'INTERRUPTED', 'REPORT'))
+                   'TOOL_RETRACTED', 'TOOL_PROPOSED', 'HANDOFF', 'INTERRUPTED', 'REPORT'))
 
 
 class CompassIntegrityError(ValueError):
@@ -102,6 +102,8 @@ def append(store, kind, ident, value, *, guard=None):
                 require(body['sha256'] == ref['sha256'],
                         f'Compass {kind} id {ident} already holds different content')
                 return {**body, 'reused': True}
+        # Refused before the write: a row past the cap would make every later read fail.
+        require(len(rows) < MAX_EVENTS, 'Compass event limit reached; start a successor campaign')
         if guard is not None:
             guard(db, [body for _, body in rows])
         parent = digest(rows[-1][1]) if rows else None

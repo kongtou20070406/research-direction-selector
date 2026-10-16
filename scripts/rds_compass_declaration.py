@@ -27,7 +27,7 @@ PROTOCOL_PATH = 'compass-protocol.json'
 GOALS = ('IDENTIFY_LAW', 'IMPROVE')
 FIELDS = {'schema', 'goal', 'inputs', 'observables', 'experiment', 'candidates', 'hypotheses',
           'grammar', 'synthesis', 'escape', 'budget', 'protocol', 'agent', 'library', 'rsi',
-          'profile', 'description', 'verification'}
+          'profile', 'description', 'verification', 'trend'}
 DEFAULTS = {
     'synthesis': {'max_nodes': 7, 'max_candidates': 20000},
     'escape': {'refuted_streak': 2, 'stagnation_rounds': 2, 'max_jumps': 6, 'probe_points': 2},
@@ -236,14 +236,33 @@ def compile_plan(store, declaration, source_sha256, source=None):
     protocol_path = protocol.get('path', PROTOCOL_PATH)
     agent = declaration.get('agent')
     if agent is not None:
-        _object(agent, {'argv', 'timeout_seconds'}, set(), 'agent')
+        _object(agent, {'argv', 'timeout_seconds'}, {'max_tokens'}, 'agent')
         require(isinstance(agent['argv'], list) and agent['argv']
                 and all(isinstance(a, str) and a and '\x00' not in a for a in agent['argv']),
                 'Agent argv must be a nonempty list of nonempty strings without NUL bytes')
         require(_seconds(agent['timeout_seconds']) and 0 < agent['timeout_seconds'] <= 600,
                 'Agent timeout must be in (0, 600] seconds')
+        cap = agent.get('max_tokens')
+        require(cap is None or (type(cap) is int and 0 < cap <= 10 ** 10),
+                'Agent max_tokens must be an integer from 1 to 10000000000')
+        if cap is None:
+            unknown.append('agent.max_tokens')  # No cap is declared; spend is still reported per call.
         agent = {'argv': [sys.executable if a == '{python}' else a for a in agent['argv']],
-                 'timeout_seconds': agent['timeout_seconds']}
+                 'timeout_seconds': agent['timeout_seconds'], **({'max_tokens': cap} if cap is not None else {})}
+    trend = declaration.get('trend')
+    if trend is not None:
+        _object(trend, {'along', 'train', 'test'}, {'replicate'}, 'trend')
+        require(trend['along'] in inputs and trend.get('replicate', trend['along']) in inputs
+                and trend.get('replicate') != trend['along'], 'trend.along and trend.replicate must be distinct inputs')
+        require({trend['train'], trend['test']} <= set(observables) and trend['train'] != trend['test'],
+                'trend.train and trend.test must be distinct declared observables')
+        directions = {observables[k]['higher_is_better'] for k in (trend['train'], trend['test'])
+                      if 'higher_is_better' in observables[k]}
+        require(len(directions) <= 1, 'trend.train and trend.test must share higher_is_better')
+        for name in (trend['train'], trend['test']):
+            if 'higher_is_better' not in observables[name]:
+                unknown.append(f'observables.{name}.higher_is_better')  # A trend direction is never defaulted.
+        trend = dict(trend)
     library = declaration.get('library')
     require(library is None or (isinstance(library, str) and library), 'Library must be a path')
     if library is None and os.environ.get('RDS_COMPASS_LIBRARY'):
@@ -301,13 +320,17 @@ def compile_plan(store, declaration, source_sha256, source=None):
             'experiment': {'timeout_seconds': timeout, 'wall_seconds': wall}, 'protocol': protocol_ref,
             'agent': agent, 'library': library, 'unknown': sorted(set(unknown)),
             'defaulted': sorted(set(defaulted)), 'declaration_sha256': source_sha256,
-            'higher_is_better': {k: v['higher_is_better'] for k, v in observables.items() if 'higher_is_better' in v}}
+            'higher_is_better': {k: v['higher_is_better'] for k, v in observables.items() if 'higher_is_better' in v},
+            **({'trend': trend} if trend is not None else {})}
     if goal['kind'] == 'IMPROVE':
         plan['profile'] = {k: (model.text(v) if k in ('max_degradation', 'min_gain') else v)
                            for k, v in declaration['profile'].items()}
         require(plan['profile']['baseline'] in {c['id'] for c in candidates}, 'Profile baseline must be a candidate')
         arms = {c['id']: c for c in candidates}
         for c in candidates:
+            # The baseline is every arm's reference: as a replicate it would dilute an arm with a self-comparison.
+            require('replicates' not in c or c['id'] != plan['profile']['baseline'],
+                    f"The profile baseline {c['id']} cannot replicate another arm")
             target = arms.get(c.get('replicates'))
             require('replicates' not in c or (target is not None and target['id'] != c['id']
                                               and target['id'] != plan['profile']['baseline']

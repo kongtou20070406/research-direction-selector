@@ -33,6 +33,10 @@ decisions = [{'id': item['id'], 'disposition': 'reject' if mode == 'reject' else
               'next_step': 'Discriminate with the highest expected-information experiment'} for item in packet['items']]
 response = {'schema': 1, 'packet_sha256': sealed, 'decisions': decisions,
             'proposals': [{'id': 'agent-guess', 'predict': {'y': config.get('proposal', 'x+100')}}]}
+if 'usage' in config:
+    response['usage'] = config['usage']
+if 'tools' in config:
+    response['tools'] = [{'source': source} for source in config['tools']]
 sys.stdout.write(json.dumps(response))
 '''
 

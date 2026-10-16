@@ -173,6 +173,18 @@ class ReplicationTests(Campaign):
         self.assertEqual(result['workset']['handoff']['detail']['unreplicated'], ['steady'])
         self.assertIsNone(result['verification']['improvement']['recommended'])
 
+    def test_a_failed_baseline_stops_the_purchase_of_arms(self):
+        path = self.declare()
+        fx.write(self.root / 'task.json', {'arms': {k: v for k, v in self.ARMS.items() if k != 'base'}})
+        initialize(self.root, path)
+        result = drive(self.root, publish=False)
+        self.assertEqual((result['status'], result['verification']['improvement']['status']),
+                         ('JUDGMENT_REQUIRED', 'BASELINE_UNMEASURED'))
+        state = compass.fold(cstore.store_for(self.root))
+        self.assertEqual(state['observations']['base']['status'], 'RUN_FAILED')
+        # Every arm needs the baseline, so none was bought after it failed.
+        self.assertEqual(sorted(r for r in state['runs'] if r.startswith('compass-')), ['compass-base'])
+
     def test_replicates_must_name_an_original_non_baseline_arm(self):
         for target in ('base', 'missing', 'flashy_r2'):
             with self.subTest(target=target):
@@ -180,6 +192,10 @@ class ReplicationTests(Campaign):
                 path = self.edit(self.declare(root=root), lambda d: d['candidates'][-1].update(replicates=target))
                 with self.assertRaisesRegex(ValueError, 'must replicate another declared'):
                     initialize(root, path)
+        root = Path(self.temp.name).resolve() / 'r-baseline'
+        path = self.edit(self.declare(root=root), lambda d: d['candidates'][0].update(replicates='flashy'))
+        with self.assertRaisesRegex(ValueError, 'profile baseline base cannot replicate'):
+            initialize(root, path)
         law = fx.law_campaign(self.root, 'x', range(4))
         with self.assertRaisesRegex(ValueError, 'Only IMPROVE candidates declare replicates'):
             initialize(self.root, self.edit(law, lambda d: d['candidates'][1].update(replicates='x0')))

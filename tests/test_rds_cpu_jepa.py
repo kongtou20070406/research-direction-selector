@@ -156,6 +156,29 @@ def treatment(x):
         pred_bag = fitted_bag.predict({}, BASE_NET, BASE_NET.replace("y = x + 1", "y = 2 * x + 1"))
         self.assertIsInstance(pred_bag["score"], float)
 
+    def test_explicit_knobs_beside_the_code_are_refused_not_merged(self):
+        code = BASE_NET.replace("y = x + 1", "y = 2 * x + 1")
+        for model in (self.ridge, self.jepa):
+            self.assertIsInstance(model.predict({}, BASE_NET, code, {"code": code})["score"], float)
+            for knobs in ({"learning_rate": 0.1}, {"code": code, "batch_size": 64}):
+                with self.subTest(model=type(model).__name__, knobs=knobs), self.assertRaises(ValueError):
+                    model.predict({}, BASE_NET, code, knobs)
+        record = {"base_code": BASE_NET, "action": {"parameters": {"code": code, "learning_rate": 0.1}},
+                  "outcome_score": 0.5, "cost": 1.0}
+        for kind in ("ridge", "latent_jepa"):
+            with self.subTest(fit=kind), self.assertRaises(ValueError):
+                cpu_jepa.fit_transitions([record], model_type=kind)
+        for adapter in ("cpu_jepa", "code_diff_linear"):
+            req = prediction_request()
+            req.update(issued_at=time.time() - 1, expires_at=time.time() + 30, timeout_seconds=4,
+                       context={"base_code": BASE_NET},
+                       candidates=[{"id": "lr_small", "parameters": {"code": code, "learning_rate": 0.001}},
+                                   {"id": "lr_large", "parameters": {"code": code, "learning_rate": 0.1}}])
+            pred = worker.PredictionWorker(req, adapter=adapter, snapshot_sha256="a" * 64).run()["prediction"]
+            validate_result(req, pred)
+            self.assertEqual((pred["status"], pred["reason_code"], pred["forecasts"]),
+                             ("ABSTAINED", "PROVIDER_ABSTAINED", []), adapter)
+
     def test_prediction_worker_subprocess_cpu_jepa_passes_contract(self):
         req = prediction_request()
         req.update(

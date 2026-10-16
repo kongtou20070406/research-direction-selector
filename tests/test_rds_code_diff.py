@@ -74,6 +74,69 @@ def treatment(x):
         score_b = code_diff.score_candidate_diff(BASE_NET, cand_b)
         self.assertNotEqual(score_a["score"], score_b["score"])
 
+    def test_an_added_or_removed_function_is_signature_drift(self):
+        import rds_cpu_jepa as cpu_jepa
+        removed = BASE_NET.replace("def treatment(x):\n    y = x + 1\n    return y\n", "")
+        added = BASE_NET + "\ndef helper(x):\n    return x\n"
+        clean = code_diff.score_candidate_diff(BASE_NET, BASE_NET.replace("y = x + 1", "y = 2 * x + 1"))
+        for candidate, field, name in ((removed, "functions_removed", "treatment"), (added, "functions_added", "helper")):
+            diff = code_diff.encode_code_diff(BASE_NET, candidate)
+            self.assertEqual(diff["ast_delta"][field], [name])
+            self.assertTrue(diff["obligation_signals"]["signature_changed"])
+            self.assertLess(code_diff.score_candidate_diff(BASE_NET, candidate)["score"], clean["score"])
+            for model in (cpu_jepa.DirectCodeDiffRidge(), cpu_jepa.LatentCodeDiffJEPA()):
+                obligations = model.predict({}, BASE_NET, candidate)["predicted_obligation_discharge"]
+                self.assertFalse(obligations["signature_preserved"], (name, model))
+
+    def test_methods_of_different_classes_keep_their_own_identity(self):
+        base = "class A:\n    def f(self):\n        return 1\n\nclass B:\n    def f(self):\n        return 1\n"
+        diff = code_diff.encode_code_diff(base, base.replace("return 1", "return 2", 1))
+        self.assertEqual(diff["ast_delta"]["functions_modified"], ["A.f"])
+        self.assertEqual(diff["parameter_delta"]["changed_bindings"], {"fn:A.f.return": {"before": 1, "after": 2}})
+        twice = "def f(x):\n    return 1\n\ndef f(x):\n    return 1\n"
+        diff = code_diff.encode_code_diff(twice, twice[:-2] + "2\n")
+        self.assertEqual(diff["ast_delta"]["functions_modified"], ["f#2"])
+
+    def test_every_part_of_a_signature_counts(self):
+        base = "def f(x, y=1):\n    return x\n"
+        drift = {"keyword-only": "def f(x, y=1, *, timeout=1):", "positional-only": "def f(x, /, y=1):",
+                 "var-positional": "def f(x, y=1, *rest):", "var-keyword": "def f(x, y=1, **options):",
+                 "annotation": "def f(x: int, y=1):", "return annotation": "def f(x, y=1) -> int:",
+                 "new default": "def f(x=0, y=1):"}
+        for kind, header in drift.items():
+            signals = code_diff.encode_code_diff(base, base.replace("def f(x, y=1):", header))["obligation_signals"]
+            self.assertTrue(signals["signature_changed"], kind)
+        # Changing a default value is a parameter delta, not signature drift.
+        diff = code_diff.encode_code_diff(base, base.replace("y=1", "y=2"))
+        self.assertFalse(diff["obligation_signals"]["signature_changed"])
+        self.assertEqual(diff["parameter_delta"]["changed_bindings"], {"fn:f.default:y": {"before": 1, "after": 2}})
+        diff = code_diff.encode_code_diff(base.replace("y=1", "*, y=1"), base.replace("y=1", "*, y=3"))
+        self.assertEqual(diff["parameter_delta"]["changed_bindings"], {"fn:f.default:y": {"before": 1, "after": 3}})
+
+    def test_a_redefined_control_is_still_the_control(self):
+        redefined = BASE_NET + "\ndef control(x):\n    return x\n"
+        clean = code_diff.score_candidate_diff(BASE_NET, BASE_NET.replace("y = x + 1", "y = 2 * x + 1"))
+        for base, candidate, field in ((redefined, redefined[:-2] + "0\n", "functions_modified"),
+                                       (BASE_NET, redefined, "functions_added")):
+            scored = code_diff.score_candidate_diff(base, candidate)
+            diff = code_diff.encode_code_diff(base, candidate)
+            self.assertEqual(diff["ast_delta"][field], ["control#2"])
+            self.assertTrue(scored["obligation_signals"]["control_modified"], field)
+            self.assertLess(scored["score"], clean["score"])
+
+    def test_unbounded_integer_literals_stay_bounded_features(self):
+        huge = "1" + "0" * 400
+        candidate = BASE_NET.replace("LR = 0.001", "LR = " + huge) + f"\nRATE = {huge} / 3\n"
+        diff = code_diff.encode_code_diff(BASE_NET, candidate)
+        self.assertEqual(diff["parameter_delta"]["numeric_log10_ratios"]["module.LR"], 403.0)
+        self.assertNotIn("module.RATE", diff["parameter_delta"]["added_bindings"])  # Beyond float range.
+        scored = code_diff.score_candidate_diff(BASE_NET, candidate)
+        self.assertTrue(0.0 <= scored["score"] <= 1.0)
+        import rds_cpu_jepa as cpu_jepa
+        for model in (cpu_jepa.DirectCodeDiffRidge(), cpu_jepa.LatentCodeDiffJEPA(), cpu_jepa.BagOfNumbersBaseline()):
+            self.assertTrue(0.0 <= model.predict({}, BASE_NET, candidate)["score"] <= 1.0, model)
+        self.assertEqual(cpu_jepa._extract_sorted_numbers("", {"n": int(huge), "m": 2}), [2.0])
+
     def test_control_modification_is_flagged_and_penalized(self):
         clean_treatment = BASE_NET.replace("y = x + 1", "y = 2 * x + 1")
         tampered_control = BASE_NET.replace("def control(x):\n    return x", "def control(x):\n    return 0")

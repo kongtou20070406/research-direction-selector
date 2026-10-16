@@ -1,5 +1,6 @@
 """Compass exact model: EIG over rival partitions, equivalence, synthesis, profiles."""
 from fractions import Fraction
+import math
 from pathlib import Path
 import sys
 import unittest
@@ -49,6 +50,79 @@ class ExactDialectTests(unittest.TestCase):
         row = {'id': 'x1', 'inputs': {'x': Fraction(1)}, 'outputs': {}}
         result = model.replay(hyp('lin', 'x'), [row], EXACT)
         self.assertEqual((result['status'], result['unknown_measurements']), ('UNTESTED', 1))
+
+
+class TranscendentalDialectTests(unittest.TestCase):
+    """exp/log/sin/cos/pi and rational powers: rigorous enclosures, never rounded points."""
+
+    REFERENCE = {'exp(1)': '2.71828182845904523536028747135266249', 'log(2)': '0.69314718055994530941723212145817656',
+                 'sin(1)': '0.84147098480789650665250232163029899', 'cos(1)': '0.54030230586813971740093660744297660',
+                 'sqrt(2)': '1.41421356237309504880168872420969807', '2 ** (1/3)': '1.25992104989487316476721060727822835',
+                 'pi': '3.14159265358979323846264338327950288', 'sin(pi / 6)': '0.5'}
+
+    def test_irrational_values_carry_an_enclosure_of_the_true_value(self):
+        for source, digits in self.REFERENCE.items():
+            value = model.evaluate(model.parse(source), {})
+            slack = Fraction(1, 10 ** 35)
+            self.assertLess(value.radius, Fraction(1, 10 ** 36), source)
+            self.assertTrue(value - value.radius - slack <= Fraction(digits) <= value + value.radius + slack, source)
+
+    def test_exact_points_stay_exact(self):
+        cases = {'exp(0)': 1, 'log(1)': 0, 'sin(0)': 0, 'cos(0)': 1, 'sqrt(9/4)': Fraction(3, 2),
+                 '4 ** 1.5': 8, '(-8) ** (1/3)': -2, '(1/9) ** (-1/2)': 3}
+        for source, expected in cases.items():
+            value = model.evaluate(model.parse(source), {})
+            self.assertEqual(value, expected, source)
+            self.assertNotIsInstance(value, model.Inexact, source)
+        self.assertEqual(model.predict(hyp('root', '(-x) ** (1/2)'), {'x': Fraction(4)})[1], 'UNDEFINED')
+
+    def test_replay_never_decides_a_cell_the_enclosure_straddles(self):
+        law = hyp('root2', 'sqrt(2) * x')
+        midpoint = Fraction(model.evaluate(law['predict']['y'], {'x': Fraction(1)}))
+        cell = [{'id': 'x1', 'inputs': {'x': Fraction(1)}, 'outputs': {'y': midpoint}}]
+        self.assertEqual((model.replay(law, cell, EXACT)['status'], model.replay(law, cell, EXACT)['undecided']),
+                         ('UNTESTED', 1))
+        near = [{'id': 'x1', 'inputs': {'x': Fraction(1)}, 'outputs': {'y': Fraction('1.41421356237')}}]
+        self.assertEqual(model.replay(law, near, {'y': model.tolerance({'abs': '1e-10'})})['status'], 'CONSISTENT')
+        self.assertEqual(model.replay(law, near, {'y': model.tolerance({'abs': '1e-12'})})['status'], 'REFUTED')
+
+    def test_an_undecidable_branch_is_unknown_not_a_counterexample(self):
+        law = hyp('step', 'floor(sin(pi * x))')
+        self.assertEqual(model.predict(law, {'x': Fraction(1)}), ({'y': None}, 'UNDECIDED'))
+        result = model.replay(law, rows(lambda x: 0, [1]), EXACT)
+        self.assertEqual((result['status'], result['counterexamples'], result['undecided']), ('UNTESTED', [], 1))
+        self.assertEqual(model.outcome_partition([law, hyp('zero', '0')], {'x': Fraction(1)}, EXACT)[1], ['step'])
+
+    def test_synthesis_reaches_trig_and_fractional_power_laws(self):
+        tol = {'y': model.tolerance({'rel': '1e-9'})}
+        observed = [{'id': f'x{x}', 'inputs': {'x': Fraction(x)}, 'outputs': {'y': model.exact(math.sin(2 * x))},
+                     'receipt_sha256': '0' * 64} for x in range(1, 6)]
+        found = model.synthesize(observed, ['x'], 'y', tol, grammar={'constants': [2], 'operators': ['mul', 'sin']},
+                                 max_nodes=4, max_candidates=2000)
+        self.assertIn('sin((2 * x))', [f['text'] for f in found['fits']])
+        observed = [{'id': f'x{x}', 'inputs': {'x': Fraction(x)}, 'outputs': {'y': model.exact(x ** 1.5)},
+                     'receipt_sha256': '0' * 64} for x in range(1, 6)]
+        found = model.synthesize(observed, ['x'], 'y', tol, grammar={'constants': ['3/2'], 'operators': ['pow']},
+                                 max_nodes=3, max_candidates=2000)
+        self.assertEqual(found['fits'][0]['text'], '(x ** (3/2))')
+
+    def test_a_rational_stand_in_for_a_trig_law_meets_a_discriminating_experiment(self):
+        # The cubic Taylor polynomial passes for sin(x) within 5% near zero; with sin expressible,
+        # EIG skips the inputs where the two agree and buys the one that separates them.
+        tol = {'y': model.tolerance({'rel': '1/20'})}
+        rivals = [hyp('sine', 'sin(x)'), hyp('cubic', 'x - x ** 3 / 6')]
+        pool = [{'id': x, 'inputs': {'x': Fraction(x)}} for x in ('1/10', '1/2', '3')]
+        ranked = model.rank_experiments(rivals, pool, tol)
+        self.assertEqual([row['id'] for row in ranked['ranked']], ['3'])
+        self.assertEqual({row['id']: row['reason'] for row in ranked['excluded']},
+                         {'1/10': 'NON_DISCRIMINATING', '1/2': 'NON_DISCRIMINATING'})
+
+    def test_copies_keep_the_enclosure(self):
+        import copy
+        import pickle
+        value = model.evaluate(model.parse('exp(1)'), {})
+        for clone in (copy.deepcopy(value), pickle.loads(pickle.dumps(value))):
+            self.assertEqual((clone, clone.radius), (value, value.radius))
 
 
 class InformationGainTests(unittest.TestCase):

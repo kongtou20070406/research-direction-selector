@@ -3,6 +3,7 @@
 Each case reproduces a defect found by an independent Codex (gpt-6.1-sol, xhigh) red-team pass
 against the 6.0.0 candidate, or by the Codex review of PR #357. Every case failed before its fix.
 """
+from argparse import Namespace
 from contextlib import closing
 import hashlib
 import json
@@ -22,7 +23,7 @@ import rds_compass as compass
 import rds_compass_model as model
 import rds_compass_rsi as rsi
 import rds_compass_store as cstore
-from rds_compass_cli import exit_code
+from rds_compass_cli import command, exit_code
 from rds_compass_declaration import initialize
 from rds_compass_drive import drive
 
@@ -62,6 +63,25 @@ class Campaign(unittest.TestCase):
     def agent(self, extra, disposition, proposals):
         source = AGENT.replace('SCRIPTS', repr(str(ROOT / 'scripts'))).replace('EXTRA', extra)
         fx.write(self.root / 'agent.py', source.replace('DISPOSITION', repr(disposition)).replace('PROPOSALS', proposals))
+
+
+class ConfirmationTests(unittest.TestCase):
+    def test_only_a_decided_agreement_confirms(self):
+        from fractions import Fraction
+        law = model.compile_hypothesis({'id': 'root2', 'predict': {'y': 'sqrt(2) * x'}}, ['x'], ['y'])
+        root2 = Fraction(model.evaluate(law['predict']['y'], {'x': Fraction(1)}))
+        outputs = {'x1': root2 + Fraction(1, 10 ** 9),  # straddles the band edge: undecided
+                   'x2': Fraction('2.8284271247'),      # 2*sqrt(2) within 1e-9: decided agreement
+                   'x3': Fraction(5)}                   # decided disagreement
+        state = {'plan': {'goal': {'kind': 'IDENTIFY_LAW', 'observable': 'y'}, 'tolerances': {'y': {'abs': '1e-9'}},
+                          'candidates': [{'id': k, 'inputs': {'x': int(k[1:])}} for k in outputs]},
+                 'observations': {k: {'status': 'MEASURED', 'outputs': {'y': str(v)}} for k, v in outputs.items()},
+                 'tools': {}}
+        tol = compass._tolerances(state['plan'])['y']
+        self.assertEqual([model.decide(model.predict(law, {'x': Fraction(int(k[1:]))})[0]['y'], v, tol)
+                          for k, v in outputs.items()], [None, True, False])
+        with patch.object(compass, '_novel_for', return_value=True):
+            self.assertEqual(compass.confirmations(state, law), 1)
 
 
 class ReceiptBindingTests(Campaign):
@@ -129,6 +149,29 @@ class ReceiptBindingTests(Campaign):
         self.assertEqual(result['status'], 'JUDGMENT_REQUIRED')
         self.assertIn({'candidate': 'x0', 'binding': 'OUTPUT_HASH_MISMATCH'}, result['verification']['stale'])
 
+    def test_stale_evidence_ends_the_drive_only_through_verification(self):
+        # The sole observation refutes every rulebook and the budget is spent; its bytes then change.
+        store = self.law(hypotheses=[('five', '5')], budget={'wall_seconds': 900, 'experiments': 1})
+        self.buy(store, 'x0')
+        compass.ingest(store)
+        self.assertEqual(compass.decide(compass.fold(store))['reason'], 'BUDGET_EXHAUSTED')
+        fx.write(self.root / 'outputs/compass/x0.json', {'outputs': {'y': 5}})
+        result = drive(self.root, publish=False)
+        self.assertEqual(result['status'], 'JUDGMENT_REQUIRED')
+        self.assertIn({'candidate': 'x0', 'binding': 'OUTPUT_HASH_MISMATCH'}, result['verification']['stale'])
+
+    def test_status_and_decide_recheck_bindings_first(self):
+        store = self.law(hypotheses=[('identity', 'x')])
+        self.buy(store, 'x0', 'x1')
+        compass.ingest(store)
+        fx.write(self.root / 'outputs/compass/x0.json', {'outputs': {'y': 999}})
+        status = command(Namespace(root=self.root, action='status'))['next']
+        decision = command(Namespace(root=self.root, action='decide'))['decision']
+        self.assertEqual([(s['action'], s['reason']) for s in (status, decision)], [('VERIFY', 'STALE_EVIDENCE')] * 2)
+        self.assertEqual(decision['stale'], [{'candidate': 'x0', 'binding': 'OUTPUT_HASH_MISMATCH'}])
+        self.assertEqual(compass.workset(compass.fold(store))['next']['reason'], 'RECEIPTS_UNCHECKED')
+        self.assertEqual(len(cstore.receipts(store)), 2)
+
 
 class EquivalenceTests(unittest.TestCase):
     def test_inapplicable_and_undefined_are_not_equivalent(self):
@@ -157,6 +200,16 @@ class EquivalenceTests(unittest.TestCase):
         ranking = model.rank_experiments([low, high], [{'id': 'x0', 'inputs': {'x': 0}}], tolerances)
         self.assertEqual([row['id'] for row in ranking['ranked']], ['x0'], ranking['excluded'])
         self.assertEqual(len(ranking['ranked'][0]['classes']), 2)
+
+    def test_eig_classes_require_pairwise_agreement(self):
+        # Agreement is not transitive: -2/5 and 8/7 each agree with -3/2, not with each other.
+        rivals = [model.compile_hypothesis({'id': ident, 'predict': {'y': value}}, ['x'], ['y'])
+                  for ident, value in (('a', '-3/2'), ('b', '-2/5'), ('c', '8/7'))]
+        tolerances = {'y': (model.exact('2/5'), model.exact(2))}
+        self.assertFalse(model.agree(model.exact('-2/5'), model.exact('8/7'), tolerances['y']))
+        ranking = model.rank_experiments(rivals, [{'id': 'x0', 'inputs': {'x': 0}}], tolerances)
+        self.assertEqual([row['id'] for row in ranking['ranked']], ['x0'], ranking['excluded'])
+        self.assertEqual([row['hypotheses'] for row in ranking['ranked'][0]['classes']], [['a', 'b'], ['c']])
 
 
 class ClassTests(Campaign):
@@ -338,6 +391,19 @@ class HashChainTests(Campaign):
             media.write(damaged)
         with self.assertRaises(cstore.CompassIntegrityError):
             compass.report(store)
+
+
+    def test_append_past_the_event_cap_is_refused_and_the_state_stays_readable(self):
+        store = self.law()
+        count = len(cstore.events(store, load=False))
+        with patch.object(cstore, 'MAX_EVENTS', count):
+            with self.assertRaisesRegex(ValueError, 'successor campaign'):
+                compass.handoff(store, 'JUDGMENT_REQUIRED')
+            self.assertEqual(compass.fold(store)['head'], cstore.head(store))
+            last = cstore.events(store)[-1]
+            # An identical record is still reused at the cap; nothing new is written.
+            self.assertTrue(cstore.append(store, last['kind'][len(cstore.PREFIX):], last['id'], last['value'])['reused'])
+            self.assertEqual(len(cstore.events(store, load=False)), count)
 
 
 class DeclarationReviewTests(Campaign):

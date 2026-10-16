@@ -40,8 +40,9 @@ with a witness. `request` says what is asked of you:
 Rulebook expressions use this dialect:
 - integers and rationals;
 - the input variables {variables}, plus any derived tool feature an item statement uses (for example `divisors_x`);
-- the operators + - * / % ** and the comparisons < <= == > >=;
-- abs, floor, ceil, sqrt, min, max, and `a if cond else b`.
+- the operators + - * / % ** and the comparisons < <= == > >= (an exponent is a rational constant
+  with denominator at most 8, for example `x ** 1.5` or `x ** (2/3)`);
+- abs, floor, ceil, sqrt, exp, log, sin, cos, the constant pi, min, max, and `a if cond else b`.
 
 `applies` is an optional guard expression; nonzero means the rulebook applies. Observables: {observables}.
 
@@ -104,8 +105,12 @@ def main(argv=None):
     report = {**audit(logs / 'events.jsonl'), 'exit_code': code, 'wall_seconds': round(time.monotonic() - started, 1),
               'packet_sha256': packet['sha256']}
     (logs / 'audit.json').write_text(json.dumps(report, indent=1), encoding='utf-8')
+    usage = {k: int(report['usage'].get(k, 0)) for k in ('input_tokens', 'cached_input_tokens', 'output_tokens')} \
+        if report['usage'] else None
     if code != 0 or report['contaminated']:
         print(json.dumps(report), file=sys.stderr)
+        if usage:  # Compass reads a usage report even from a failed call, so the spend is accounted.
+            sys.stdout.write(json.dumps({'usage': usage}))
         return 3
     value = json.loads((logs / 'last.json').read_text(encoding='utf-8'))
     decisions = []
@@ -115,7 +120,7 @@ def main(argv=None):
             clean['hypothesis'] = _strip(row['hypothesis'])
         decisions.append(clean)
     response = {'schema': 1, 'packet_sha256': packet['sha256'], 'decisions': decisions,
-                'proposals': [_strip(p) for p in value.get('proposals') or []]}
+                'proposals': [_strip(p) for p in value.get('proposals') or []], **({'usage': usage} if usage else {})}
     sys.stdout.write(json.dumps(response))
     return 0
 

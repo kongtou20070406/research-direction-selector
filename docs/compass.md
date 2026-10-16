@@ -11,6 +11,9 @@ It adds no second ledger, scheduler or database. Every Compass fact is a
 SHA-256 and the digest of the previous Compass row, forming a hash chain. Each
 row also carries its own digest (`row_sha256`) and a consecutive `seq`, so a
 tampered tail row is detected even though no successor row binds it.
+A campaign holds at most 20,000 Compass rows. The append that would exceed this
+is refused (`start a successor campaign`), so the rows already written stay
+readable; an identical record is still reused.
 Hypothesis status, tool status and the next decision are recomputed from those
 rows plus the kernel's original run receipts on every read. A stored status is
 never trusted.
@@ -43,14 +46,29 @@ A goal claim is `GOAL_IDENTIFIED` only when all of the following hold:
 
 | Module | Layer | Responsibility |
 |---|---|---|
-| `rds_compass_model` | SHARED | Exact `Fraction` AST dialect, description-length prior `2^-size`, EIG over rival outcome partitions, observational equivalence, bottom-up synthesis with counterexample filtering, per-sample profiles. |
+| `rds_compass_model` | SHARED | Exact `Fraction` AST dialect with rigorous enclosures for irrational values, description-length prior `2^-size`, EIG over rival outcome partitions, observational equivalence, bottom-up synthesis with counterexample filtering, per-sample profiles. |
 | `rds_compass_store` | L1 | Hash-chained `COMPASS_*` records in the existing ledger and CAS, written idempotently under `BEGIN IMMEDIATE`. |
 | `rds_compass_declaration` | L1 | Declaration compiler for the kernel contract, frozen protocol and plan. Every undeclared field stays `UNKNOWN`, and controller defaults are listed in `defaulted`. |
 | `rds_compass` | L3 | Advisor: receipt ingestion, basin detection, decisions, abductive jumps, verification, compact working set, TMS mirror, report. |
-| `rds_compass_rsi` | L3 | Goal-bound tool synthesis, oracle-triple qualification, cross-session library, retraction. |
+| `rds_compass_rsi` | L3 | Goal-bound tool synthesis from the base catalogue and recorded offers, oracle-triple qualification, cross-session library, retraction. |
 | `rds_compass_drive` | L3 | The unattended loop; SIGTERM and deadline handling. |
 | `rds_compass_cli` | L4 | `compass init/drive/status/decide/report/tools`, plus the `project init --declaration` and `project drive --compass` front doors. |
+| `rds_fit_trend` | SHARED | Train/test fit-trend conclusions over measured runs, decided per replicate pair against declared tolerances. |
 | `rds_interrupt`, `rds_path_identity` | SHARED | Outer interrupt as a settled exit (#215); spelling-independent root identity (#207). |
+
+## Expression dialect
+
+Rulebooks, adaptations, proposals and synthesis share one bounded dialect:
+- rationals and declared inputs;
+- `+ - * / %`, comparisons, `abs`, `floor`, `ceil`, `min`, `max`, `a if c else b`;
+- `x ** e` for a rational constant `e` with denominator at most 8 and `|e| <= 8`, such as `x ** 1.5` or `x ** (2/3)`;
+- `sqrt`, `exp`, `log`, `sin`, `cos` and the constant `pi`.
+
+Exact values stay exact Fractions. `exp(0)`, `sqrt(9/4)` and `4 ** 1.5` are points. An irrational value is never rounded into a point. Evaluation carries a rigorous rational enclosure through every operator: 40 significant digits, with outward rounding. `exp`, `log` and `sqrt` come from `decimal`'s correctly rounded functions, widened by one step. `sin` and `cos` use 60-digit Taylor sums after range reduction against an enclosure of pi.
+
+Replay counts a cell only when the whole enclosure lies inside the tolerance band (`CONSISTENT`) or outside it (`REFUTED`). If the enclosure straddles the band edge, the cell is `undecided` and refutes nothing. The same holds where an enclosure straddles a decision the exact value fixes: a branch test, an integer under `floor`, or zero under a divisor or `log`. Such a prediction is `UNDECIDED`, not `UNDEFINED`: it is never a counterexample, and EIG treats it as undetermined. Truly undefined values stay `UNDEFINED`, such as `log(-1)`, `sqrt(-1)` and `(-1) ** (1/2)`. The Lean obligation checks an irrational prediction as `|midpoint - observed| + radius <= band`, a bound on the exact value's gap.
+
+Synthesis uses only the operators a declaration lists in `grammar.operators`; the default stays `add, sub, mul, div`. A rational exponent enters synthesis only if it is among `grammar.constants`. Making a transcendental law expressible does not make a wrong one impossible. A rational stand-in for `sin(x)`, such as `x - x**3/6`, can match every measured point within a loose tolerance. Once `sin(x)` is a live rival, EIG skips the inputs where the two agree and buys the one that separates them.
 
 ## Advisor decisions
 
@@ -60,7 +78,7 @@ head it was computed from, then acts on it.
 - `RECOVER`: an original attempt is reserved or running. Compass finishes or recovers it and never starts a second attempt of the same run.
 - `EXPERIMENT`: buys the candidate with the highest EIG per cost among adjudicable rivals. `rank_experiments` excludes three kinds of candidate:
   - `ALREADY_OBSERVED` inputs;
-  - `NON_DISCRIMINATING` candidates, where every rival predicts the same outcome. Outcomes are grouped with the same two-way agreement as equivalence, so predictions that one measurement could separate are separate outcomes;
+  - `NON_DISCRIMINATING` candidates, where every rival predicts the same outcome. Outcomes are grouped with the same two-way agreement as equivalence, and, since agreement is not transitive, a prediction joins an outcome class only if it agrees with every member, so predictions that one measurement could separate are separate outcomes;
   - `EQUIVALENT_PARTITION` candidates, which split the rivals exactly like a better-ranked candidate. Equivalent predictions are never bought twice.
 
   Equal EIG per cost is broken by coverage: the candidate farthest (per-input range normalized L1) from every observed input wins, then the candidate id. An id tie-break once bought `x10` in a 999-input domain, where a digit-dependent law happens to agree with `x+5`.
@@ -85,16 +103,26 @@ head it was computed from, then acts on it.
 4. **Validate the response.** The agent must address every item exactly once with `adopt`, `adapt`, `reject` or `defer`, plus substantive reasons and next steps. Adapted rulebooks and free proposals pass the same record filter: a fresh id (one no retained or same-response rulebook holds, else `ID_TAKEN`), replay, then equivalence. Two rulebooks are equivalent only if, at every declared experiment, their values agree within tolerance or both share the same non-predicting status. Values agree only if each would survive the other as the measured value, because a relative band scales with the measurement; `NOT_APPLICABLE` and `UNDEFINED` separate them. Any rulebook that reads a qualified tool feature is bound to that tool as a premise, whoever wrote it, so a tool retraction also retracts it. A malformed or failed response is recorded, and the unattended policy continues. The `DISPOSITION` binds the agent's input and both output streams by raw-byte SHA-256. A timeout records `AGENT_TIMEOUT` with the hashes of the partial streams. If the Compass head or the receipt set changed while the agent worked, the response is `STALE_RESPONSE` and nothing from that jump is adopted. No agent means `COMPASS_AUTO` adoption of the already filtered fits.
 5. **Stop at the bound.** `escape.max_jumps` bounds the search, after which the drive ends `SEARCH_EXHAUSTED`. That exhaustion speaks only about the declared grammar and bound.
 
+### Agent token budget
+
+`agent.max_tokens` caps the agent's token spend. The agent reports each call's spend on stdout as `usage: {input_tokens, output_tokens, cached_input_tokens?}`, also when the call fails. Compass records the report with the call's `DISPOSITION` and labels the sum `INPUT_REPORTED`: it is the agent's own count, not a measurement. Before each call Compass adds `input_tokens + output_tokens` over every recorded call:
+- `AVAILABLE`: the call is made, and the packet carries `budget.agent_tokens` (`cap`, `spent`, `remaining`);
+- `EXHAUSTED`: the spend has reached the cap, so no further call is made;
+- `USAGE_UNREPORTED`: some call has no well-formed report, so no further call is made, because an unaccounted spend is never taken as zero;
+- `CAP_UNKNOWN`: no cap is declared. Calls are made, `agent.max_tokens` is listed under `unknown`, and the spend is still reported.
+
+A withheld call leaves the jump to the unattended policy, as a failed call does. The cap is checked between calls, so one call can overshoot it. With an agent declared, each `JUMP`, the working set and the report carry `agent_tokens`. The Codex bridge (`benchmark/compass/codex_jump.py`) forwards the usage counts from Codex's event stream.
+
 ## Goal-bound RSI
 
 Compass treats a gap the grammar cannot close as a missing capability and closes it in-campaign:
 
-1. **Extract.** Library offers come first, then bounded generated families: digit folds, valuations, divisors, sigma, primality, Fibonacci. A library record that does not parse, is not an object, lacks an object `scope` or fails its source hash is skipped, never repaired and never fatal.
+1. **Extract.** Library records come first, then recorded tool offers (below), then the base catalogue. The catalogue holds digit folds and decimal reversal, valuations, divisor count and sum, prime-factor functions (`totient`, `omega`, `bigomega`, `mobius`, `lpf`, `gpf`, `rad`), primality, `primepi`, `issquare`, Fibonacci and Collatz steps. `compass tools --catalogue` lists each tool with its SHA-256. A library record that does not parse, is not an object, lacks an object `scope` or fails its source hash is skipped, never repaired and never fatal.
 2. **Validate.** Each source passes the existing `rds_tools.extract_function` allowlist and runs in an isolated `python -I -B` subprocess with a step budget and a 60-second timeout. This is labeled `SUBPROCESS_ISOLATED_NOT_OS_SANDBOX`. A runner timeout or non-zero exit is recorded as `TOOL_REJECTED` (`TOOL_RUNNER_TIMEOUT` or `TOOL_RUNNER_FAILED`). The record carries the phase, the stream hashes and the wall time. The drive continues instead of aborting, and the same tools are re-tried only after the evidence grows.
 3. **Qualify** against an independent oracle triple. Expected values come only from original receipts, never from the tool:
    - **known positive**: a law fitted without the holdout receipts, using the tool, predicts every holdout measurement;
    - **discriminating negative**: a mutant of the tool, substituted into that law, is contradicted by a receipt;
-   - **boundary and counterexample witness**: the killing receipt is retained, and the tool must be defined on every declared input. Otherwise it is rejected as `UNDEFINED_ON_DECLARED_DOMAIN`.
+   - **boundary and counterexample witness**: the killing receipt is retained, and the tool must be defined on every declared input. Otherwise it is rejected as `UNDEFINED_ON_DECLARED_DOMAIN`, or as `OUTSIDE_EXACT_DOMAIN` when a value there leaves the bounded exact domain (for example `2 ** 1000`).
 4. **Register and use.** Compass writes `.rds/tools/compass/<name>-<sha12>.py` and a `TOOL_QUALIFIED` record (`QUALIFIED_FOR_SCOPE`, `self_certified: false`, `scientific_support: UNKNOWN`). The tool's values become a derived input `<tool>_<input>` that the next Advisor decision and synthesis use.
 5. **Persist.** With `library` declared (or the `RDS_COMPASS_LIBRARY` default, recorded in `defaulted`), the tool is exported create-only together with its provenance: origin ledger root, qualifying record SHA-256, sequence number and head. A later session re-reads the origin ledger and labels the offer `ORIGIN_VERIFIED` or `ORIGIN_UNVERIFIED`. Verified offers come first, and every reused tool is re-qualified against the new campaign's own receipts.
 6. **Retract.** If a newer receipt contradicts the qualifying law, Compass writes `TOOL_RETRACTED` with that witness. It also:
@@ -102,14 +130,55 @@ Compass treats a gap the grammar cannot close as a missing capability and closes
    - turns the TMS node `CONTRADICTED`;
    - leaves a create-only `.retracted.json` marker beside the library record, so later sessions stop offering the tool.
 
+### Tool offers
+
+A researcher or the jump agent can offer a domain tool, for example a quantity from their field that the catalogue lacks:
+- `compass tools --propose tool.py` records the file's one-argument function;
+- a jump response may carry `tools: [{"source": ...}]`, at most 4 per response.
+
+The source passes the same allowlist at once. A bad source is refused, and in a jump response it voids the whole response. An accepted source is recorded as `TOOL_PROPOSED` with status `OFFER_NOT_QUALIFIED`, `self_certified: false` and origin `USER_PROPOSED` or `AGENT_PROPOSED`. It enters the pool at the next capability gap, ahead of the catalogue, and qualifies only through the oracle triple, like any other candidate. An offer made after a barren jump makes the next jump worth taking. `compass tools` lists the offers, and the report lists them under `tool_offers`.
+
+Tools take one integer input. A gap over real-valued inputs is not closed by tools: the dialect's `exp`, `log`, `sin`, `cos` and rational powers cover those laws.
+
 ## Verification
 
-`verify` re-derives every measurement from its receipt and re-hashes every artifact that receipt binds: the declared output, `stdout.bin`, `stderr.bin` and the manifest. A changed output is reported as `OUTPUT_HASH_MISMATCH`; any other changed or missing artifact is reported as `ARTIFACT_HASH_MISMATCH` or `ARTIFACT_MISSING`, and a missing receipt row as `RECEIPT_MISSING`. Either way the measurement is stale, never trusted, and the goal claim is withheld. `compass report` re-checks these bindings at report time instead of copying the stored verification. Before any rival, ranking or purchase, the drive re-checks the bindings of every ingested measurement; a stale one sends it straight to `VERIFY`, so changed evidence spends no more budget. When a binding has gone stale since verification, the report's law claim is `NOT_ESTABLISHED`, IMPROVE verdicts are recomputed on the current stale set and no arm is recommended; the stored conclusion stays under `claim_at_verification` or `recommended_at_verification`. Verification then:
+`verify` re-derives every measurement from its receipt and re-hashes every artifact that receipt binds: the declared output, `stdout.bin`, `stderr.bin` and the manifest. A changed output is reported as `OUTPUT_HASH_MISMATCH`; any other changed or missing artifact is reported as `ARTIFACT_HASH_MISMATCH` or `ARTIFACT_MISSING`, and a missing receipt row as `RECEIPT_MISSING`. Either way the measurement is stale, never trusted, and the goal claim is withheld. `compass report` re-checks these bindings at report time instead of copying the stored verification. Before any rival, ranking, purchase or terminal handoff, the drive re-checks the bindings of every ingested measurement; a stale one sends it straight to `VERIFY`, so changed evidence spends no more budget and ends the drive only as `JUDGMENT_REQUIRED`. `compass status` and `compass decide` re-check the same bindings before they name the next action: a stale one makes it `VERIFY` with reason `STALE_EVIDENCE` and names the stale bindings, and a working set built without a recheck names `VERIFY` with reason `RECEIPTS_UNCHECKED`. When a binding has gone stale since verification, the report's law claim is `NOT_ESTABLISHED`, IMPROVE verdicts are recomputed on the current stale set and no arm is recommended; the stored conclusion stays under `claim_at_verification` or `recommended_at_verification`. The TMS mirror re-checks the same bindings each time it publishes: a stale measurement is published `UNKNOWN`, not `SUPPORTED`, and a refutation or tool retraction whose every recorded witness is stale is published `UNKNOWN` as well, so `--saved-dependencies` consumers never read failed evidence as support. Verification then:
 - groups live rulebooks into equivalence classes over the declared space. Equivalence checks each pair in both directions, so the order of the rulebooks does not matter. Tolerance equivalence is not transitive, so a class holds only pairwise-equivalent rulebooks;
 - replays the simplest member exactly;
 - runs a `lean_vector_obligation`. Without a local Lean 4 toolchain this falls back to `rds_python_closed_rational` with `CERTIFICATE_CHECKED`, and the fallback is stated in the result.
 
 For one-input unconditional laws, Compass also builds the unique polynomial of degree `≤ m-2` through `m` receipted points (one spare equation). The independent `rds_math_router.check_certificate` replays that certificate (#194), and the result is compared with the law on every declared input. The two agree at an input only if each value would survive the other as the measurement. If they disagree (`POLYNOMIAL_RIVAL_DISAGREES`), some rival outside the synthesis bound fits every receipt, and the drive returns `JUDGMENT_REQUIRED` instead of `GOAL_IDENTIFIED`.
+
+## Fit trends (train and test)
+
+An experiment that trains a model at each level of an input (epochs, width, depth, data size, a regularization strength) and reports a metric on both the training and the test set can declare `"trend": {"along": "x", "train": "train_loss", "test": "test_loss", "replicate": "seed"}`. `replicate` is optional. Both observables need a tolerance and the same `higher_is_better`. A missing direction is listed as unknown and never defaulted.
+
+Compass then recomputes `fit_trend` from the receipted measurements whenever it builds a jump packet, the working set or the report, so a jump agent reads the conclusions without computing them. Between consecutive levels of `along`, each metric gets a step label, decided over every pair of runs at the two levels:
+- `IMPROVES` or `WORSENS`, if every pair moves that way beyond the tolerance;
+- `WITHIN_TOLERANCE`, if every pair agrees within it;
+- `UNRESOLVED`, otherwise.
+
+The pair of labels gives the step's diagnosis:
+
+| Train | Test | Diagnosis |
+|---|---|---|
+| `IMPROVES` | `WORSENS` | `OVERFITTING` |
+| `IMPROVES` | `IMPROVES` | `BOTH_IMPROVE` |
+| `WITHIN_TOLERANCE` | `WITHIN_TOLERANCE` | `PLATEAU` |
+| `WITHIN_TOLERANCE` | `WORSENS` | `TEST_WORSENS` |
+| `WITHIN_TOLERANCE` | `IMPROVES` | `TEST_IMPROVES` |
+| `IMPROVES` | `WITHIN_TOLERANCE` | `TRAIN_ONLY_IMPROVES` |
+| `WORSENS` | `WORSENS` | `BOTH_WORSEN` |
+| any other pair | | `UNRESOLVED` |
+
+The result also gives:
+- the first `OVERFITTING` step, or `NOT_OBSERVED_OVER_MEASURED_RANGE`;
+- the levels no other level beats on test, and whether they sit `AT_RANGE_EDGE` (the optimum may lie outside the measured range), `INSIDE_RANGE`, or no level is decidedly better (`NO_DECIDED_OPTIMUM`);
+- the train and test trends (`IMPROVING`, `WORSENING`, `MIXED`, `NO_DECIDED_CHANGE`);
+- the per-level gap (`test - train` for a lower-is-better metric);
+- `noise`: `REPLICATED`, or `UNREPLICATED`, in which case steps are decided against the tolerance alone.
+
+If any other declared input varies across the runs, the result is `CONFOUNDED` and names it. The packet, working set, `compass status`, handoff and report re-check the receipt bindings of the trend's runs first: if any no longer verifies, the result is `STALE_EVIDENCE` and names the runs, with no conclusion. A caller that passes no fresh recheck gets `UNKNOWN` (`RECEIPTS_UNCHECKED`). Underfitting needs a target that the declaration does not state, so it is not concluded. Labels: `DESCRIPTIVE_OVER_MEASURED_LEVELS`, `extrapolation: NONE`, values `INPUT_REPORTED`, `scientific_support: UNKNOWN`. Outside a campaign, `python -B scripts/rds_fit_trend.py --request runs.json` reads `{lower_is_better, tolerance: {train, test}, runs: [{x, train, test}]}`.
 
 ## IMPROVE goals
 
@@ -117,9 +186,9 @@ An IMPROVE declaration compares arms that report per-sample metrics. Mean gain a
 - its mean gain is positive and at least `min_gain`, and
 - its worst per-sample degradation is at most `max_degradation`.
 
-An arm may declare independent re-runs: a candidate with `replicates: <arm>` is one more run of that arm, never an arm of its own. With replicates declared, the arm is `ACCEPT` only if the rule holds on every declared run. If a declared run was never bought, the arm is `UNREPLICATED`, never `ACCEPT`. Compass screens every first run, then buys re-runs only for arms whose every bought run passes, best minimum mean gain first. An arm that failed a run is never re-run. If the budget leaves only `UNREPLICATED` arms, the drive ends `JUDGMENT_REQUIRED` and names them.
+An arm may declare independent re-runs: a candidate with `replicates: <arm>` is one more run of that arm, never an arm of its own. The baseline is every arm's reference, so it can neither replicate an arm nor be replicated. With replicates declared, the arm is `ACCEPT` only if the rule holds on every declared run. If a declared run was never bought, the arm is `UNREPLICATED`, never `ACCEPT`. Compass screens every first run, then buys re-runs only for arms whose every bought run passes, best minimum mean gain first. An arm that failed a run is never re-run. If the budget leaves only `UNREPLICATED` arms, the drive ends `JUDGMENT_REQUIRED` and names them.
 
-`min_gain` must be at least 0; a negative floor is rejected at `init`. A mean gain that masks one collapsed sample is `LOCAL_REGRESSION`. Against the metric's tolerance the profile is one-sided: a sample's gain counts only by what it exceeds the tolerance band around its baseline value, and a degradation counts in full. A missing threshold stays `UNKNOWN`. The arm's verdict is `JUDGMENT_REQUIRED`, and the drive ends with `JUDGMENT_REQUIRED`, naming the unknown thresholds. An unmeasured baseline ends the drive the same way, and so does an arm that is unmeasured, including one the budget never reached, or reports other samples than the baseline (`UNMEASURED_OR_SAMPLE_MISMATCH`). An arm whose receipt, or whose baseline's receipt, no longer verifies is `STALE_EVIDENCE`, never `ACCEPT`. Stale evidence ends the drive with `JUDGMENT_REQUIRED`.
+`min_gain` must be at least 0; a negative floor is rejected at `init`. A mean gain that masks one collapsed sample is `LOCAL_REGRESSION`. Against the metric's tolerance the profile is one-sided: a sample's gain counts only by what it exceeds the tolerance band around its baseline value, and a degradation counts in full. A missing threshold stays `UNKNOWN`. The arm's verdict is `JUDGMENT_REQUIRED`, and the drive ends with `JUDGMENT_REQUIRED`, naming the unknown thresholds. An unmeasured baseline ends the drive the same way, and once the baseline has settled without a usable measurement no arm is bought, since none could be evaluated; and so does an arm that is unmeasured, including one the budget never reached, or reports other samples than the baseline (`UNMEASURED_OR_SAMPLE_MISMATCH`). An arm whose receipt, or whose baseline's receipt, no longer verifies is `STALE_EVIDENCE`, never `ACCEPT`. Stale evidence ends the drive with `JUDGMENT_REQUIRED`.
 
 ## Interrupts, deadlines and resume (#207, #215)
 
@@ -148,7 +217,7 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
 ```
 
 Optional fields: `grammar`, `synthesis`, `escape`, `rsi`, `verification` (`confirmations`, `spend_budget`),
-`agent` (`{argv, timeout_seconds}`), `library`, `protocol` (identity fields),
+`agent` (`{argv, timeout_seconds, max_tokens?}`; `max_tokens` is an integer from 1 to 10^10), `library`, `trend` (`{along, train, test, replicate?}`), `protocol` (identity fields),
 and `profile` (IMPROVE). `higher_is_better` and `inputs.<name>.integer` must be JSON booleans. An IMPROVE profile metric must declare `higher_is_better` and a tolerance: without either, the plan lists it as unknown and every arm is `JUDGMENT_REQUIRED`. An observable without a tolerance is never compared, in replay, in equivalence or in the claim: the verification names it under `unadjudicated` and leaves it out of `predict`. Every timeout and wall budget must be a JSON number, not a boolean. `budget.experiments` must be an integer from 0 to the number of attempt slots, which is twice the number of candidates because each candidate has one retry slot. For IDENTIFY_LAW, every declared, adapted or proposed hypothesis must predict `goal.observable`. A rulebook may have up to 64 AST nodes (`MAX_RULEBOOK_NODES`); synthesis builds each part within `synthesis.max_nodes`, an integer from 1 to 15, and tries at most `synthesis.max_candidates` expressions, an integer from 1 to 200000; `init` rejects other values. Agent `argv` items must be nonempty strings without NUL bytes. Candidate ids that differ only in case are rejected, since their output files would collide on a case-insensitive filesystem, and so are Windows reserved device names (`CON`, `NUL`, `COM1`, …), on every platform. A candidate output or retry path that names a bound experiment file or the protocol file, compared case-insensitively, is rejected at `init`; otherwise the kernel would refuse the purchase only after the ledger exists. An IMPROVE declaration needs at least one treatment arm besides the baseline that is not a replicate. An IMPROVE candidate may declare `replicates: <arm>`. The experiment writes `{"outputs": {...},
 "samples"?: {...}}` to `{output}`.
 

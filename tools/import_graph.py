@@ -16,7 +16,7 @@ GROUPS = {
           "steering tools tool_compare tool_workbench tool_application tool_calls owned_tools "
           "tms_store proof_cache rsi_confirmation postcommit_confirmation blind_runner "
           "verify verify_registry builtin_verifiers formal_kernel lean_verify scalar_verify "
-          "matrix_verify dynamics_verify nn_verify tensor_verify scale_verify statistical_verify "
+          "matrix_verify dynamics_verify nn_verify nn_analyze tensor_verify scale_verify statistical_verify "
           "disk_cover_verify rational_voronoi_verify affine_toolchain theory_progression "
           "continuous_confirmation polynomial_confirmation domain_confirmation advancement guard",
     "L2": "hypergraph hypergraph_blockers hypergraph_input bus_adapter accelerator trajectory "
@@ -60,6 +60,7 @@ LAYERS.update(
     rds_interrupt="SHARED",
     rds_path_identity="SHARED",
     rds_compass_model="SHARED",
+    rds_fit_trend="SHARED",
     rds_compass_store="L1",
     rds_compass_declaration="L1",
     rds_compass="L3",

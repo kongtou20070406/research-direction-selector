@@ -14,7 +14,9 @@ def add_parser(commands):
     actions.add_parser('status', help='Hash-bound compact working set and the next decision')
     actions.add_parser('decide', help='Print the next decision without executing it')
     actions.add_parser('report', help='Auditable report recomputed from ledger records and receipts')
-    actions.add_parser('tools', help='Qualified, rejected and retracted goal-bound tools')
+    tools = actions.add_parser('tools', help='Qualified, rejected and retracted goal-bound tools, offers, catalogue')
+    tools.add_argument('--propose', metavar='FILE', help='Offer a one-argument tool; it qualifies only via the oracle triple')
+    tools.add_argument('--catalogue', action='store_true', help='List the base tools offered at a capability gap')
     return compass
 
 
@@ -37,19 +39,29 @@ def command(args):
     if args.action == 'drive':
         from rds_compass_drive import drive
         return drive(args.root, max_steps=args.max_steps, wall_seconds=args.wall_seconds, publish=not args.no_tms)
+    if args.action == 'tools' and args.catalogue:
+        import rds_compass_rsi as rsi
+        return {'catalogue': rsi.catalogue(), 'scientific_support': 'UNKNOWN'}
     store = cstore.store_for(args.root)
-    if args.action == 'status':
-        return compass.workset(compass.fold(store))
-    if args.action == 'decide':
+    if args.action == 'tools' and args.propose:
+        import rds_compass_rsi as rsi
+        with open(args.propose, encoding='utf-8') as stream:
+            return {**rsi.propose(store, stream.read(), 'USER_PROPOSED'), 'scientific_support': 'UNKNOWN'}
+    if args.action in ('status', 'decide'):
         state = compass.fold(store)
-        return {'head': state['head'], 'decision': compass.decide(state), 'execution_started': False}
+        stale = compass.stale_bindings(store, state)
+        if args.action == 'status':
+            return compass.workset(state, stale=stale)
+        return {'head': state['head'], 'decision': compass.next_step(state, stale), 'execution_started': False}
     if args.action == 'report':
         return compass.report(store)
     state = compass.fold(store)
     return {'tools': [{k: t.get(k) for k in ('name', 'sha256', 'status', 'origin', 'library_provenance', 'oracle',
                                              'boundary', 'scope', 'path', 'retraction', 'uses')}
                       for t in state['tools'].values()],
-            'rejected': state['tool_rejections'], 'scientific_support': 'UNKNOWN'}
+            'rejected': state['tool_rejections'],
+            'offers': [{k: t[k] for k in ('name', 'sha256', 'origin', 'status')} for t in state['proposed_tools'].values()],
+            'scientific_support': 'UNKNOWN'}
 
 
 def exit_code(result):

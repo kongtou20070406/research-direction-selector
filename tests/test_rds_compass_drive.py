@@ -149,6 +149,30 @@ class LawTests(Campaign):
         self.assertEqual(nodes['owned:compass:hyp:lin']['status'], 'CONTRADICTED')
         self.assertIn('receipt', nodes['owned:compass:hyp:lin']['evidence'])
 
+    def test_tms_mirror_withdraws_evidence_that_fails_its_recheck(self):
+        from rds_tms_store import current
+        root = self.campaign('tms-stale', QUAD)
+        drive(root)
+        store = cstore.store_for(root)
+        state = compass.fold(store)
+        witnesses = [c['id'] for c in state['hypotheses']['lin']['replay']['counterexamples']]
+        self.assertGreater(len(witnesses), 1)
+        for count, status in ((1, 'CONTRADICTED'), (len(witnesses), 'UNKNOWN')):
+            for ident in witnesses[:count]:
+                (root / state['observations'][ident]['artifact']['path']).write_text('{"outputs": {"y": 999}}',
+                                                                                     encoding='utf-8')
+            compass.publish_tms(store, compass.fold(store))
+            graph = current(root)['dependency_map']
+            nodes = {n['id']: n for n in graph['nodes']}
+            self.assertEqual({nodes['owned:compass:obs:' + i]['status'] for i in witnesses[:count]}, {'UNKNOWN'})
+            lin = nodes['owned:compass:hyp:lin']
+            self.assertEqual(lin['status'], status)
+            # A refutation that stands cites a witness that still verifies, never the stale one.
+            self.assertEqual((lin.get('evidence') or {}).get('receipt', {}).get('sha256'),
+                             state['observations'][witnesses[1]]['receipt_sha256'] if count == 1 else None)
+            explains = next(e for e in graph['hyperedges'] if e['id'] == 'owned:compass:explains:lin')
+            self.assertEqual(explains['status'], 'CONTRADICTED' if count == 1 else 'PROPOSED')
+
     def test_changed_original_output_is_reported_stale_not_trusted(self):
         root = self.campaign('stale', QUAD)
         drive(root)
@@ -183,6 +207,60 @@ class JumpAgentTests(Campaign):
         first = self.events(root, 'DISPOSITION')[0]
         self.assertEqual(first['disposer'], 'COMPASS_AUTO')
         self.assertTrue(first['errors'][0].startswith('INVALID_RESPONSE'))
+
+
+class TokenBudgetTests(Campaign):
+    """A declared agent.max_tokens is checked before every call against the agent's own usage reports."""
+
+    def budgeted(self, name, max_tokens, usage):
+        root = self.base / name
+        path = fx.law_campaign(root, QUAD['law'], QUAD['xs'], hypotheses=QUAD['hypotheses'], agent='reject',
+                               escape={'max_jumps': 2})
+        value = json.loads(path.read_text(encoding='utf-8'))
+        if max_tokens is not None:
+            value['agent']['max_tokens'] = max_tokens
+        fx.write(path, value)
+        fx.write(root / 'agent-mode.json', {'mode': 'reject', **({'usage': usage} if usage else {})})
+        self.assertEqual(initialize(root, path)['status'], 'INITIALIZED')
+        drive(root)
+        calls = len((root / 'agent-calls.jsonl').read_text(encoding='utf-8').splitlines())
+        return root, calls, [j['agent_tokens'] for j in self.events(root, 'JUMP')]
+
+    def test_a_spent_budget_withholds_further_agent_calls(self):
+        usage = {'input_tokens': 600, 'output_tokens': 500, 'cached_input_tokens': 200}
+        root, calls, tokens = self.budgeted('spent', 1000, usage)
+        self.assertEqual((calls, [t['status'] for t in tokens]), (1, ['AVAILABLE', 'EXHAUSTED']))
+        self.assertEqual(self.events(root, 'JUMP')[0]['packet']['budget'],
+                         {'agent_tokens': {'cap': 1000, 'spent': 0, 'remaining': 1000}})
+        final = compass.report(cstore.store_for(root))['agent_tokens']
+        self.assertEqual({k: final[k] for k in ('spent', 'cached_input_tokens', 'calls', 'provenance')},
+                         {'spent': 1100, 'cached_input_tokens': 200, 'calls': 1, 'provenance': 'INPUT_REPORTED'})
+
+    def test_unreported_usage_under_a_cap_fails_closed(self):
+        _, calls, tokens = self.budgeted('silent', 10 ** 6, None)
+        self.assertEqual((calls, [t['status'] for t in tokens]), (1, ['AVAILABLE', 'USAGE_UNREPORTED']))
+
+    def test_an_undeclared_cap_is_unknown_and_spend_is_still_counted(self):
+        root, calls, tokens = self.budgeted('uncapped', None, {'input_tokens': 7, 'output_tokens': 3})
+        self.assertEqual((calls, [t['status'] for t in tokens]), (2, ['CAP_UNKNOWN', 'CAP_UNKNOWN']))
+        self.assertIn('agent.max_tokens', compass.fold(cstore.store_for(root))['plan']['unknown'])
+        self.assertEqual(compass.report(cstore.store_for(root))['agent_tokens']['spent'], 20)
+
+    def test_malformed_caps_and_usage_reports_are_rejected(self):
+        for index, bad in enumerate((0, True, '100', 1.5, 10 ** 11)):
+            root = self.base / ('bad%d' % index)
+            path = fx.law_campaign(root, 'x', range(3), agent='reject')
+            value = json.loads(path.read_text(encoding='utf-8'))
+            value['agent']['max_tokens'] = bad
+            fx.write(path, value)
+            with self.assertRaisesRegex(ValueError, 'max_tokens'):
+                initialize(root, path)
+        self.assertEqual(compass._usage(b'{"usage": {"input_tokens": 3, "output_tokens": 4}}'),
+                         {'input_tokens': 3, 'output_tokens': 4})
+        for bad in (b'{"usage": {"input_tokens": -1, "output_tokens": 4}}', b'{"usage": {"input_tokens": true, '
+                    b'"output_tokens": 4}}', b'{"usage": {"input_tokens": 3}}', b'[1]', b'not json',
+                    b'{"usage": {"input_tokens": 3, "output_tokens": 4, "cost": 1}}'):
+            self.assertIsNone(compass._usage(bad), bad)
 
 
 class RsiTests(Campaign):

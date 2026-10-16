@@ -200,10 +200,26 @@ def _extract_sorted_numbers(code, parameters=None):
             pass
     if isinstance(parameters, dict):
         for v in parameters.values():
-            if isinstance(v, (int, float)) and math.isfinite(v):
-                found.append(float(v))
+            if isinstance(v, (int, float)):
+                try:
+                    v = float(v)
+                except OverflowError:  # An integer beyond float range is no summary number.
+                    continue
+                if math.isfinite(v):
+                    found.append(v)
     found.sort()
     return found
+
+
+def _code_only(parameters):
+    """Fail closed on explicit knobs: the structural models encode only ``parameters.code``.
+
+    A learning rate or batch size passed beside the code would leave two distinct actions
+    with identical features, so such a candidate is refused instead of silently merged.
+    """
+    extra = sorted(str(k) for k in (parameters or {}) if k != "code")
+    if extra:
+        raise ValueError(f"Candidate parameters besides code are not encoded: {extra[:8]}")
 
 
 def _extract_record(rec):
@@ -395,6 +411,7 @@ class DirectCodeDiffRidge:
         return w
 
     def _features(self, before_state, base_code, candidate_code, parameters=None):
+        _code_only(parameters)
         diff = encode_code_diff(base_code, candidate_code)
         sig = diff["obligation_signals"]
         ast_d = diff["ast_delta"]
@@ -663,6 +680,7 @@ class LatentCodeDiffJEPA:
         return z_hat_after
 
     def predict(self, before_state, base_code, candidate_code, parameters=None):
+        _code_only(parameters)
         z_before, base_summary = self.encode_state(before_state, base_code)
         u, diff = self.encode_action(base_code, candidate_code)
         z_hat_after = self.predict_latent(z_before, u)
@@ -740,6 +758,7 @@ class LatentCodeDiffJEPA:
             r = _extract_record(raw)
             if not r["base_code"] or not r["candidate_code"]:
                 continue
+            _code_only(r["parameters"])
             z_b, _ = self.encode_state(r["before_state"], r["base_code"])
             u, _ = self.encode_action(r["base_code"], r["candidate_code"])
             z_a, _ = self.encode_state(r["after_state"] or r["before_state"], r["candidate_code"])

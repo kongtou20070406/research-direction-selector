@@ -6,7 +6,13 @@ exact Fraction predictor; replay against original measurements decides whether
 the rulebook still reproduces every observed transition within the declared
 tolerance. Nothing here reads a ledger, starts a process or certifies a claim:
 CONSISTENT means "not contradicted by these observations", never SUPPORT.
+
+Irrational values (exp, log, sin, cos, pi, non-square roots, rational powers)
+are never rounded into a point: evaluation carries a rigorous rational
+enclosure, and replay counts a cell only when the whole enclosure lies inside
+or outside the tolerance band. A cell the enclosure cannot decide stays UNKNOWN.
 """
+from decimal import Context, Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN
 from fractions import Fraction
 import ast as _pyast
 import math
@@ -19,19 +25,50 @@ MAX_NODES = 15  # One synthesized expression.
 MAX_RULEBOOK_NODES = 64
 MAX_BITS = 512
 MAX_POWER = 8
+MAX_ROOT = 8  # Largest denominator of a rational exponent.
 MAX_POINTS = 256
 MAX_SYNTH_CANDIDATES = 200000
-UNARY = frozenset(('neg', 'abs', 'floor', 'ceil', 'sqrt'))
+TRANSCENDENTAL = frozenset(('exp', 'log', 'sin', 'cos'))
+NULLARY = frozenset(('pi',))
+UNARY = frozenset(('neg', 'abs', 'floor', 'ceil', 'sqrt')) | TRANSCENDENTAL
 BINARY = frozenset(('add', 'sub', 'mul', 'div', 'mod', 'pow', 'min', 'max', 'lt', 'le', 'eq'))
 TERNARY = frozenset(('ite',))
-OPERATORS = UNARY | BINARY | TERNARY
+OPERATORS = NULLARY | UNARY | BINARY | TERNARY
 COMMUTATIVE = frozenset(('add', 'mul', 'min', 'max', 'eq'))
 _INFIX = {'add': '+', 'sub': '-', 'mul': '*', 'div': '/', 'mod': '%', 'pow': '**',
           'lt': '<', 'le': '<=', 'eq': '=='}
+DIGITS = 40  # Significant digits of an enclosure endpoint.
+_PI = (Fraction('3.141592653589793238462643383279502884197'), Fraction('3.141592653589793238462643383279502884198'))
+_FLOOR, _CEIL, _NEAR = (Context(prec=DIGITS, rounding=r, Emax=10 ** 6, Emin=-10 ** 6)
+                        for r in (ROUND_FLOOR, ROUND_CEILING, ROUND_HALF_EVEN))
+_WORK = Context(prec=60, rounding=ROUND_HALF_EVEN, Emax=10 ** 6, Emin=-10 ** 6)
+_SERIES_ERROR = Fraction(1, 10 ** 50)  # 60-digit Taylor sum at |r| < 1: rounding stays below 1e-55.
 
 
 class DomainError(ValueError):
     """An expression is undefined or leaves its bounded exact domain here."""
+
+
+class Undecided(ValueError):
+    """An enclosure straddles a decision (a branch, an integer or zero); the cell stays UNKNOWN."""
+
+
+class Inexact(Fraction):
+    """The midpoint of a rigorous enclosure of an irrational value; ``radius`` bounds its error."""
+    __slots__ = ('radius',)
+
+    def __new__(cls, lo, hi):
+        self = super().__new__(cls, (lo + hi) / 2)
+        self.radius = (hi - lo) / 2
+        return self
+
+    def __deepcopy__(self, memo=None):
+        return self
+
+    __copy__ = __deepcopy__
+
+    def __reduce__(self):
+        return Inexact, (self - self.radius, self + self.radius)
 
 
 def require(ok, message):
@@ -83,7 +120,7 @@ def _name(value):
 
 
 def _arity(op):
-    return 1 if op in UNARY else 3 if op in TERNARY else 2
+    return 0 if op in NULLARY else 1 if op in UNARY else 3 if op in TERNARY else 2
 
 
 def normalize(node, variables=None, *, limit=MAX_NODES):
@@ -105,8 +142,8 @@ def normalize(node, variables=None, *, limit=MAX_NODES):
                 'Invalid expression operator or arguments')
         op, args = item['op'], [visit(arg) for arg in item['args']]
         if op == 'pow':
-            require('const' in args[1] and Fraction(args[1]['const']).denominator == 1
-                    and abs(Fraction(args[1]['const'])) <= MAX_POWER, 'pow needs a small integer exponent')
+            require('const' in args[1] and Fraction(args[1]['const']).denominator <= MAX_ROOT
+                    and abs(Fraction(args[1]['const'])) <= MAX_POWER, 'pow needs a small rational exponent')
         # Identities that never erase a domain error in the other operand.
         if op == 'add' and {'const': '0'} in args:
             return args[1] if args[0] == {'const': '0'} else args[0]
@@ -133,17 +170,37 @@ def variables_of(node):
     return set().union(*(variables_of(arg) for arg in node.get('args', ())))
 
 
-def _sqrt(value):
+def _iroot(n, q):
+    """Exact integer q-th root of n >= 0, or None."""
+    if n == 0:
+        return 0
+    x = 1 << -(-n.bit_length() // q)
+    while True:
+        y = ((q - 1) * x + n // x ** (q - 1)) // q
+        if y >= x:
+            return x if x ** q == n else None
+        x = y
+
+
+def _root(value, q):
+    """Exact real q-th root of a rational, None when it is irrational."""
     if value < 0:
-        raise DomainError('sqrt of a negative value')
-    num, den = math.isqrt(value.numerator), math.isqrt(value.denominator)
-    if num * num != value.numerator or den * den != value.denominator:
-        raise DomainError('sqrt is not exact rational here')
-    return Fraction(num, den)
+        if q % 2 == 0:
+            raise DomainError('Even root of a negative value')
+        inner = _root(-value, q)
+        return None if inner is None else -inner
+    num, den = _iroot(value.numerator, q), _iroot(value.denominator, q)
+    return None if num is None or den is None else Fraction(num, den)
 
 
 def _apply(op, values):
+    """Exact value of op on exact arguments; None when the value is irrational (an enclosure follows)."""
     a = values[0]
+    if op in TRANSCENDENTAL:
+        if op == 'log' and a <= 0:
+            raise DomainError('log of a non-positive value')
+        special = {('exp', 0): 1, ('log', 1): 0, ('sin', 0): 0, ('cos', 0): 1}.get((op, a))
+        return None if special is None else Fraction(special)
     if op == 'neg':
         return -a
     if op == 'abs':
@@ -153,7 +210,9 @@ def _apply(op, values):
     if op == 'ceil':
         return Fraction(math.ceil(a))
     if op == 'sqrt':
-        return _sqrt(a)
+        if a < 0:
+            raise DomainError('sqrt of a negative value')
+        return _root(a, 2)
     if op == 'ite':
         return values[1] if a != 0 else values[2]
     b = values[1]
@@ -170,7 +229,10 @@ def _apply(op, values):
     if op == 'pow':
         if a == 0 and b < 0:
             raise DomainError('Zero to a negative power')
-        return a ** int(b)
+        if b.denominator == 1:
+            return a ** int(b)
+        root = _root(a, b.denominator)
+        return None if root is None else root ** b.numerator
     if op == 'min':
         return min(a, b)
     if op == 'max':
@@ -178,21 +240,165 @@ def _apply(op, values):
     return Fraction(int(a < b if op == 'lt' else a <= b if op == 'le' else a == b))
 
 
-def _evaluate(node, env):
+# --- Rigorous enclosures for irrational values --------------------------------
+
+def _dec(value, context):
+    return context.divide(Decimal(value.numerator), Decimal(value.denominator))
+
+
+def _frac(value):
+    if value and abs(value.adjusted()) > 150:
+        raise DomainError('Exact value exceeds bounded precision')
+    return _bounded(Fraction(value))
+
+
+def _out(lo, hi):
+    """Round an enclosure outward to DIGITS significant digits so endpoint sizes stay bounded."""
+    return _frac(_dec(lo, _FLOOR)), _frac(_dec(hi, _CEIL))
+
+
+def _monotone(name, lo, hi):
+    """exp/ln/sqrt are correctly rounded by ``decimal``: the true value is within one step."""
+    f = getattr(_NEAR, name)
+    return _frac(_NEAR.next_minus(f(_dec(lo, _FLOOR)))), _frac(_NEAR.next_plus(f(_dec(hi, _CEIL))))
+
+
+def _series(r, cosine):
+    """Taylor sum of sin or cos at |r| < 1; alternating and decreasing, so the tail is below the last term."""
+    term = Decimal(1) if cosine else r
+    total, n, r2 = term, 0 if cosine else 1, _WORK.multiply(r, r)
+    while abs(term) > Decimal('1e-58'):
+        term = _WORK.divide(_WORK.minus(_WORK.multiply(term, r2)), (n + 1) * (n + 2))
+        total, n = _WORK.add(total, term), n + 2
+    return Fraction(total)
+
+
+def _trig(lo, hi, cosine):
+    """Both are 1-Lipschitz: the value at a reduced centre, widened by every tracked error."""
+    mid, radius = (lo + hi) / 2, (hi - lo) / 2
+    k = round(mid / (_PI[0] / 2))
+    r_lo, r_hi = sorted((mid - k * _PI[0] / 2, mid - k * _PI[1] / 2))
+    if r_hi - r_lo > Fraction(1, 4) or radius > 1:
+        return Fraction(-1), Fraction(1)
+    quadrant = (k + cosine) % 4  # sin(r + k pi/2) cycles sin, cos, -sin, -cos; cos x = sin(x + pi/2).
+    centre = (r_lo + r_hi) / 2
+    point = _dec(centre, _WORK)
+    error = _SERIES_ERROR + abs(Fraction(point) - centre) + (r_hi - r_lo) / 2 + radius
+    value = _series(point, quadrant % 2) * (-1 if quadrant >= 2 else 1)
+    return max(Fraction(-1), value - error), min(Fraction(1), value + error)
+
+
+def _power(a0, a1, e):
+    """Enclosure of x**e over [a0, a1] for a constant rational exponent."""
+    if e.denominator == 1:
+        n = abs(int(e))
+        ends = sorted((a0 ** n, a1 ** n))
+        lo, hi = (Fraction(0), ends[1]) if n % 2 == 0 and a0 < 0 < a1 else tuple(ends)
+        return (lo, hi) if e >= 0 else _wide('div', [(Fraction(1), Fraction(1)), (lo, hi)])
+    if a0 < 0:
+        if a1 >= 0 or e.denominator % 2 == 0:
+            if a1 < 0:
+                raise DomainError('Even root of a negative value')
+            raise Undecided('Power base enclosure reaches a non-positive value')
+        lo, hi = _power(-a1, -a0, e)
+        return (-hi, -lo) if e.numerator % 2 else (lo, hi)
+    if a0 == 0:
+        if e < 0:
+            raise Undecided('Power base enclosure contains zero')
+        return Fraction(0), _power(a1, a1, e)[1]
+    l0, l1 = _monotone('ln', a0, a1)
+    return _monotone('exp', *sorted((l0 * e, l1 * e)))
+
+
+def _wide(op, values):
+    """Interval semantics of op; raises Undecided where the exact outcome depends on the unknown digits."""
+    a0, a1 = values[0]
+    if op == 'neg':
+        return -a1, -a0
+    if op == 'abs':
+        return (a0, a1) if a0 >= 0 else (-a1, -a0) if a1 <= 0 else (Fraction(0), max(-a0, a1))
+    if op in ('floor', 'ceil'):
+        f = math.floor if op == 'floor' else math.ceil
+        if f(a0) != f(a1):
+            raise Undecided(op + ' enclosure crosses an integer')
+        return Fraction(f(a0)), Fraction(f(a0))
+    if op in ('sqrt', 'log'):
+        if a1 < 0 or (op == 'log' and a1 <= 0):
+            raise DomainError(op + ' of a negative value')
+        if a0 < 0 or (op == 'log' and a0 <= 0):
+            raise Undecided(op + ' argument enclosure reaches zero')
+        lo, hi = _monotone('sqrt' if op == 'sqrt' else 'ln', a0, a1)
+        return (max(lo, Fraction(0)) if op == 'sqrt' else lo), hi
+    if op == 'exp':
+        if a1 > 360 or a0 < -360:
+            raise DomainError('exp leaves the bounded domain')
+        return _monotone('exp', a0, a1)
+    if op in ('sin', 'cos'):
+        return _trig(a0, a1, op == 'cos')
+    b0, b1 = values[1]
+    if op in ('add', 'sub'):
+        return (a0 + b0, a1 + b1) if op == 'add' else (a0 - b1, a1 - b0)
+    if op in ('mul', 'div'):
+        if op == 'div' and b0 <= 0 <= b1:
+            if b0 == b1:
+                raise DomainError('Division by zero')
+            raise Undecided('Divisor enclosure contains zero')
+        ends = [x * y if op == 'mul' else x / y for x in (a0, a1) for y in (b0, b1)]
+        return min(ends), max(ends)
+    if op == 'mod':
+        q0, q1 = _wide('div', values)
+        if math.floor(q0) != math.floor(q1):
+            raise Undecided('mod quotient crosses an integer')
+        k = Fraction(math.floor(q0))
+        return _wide('sub', [values[0], _wide('mul', [values[1], (k, k)])])
+    if op == 'pow':
+        return _power(a0, a1, b0)
+    if op in ('min', 'max'):
+        f = min if op == 'min' else max
+        return f(a0, b0), f(a1, b1)
+    true = a1 < b0 if op == 'lt' else a1 <= b0 if op == 'le' else False
+    false = a0 >= b1 if op == 'lt' else a0 > b1 if op == 'le' else a1 < b0 or b1 < a0
+    if true == false:
+        raise Undecided('Comparison enclosures overlap')
+    return Fraction(int(true)), Fraction(int(true))
+
+
+def _enclose(node, env):
+    """Rigorous (lo, hi) of a node's value; a point (v, v) whenever the value is exact."""
     if 'const' in node:
-        return Fraction(node['const'])
+        value = Fraction(node['const'])
+        return value, value
     if 'var' in node:
         if node['var'] not in env:
             raise DomainError('Missing input: ' + node['var'])
-        return env[node['var']]
-    if node['op'] == 'ite':  # Only the chosen branch must be defined.
-        test = _evaluate(node['args'][0], env)
-        return _evaluate(node['args'][1 if test != 0 else 2], env)
-    return _bounded(_apply(node['op'], [_evaluate(arg, env) for arg in node['args']]))
+        value = env[node['var']]
+        radius = getattr(value, 'radius', 0)
+        return value - radius, value + radius
+    op, args = node['op'], node['args']
+    if op == 'pi':
+        return _PI
+    if op == 'ite':  # Only the chosen branch must be defined.
+        lo, hi = _enclose(args[0], env)
+        if lo <= 0 <= hi and lo != hi:
+            raise Undecided('Branch test enclosure contains zero')
+        return _enclose(args[1 if lo != 0 else 2], env)
+    values = [_enclose(arg, env) for arg in args]
+    if all(lo == hi for lo, hi in values):
+        point = _apply(op, [lo for lo, _ in values])
+        if point is not None:
+            point = _bounded(point)
+            return point, point
+    lo, hi = _wide(op, values)
+    return (_bounded(lo), hi) if lo == hi else _out(lo, hi)
+
+
+def _evaluate(node, env):
+    lo, hi = _enclose(node, env)
+    return lo if lo == hi else Inexact(lo, hi)
 
 
 def evaluate(node, env):
-    """Exact evaluation of a normalized AST over an exact input environment."""
+    """Exact evaluation of a normalized AST over an exact input environment (Inexact if irrational)."""
     return _evaluate(node, {_name(k): exact(v) for k, v in env.items()})
 
 
@@ -205,18 +411,24 @@ def parse(source, variables=None):
     ops = {_pyast.Add: 'add', _pyast.Sub: 'sub', _pyast.Mult: 'mul', _pyast.Div: 'div',
            _pyast.Mod: 'mod', _pyast.Pow: 'pow'}
     cmps = {_pyast.Lt: 'lt', _pyast.LtE: 'le', _pyast.Eq: 'eq'}
-    calls = {'abs': 1, 'floor': 1, 'ceil': 1, 'sqrt': 1, 'min': 2, 'max': 2, 'ite': 3}
+    calls = {'abs': 1, 'floor': 1, 'ceil': 1, 'sqrt': 1, 'min': 2, 'max': 2, 'ite': 3,
+             'exp': 1, 'log': 1, 'sin': 1, 'cos': 1}
 
     def visit(node):
         if isinstance(node, _pyast.Constant) and type(node.value) in (int, float):
             return {'const': text(node.value)}
         if isinstance(node, _pyast.Name):
-            return {'var': node.id}
+            pi = node.id == 'pi' and (variables is None or 'pi' not in variables)
+            return {'op': 'pi', 'args': []} if pi else {'var': node.id}
         if isinstance(node, _pyast.UnaryOp) and isinstance(node.op, (_pyast.USub, _pyast.UAdd)):
             inner = visit(node.operand)
             return inner if isinstance(node.op, _pyast.UAdd) else {'op': 'neg', 'args': [inner]}
         if isinstance(node, _pyast.BinOp) and type(node.op) in ops:
-            return {'op': ops[type(node.op)], 'args': [visit(node.left), visit(node.right)]}
+            right = visit(node.right)
+            if isinstance(node.op, _pyast.Pow) and not variables_of(right) and 'const' not in right:
+                folded = _evaluate(normalize(right), {})  # x ** (3/2): a constant exponent, spelled exactly
+                right = right if isinstance(folded, Inexact) else {'const': text(folded)}
+            return {'op': ops[type(node.op)], 'args': [visit(node.left), right]}
         if (isinstance(node, _pyast.Compare) and len(node.ops) == 1
                 and type(node.ops[0]) in cmps | {_pyast.Gt: 'gt', _pyast.GtE: 'ge'}):
             left, right = visit(node.left), visit(node.comparators[0])
@@ -241,6 +453,8 @@ def render(node):
     if 'var' in node:
         return node['var']
     op, args = node['op'], [render(arg) for arg in node['args']]
+    if op == 'pi':
+        return 'pi'
     if op == 'neg':
         return '(-' + args[0] + ')'
     if op in _INFIX:
@@ -256,9 +470,24 @@ def tolerance(spec):
     return absolute, relative
 
 
-def matches(predicted, observed, tol):
+def decide(predicted, observed, tol):
+    """True/False when every value in both enclosures is inside/outside the band; None otherwise."""
     absolute, relative = tol
-    return abs(predicted - observed) <= absolute + relative * abs(observed)
+    radius = getattr(predicted, 'radius', 0) + getattr(observed, 'radius', 0)
+    gap, spread = abs(predicted - observed), relative * getattr(observed, 'radius', 0)
+    if gap + radius <= absolute + relative * abs(observed) - spread:
+        return True
+    if gap - radius > absolute + relative * abs(observed) + spread:
+        return False
+    return None
+
+
+def matches(predicted, observed, tol):
+    """Certain agreement only: an enclosure that straddles the band does not match."""
+    if not hasattr(predicted, 'radius') and not hasattr(observed, 'radius'):
+        absolute, relative = tol
+        return abs(predicted - observed) <= absolute + relative * abs(observed)
+    return decide(predicted, observed, tol) is True
 
 
 def agree(left, right, tol):
@@ -300,13 +529,20 @@ def compile_hypothesis(value, inputs, observables, *, goal=None):
 
 
 def predict(hypothesis, env):
-    """Return {observable: Fraction|None}; None marks NOT_APPLICABLE/UNDEFINED."""
+    """Return {observable: Fraction|None}; None marks NOT_APPLICABLE/UNDEFINED/UNDECIDED."""
     try:
-        if hypothesis['applies'] is not None and evaluate(hypothesis['applies'], env) == 0:
-            return {name: None for name in hypothesis['predict']}, 'NOT_APPLICABLE'
+        if hypothesis['applies'] is not None:
+            guard = evaluate(hypothesis['applies'], env)
+            radius = getattr(guard, 'radius', 0)
+            if radius and radius >= abs(guard):
+                raise Undecided('Applicability enclosure contains zero')
+            if guard == 0:
+                return {name: None for name in hypothesis['predict']}, 'NOT_APPLICABLE'
         return {name: evaluate(rule, env) for name, rule in hypothesis['predict'].items()}, 'PREDICTED'
     except DomainError:
         return {name: None for name in hypothesis['predict']}, 'UNDEFINED'
+    except Undecided:
+        return {name: None for name in hypothesis['predict']}, 'UNDECIDED'
 
 
 def replay(hypothesis, observations, tolerances):
@@ -315,9 +551,10 @@ def replay(hypothesis, observations, tolerances):
     UNDEFINED where the rulebook claims applicability counts against it: an
     explanation that cannot produce its own prediction does not explain the
     observation. Missing measurements, and observables with no declared
-    tolerance, stay UNKNOWN and refute nothing.
+    tolerance, stay UNKNOWN and refute nothing. So does a cell whose prediction
+    enclosure straddles the tolerance band (``undecided``).
     """
-    counterexamples, tested, skipped, unknown = [], 0, 0, 0
+    counterexamples, tested, skipped, unknown, undecided = [], 0, 0, 0, 0
     for row in observations:
         values, status = predict(hypothesis, row['inputs'])
         if status == 'NOT_APPLICABLE':
@@ -328,27 +565,37 @@ def replay(hypothesis, observations, tolerances):
             if observed is None or name not in tolerances:
                 unknown += 1
                 continue
+            verdict = None if status == 'UNDECIDED' else False if status == 'UNDEFINED' else \
+                decide(values[name], observed, tolerances[name])
+            if verdict is None:
+                undecided += 1
+                continue
             tested += 1
             if status == 'UNDEFINED':
                 counterexamples.append({'id': row['id'], 'observable': name, 'predicted': None,
                                         'observed': text(observed), 'residual': None})
-            elif not matches(values[name], observed, tolerances[name]):
+            elif not verdict:
                 counterexamples.append({'id': row['id'], 'observable': name, 'predicted': text(values[name]),
                                         'observed': text(observed), 'residual': text(observed - values[name])})
     status = 'REFUTED' if counterexamples else 'CONSISTENT' if tested else 'UNTESTED'
-    return {'status': status, 'counterexamples': counterexamples, 'tested': tested,
-            'not_applicable': skipped, 'unknown_measurements': unknown, 'scientific_support': 'UNKNOWN'}
+    result = {'status': status, 'counterexamples': counterexamples, 'tested': tested,
+              'not_applicable': skipped, 'unknown_measurements': unknown, 'scientific_support': 'UNKNOWN'}
+    return {**result, 'undecided': undecided} if undecided else result
 
 
 def _classes(predictions, tol):
-    """Group exact predictions whose values agree, in both directions, with a class anchor."""
+    """Group exact predictions that agree, in both directions, with every member of their class.
+
+    Agreement is not transitive, so agreeing with the class anchor is not enough (as in verification).
+    """
     groups = []
     for ident, value in sorted(predictions, key=lambda row: (row[1], row[0])):
-        if groups and agree(value, groups[-1][0], tol):
+        if groups and all(agree(value, other, tol) for other in groups[-1][2]):
             groups[-1][1].append(ident)
+            groups[-1][2].append(value)
         else:
-            groups.append((value, [ident]))
-    return groups
+            groups.append((value, [ident], [value]))
+    return [(anchor, members) for anchor, members, _ in groups]
 
 
 def _entropy(weights):
@@ -366,7 +613,7 @@ def outcome_partition(hypotheses, env, tolerances):
     determinate, undetermined, undefined = {}, [], []
     for hyp in hypotheses:
         values, status = predict(hyp, env)
-        if status == 'NOT_APPLICABLE':
+        if status in ('NOT_APPLICABLE', 'UNDECIDED'):
             undetermined.append(hyp['id'])
             continue
         if status == 'UNDEFINED':
@@ -527,7 +774,7 @@ def _grammar(grammar, inputs):
     require(len(constants) <= 24 and len(set(constants)) == len(constants), 'At most 24 distinct constants')
     operators = grammar.get('operators', ['add', 'sub', 'mul', 'div'])
     require(isinstance(operators, list) and set(operators) <= OPERATORS - TERNARY,
-            'Synthesis operators must be unary/binary')
+            'Synthesis operators must be nullary, unary or binary')
     return sorted(set(names)), constants, sorted(set(operators))
 
 
@@ -555,7 +802,7 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
         for env in points[:len(rows)]:
             try:
                 offsets.append(_evaluate(base, env))
-            except DomainError:
+            except (DomainError, Undecided):
                 return {'status': 'BASE_UNDEFINED', 'fits': [], 'attempted': 0, 'scientific_support': 'UNKNOWN'}
         targets = [t - o for t, o in zip(targets, offsets)]
     tol = tolerances[observable]
@@ -570,7 +817,7 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
         for env in points:
             try:
                 out.append(_evaluate(node, env))
-            except DomainError:
+            except (DomainError, Undecided):
                 out.append(None)
         return tuple(out)
 
@@ -595,6 +842,7 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
         return len(fits) < keep
 
     leaves = [{'var': v} for v in names] + [{'const': c} for c in constants]
+    leaves += [{'op': op, 'args': []} for op in operators if op in NULLARY]
     go = all(consider(leaf) for leaf in leaves)
     for total in range(2, max_nodes + 1):
         if not go:
@@ -602,6 +850,8 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
         for op in operators:
             if not go:
                 break
+            if op in NULLARY:
+                continue
             if op in UNARY:
                 for child, _ in tuple(pools[total - 1]):
                     if not consider({'op': op, 'args': [child]}):
@@ -609,7 +859,7 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
                         break
                 continue
             if op == 'pow':
-                exps = [c for c in constants if Fraction(c).denominator == 1 and 0 < abs(Fraction(c)) <= MAX_POWER]
+                exps = [c for c in constants if Fraction(c).denominator <= MAX_ROOT and 0 < abs(Fraction(c)) <= MAX_POWER]
                 for child, _ in tuple(pools.get(total - 2, ())):
                     for e in exps:
                         if not consider({'op': 'pow', 'args': [child, {'const': e}]}):
