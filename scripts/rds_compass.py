@@ -61,7 +61,7 @@ def fold(store):
     plan = evs[0]['value']
     state = {'plan': plan, 'head': digest({k: v for k, v in evs[-1].items() if k not in ('event_id', 'value')}),
              'events': len(evs), 'hypotheses': {}, 'observations': {}, 'refutations': {}, 'decisions': [],
-             'jumps': [], 'dispositions': {}, 'tools': {}, 'tool_rejections': [], 'verifications': [],
+             'jumps': [], 'dispositions': {}, 'tools': {}, 'tool_rejections': [], 'proposed_tools': {}, 'verifications': [],
              'handoffs': [], 'interruptions': [], 'interrupted': {}, 'reports': [], 'budget': budget,
              'runs': {rid: run['status'] for rid, run in runs.items()},
              'run_order': {rid: {'started_at': run.get('started_at'), 'settled_event': settled.get(rid)}
@@ -89,6 +89,8 @@ def fold(store):
                                               'record_sha256': event['sha256']}
         elif kind == 'TOOL_REJECTED':
             state['tool_rejections'].append(value)
+        elif kind == 'TOOL_PROPOSED':
+            state['proposed_tools'].setdefault(value['sha256'], {**value, 'seq': event['seq']})
         elif kind == 'TOOL_USED':
             state['tools'][value['tool']]['uses'].append(value['hypothesis'])
         elif kind == 'TOOL_RETRACTED':
@@ -332,6 +334,8 @@ def _spread(state, count):
 
 def _barren(state, jump):
     """A jump that added no rival at its evidence: ask again only after new evidence."""
+    if any(tool['seq'] > jump['seq'] for tool in state['proposed_tools'].values()):
+        return False  # A tool offered since this jump has not met the oracle yet.
     if jump['status'] == 'NO_RIVAL_WITHIN_BOUND':
         return True
     if jump['status'] != 'PROPOSALS_REQUESTED':
@@ -587,7 +591,9 @@ def packet(state, items, trigger, notes):
             'response': {'schema': 1, 'decisions': '[{id, disposition: adopt|adapt|reject|defer, reason, next_step, '
                                                     'hypothesis? (adapt: {predict: {obs: expr}})}]',
                          'proposals': 'optional [{id, predict, applies?, statement?}]',
-                         'usage': 'optional {input_tokens, output_tokens, cached_input_tokens?}: this call'},
+                         'usage': 'optional {input_tokens, output_tokens, cached_input_tokens?}: this call',
+                         'tools': 'optional [{source}] (at most 4): one-argument integer feature functions, tried at '
+                                  'the next capability gap and qualified only by the receipted oracle triple'},
             'scientific_support': 'UNKNOWN'}
     tokens = agent_tokens(state)
     if tokens['cap'] is not None:
@@ -671,7 +677,18 @@ def validate_response(state, value, sealed, candidates):
     """Every delivered item exactly once; adapted/proposed rulebooks pass the record filter."""
     require(isinstance(value, dict) and value.get('schema') == 1 and value.get('packet_sha256') == sealed['sha256'],
             'Jump response packet/schema mismatch')
-    require(set(value) <= {'schema', 'packet_sha256', 'decisions', 'proposals', 'usage'}, 'Unknown jump response fields')
+    require(set(value) <= {'schema', 'packet_sha256', 'decisions', 'proposals', 'usage', 'tools'},
+            'Unknown jump response fields')
+    from rds_compass_rsi import extract
+    tools = value.get('tools', [])
+    require(isinstance(tools, list) and len(tools) <= 4 and all(
+        isinstance(t, dict) and set(t) == {'source'} and isinstance(t['source'], str) and len(t['source']) <= 16384
+        for t in tools), 'Jump response tools must be at most 4 {source} objects')
+    for tool in tools:
+        try:
+            extract(tool['source'])  # The same allowlist as every other tool, before anything is recorded.
+        except SyntaxError as exc:
+            raise ValueError('Jump response tool does not parse') from exc
     ids = [item['id'] for item in sealed['items']]
     decisions = value.get('decisions')
     require(isinstance(decisions, list) and len(decisions) == len(ids), 'Jump response must address every item once')
@@ -698,7 +715,7 @@ def validate_response(state, value, sealed, candidates):
         require(isinstance(spec, dict) and len(proposals) < 8, 'At most 8 agent proposals')
         proposals.append(_tool_premises(state, model.compile_hypothesis(
             {**spec, 'origin': 'agent-proposal'}, variables(state), plan['observables'], goal=_goal_observable(plan))))
-    return out, proposals
+    return out, proposals, [t['source'] for t in tools]
 
 
 def _taken(state, hyp, extra):
@@ -736,7 +753,7 @@ def _tool_premises(state, hyp):
 
 def escape(store, state, diagnosis):
     """Abductive jump: synthesize counterexample-filtered rivals, packetize, dispose."""
-    from rds_compass_rsi import escalate
+    from rds_compass_rsi import escalate, propose
     found, notes = _fits(state)
     rsi = None
     if not found and state['plan']['rsi']['enabled'] and state['plan']['inputs']:
@@ -778,7 +795,7 @@ def escape(store, state, diagnosis):
                                            'rejected': rejected, 'rsi': rsi,
                                            'status': 'PACKET_DELIVERED' if items else 'PROPOSALS_REQUESTED',
                                            'observations': len(state['observations']), **budget})
-    disposer, evidence, decisions, proposals, errors = 'COMPASS_AUTO', None, None, [], []
+    disposer, evidence, decisions, proposals, errors, offers = 'COMPASS_AUTO', None, None, [], [], []
     if agent:
         delivered = _evidence_identity(store)
         response, evidence = _call_agent(store, agent, sealed)
@@ -792,7 +809,7 @@ def escape(store, state, diagnosis):
                     'errors': ['STALE_RESPONSE'], 'rsi': rsi, 'outcomes': []}
         if response is not None:
             try:
-                decisions, proposals = validate_response(state, response, sealed, hyps)
+                decisions, proposals, offers = validate_response(state, response, sealed, hyps)
                 disposer = 'AGENT'
             except (ValueError, KeyError, TypeError) as exc:
                 errors.append('INVALID_RESPONSE: ' + str(exc)[:300])
@@ -825,8 +842,10 @@ def escape(store, state, diagnosis):
     for hyp in adopted:
         cstore.append(store, 'HYPOTHESIS', hyp['id'], {**hyp, 'origin': 'jump:' + jump_id + ':' + hyp['origin']})
         _note_tools(store, hyp)
+    offered = [propose(store, source, 'AGENT_PROPOSED') for source in offers]
     return {'status': 'ADOPTED' if adopted else 'NONE_ADOPTED', 'jump': jump_id, 'adopted': [h['id'] for h in adopted],
-            'disposer': disposer, 'errors': errors, 'rsi': rsi, 'outcomes': outcomes, **budget}
+            'disposer': disposer, 'errors': errors, 'rsi': rsi, 'outcomes': outcomes, **budget,
+            **({'tools_offered': offered} if offered else {})}
 
 
 # --- Verification, working set, report ---------------------------------------
@@ -1212,6 +1231,8 @@ def report(store):
             'tools': [{k: t.get(k) for k in ('name', 'sha256', 'status', 'oracle', 'scope', 'origin', 'retraction')}
                       for t in state['tools'].values()],
             'tool_rejections': state['tool_rejections'],
+            **({'tool_offers': [{k: t[k] for k in ('name', 'sha256', 'origin', 'status')}
+                                for t in state['proposed_tools'].values()]} if state['proposed_tools'] else {}),
             'verification': _rechecked(store, state),
             'handoff': state['handoffs'][-1] if state['handoffs'] else None,
             'interruptions': state['interruptions'], 'budget': state['budget'],

@@ -16,6 +16,11 @@ expected values come only from original receipted measurements:
 * counterexample   - that killing measurement is retained with its receipt.
   witness
 
+Candidates come from the cross-session library, from offers recorded as
+``TOOL_PROPOSED`` (``compass tools --propose`` or a jump response's ``tools``),
+and from the built-in base catalogue (``compass tools --catalogue``). An offer
+is never evidence: each one meets the same oracle triple.
+
 Status is ``QUALIFIED_FOR_SCOPE`` (goal, observable and input domain bound);
 ``scientific_support`` stays ``UNKNOWN``. A later receipt that contradicts the
 qualifying law retracts the tool's goal binding and every hypothesis built on it.
@@ -88,8 +93,16 @@ def _fold(name, base, step):
             f'        acc = {step}\n        n = n // {base}\n    return acc\n')
 
 
+def _factored(name, start, step, small):
+    """Fold over the prime factorization of abs(n): ``step`` sees each prime p with multiplicity k."""
+    return (f'def {name}(n):\n    n = abs(int(n))\n    if n < 2:\n        return {small}\n    acc, p = {start}, 2\n'
+            f'    while n > 1:\n        if p * p > n:\n            p = n\n        k = 0\n'
+            f'        while n % p == 0:\n            n = n // p\n            k = k + 1\n'
+            f'        if k:\n            acc = {step}\n        p = p + 1\n    return acc\n')
+
+
 def families():
-    """Bounded generated tool sources: digit folds, divisor counts, valuations."""
+    """The base catalogue: digit folds, valuations, divisor and prime-factor functions, primes, sequences."""
     out = []
     for base in (2, 3, 10):
         out.append(_fold(f'digitsum{base}', base, f'acc + n % {base}'))
@@ -104,7 +117,24 @@ def families():
     out.append('def isprime(n):\n    n = int(n)\n    if n < 2:\n        return 0\n'
                '    return 1 if all(n % d for d in range(2, int(n ** 0.5) + 1)) else 0\n')
     out.append('def fib(n):\n    a, b = 0, 1\n    for _ in range(abs(int(n))):\n        a, b = b, a + b\n    return a\n')
+    # Appended after the original families, so a gap those already close is closed by the same tool.
+    for name, start, step, small in (('totient', 1, 'acc * (p - 1) * p ** (k - 1)', 'n'), ('omega', 0, 'acc + 1', 0),
+                                     ('bigomega', 0, 'acc + k', 0), ('mobius', 1, '0 if k > 1 else -acc', 'n'),
+                                     ('lpf', 0, 'acc or p', 'n'), ('gpf', 0, 'p', 'n'), ('rad', 1, 'acc * p', 'n')):
+        out.append(_factored(name, start, step, small))
+    out.append(_fold('digitrev10', 10, 'acc * 10 + n % 10'))
+    out.append('import math\n\n\ndef issquare(n):\n    n = int(n)\n    return 1 if n >= 0 and math.isqrt(n) ** 2 == n else 0\n')
+    out.append('import math\n\n\ndef primepi(n):\n    n = int(n)\n'
+               '    return sum(1 for k in range(2, n + 1) if all(k % d for d in range(2, math.isqrt(k) + 1)))\n')
+    out.append('def collatz(n):\n    n = abs(int(n))\n    acc = 0\n    while n > 1:\n'
+               '        n = n // 2 if n % 2 == 0 else 3 * n + 1\n        acc = acc + 1\n    return acc\n')
     return out
+
+
+def catalogue():
+    """The base tools as Compass offers them at a capability gap: unqualified until the oracle triple."""
+    return [{'name': name, 'sha256': sha, 'domain': 'integer', 'status': 'OFFER_NOT_QUALIFIED'}
+            for name, _, _, sha in map(extract, families())]
 
 
 def extract(source):
@@ -117,6 +147,22 @@ def extract(source):
             'Compass tool names are short lowercase alphanumerics')
     code, _ = extract_function(source.encode('utf-8'), entry)
     return entry, entry, code.decode('utf-8'), _sha(code)
+
+
+def propose(store, source, origin):
+    """Record a tool offer for the next capability gap; it qualifies only through the oracle triple."""
+    require(origin in ('USER_PROPOSED', 'AGENT_PROPOSED'), 'Unknown tool offer origin')
+    first = cstore.events(store, load=False)[:1]
+    require(first and first[0]['kind'] == cstore.PREFIX + 'DECLARED', 'Run compass init before offering tools')
+    try:
+        name, entry, code, sha = extract(source)
+    except SyntaxError as exc:
+        raise ValueError('Tool source does not parse: ' + str(exc)[:200]) from None
+    event = cstore.append(store, 'TOOL_PROPOSED', f'{sha[:16]}-{origin.lower()}', {
+        'name': name, 'entry': entry, 'source': code, 'sha256': sha, 'origin': origin,
+        'status': 'OFFER_NOT_QUALIFIED', 'self_certified': False, 'scientific_support': 'UNKNOWN'})
+    return {'status': 'OFFER_NOT_QUALIFIED', 'name': name, 'sha256': sha, 'origin': origin,
+            'recorded': not event['reused']}
 
 
 def mutants(code, entry, limit):
@@ -374,8 +420,10 @@ def escalate(store, state, gap):
     folder = library_path(store, plan)
     library = library_tools(folder, _scope(state))
     report['library_offered'] = len(library)
-    for tool in library + [dict(zip(('name', 'entry', 'source', 'sha256'), extract(s)), origin='SYNTHESIZED')
-                           for s in families()]:
+    offers = [dict(zip(('name', 'entry', 'source', 'sha256'), extract(t['source'])), origin=t['origin'])
+              for t in sorted(state['proposed_tools'].values(), key=lambda t: t['seq'])]
+    for tool in library + offers + [dict(zip(('name', 'entry', 'source', 'sha256'), extract(s)), origin='SYNTHESIZED')
+                                    for s in families()]:
         if tool['sha256'] in seen or tool['sha256'] in structural or tool['sha256'] in known:
             continue
         seen.add(tool['sha256'])
