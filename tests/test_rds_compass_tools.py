@@ -134,6 +134,23 @@ class OfferTests(Campaign):
         point = compass.env(compass.fold(store), compass.candidate(compass.fold(store), 'x7'))
         self.assertEqual((point[features[0]], point[features[1]]), (3, 3))
 
+    def test_a_value_outside_the_exact_domain_rejects_the_tool_not_the_drive(self):
+        root = self.base / 'huge'
+        self.assertEqual(initialize(root, fx.law_campaign(root, '2*popcount(x)+1', range(17)))['status'], 'INITIALIZED')
+        store = cstore.store_for(root)
+        for ident in ('x0', 'x1', 'x2', 'x3', 'x5', 'x6', 'x7', 'x9'):
+            manifest = compass.manifest(compass.fold(store), ident)
+            store.register(manifest)
+            self.assertEqual(store.execute(manifest['id'])['run_status'], 'SUCCEEDED')
+        state, _ = compass.ingest(store)
+        rsi.propose(store, 'def huge(n):\n    return 2 ** 1000 + n\n', 'USER_PROPOSED')
+        report = rsi.escalate(store, compass.fold(store), {'trigger': 'TEST'})
+        self.assertIn({'name': 'huge', 'reason': 'OUTSIDE_EXACT_DOMAIN'}, report['rejected'])
+        self.assertEqual(report['qualified'], ['digitsum2'])  # The catalogue still closes the gap.
+        rejected = [e['value'] for e in cstore.events(store) if e['kind'] == cstore.PREFIX + 'TOOL_REJECTED'
+                    and e['value']['name'] == 'huge']
+        self.assertEqual([r['witness'] for r in rejected], [{'candidate': 'x0'}])
+
     def test_an_agent_offer_is_tried_at_the_next_gap(self):
         root = self.campaign('agent', agent='adopt')
         fx.write(root / 'agent-mode.json', {'mode': 'adopt', 'tools': [SQUARES]})

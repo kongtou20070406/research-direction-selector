@@ -330,10 +330,19 @@ def _with_feature(rows, state, name, table):
     out = []
     for row in rows:
         value = table.get(row['id'])
-        if value is None:
+        try:
+            out.append({**row, 'inputs': {**row['inputs'], name: model.exact(value)}})
+        except ValueError:  # Missing, or outside the bounded exact domain (DomainError).
             return None
-        out.append({**row, 'inputs': {**row['inputs'], name: model.exact(value)}})
     return out
+
+
+def _exact_ok(value):
+    try:
+        model.exact(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _qualify(state, tool, values, rows, var, run_mutants):
@@ -460,13 +469,15 @@ def escalate(store, state, gap):
         result = values.get(tool['sha256'], {})
         if 'values' not in result:
             continue
-        gap = next((c['id'] for c, v in zip(plan['candidates'], result['values']) if v is None), None)
+        gap = next(((c['id'], 'UNDEFINED_ON_DECLARED_DOMAIN' if v is None else 'OUTSIDE_EXACT_DOMAIN')
+                    for c, v in zip(plan['candidates'], result['values']) if v is None or not _exact_ok(v)), None)
         if gap is not None:
-            # Boundary witness: a tool that is undefined on a declared input cannot be a law primitive there.
+            # Boundary witness: a tool that is undefined on a declared input, or whose value there leaves
+            # the bounded exact domain (e.g. 2 ** 1000), cannot be a law primitive there.
             cstore.append(store, 'TOOL_REJECTED', f"{tool['sha256'][:16]}-{len(rows)}", {
                 'name': tool['name'], 'sha256': tool['sha256'], 'origin': tool['origin'], 'measurements': len(rows),
-                'reason': 'UNDEFINED_ON_DECLARED_DOMAIN', 'witness': {'candidate': gap}})
-            report['rejected'].append({'name': tool['name'], 'reason': 'UNDEFINED_ON_DECLARED_DOMAIN'})
+                'reason': gap[1], 'witness': {'candidate': gap[0]}})
+            report['rejected'].append({'name': tool['name'], 'reason': gap[1]})
             continue
         def run_mutants(tool=tool):
             listed = mutants(tool['source'], tool['entry'], rsi['max_mutants'])
