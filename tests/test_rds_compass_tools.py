@@ -21,6 +21,9 @@ from rds_compass_drive import drive
 # Twice the sum of squared decimal digits, plus one: no base tool and no add/mul law reproduces it.
 LAW = '2*((x % 10) ** 2 + (x // 10) ** 2)+1'
 GRAMMAR = {'variables': ['x'], 'constants': [1, 2], 'operators': ['add', 'mul']}
+# Popcount again under the catalogue's name, with different code and so a different hash.
+TWIN = ('def digitsum2(n):\n    n = abs(int(n))\n    acc = 0\n    while n > 0:\n'
+        '        acc = acc + n % 2\n        n = n // 2\n    return acc\n')
 SQUARES = ('def digitsq10(n):\n    n = abs(int(n))\n    acc = 0\n    while n:\n'
            '        acc = acc + (n % 10) ** 2\n        n = n // 10\n    return acc\n')
 
@@ -111,6 +114,25 @@ class OfferTests(Campaign):
         # A ledger without a Compass declaration takes no offer: the first record must stay the plan.
         with patch.object(cstore, 'events', return_value=[]), self.assertRaisesRegex(ValueError, 'compass init'):
             rsi.propose(store, SQUARES, 'USER_PROPOSED')
+
+    def test_a_second_tool_of_the_same_name_gets_its_own_feature(self):
+        root = self.base / 'twin'
+        self.assertEqual(initialize(root, fx.law_campaign(root, '2*popcount(x)+1', range(17)))['status'], 'INITIALIZED')
+        store = cstore.store_for(root)
+        for ident in ('x0', 'x1', 'x2', 'x3', 'x5', 'x6', 'x7', 'x9'):
+            manifest = compass.manifest(compass.fold(store), ident)
+            store.register(manifest)
+            self.assertEqual(store.execute(manifest['id'])['run_status'], 'SUCCEEDED')
+        state, _ = compass.ingest(store)
+        self.assertEqual(rsi.escalate(store, state, {'trigger': 'TEST'})['qualified'], ['digitsum2'])
+        rsi.propose(store, TWIN, 'USER_PROPOSED')
+        self.assertEqual(rsi.escalate(store, compass.fold(store), {'trigger': 'TEST'})['qualified'], ['digitsum2'])
+        tools = list(compass.fold(store)['tools'].values())
+        features = [next(iter(t['features'])) for t in tools]
+        self.assertEqual(features, ['digitsum2_x', 'digitsum2' + tools[1]['sha256'][:12] + '_x'])
+        # Each name keeps its own tool's table, so env() overwrites neither.
+        point = compass.env(compass.fold(store), compass.candidate(compass.fold(store), 'x7'))
+        self.assertEqual((point[features[0]], point[features[1]]), (3, 3))
 
     def test_an_agent_offer_is_tried_at_the_next_gap(self):
         root = self.campaign('agent', agent='adopt')

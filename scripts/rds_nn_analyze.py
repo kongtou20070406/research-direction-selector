@@ -121,11 +121,12 @@ def linear_regions(model, start, end):
             cuts = sorted({-o / s for o, s in zip(offset, slope) if s and t0 < -o / s < t1})
             for u0, u1 in zip([t0] + cuts, cuts + [t1]):
                 on = [o + s * (u0 + u1) / 2 > 0 for o, s in zip(offset, slope)]
+                # Checked per piece, so a segment past the cap never materializes its descendants.
+                require(len(following) < MAX_PIECES, f'The segment crosses more than {MAX_PIECES} linear pieces')
                 following.append((u0, u1, [o if k else Fraction(0) for o, k in zip(offset, on)],
                                   [s if k else Fraction(0) for s, k in zip(slope, on)],
                                   pattern + (''.join('1' if k else '0' for k in on),)))
         pieces = following
-        require(len(pieces) <= MAX_PIECES, f'The segment crosses more than {MAX_PIECES} linear pieces')
     value = lambda piece, t: [str(o + s * t) for o, s in zip(piece[2], piece[3])]
     return {'regions': len(pieces), 'breakpoints': [str(p[0]) for p in pieces[1:]][:MAX_POINTS],
             'patterns': [list(p[4]) for p in pieces[:64]], 'outputs_at_start': value(pieces[0], Fraction(0)),

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -44,6 +45,12 @@ class KnownNetworkTests(unittest.TestCase):
         result = nn.linear_regions(KINK, ['-3'], ['3'])
         self.assertEqual((result['regions'], result['breakpoints']), (3, ['1/2', '5/6']))
         self.assertEqual((result['outputs_at_start'], result['outputs_at_end']), (['3'], ['4']))
+
+    def test_the_region_cap_is_enforced_while_pieces_are_built(self):
+        with patch.object(nn, 'MAX_PIECES', 3):
+            self.assertEqual(nn.linear_regions(KINK, ['-3'], ['3'])['regions'], 3)
+        with patch.object(nn, 'MAX_PIECES', 2), self.assertRaisesRegex(ValueError, 'more than 2 linear pieces'):
+            nn.linear_regions(KINK, ['-3'], ['3'])
 
     def test_jacobian_reports_ties_instead_of_hiding_them(self):
         self.assertEqual(nn.jacobian(KINK, ['1'])['jacobian'], [['1']])

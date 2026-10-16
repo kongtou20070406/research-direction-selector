@@ -342,8 +342,15 @@ def _qualify(state, tool, values, rows, var, run_mutants):
     plan = state['plan']
     tolerances = compass._tolerances(plan)
     observable = plan['goal']['observable']
+    # A feature name denotes one tool's values for good: a tool sharing another tool's name (or an
+    # input's) gets its hash in the name, so env() never overwrites one table with another.
+    taken = set(plan['inputs']) | {f for t in state['tools'].values() if t['sha256'] != tool['sha256']
+                                   for f in t['features']}
     feature = f"{tool['name']}_{var}"
-    require(feature not in plan['inputs'], 'Tool feature collides with a declared input')
+    if feature in taken:
+        feature = f"{tool['name']}{tool['sha256'][:12]}_{var}"
+    if feature in taken or len(feature) > 64:
+        return None, {'reason': 'FEATURE_NAME_UNAVAILABLE', 'feature': feature}
     table = _table(state, values, var)
     full = _with_feature(rows, state, feature, table)
     if full is None:
