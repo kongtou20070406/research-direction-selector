@@ -1,6 +1,7 @@
 """Pre-registered analysis of the NewtonBench comparison (see PREREGISTRATION.md, including amendment 1).
 
-    python -B analyze.py --phase formal --out results/newtonbench-compass.json --table results/per-task.md
+    python -B analyze.py --phase formal --out results/newtonbench-compass.json --table results/per-task.md \
+        [--rerun-phase formal-rerun --corrected-table results/per-task-corrected.md]
 
 Unit of analysis: the cell (module, difficulty, law version). Its two strata (noise 0 and noise 0.01) share one
 law, so the primary test pools them: per arm and cell, accuracy is the mean of NewtonBench's ``exact_accuracy``
@@ -9,6 +10,9 @@ runs over that stratum's trials; the noise-free stratum test is the originally r
 failed, timed-out, crashed, missing or contaminated trial scores 0. Paired comparisons use an exact two-sided
 sign test over cells with a nonzero difference and a paired bootstrap 95% CI of the mean difference (10,000
 cell resamples, fixed seed).
+
+``--rerun-phase`` adds the POST HOC corrected analysis of amendment 5 next to the registered one: the same
+analysis on the formal trials with the affected Compass trials replaced by their rerun.
 """
 import argparse
 import json
@@ -343,14 +347,8 @@ def descriptive(rows, records):
     return out
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--phase', default='formal')
-    parser.add_argument('--out', required=True)
-    parser.add_argument('--table', required=True)
-    args = parser.parse_args(argv)
-    runs = common.EVAL / 'runs' / args.phase
-    rows = load(runs)
+def analyse(rows):
+    """The registered analysis (plus the labelled descriptive and post-hoc parts) of one set of trials."""
     records = scored(rows)
     strata = sorted({r['stratum'] for r in records})
     views = {'pooled': records, **{s: [r for r in records if r['stratum'] == s] for s in strata}}
@@ -390,11 +388,78 @@ def main(argv=None):
             'comparisons': {name: {'cells': len(subset), 'primary': compare(table, *PRIMARY, subset),
                                    'secondary': [compare(table, a, b, subset) for a, b in SECONDARY]}
                             for name, subset in subsets.items()}}
+    return {'records': records, 'strata': strata, 'comparisons': comparisons, 'fcr': fcr, 'rmsle': rmsle,
+            'desc': desc, 'path_stats': path_stats, 'sensitivity': sensitivity}
+
+
+def _manifest_commits(runs):
+    return sorted({json.loads(line)['rds_commit'] for line in
+                   (runs / 'manifests.jsonl').read_text(encoding='utf-8').splitlines()})
+
+
+def _trial_rows(rows):
+    return [{k: row.get(k) for k in ('arm', 'task_id', 'trial', 'status', 'compass_status', 'queries',
+                                     'wall_seconds', 'contaminated', 'row_sha256', 'ledger_head',
+                                     'report_sha256', 'query_chain_head', 'transcript_sha256')}
+            | {'compass_path': compass_path(row), 'chosen': row.get('chosen'), 'tokens': trial_tokens(row),
+               'receipts': row.get('receipts'),
+               'submissions': {n: {'law': s.get('law'), 'certified': s.get('certified'),
+                                   'fallback_used': s.get('fallback_used'),
+                                   'evaluation': {k: (s.get('evaluation') or {}).get(k) for k in
+                                                  ('exact_accuracy', 'rmsle', 'symbolic_equivalent',
+                                                   'symbolic_msg', 'error', 'eval_seed')}}
+                               for n, s in (row.get('submissions') or {}).items()}}
+            for row in sorted(rows, key=lambda r: (r['task_id'], r['arm'], r['trial']))]
+
+
+def _sections(result):
+    return {'primary': result['comparisons']['pooled']['all']['primary'],
+            'registered_noise_free_primary': (result['comparisons'].get('noise0') or {}).get('all', {}).get('primary'),
+            'comparisons': result['comparisons'], 'false_certification': result['fcr'],
+            'compass_paths': result['path_stats'], 'post_hoc_sensitivity': result['sensitivity'],
+            'official_style_rmsle': result['rmsle'], 'descriptive': result['desc']}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--phase', default='formal')
+    parser.add_argument('--out', required=True)
+    parser.add_argument('--table', required=True)
+    parser.add_argument('--rerun-phase', help='amendment 5 (POST HOC): Compass trials that replace the formal '
+                                              "ones of common.RERUN_MODULES, e.g. 'formal-rerun'")
+    parser.add_argument('--corrected-table', help='per-task table of the post-hoc corrected trial set')
+    args = parser.parse_args(argv)
+    runs = common.EVAL / 'runs' / args.phase
+    rows = load(runs)
+    result = analyse(rows)
+    records, strata, comparisons = result['records'], result['strata'], result['comparisons']
+    fcr, path_stats, sensitivity = result['fcr'], result['path_stats'], result['sensitivity']
+    corrected = None
+    if args.rerun_phase:
+        rerun_runs = common.EVAL / 'runs' / args.rerun_phase
+        rerun = [r for r in load(rerun_runs) if r['arm'] == 'compass']
+        affected = lambda r: r['arm'] == 'compass' and cell_of(r['task_id']).split('/')[0] in common.RERUN_MODULES
+        replaced = [r for r in rows if affected(r)]
+        assert {(r['task_id'], r['trial']) for r in replaced} == {(r['task_id'], r['trial']) for r in rerun}, \
+            'the rerun must replace exactly the affected Compass trials'
+        corrected_rows = [r for r in rows if not affected(r)] + rerun
+        corrected_result = analyse(corrected_rows)
+        corrected = {'label': 'POST HOC (amendment 5), not pre-registered: the Compass trials of '
+                              + ', '.join(common.RERUN_MODULES) + ' rerun with the simulator keyword names; '
+                              'every other trial is the formal run\'s',
+                     'rerun_phase': args.rerun_phase, 'rds_commit_rerun': _manifest_commits(rerun_runs),
+                     'replaced_trials': sorted(f"{r['task_id']}#t{r['trial']}" for r in replaced),
+                     **_sections(corrected_result), 'rerun_trials': _trial_rows(rerun)}
+        for row in rerun:
+            row.pop('_dir', None)
+        if args.corrected_table:
+            Path(args.corrected_table).write_text(
+                render_table(per_unit(corrected_result['records'], 'task_id'), corrected_rows,
+                             title='# Per-task results, POST HOC corrected (amendment 5)'), encoding='utf-8')
     task_table = per_unit(records, 'task_id')
     body = {'schema': 'rds-newtonbench-comparison-v2', 'generated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
             'phase': args.phase, 'rds_commit_analysis': common.git_head(HERE),
-            'rds_commit_runs': sorted({json.loads(line)['rds_commit'] for line in
-                                       (runs / 'manifests.jsonl').read_text(encoding='utf-8').splitlines()}),
+            'rds_commit_runs': _manifest_commits(runs),
             'newtonbench': {'repository': 'https://github.com/HKUST-KnowComp/NewtonBench', 'license': 'MIT',
                             'commit': common.git_head(common.NEWTONBENCH)},
             'model': {'cli': 'codex', 'model': common.MODEL, 'reasoning_effort': common.EFFORT,
@@ -405,25 +470,10 @@ def main(argv=None):
                        'tolerance_noisy': f'rel {common.NOISE_SIGMAS} x noise, abs {common.NOISE_SIGMAS} x module floor',
                        'cells': len({r['cell'] for r in records}),
                        'expressible_cells': len({r['cell'] for r in records} & EXPRESSIBLE)},
-            'primary': comparisons['pooled']['all']['primary'],
-            'registered_noise_free_primary': (comparisons.get('noise0') or {}).get('all', {}).get('primary'),
-            'comparisons': comparisons, 'false_certification': fcr, 'compass_paths': path_stats,
-            'post_hoc_sensitivity': sensitivity,
-            'official_style_rmsle': rmsle,
-            'descriptive': desc,
+            **_sections(result),
+            'post_hoc_adapter_corrected': corrected,
             'per_task': [{'submission': n, 'task_id': t, **v} for (n, t), v in sorted(task_table.items())],
-            'trials': [{k: row.get(k) for k in ('arm', 'task_id', 'trial', 'status', 'compass_status', 'queries',
-                                                'wall_seconds', 'contaminated', 'row_sha256', 'ledger_head',
-                                                'report_sha256', 'query_chain_head', 'transcript_sha256')}
-                       | {'compass_path': compass_path(row), 'chosen': row.get('chosen'), 'tokens': trial_tokens(row),
-                          'receipts': row.get('receipts'),
-                          'submissions': {n: {'law': s.get('law'), 'certified': s.get('certified'),
-                                              'fallback_used': s.get('fallback_used'),
-                                              'evaluation': {k: (s.get('evaluation') or {}).get(k) for k in
-                                                             ('exact_accuracy', 'rmsle', 'symbolic_equivalent',
-                                                              'symbolic_msg', 'error', 'eval_seed')}}
-                                          for n, s in (row.get('submissions') or {}).items()}}
-                       for row in sorted(rows, key=lambda r: (r['task_id'], r['arm'], r['trial']))],
+            'trials': _trial_rows(rows),
             'scientific_support': 'UNKNOWN'}
     body['bundle_sha256'] = common.sha256_json(body)
     for row in rows:
@@ -436,6 +486,7 @@ def main(argv=None):
                       'compass_paths': {k: v['all'] for k, v in path_stats.items()},
                       'post_hoc_sensitivity': {'simulator_exception_trials': sensitivity['simulator_exception_trials'],
                                                'pooled_primary': sensitivity['views']['pooled']['comparisons']['all']['primary']},
+                      'post_hoc_adapter_corrected_primary': corrected and corrected['primary'],
                       'bundle_sha256': body['bundle_sha256']}, indent=1))
     return 0
 
@@ -448,11 +499,11 @@ def _cell(entry):
     return f"{marks} ({'inf' if rm == math.inf else f'{rm:.3g}'})"
 
 
-def render_table(table, rows):
+def render_table(table, rows, title='# Per-task results'):
     status = {(r['task_id'], r['trial']): f"{compass_path(r)} ({r.get('compass_status') or r.get('status')})"
               for r in rows if r['arm'] == 'compass'}
     keys = sorted({t for (_, t) in table}, key=lambda k: (stratum_of(k), k))
-    lines = ['# Per-task results', '',
+    lines = [title, '',
              'Each cell: one mark per trial (✓ = NewtonBench judge says equivalent, ✗ otherwise), then the per-task '
              'median RMSLE (inf = no finite score). E = expressible in the Compass dialect (a priori).', '']
     for stratum in sorted({stratum_of(k) for k in keys}):
