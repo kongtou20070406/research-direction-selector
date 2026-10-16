@@ -236,14 +236,19 @@ def compile_plan(store, declaration, source_sha256, source=None):
     protocol_path = protocol.get('path', PROTOCOL_PATH)
     agent = declaration.get('agent')
     if agent is not None:
-        _object(agent, {'argv', 'timeout_seconds'}, set(), 'agent')
+        _object(agent, {'argv', 'timeout_seconds'}, {'max_tokens'}, 'agent')
         require(isinstance(agent['argv'], list) and agent['argv']
                 and all(isinstance(a, str) and a and '\x00' not in a for a in agent['argv']),
                 'Agent argv must be a nonempty list of nonempty strings without NUL bytes')
         require(_seconds(agent['timeout_seconds']) and 0 < agent['timeout_seconds'] <= 600,
                 'Agent timeout must be in (0, 600] seconds')
+        cap = agent.get('max_tokens')
+        require(cap is None or (type(cap) is int and 0 < cap <= 10 ** 10),
+                'Agent max_tokens must be an integer from 1 to 10000000000')
+        if cap is None:
+            unknown.append('agent.max_tokens')  # No cap is declared; spend is still reported per call.
         agent = {'argv': [sys.executable if a == '{python}' else a for a in agent['argv']],
-                 'timeout_seconds': agent['timeout_seconds']}
+                 'timeout_seconds': agent['timeout_seconds'], **({'max_tokens': cap} if cap is not None else {})}
     library = declaration.get('library')
     require(library is None or (isinstance(library, str) and library), 'Library must be a path')
     if library is None and os.environ.get('RDS_COMPASS_LIBRARY'):

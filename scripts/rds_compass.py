@@ -586,8 +586,13 @@ def packet(state, items, trigger, notes):
             'synthesis': notes, 'omissions': {'items': 0, 'generation_results': False},
             'response': {'schema': 1, 'decisions': '[{id, disposition: adopt|adapt|reject|defer, reason, next_step, '
                                                     'hypothesis? (adapt: {predict: {obs: expr}})}]',
-                         'proposals': 'optional [{id, predict, applies?, statement?}]'},
+                         'proposals': 'optional [{id, predict, applies?, statement?}]',
+                         'usage': 'optional {input_tokens, output_tokens, cached_input_tokens?}: this call'},
             'scientific_support': 'UNKNOWN'}
+    tokens = agent_tokens(state)
+    if tokens['cap'] is not None:
+        body['budget'] = {'agent_tokens': {'cap': tokens['cap'], 'spent': tokens['spent'],
+                                           'remaining': tokens['cap'] - tokens['spent']}}
     while len(canonical(body).encode('utf-8')) > PACKET_BYTES and body['evidence']['observations']:
         body['evidence']['observations'] = body['evidence']['observations'][1:]
         body['omissions'] = {'items': 0, 'generation_results': False, 'evidence_rows_trimmed': True}
@@ -602,6 +607,35 @@ def _streams(stdout, stderr):
             'stderr_tail': stderr[-512:].decode('utf-8', 'replace')}
 
 
+def _usage(stdout):
+    """The agent's own token report on stdout, even from a failed call; None unless well formed."""
+    try:
+        usage = strict_json(stdout.decode('utf-8')).get('usage') if len(stdout) <= AGENT_BYTES else None
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        return None
+    keys = {'input_tokens', 'output_tokens'}
+    ok = isinstance(usage, dict) and keys <= set(usage) <= keys | {'cached_input_tokens'} and \
+        all(type(v) is int and 0 <= v < 10 ** 12 for v in usage.values())
+    return dict(usage) if ok else None
+
+
+def agent_tokens(state):
+    """Token spend over every recorded agent call; the counts are the agent's report (INPUT_REPORTED).
+
+    With ``agent.max_tokens`` declared, a spent budget or any call without a usage report
+    withholds further calls: an unaccounted spend is never assumed to be zero.
+    """
+    cap = (state['plan'].get('agent') or {}).get('max_tokens')
+    calls = [d['agent'] for d in state['dispositions'].values() if d.get('agent')]
+    reported = [c['usage'] for c in calls if c.get('usage') is not None]
+    spent = sum(u['input_tokens'] + u['output_tokens'] for u in reported)
+    status = 'CAP_UNKNOWN' if cap is None else 'USAGE_UNREPORTED' if len(reported) < len(calls) else \
+        'EXHAUSTED' if spent >= cap else 'AVAILABLE'
+    return {'cap': cap, 'spent': spent, 'cached_input_tokens': sum(u.get('cached_input_tokens', 0) for u in reported),
+            'calls': len(calls), 'unreported_calls': len(calls) - len(reported), 'status': status,
+            'provenance': 'INPUT_REPORTED'}
+
+
 def _call_agent(store, agent, value):
     raw = canonical(value).encode('utf-8')
     sent = {'argv': agent['argv'], 'input_sha256': hashlib.sha256(raw).hexdigest()}
@@ -610,11 +644,12 @@ def _call_agent(store, agent, value):
                               cwd=store.root, check=False)
     except subprocess.TimeoutExpired as exc:
         return None, {'status': 'AGENT_TIMEOUT', 'phase': 'RUNNING', 'timeout_seconds': agent['timeout_seconds'],
-                      **sent, **_streams(exc.stdout, exc.stderr)}
-    except OSError as exc:
+                      **sent, **_streams(exc.stdout, exc.stderr), 'usage': None}
+    except OSError as exc:  # Never launched: nothing was spent.
         return None, {'status': 'AGENT_UNAVAILABLE', 'phase': 'LAUNCH', **sent,
-                      'error': type(exc).__name__ + ': ' + str(exc)[:200]}
-    evidence = {'status': 'RETURNED', 'exit_code': done.returncode, **sent, **_streams(done.stdout, done.stderr)}
+                      'error': type(exc).__name__ + ': ' + str(exc)[:200], 'usage': {'input_tokens': 0, 'output_tokens': 0}}
+    evidence = {'status': 'RETURNED', 'exit_code': done.returncode, **sent, **_streams(done.stdout, done.stderr),
+                'usage': _usage(done.stdout)}
     if done.returncode != 0 or len(done.stdout) > AGENT_BYTES:
         return None, {**evidence, 'status': 'AGENT_FAILED'}
     try:
@@ -636,7 +671,7 @@ def validate_response(state, value, sealed, candidates):
     """Every delivered item exactly once; adapted/proposed rulebooks pass the record filter."""
     require(isinstance(value, dict) and value.get('schema') == 1 and value.get('packet_sha256') == sealed['sha256'],
             'Jump response packet/schema mismatch')
-    require(set(value) <= {'schema', 'packet_sha256', 'decisions', 'proposals'}, 'Unknown jump response fields')
+    require(set(value) <= {'schema', 'packet_sha256', 'decisions', 'proposals', 'usage'}, 'Unknown jump response fields')
     ids = [item['id'] for item in sealed['items']]
     decisions = value.get('decisions')
     require(isinstance(decisions, list) and len(decisions) == len(ids), 'Jump response must address every item once')
@@ -728,18 +763,21 @@ def escape(store, state, diagnosis):
                       'size': hyp['size'], 'sha256': hyp['sha256'], 'premises': hyp['premises'],
                       'fits_measurements': len(measured(state)), 'diverges_from_live_at': diverge})
     agent = state['plan'].get('agent')
+    budget = {'agent_tokens': agent_tokens(state)} if agent else {}
+    if budget and budget['agent_tokens']['status'] in ('EXHAUSTED', 'USAGE_UNREPORTED'):
+        agent = None  # Fail closed: a spent or unaccounted token budget buys no further agent call.
     if not items and not agent:
         cstore.append(store, 'JUMP', jump_id, {'trigger': diagnosis, 'packet': None, 'synthesis': notes,
                                                'rejected': rejected, 'rsi': rsi, 'status': 'NO_RIVAL_WITHIN_BOUND',
-                                               'observations': len(state['observations'])})
-        return {'status': 'NO_RIVAL_WITHIN_BOUND', 'jump': jump_id, 'rsi': rsi}
+                                               'observations': len(state['observations']), **budget})
+        return {'status': 'NO_RIVAL_WITHIN_BOUND', 'jump': jump_id, 'rsi': rsi, **budget}
     # With no machine rival left, a declared agent is asked for proposals: its rulebooks pass the
     # same record filter as any other, so the agent adds candidates, never evidence or verdicts.
     sealed = packet(state, items, diagnosis, notes)
     cstore.append(store, 'JUMP', jump_id, {'trigger': diagnosis, 'packet': sealed, 'synthesis': notes,
                                            'rejected': rejected, 'rsi': rsi,
                                            'status': 'PACKET_DELIVERED' if items else 'PROPOSALS_REQUESTED',
-                                           'observations': len(state['observations'])})
+                                           'observations': len(state['observations']), **budget})
     disposer, evidence, decisions, proposals, errors = 'COMPASS_AUTO', None, None, [], []
     if agent:
         delivered = _evidence_identity(store)
@@ -788,7 +826,7 @@ def escape(store, state, diagnosis):
         cstore.append(store, 'HYPOTHESIS', hyp['id'], {**hyp, 'origin': 'jump:' + jump_id + ':' + hyp['origin']})
         _note_tools(store, hyp)
     return {'status': 'ADOPTED' if adopted else 'NONE_ADOPTED', 'jump': jump_id, 'adopted': [h['id'] for h in adopted],
-            'disposer': disposer, 'errors': errors, 'rsi': rsi, 'outcomes': outcomes}
+            'disposer': disposer, 'errors': errors, 'rsi': rsi, 'outcomes': outcomes, **budget}
 
 
 # --- Verification, working set, report ---------------------------------------
@@ -1065,6 +1103,7 @@ def workset(state, reason=None, detail=None):
             'basin': basin(state) if plan['goal']['kind'] == 'IDENTIFY_LAW' else None,
             'next': {k: decision[k] for k in ('action', 'candidate', 'eig_bits', 'reason') if k in decision} if decision else None,
             'handoff': {'reason': reason, 'detail': detail} if reason else None,
+            **({'agent_tokens': agent_tokens(state)} if plan.get('agent') else {}),
             'scientific_support': 'UNKNOWN'}
     require(reason is None or reason in HANDOFF_REASONS, 'Unknown handoff reason')
     return {**body, 'sha256': digest(body)}
@@ -1176,6 +1215,7 @@ def report(store):
             'verification': _rechecked(store, state),
             'handoff': state['handoffs'][-1] if state['handoffs'] else None,
             'interruptions': state['interruptions'], 'budget': state['budget'],
+            **({'agent_tokens': agent_tokens(state)} if plan.get('agent') else {}),
             'interrupted_attempts': [{'candidate': v['candidate'], 'run_id': k, 'receipt_sha256': v['receipt_sha256']}
                                      for k, v in sorted(state['interrupted'].items())],
             'experiments': sum(1 for rid in state['runs'] if rid.startswith('compass-')),
