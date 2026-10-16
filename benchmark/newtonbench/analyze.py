@@ -1,11 +1,14 @@
-"""Pre-registered analysis of the NewtonBench comparison (see PREREGISTRATION.md).
+"""Pre-registered analysis of the NewtonBench comparison (see PREREGISTRATION.md, including amendment 1).
 
     python -B analyze.py --phase formal --out results/newtonbench-compass.json --table results/per-task.md
 
-Unit of analysis: the task. Per arm and task, accuracy is the mean of NewtonBench's ``exact_accuracy`` (its
-LLM-judge symbolic equivalence) over the N trials; a failed, timed-out, crashed or contaminated trial scores 0.
-Paired comparisons use an exact two-sided sign test over tasks with a nonzero difference and a paired bootstrap
-95% CI of the mean difference (10,000 task resamples, fixed seed).
+Unit of analysis: the cell (module, difficulty, law version). Its two strata (noise 0 and noise 0.01) share one
+law, so the primary test pools them: per arm and cell, accuracy is the mean of NewtonBench's ``exact_accuracy``
+(its LLM-judge symbolic equivalence) over the cell's trials in both strata. Within one stratum, the same test
+runs over that stratum's trials; the noise-free stratum test is the originally registered primary test. A
+failed, timed-out, crashed, missing or contaminated trial scores 0. Paired comparisons use an exact two-sided
+sign test over cells with a nonzero difference and a paired bootstrap 95% CI of the mean difference (10,000
+cell resamples, fixed seed).
 """
 import argparse
 import json
@@ -26,14 +29,25 @@ PRIMARY = ('compass', 'code_assisted')
 SECONDARY = [('compass', 'vanilla'), ('compass_fallback', 'code_assisted'), ('compass_fallback', 'vanilla'),
              ('code_assisted', 'vanilla')]
 # A priori: a law the Compass dialect can state on the declared design (rational operations, integer powers,
-# sqrt that is exact on the grid, decimal constants within tolerance). Fixed in PREREGISTRATION.md.
+# sqrt that is exact on the grid, decimal constants within tolerance). Fixed in PREREGISTRATION.md; a property
+# of the law, so the same in both noise strata.
 EXPRESSIBLE = {'m0_gravity/easy/v0', 'm0_gravity/medium/v0', 'm1_coulomb_force/easy/v1',
                'm1_coulomb_force/medium/v0', 'm2_magnetic_force/easy/v0', 'm3_fourier_law/easy/v2',
                'm6_underdamped_harmonic/easy/v1', 'm6_underdamped_harmonic/hard/v1', 'm8_sound_speed/easy/v2',
                'm8_sound_speed/medium/v0', 'm9_hooke_law/medium/v1', 'm9_hooke_law/hard/v0',
                'm11_heat_transfer/easy/v1', 'm11_heat_transfer/medium/v2'}
+FAILED = ('FAILED', 'TIMEOUT', 'CRASHED', 'MISSING')
 BOOTSTRAP = 10000
 BOOT_SEED = 20261015
+
+
+def cell_of(key):
+    return '/'.join(key.split('/')[:3])
+
+
+def stratum_of(key):
+    parts = key.split('/')
+    return parts[3] if len(parts) > 3 else 'noise0'
 
 
 def sign_test(diffs):
@@ -65,8 +79,8 @@ def wilson(successes, n, z=1.959964):
 
 def load(runs):
     rows = []
-    for path in sorted(runs.glob('*/*/*/*/trial.json')):
-        if '.incomplete-' in str(path):
+    for path in sorted(runs.rglob('trial.json')):
+        if any('.incomplete-' in part or '.superseded-' in part for part in path.parts):
             continue
         rows.append(json.loads(path.read_text(encoding='utf-8')))
     # Every job a manifest scheduled counts: one with no trial.json at all is MISSING and scores as a failure.
@@ -75,12 +89,12 @@ def load(runs):
     lines = manifests.read_text(encoding='utf-8').splitlines() if manifests.exists() else []
     for line in lines:
         m = json.loads(line)
-        for task_id in m['tasks']:
+        for key in m['tasks']:
             for arm in m['arms']:
                 for trial in range(1, m['trials'] + 1):
-                    if (task_id, arm, trial) not in have:
-                        have.add((task_id, arm, trial))
-                        rows.append({'arm': arm, 'task_id': task_id, 'trial': trial, 'status': 'MISSING',
+                    if (key, arm, trial) not in have:
+                        have.add((key, arm, trial))
+                        rows.append({'arm': arm, 'task_id': key, 'trial': trial, 'status': 'MISSING',
                                      'submissions': {}, 'contaminated': False})
     return rows
 
@@ -93,12 +107,13 @@ def scored(rows):
             if SOURCE[name] != row['arm']:
                 continue
             sub = (row.get('submissions') or {}).get(name)
-            failed = row.get('status') in ('FAILED', 'TIMEOUT', 'CRASHED', 'MISSING') or sub is None
+            failed = row.get('status') in FAILED or sub is None
             contaminated = bool(row.get('contaminated')) or bool((sub or {}).get('contaminated'))
             ev = (sub or {}).get('evaluation') or {}
             correct = (not failed and not contaminated and ev.get('exact_accuracy') == 1.0)
             rmsle = ev.get('rmsle') if not failed and not contaminated else None
-            out.append({'submission': name, 'task_id': row['task_id'], 'trial': row['trial'], 'status': row.get('status'),
+            out.append({'submission': name, 'task_id': row['task_id'], 'cell': cell_of(row['task_id']),
+                        'stratum': stratum_of(row['task_id']), 'trial': row['trial'], 'status': row.get('status'),
                         'compass_status': row.get('compass_status'), 'correct': int(correct),
                         'rmsle': rmsle if isinstance(rmsle, (int, float)) and math.isfinite(rmsle) else None,
                         'certified': (sub or {}).get('certified'), 'fallback_used': (sub or {}).get('fallback_used'),
@@ -108,36 +123,38 @@ def scored(rows):
     return out
 
 
-def per_task(records, tasks):
+def per_unit(records, unit):
+    """(submission, unit) -> accuracy over the unit's trials and median RMSLE (missing = +inf)."""
     table = {}
     for name in SUBMISSIONS:
-        for task in tasks:
-            mine = [r for r in records if r['submission'] == name and r['task_id'] == task]
+        for key in sorted({r[unit] for r in records}):
+            mine = [r for r in records if r['submission'] == name and r[unit] == key]
             if not mine:
                 continue
             rmsles = [r['rmsle'] if r['rmsle'] is not None else math.inf for r in mine]
-            table[(name, task)] = {'n': len(mine), 'accuracy': statistics.fmean(r['correct'] for r in mine),
-                                   'median_rmsle': statistics.median(rmsles),
-                                   'trials': [{'trial': r['trial'], 'correct': r['correct'], 'rmsle': r['rmsle'],
-                                               'certified': r['certified'], 'status': r['status'],
-                                               'compass_status': r['compass_status']} for r in sorted(mine, key=lambda r: r['trial'])]}
+            table[(name, key)] = {
+                'n': len(mine), 'accuracy': statistics.fmean(r['correct'] for r in mine),
+                'median_rmsle': statistics.median(rmsles),
+                'trials': [{'task_id': r['task_id'], 'trial': r['trial'], 'correct': r['correct'], 'rmsle': r['rmsle'],
+                            'certified': r['certified'], 'status': r['status'], 'compass_status': r['compass_status']}
+                           for r in sorted(mine, key=lambda r: (r['task_id'], r['trial']))]}
     return table
 
 
-def compare(table, a, b, tasks):
-    both = [t for t in tasks if (a, t) in table and (b, t) in table]
-    diffs = [table[(a, t)]['accuracy'] - table[(b, t)]['accuracy'] for t in both]
+def compare(table, a, b, units):
+    both = [u for u in units if (a, u) in table and (b, u) in table]
+    diffs = [table[(a, u)]['accuracy'] - table[(b, u)]['accuracy'] for u in both]
     rm = []
-    for t in both:
-        x, y = table[(a, t)]['median_rmsle'], table[(b, t)]['median_rmsle']
+    for u in both:
+        x, y = table[(a, u)]['median_rmsle'], table[(b, u)]['median_rmsle']
         rm.append(0 if x == y else (1 if x < y else -1))  # +1: a has the lower (better) RMSLE
-    acc = {'tasks': len(both), 'mean_accuracy': {a: _mean([table[(a, t)]['accuracy'] for t in both]),
-                                                  b: _mean([table[(b, t)]['accuracy'] for t in both])},
+    acc = {'units': len(both), 'mean_accuracy': {a: _mean([table[(a, u)]['accuracy'] for u in both]),
+                                                  b: _mean([table[(b, u)]['accuracy'] for u in both])},
            'mean_difference': _mean(diffs), 'bootstrap_95ci': bootstrap_ci(diffs), 'sign_test': sign_test(diffs)}
     acc['significant'] = bool(acc['sign_test']['p_two_sided'] < 0.05 and acc['bootstrap_95ci'][0] is not None
                               and (acc['bootstrap_95ci'][0] > 0 or acc['bootstrap_95ci'][1] < 0))
     return {'a': a, 'b': b, 'accuracy': acc, 'rmsle_sign_test': sign_test(rm),
-            'rmsle_note': 'per-task median RMSLE over trials, missing/failed = +inf; positive = a lower (better)'}
+            'rmsle_note': 'per-cell median RMSLE over trials, missing/failed = +inf; positive = a lower (better)'}
 
 
 def _mean(values):
@@ -158,34 +175,27 @@ def official_rmsle(records, name):
             'submissions': sum(1 for r in records if r['submission'] == name)}
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--phase', default='formal')
-    parser.add_argument('--out', required=True)
-    parser.add_argument('--table', required=True)
-    args = parser.parse_args(argv)
-    runs = common.EVAL / 'runs' / args.phase
-    rows = load(runs)
-    records = scored(rows)
-    tasks = sorted({r['task_id'] for r in records})
-    table = per_task(records, tasks)
-    subsets = {'all': tasks, 'expressible': [t for t in tasks if t in EXPRESSIBLE],
-               'not_expressible': [t for t in tasks if t not in EXPRESSIBLE]}
-    comparisons = {label: {'primary': compare(table, *PRIMARY, subset),
-                           'secondary': [compare(table, a, b, subset) for a, b in SECONDARY]}
-                   for label, subset in subsets.items()}
-    compass_rows = [r for r in records if r['submission'] == 'compass']
+def false_certification(records, cells):
+    compass_rows = [r for r in records if r['submission'] == 'compass' and r['cell'] in cells]
     certified = [r for r in compass_rows if r['certified']]
     wrong = [r for r in certified if not r['correct']]
-    fcr = {'certified': len(certified), 'certified_wrong': len(wrong), 'compass_trials': len(compass_rows),
-           'rate': (len(wrong) / len(certified)) if certified else None, 'wilson_95ci': wilson(len(wrong), len(certified)),
-           'by_subset': {label: {'certified': sum(1 for r in certified if r['task_id'] in s),
-                                 'certified_wrong': sum(1 for r in wrong if r['task_id'] in s)}
-                         for label, s in subsets.items()}}
-    descriptive = {}
+    return {'certified': len(certified), 'certified_wrong': len(wrong), 'compass_trials': len(compass_rows),
+            'rate': (len(wrong) / len(certified)) if certified else None,
+            'wilson_95ci': wilson(len(wrong), len(certified))}
+
+
+def _tally(values):
+    out = {}
+    for v in values:
+        out[str(v)] = out.get(str(v), 0) + 1
+    return out
+
+
+def descriptive(rows, records):
+    out = {}
     for arm in ('vanilla', 'code_assisted', 'compass'):
         mine = [row for row in rows if row['arm'] == arm]
-        descriptive[arm] = {
+        entry = {
             'trials': len(mine), 'status': _tally(row.get('status') for row in mine),
             'compass_status': _tally(row.get('compass_status') for row in mine) if arm == 'compass' else None,
             'contaminated': sum(bool(row.get('contaminated')) for row in mine),
@@ -198,21 +208,54 @@ def main(argv=None):
                                for row in mine),
             'chat_tool_events': sum(row.get('chat_tool_events') or 0 for row in mine)}
         if arm == 'compass':
-            descriptive[arm]['fallback_used'] = sum(1 for r in records if r['submission'] == 'compass_fallback'
-                                                    and r['fallback_used'])
-    body = {'schema': 'rds-newtonbench-comparison-v1', 'generated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+            entry['fallback_used'] = sum(1 for r in records if r['submission'] == 'compass_fallback' and r['fallback_used'])
+            entry['retried_attempts'] = sum(max(0, len(row.get('attempts') or []) - 1) for row in mine)
+        out[arm] = entry
+    return out
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--phase', default='formal')
+    parser.add_argument('--out', required=True)
+    parser.add_argument('--table', required=True)
+    args = parser.parse_args(argv)
+    runs = common.EVAL / 'runs' / args.phase
+    rows = load(runs)
+    records = scored(rows)
+    strata = sorted({r['stratum'] for r in records})
+    views = {'pooled': records, **{s: [r for r in records if r['stratum'] == s] for s in strata}}
+    comparisons, fcr, rmsle, desc = {}, {}, {}, {}
+    for label, view in views.items():
+        table = per_unit(view, 'cell')
+        cells = sorted({r['cell'] for r in view})
+        subsets = {'all': cells, 'expressible': [c for c in cells if c in EXPRESSIBLE],
+                   'not_expressible': [c for c in cells if c not in EXPRESSIBLE]}
+        comparisons[label] = {name: {'cells': len(subset), 'primary': compare(table, *PRIMARY, subset),
+                                     'secondary': [compare(table, a, b, subset) for a, b in SECONDARY]}
+                              for name, subset in subsets.items()}
+        fcr[label] = {name: false_certification(view, set(subset)) for name, subset in subsets.items()}
+        rmsle[label] = {n: official_rmsle(view, n) for n in SUBMISSIONS}
+        view_rows = rows if label == 'pooled' else [row for row in rows if stratum_of(row['task_id']) == label]
+        desc[label] = descriptive(view_rows, view)
+    task_table = per_unit(records, 'task_id')
+    body = {'schema': 'rds-newtonbench-comparison-v2', 'generated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
             'phase': args.phase, 'rds_commit': common.git_head(HERE),
             'newtonbench': {'repository': 'https://github.com/HKUST-KnowComp/NewtonBench', 'license': 'MIT',
                             'commit': common.git_head(common.NEWTONBENCH)},
             'model': {'cli': 'codex', 'model': common.MODEL, 'reasoning_effort': common.EFFORT,
-                      'service_tier': common.TIER},
-            'design': {'system': 'vanilla_equation', 'noise': 0.0, 'query_budget': common.QUERY_BUDGET,
-                       'compass_design_points': common.DESIGN_POINTS, 'tolerance_rel': common.REL_TOLERANCE,
-                       'tasks': len(tasks), 'expressible_tasks': len(subsets['expressible'])},
-            'primary': comparisons['all']['primary'], 'comparisons': comparisons,
-            'false_certification': fcr, 'official_style_rmsle': {n: official_rmsle(records, n) for n in SUBMISSIONS},
-            'descriptive': descriptive,
-            'per_task': [{'submission': n, 'task_id': t, **v} for (n, t), v in sorted(table.items())],
+                      'service_tier': common.TIER, 'judge': common.MODEL},
+            'design': {'system': 'vanilla_equation', 'strata': strata, 'noise_level': common.NOISE_LEVEL,
+                       'query_budget': common.QUERY_BUDGET, 'compass_design_points': common.DESIGN_POINTS,
+                       'tolerance_noise_free': {'rel': common.REL_TOLERANCE},
+                       'tolerance_noisy': f'rel {common.NOISE_SIGMAS} x noise, abs {common.NOISE_SIGMAS} x module floor',
+                       'cells': len({r['cell'] for r in records}),
+                       'expressible_cells': len({r['cell'] for r in records} & EXPRESSIBLE)},
+            'primary': comparisons['pooled']['all']['primary'],
+            'registered_noise_free_primary': (comparisons.get('noise0') or {}).get('all', {}).get('primary'),
+            'comparisons': comparisons, 'false_certification': fcr, 'official_style_rmsle': rmsle,
+            'descriptive': desc,
+            'per_task': [{'submission': n, 'task_id': t, **v} for (n, t), v in sorted(task_table.items())],
             'trials': [{k: row.get(k) for k in ('arm', 'task_id', 'trial', 'status', 'compass_status', 'queries',
                                                 'wall_seconds', 'contaminated', 'row_sha256', 'ledger_head',
                                                 'report_sha256', 'query_chain_head', 'transcript_sha256')}
@@ -228,17 +271,11 @@ def main(argv=None):
     body['bundle_sha256'] = common.sha256_json(body)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(body, indent=1, default=str) + '\n', encoding='utf-8')
-    Path(args.table).write_text(render_table(table, tasks, rows), encoding='utf-8')
-    print(json.dumps({'primary': body['primary'], 'false_certification': fcr,
+    Path(args.table).write_text(render_table(task_table, rows), encoding='utf-8')
+    print(json.dumps({'primary': body['primary'], 'registered_noise_free_primary': body['registered_noise_free_primary'],
+                      'false_certification': {k: v['all'] for k, v in fcr.items()},
                       'bundle_sha256': body['bundle_sha256']}, indent=1))
     return 0
-
-
-def _tally(values):
-    out = {}
-    for v in values:
-        out[str(v)] = out.get(str(v), 0) + 1
-    return out
 
 
 def _cell(entry):
@@ -249,18 +286,22 @@ def _cell(entry):
     return f"{marks} ({'inf' if rm == math.inf else f'{rm:.3g}'})"
 
 
-def render_table(table, tasks, rows):
+def render_table(table, rows):
     status = {(r['task_id'], r['trial']): r.get('compass_status') or r.get('status') for r in rows if r['arm'] == 'compass'}
+    keys = sorted({t for (_, t) in table}, key=lambda k: (stratum_of(k), k))
     lines = ['# Per-task results', '',
              'Each cell: one mark per trial (✓ = NewtonBench judge says equivalent, ✗ otherwise), then the per-task '
-             'median RMSLE (inf = no finite score). E = expressible in the Compass dialect (a priori).', '',
-             '| Task | E | vanilla | code_assisted | compass | compass_fallback | Compass end states |',
-             '|---|---|---|---|---|---|---|']
-    for t in tasks:
-        ends = ', '.join(str(status[(t, i)]) for i in sorted({i for (tt, i) in status if tt == t}))
-        lines.append(f"| `{t}` | {'E' if t in EXPRESSIBLE else ''} | " +
-                     ' | '.join(_cell(table.get((n, t))) for n in SUBMISSIONS) + f' | {ends} |')
-    return '\n'.join(lines) + '\n'
+             'median RMSLE (inf = no finite score). E = expressible in the Compass dialect (a priori).', '']
+    for stratum in sorted({stratum_of(k) for k in keys}):
+        lines += [f'## Stratum {stratum}', '',
+                  '| Task | E | vanilla | code_assisted | compass | compass_fallback | Compass end states |',
+                  '|---|---|---|---|---|---|---|']
+        for t in (k for k in keys if stratum_of(k) == stratum):
+            ends = ', '.join(str(status[(t, i)]) for i in sorted({i for (tt, i) in status if tt == t}))
+            lines.append(f"| `{t}` | {'E' if cell_of(t) in EXPRESSIBLE else ''} | " +
+                         ' | '.join(_cell(table.get((n, t))) for n in SUBMISSIONS) + f' | {ends} |')
+        lines.append('')
+    return '\n'.join(lines)
 
 
 if __name__ == '__main__':

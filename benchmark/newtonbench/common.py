@@ -42,6 +42,17 @@ CALL_ATTEMPTS = 3
 QUERY_BUDGET = 40      # Simulator evaluations per trial, every arm.
 DESIGN_POINTS = 64     # Compass's declared candidate experiments (its MAX_CANDIDATES).
 REL_TOLERANCE = '1/1000000'
+# Amendment 1: a second stratum of the same cells at NewtonBench noise 0.01. Every arm is told the noise model;
+# the floor is NewtonBench's absolute precision constant for the module's vanilla-equation output.
+NOISE_LEVEL = 0.01
+NOISE_FLOOR = {'m0_gravity': '1e-12', 'm1_coulomb_force': '1e-12', 'm2_magnetic_force': '1e-12',
+               'm3_fourier_law': '1e-9', 'm4_snell_law': '1e-6', 'm5_radioactive_decay': '1e-9',
+               'm6_underdamped_harmonic': '1e-9', 'm7_malus_law': '1e-9', 'm8_sound_speed': '1e-9',
+               'm9_hooke_law': '1e-9', 'm10_be_distribution': '1e-18', 'm11_heat_transfer': '1e-9'}
+NOISE_SIGMAS = 5       # Compass tolerance in the noisy stratum: 5 standard deviations (relative and floor).
+NOISE_NOTE = ('\n\n**Noise model (benchmark harness):** each returned value is the true value plus independent '
+              "Gaussian noise with standard deviation equal to 1% of the true value's magnitude, or {floor} if that "
+              'is larger.')
 SAMPLE_SEED = 20261015
 EVAL_SEED_BASE = 7_000_000
 
@@ -77,22 +88,47 @@ def task_id(module, difficulty, version):
     return f'{module}/{difficulty}/{version}'
 
 
-def formal_tasks():
+def task_key(task):
+    """Task identity: the cell id, plus the noise stratum when noisy (noise-free ids are the registered ones)."""
+    cell = task_id(task['module'], task['difficulty'], task['version'])
+    return cell if not task['noise'] else f"{cell}/noise{task['noise']:g}"
+
+
+def formal_cells():
     """One law version per (module, difficulty) cell, drawn once with the pre-registered seed."""
     rng = random.Random(SAMPLE_SEED)
     return [{'module': m, 'difficulty': d, 'version': rng.choice(VERSIONS), 'system': 'vanilla_equation',
              'noise': 0.0} for m in MODULES for d in DIFFICULTIES]
 
 
+def formal_tasks():
+    """Both strata of the formal cells (amendment 1): noise-free, then noise ``NOISE_LEVEL``."""
+    cells = formal_cells()
+    return cells + [dict(t, noise=NOISE_LEVEL) for t in cells]
+
+
 def pilot_tasks():
-    """Held-out pilot tasks: cells' versions that the formal sample did not draw."""
-    formal = {task_id(t['module'], t['difficulty'], t['version']) for t in formal_tasks()}
+    """Held-out pilot tasks: cells' versions that the formal sample did not draw, in both strata."""
+    formal = {task_id(t['module'], t['difficulty'], t['version']) for t in formal_cells()}
     picks = []
     for module, difficulty in (('m0_gravity', 'easy'), ('m1_coulomb_force', 'medium'), ('m7_malus_law', 'easy')):
         version = next(v for v in VERSIONS if task_id(module, difficulty, v) not in formal)
         picks.append({'module': module, 'difficulty': difficulty, 'version': version, 'system': 'vanilla_equation',
                       'noise': 0.0})
-    return picks
+    return picks + [dict(t, noise=NOISE_LEVEL) for t in picks]
+
+
+def noise_note(task):
+    return NOISE_NOTE.format(floor=NOISE_FLOOR[task['module']]) if task['noise'] else ''
+
+
+def tolerance(task):
+    """Compass's declared tolerance: 1e-6 relative when noise-free; 5 sd (relative and floor) when noisy."""
+    if not task['noise']:
+        return {'rel': REL_TOLERANCE}
+    sigmas = Fraction(NOISE_SIGMAS)
+    return {'rel': frac_text(sigmas * Fraction(str(task['noise']))),
+            'abs': frac_text(sigmas * Fraction(NOISE_FLOOR[task['module']]))}
 
 
 def eval_seed(task):

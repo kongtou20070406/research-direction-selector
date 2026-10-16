@@ -30,7 +30,7 @@ Task background (the same mission text other agents receive):
 `packet.json` in this directory is the sealed packet. Reason only from it and the background above. You may run
 Python here to analyze the numbers; you cannot run new experiments.
 
-The campaign is stuck: `trigger` explains why. `evidence.observations` are receipted, noise-free measurements of
+The campaign is stuck: `trigger` explains why. `evidence.observations` are receipted, {measurements} of
 the observable `{observable}` at the listed inputs (exact rationals written "p/q"). `evidence.refuted` lists
 rulebooks already refuted, with a witness. `request` says what is asked of you:
 - DISPOSITIONS: `items` are candidate rulebooks, each synthesized to reproduce every receipted measurement.
@@ -53,8 +53,7 @@ only where its result is an exact rational; every declared input value is the sq
 single input is always defined. There is no exp, log or trigonometric function. A rulebook that is undefined at a
 measured input is refuted there.
 
-A rulebook survives only if it reproduces every measurement within a relative tolerance of 1e-6, so fit any
-constants precisely. `applies` is an optional guard expression; nonzero means the rulebook applies. Observable:
+{tolerance_text} `applies` is an optional guard expression; nonzero means the rulebook applies. Observable:
 {observable}.
 
 You may add up to 8 new `proposals`. Each needs an identifier-like id that no earlier rulebook used, `predict`
@@ -66,6 +65,11 @@ observational duplicates are rejected automatically.
 
 Return the JSON object required by the output schema. Set `hypothesis` to null unless the disposition is adapt.
 '''
+NOISE_FREE_TOLERANCE = ('A rulebook survives only if it reproduces every measurement within a relative tolerance of '
+                        '1e-6, so fit any\nconstants precisely.')
+NOISY_TOLERANCE = ('A rulebook survives only if, at every measurement, |prediction - measured| <= {abs} + {rel} x '
+                   '|measured|\n(five noise standard deviations). Exact agreement is neither possible nor needed, so fit '
+                   'constants to the data.')
 
 
 def schema(observables):
@@ -96,6 +100,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--log-dir', required=True)
     parser.add_argument('--background', required=True)
+    parser.add_argument('--tol-rel', help='noisy stratum: declared relative tolerance')
+    parser.add_argument('--tol-abs', help='noisy stratum: declared absolute tolerance')
     args = parser.parse_args(argv)
     raw = sys.stdin.buffer.read()
     packet = json.loads(raw)
@@ -104,8 +110,14 @@ def main(argv=None):
     variables = sorted({k for r in rows for k in r['inputs']})
     logs = Path(tempfile.mkdtemp(prefix=packet['sha256'][:12] + '-', dir=Path(args.log_dir).resolve()))
     background = Path(args.background).read_text(encoding='utf-8')
+    if args.tol_rel is None:
+        measurements, tolerance_text = 'noise-free measurements', NOISE_FREE_TOLERANCE
+    else:
+        measurements = 'noisy measurements (see the noise model in the background)'
+        tolerance_text = NOISY_TOLERANCE.format(rel=args.tol_rel, abs=args.tol_abs)
     prompt = PROMPT.format(background=background, variables=', '.join(variables),
-                           observable=', '.join(observables))
+                           observable=', '.join(observables), measurements=measurements,
+                           tolerance_text=tolerance_text)
     started = time.monotonic()
     message, record = run_codex(prompt, logs, chat=False, files={'packet.json': raw.decode('utf-8')},
                                 schema=schema(observables), timeout=JUMP_SECONDS, extra_tokens=[str(Path.cwd())])

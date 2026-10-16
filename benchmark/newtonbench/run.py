@@ -27,13 +27,15 @@ ARMS = ['vanilla', 'code_assisted', 'compass']
 
 
 def job_dir(runs, task, arm, trial):
-    return runs / task['module'] / task['difficulty'] / task['version'] / f'{arm}-t{trial}'
+    base = runs / f"noise{task['noise']:g}" if task['noise'] else runs
+    return base / task['module'] / task['difficulty'] / task['version'] / f'{arm}-t{trial}'
 
 
 def write_failure(out, job, status, detail):
     task, arm, trial = job
     row = {'schema': 'rds-newtonbench-trial-v1', 'arm': arm, 'trial': trial, 'task': task,
-           'task_id': common.task_id(task['module'], task['difficulty'], task['version']), 'status': status,
+           'task_id': common.task_key(task), 'cell': common.task_id(task['module'], task['difficulty'], task['version']),
+           'status': status,
            'failure': detail, 'query_budget': common.QUERY_BUDGET, 'contaminated': False, 'submissions': {},
            'scientific_support': 'UNKNOWN'}
     row['row_sha256'] = common.sha256_json(row)
@@ -52,7 +54,8 @@ def run_job(runs, job):
             log.write(json.dumps({'job': str(out), 'moved_to': out.name + '.incomplete-' + stamp, 'at': stamp}) + '\n')
     out.parent.mkdir(parents=True, exist_ok=True)
     argv = [str(VENV_PYTHON), '-B', str(HERE / 'trial.py'), '--arm', arm, '--module', task['module'],
-            '--difficulty', task['difficulty'], '--version', task['version'], '--trial', str(trial), '--out', str(out)]
+            '--difficulty', task['difficulty'], '--version', task['version'], '--noise', repr(task['noise']),
+            '--trial', str(trial), '--out', str(out)]
     started = time.monotonic()
     with open(out.with_name(out.name + '.log'), 'wb') as log:
         proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, cwd=HERE)
@@ -79,17 +82,18 @@ def main(argv=None):
     parser.add_argument('--trials', type=int, required=True)
     parser.add_argument('--parallel', type=int, default=6)
     parser.add_argument('--arms', nargs='*', default=ARMS, choices=ARMS)
-    parser.add_argument('--tasks', nargs='*', help='task ids (module/difficulty/version); default: the phase sample')
+    parser.add_argument('--tasks', nargs='*', help='task ids (module/difficulty/version[/noise0.01]); default: the '
+                                                   'phase sample, both strata')
     args = parser.parse_args(argv)
     tasks = common.pilot_tasks() if args.phase == 'pilot' else common.formal_tasks()
     if args.tasks:
-        tasks = [t for t in tasks if common.task_id(t['module'], t['difficulty'], t['version']) in args.tasks]
+        tasks = [t for t in tasks if common.task_key(t) in args.tasks]
     runs = common.EVAL / 'runs' / args.phase
     runs.mkdir(parents=True, exist_ok=True)
     manifest = {'phase': args.phase, 'started_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
                 'rds_commit': common.git_head(HERE), 'newtonbench_commit': common.git_head(common.NEWTONBENCH),
                 'expected_newtonbench_commit': common.NEWTONBENCH_COMMIT, 'trials': args.trials, 'arms': args.arms,
-                'tasks': [common.task_id(t['module'], t['difficulty'], t['version']) for t in tasks],
+                'tasks': [common.task_key(t) for t in tasks],
                 'parallel': args.parallel, 'trial_wall_seconds': TRIAL_WALL}
     with open(runs / 'manifests.jsonl', 'a', encoding='utf-8') as log:
         log.write(json.dumps(manifest) + '\n')
@@ -103,7 +107,7 @@ def main(argv=None):
             task, arm, trial = futures[future]
             status, out = future.result()
             print(json.dumps({'at': time.strftime('%H:%M:%S'), 'status': status, 'arm': arm, 'trial': trial,
-                              'task': common.task_id(task['module'], task['difficulty'], task['version'])}), flush=True)
+                              'task': common.task_key(task)}), flush=True)
     return 0
 
 

@@ -267,3 +267,14 @@ Changes:
    in both strata.
 6. **Size.** 432 trials (216 per stratum, 144 per arm). N stays 2; if cost forces a smaller N before the formal
    start, both strata shrink equally, and the change is recorded here.
+
+### Amendment 2 - 2026-10-15T18:24-0700 - Compass crash fixed (pipeline defect found in the pilot)
+
+Every noise-free Compass pilot trial crashed inside Compass, on all four attempts, with
+`KeyError: 'attempted'`: `regime_split` (scripts/rds_compass_model.py) returned `TOO_FEW_POINTS` without an
+`attempted` count whenever an input had fewer than 4 measured levels, and `_fits` (scripts/rds_compass.py) reads
+that count unconditionally once at least 6 measurements exist and synthesis finds no fit. Commit `6c8ad0d` on this
+branch adds `'attempted': 0` to that return, with a regression test; the split still yields no fits, so no Compass
+decision changes. The evaluated RDS code is therefore `release/6.0.0-compass` at `fbff27f` plus this fix (the result
+file records the exact commit). The crashed pilot trials are kept, renamed `*.superseded-*`, and the Compass pilot
+is rerun. The fix was reported to the session reviewing the release. The baseline pilot results above are unaffected.

@@ -102,7 +102,8 @@ def run_baseline(arm, task, out, chat, nb):
         proxy = types.SimpleNamespace(**vars(module))
         proxy.run_experiment_for_module = sim
         proxy.get_task_prompt = lambda system, _m=module, **kw: (_m.get_task_prompt(system, **kw)
-                                                                 + BUDGET_NOTE.format(n=common.QUERY_BUDGET))
+                                                                 + BUDGET_NOTE.format(n=common.QUERY_BUDGET)
+                                                                 + common.noise_note(task))
         trial_info = {'trial_id': f'{arm}-{attempt}', 'trial_dir': str(out)}
         try:
             if arm == 'vanilla':
@@ -195,6 +196,11 @@ def rulebook_to_python(hyp, signature, names):
     return f'{signature}\n    import math\n    return {body}'
 
 
+def _tolerance_args(task):
+    tol = common.tolerance(task)
+    return ['--tol-rel', tol['rel'], '--tol-abs', tol['abs']] if 'abs' in tol else []
+
+
 def declare(task, root, names, background, logs):
     import rds_compass_store as cstore
     from rds_compass_declaration import initialize
@@ -218,7 +224,7 @@ def declare(task, root, names, background, logs):
                               ') to the measured value y of the simulated apparatus.'},
         'inputs': {n: {'min': common.frac_text(min(p[n] for p in points)),
                        'max': common.frac_text(max(p[n] for p in points))} for n in names},
-        'observables': {'y': {'tolerance': {'rel': common.REL_TOLERANCE}}},
+        'observables': {'y': {'tolerance': common.tolerance(task)}},
         'experiment': {'argv': argv, 'files': {'code': ['experiment.py'], 'data': ['task.json'],
                                                'evaluator': ['experiment.py']},
                        'timeout_seconds': 60, 'wall_seconds': 90},
@@ -226,7 +232,8 @@ def declare(task, root, names, background, logs):
                        for i, p in enumerate(points)],
         'escape': {'probe_points': 6, 'max_jumps': 8},
         'agent': {'argv': ['{python}', '-B', str(HERE / 'nb_jump.py'), '--log-dir', str(logs),
-                           '--background', str(logs / 'background.txt')], 'timeout_seconds': 600},
+                           '--background', str(logs / 'background.txt')] + _tolerance_args(task),
+                  'timeout_seconds': 600},
         'budget': {'wall_seconds': COMPASS_WALL, 'experiments': common.QUERY_BUDGET}}
     (root / 'compass.json').write_text(json.dumps(declaration, indent=1), encoding='utf-8')
     initialize(root, root / 'compass.json')
@@ -236,16 +243,17 @@ def declare(task, root, names, background, logs):
 FALLBACK = '''{background}
 
 **Benchmark harness note:** You cannot run experiments in this session. `data.json` in your working directory
-holds every measurement available to you: a list of rows {{"inputs": {{...}}, "value": ...}} from the noise-free
+holds every measurement available to you: a list of rows {{"inputs": {{...}}, "value": ...}} from the {source}
 apparatus described above. You may run Python here to analyze them. Then answer with the <final_law> block
 exactly as the submission requirements above describe.
 '''
 
 
-def compass_fallback(module, rows, background, logs):
+def compass_fallback(module, rows, background, logs, noisy):
     data = [{'inputs': {k: float(Fraction(v)) for k, v in r['inputs'].items()}, 'value': float(Fraction(r['y']))}
             for r in rows]
-    message, record = common.run_codex(FALLBACK.format(background=background), logs, chat=False,
+    prompt = FALLBACK.format(background=background, source='noisy' if noisy else 'noise-free')
+    message, record = common.run_codex(prompt, logs, chat=False,
                                        files={'data.json': json.dumps(data, indent=1)})
     law = None
     if message is not None and not record['contaminated']:
@@ -261,7 +269,7 @@ def run_compass(task, out, chat, nb):
     from rds_compass_drive import drive
     module = common.nb_module(task['module'])
     names = params_of(module.FUNCTION_SIGNATURE)
-    background = (module.get_task_prompt('vanilla_equation', noise_level=task['noise'])
+    background = (module.get_task_prompt('vanilla_equation', noise_level=task['noise']) + common.noise_note(task)
                   + '\n\n(For this campaign the experiment protocol and submission format above do not apply: the '
                     'campaign buys measurements, and you answer only in the JSON form requested below.)')
     attempts, result, store = [], None, None
@@ -329,9 +337,8 @@ def run_compass(task, out, chat, nb):
     submissions = {'compass': {'law': strict_law, 'certified': certified, 'evaluation': evaluation}}
     fallback = None
     if state is not None and chosen is None and not contaminated:
-        fb_law, fallback = compass_fallback(module, rows, module.get_task_prompt('vanilla_equation',
-                                                                                  noise_level=task['noise']),
-                                            out / 'fallback')
+        fb_background = module.get_task_prompt('vanilla_equation', noise_level=task['noise']) + common.noise_note(task)
+        fb_law, fallback = compass_fallback(module, rows, fb_background, out / 'fallback', bool(task['noise']))
         contaminated_fb = fallback['contaminated']
         fb_law = fb_law or f"{module.FUNCTION_SIGNATURE} return float('nan')"
         submissions['compass_fallback'] = {'law': fb_law, 'certified': False, 'fallback_used': True,
@@ -364,13 +371,14 @@ def main(argv=None):
     parser.add_argument('--module', required=True)
     parser.add_argument('--difficulty', required=True)
     parser.add_argument('--version', required=True)
+    parser.add_argument('--noise', type=float, default=0.0)
     parser.add_argument('--trial', type=int, required=True)
     parser.add_argument('--out', required=True)
     args = parser.parse_args(argv)
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
     task = {'module': args.module, 'difficulty': args.difficulty, 'version': args.version,
-            'system': 'vanilla_equation', 'noise': 0.0}
+            'system': 'vanilla_equation', 'noise': args.noise}
     chat = common.ChatBackend(out / 'codex')
     nb = common.load_newtonbench(chat)
     started = time.monotonic()
@@ -379,7 +387,7 @@ def main(argv=None):
     else:
         body = run_baseline(args.arm, task, out, chat, nb)
     row = {'schema': 'rds-newtonbench-trial-v1', 'arm': args.arm, 'trial': args.trial, 'task': task,
-           'task_id': common.task_id(args.module, args.difficulty, args.version),
+           'task_id': common.task_key(task), 'cell': common.task_id(args.module, args.difficulty, args.version),
            'model': {'cli': 'codex', 'model': common.MODEL, 'reasoning_effort': common.EFFORT,
                      'service_tier': common.TIER},
            'query_budget': common.QUERY_BUDGET, 'wall_seconds': round(time.monotonic() - started, 1), **body,
