@@ -328,6 +328,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
         require(plan['profile']['baseline'] in {c['id'] for c in candidates}, 'Profile baseline must be a candidate')
         arms = {c['id']: c for c in candidates}
         for c in candidates:
+            # The baseline is every arm's reference: as a replicate it would dilute an arm with a self-comparison.
+            require('replicates' not in c or c['id'] != plan['profile']['baseline'],
+                    f"The profile baseline {c['id']} cannot replicate another arm")
             target = arms.get(c.get('replicates'))
             require('replicates' not in c or (target is not None and target['id'] != c['id']
                                               and target['id'] != plan['profile']['baseline']

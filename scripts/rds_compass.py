@@ -428,6 +428,12 @@ def _decide_improve(state, spent, wall):
     plan = state['plan']
     can_buy = spent < plan['budget']['experiments'] and wall >= plan['experiment']['wall_seconds']
     baseline = plan['profile']['baseline']
+    base = state['observations'].get(baseline)
+    if (base['status'] != 'MEASURED' or not base['samples']) if base else \
+            next_attempt(state, candidate(state, baseline)) is None:
+        # Every arm is judged against the baseline: once it settled without a usable measurement
+        # (or has no slot left), a bought arm could never be evaluated, so nothing more is bought.
+        return {'action': 'VERIFY', 'live': [], 'reason': 'BASELINE_UNMEASURED'}
     order = [baseline] + [c['id'] for c in sorted(plan['candidates'], key=lambda c: (model.exact(c['cost']), c['id']))
                           if c['id'] != baseline and 'replicates' not in c]
     for ident in order:
