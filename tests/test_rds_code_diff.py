@@ -88,6 +88,31 @@ def treatment(x):
                 obligations = model.predict({}, BASE_NET, candidate)["predicted_obligation_discharge"]
                 self.assertFalse(obligations["signature_preserved"], (name, model))
 
+    def test_methods_of_different_classes_keep_their_own_identity(self):
+        base = "class A:\n    def f(self):\n        return 1\n\nclass B:\n    def f(self):\n        return 1\n"
+        diff = code_diff.encode_code_diff(base, base.replace("return 1", "return 2", 1))
+        self.assertEqual(diff["ast_delta"]["functions_modified"], ["A.f"])
+        self.assertEqual(diff["parameter_delta"]["changed_bindings"], {"fn:A.f.return": {"before": 1, "after": 2}})
+        twice = "def f(x):\n    return 1\n\ndef f(x):\n    return 1\n"
+        diff = code_diff.encode_code_diff(twice, twice[:-2] + "2\n")
+        self.assertEqual(diff["ast_delta"]["functions_modified"], ["f#2"])
+
+    def test_every_part_of_a_signature_counts(self):
+        base = "def f(x, y=1):\n    return x\n"
+        drift = {"keyword-only": "def f(x, y=1, *, timeout=1):", "positional-only": "def f(x, /, y=1):",
+                 "var-positional": "def f(x, y=1, *rest):", "var-keyword": "def f(x, y=1, **options):",
+                 "annotation": "def f(x: int, y=1):", "return annotation": "def f(x, y=1) -> int:",
+                 "new default": "def f(x=0, y=1):"}
+        for kind, header in drift.items():
+            signals = code_diff.encode_code_diff(base, base.replace("def f(x, y=1):", header))["obligation_signals"]
+            self.assertTrue(signals["signature_changed"], kind)
+        # Changing a default value is a parameter delta, not signature drift.
+        diff = code_diff.encode_code_diff(base, base.replace("y=1", "y=2"))
+        self.assertFalse(diff["obligation_signals"]["signature_changed"])
+        self.assertEqual(diff["parameter_delta"]["changed_bindings"], {"fn:f.default:y": {"before": 1, "after": 2}})
+        diff = code_diff.encode_code_diff(base.replace("y=1", "*, y=1"), base.replace("y=1", "*, y=3"))
+        self.assertEqual(diff["parameter_delta"]["changed_bindings"], {"fn:f.default:y": {"before": 1, "after": 3}})
+
     def test_control_modification_is_flagged_and_penalized(self):
         clean_treatment = BASE_NET.replace("y = x + 1", "y = 2 * x + 1")
         tampered_control = BASE_NET.replace("def control(x):\n    return x", "def control(x):\n    return 0")

@@ -99,6 +99,45 @@ def _scalar_literal(node):
     return None
 
 
+def _qualified_names(tree):
+    """Scope-qualified identity of every function and class (``A.f``, ``outer.inner``).
+
+    Methods of different classes never share a key; a redefinition in the same scope gets
+    its source-order ordinal (``f#2``), so no definition's profile overwrites another's.
+    """
+    names, seen, stack = {}, {}, [(tree, "")]
+    while stack:
+        node, prefix = stack.pop()
+        children = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = prefix + child.name
+                seen[name] = seen.get(name, 0) + 1
+                name = name if seen[name] == 1 else f"{name}#{seen[name]}"
+                names[id(child)] = name
+                children.append((child, name + "."))
+            else:
+                children.append((child, prefix))
+        stack.extend(reversed(children))
+    return names
+
+
+def _signature(node):
+    """Every parameter's kind, name and annotation, which ones have defaults, and the return
+    annotation. Default values themselves are bindings, so changing one is a parameter delta."""
+    args = node.args
+    note = lambda a: ast.dump(a.annotation) if a.annotation is not None else None
+    return {
+        "positional_only": [[a.arg, note(a)] for a in args.posonlyargs],
+        "positional": [[a.arg, note(a)] for a in args.args],
+        "positional_defaults": len(args.defaults),
+        "var_positional": [args.vararg.arg, note(args.vararg)] if args.vararg else None,
+        "keyword_only": [[a.arg, note(a), d is not None] for a, d in zip(args.kwonlyargs, args.kw_defaults)],
+        "var_keyword": [args.kwarg.arg, note(args.kwarg)] if args.kwarg else None,
+        "returns": ast.dump(node.returns) if node.returns is not None else None,
+    }
+
+
 def _extract_profile(tree, nodes):
     functions = {}
     signatures = {}
@@ -121,29 +160,33 @@ def _extract_profile(tree, nodes):
             if val is not None:
                 bindings[f"module.{node.target.id}"] = val
 
+    qualified = _qualified_names(tree)
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            arg_names = [a.arg for a in node.args.args]
-            functions[node.name] = ast.dump(node, include_attributes=False)
-            signatures[node.name] = arg_names
+            name = qualified[id(node)]
+            functions[name] = ast.dump(node, include_attributes=False)
+            signatures[name] = _signature(node)
+            positional = [a.arg for a in node.args.posonlyargs + node.args.args]
             n_defaults = len(node.args.defaults)
-            for arg, default_node in zip(arg_names[-n_defaults:] if n_defaults else [], node.args.defaults):
+            defaults = list(zip(positional[-n_defaults:] if n_defaults else [], node.args.defaults))
+            defaults += [(a.arg, d) for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults) if d is not None]
+            for arg, default_node in defaults:
                 val = _scalar_literal(default_node)
                 if val is not None:
-                    bindings[f"fn:{node.name}.default:{arg}"] = val
+                    bindings[f"fn:{name}.default:{arg}"] = val
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Assign):
                     val = _scalar_literal(sub.value)
                     if val is not None:
                         for target in sub.targets:
                             if isinstance(target, ast.Name):
-                                bindings[f"fn:{node.name}.var:{target.id}"] = val
+                                bindings[f"fn:{name}.var:{target.id}"] = val
                 elif isinstance(sub, ast.Return) and sub.value is not None:
                     val = _scalar_literal(sub.value)
                     if val is not None:
-                        bindings[f"fn:{node.name}.return"] = val
+                        bindings[f"fn:{name}.return"] = val
         elif isinstance(node, ast.ClassDef):
-            classes[node.name] = ast.dump(node, include_attributes=False)
+            classes[qualified[id(node)]] = ast.dump(node, include_attributes=False)
         elif isinstance(node, ast.Call):
             cname = _call_name(node)
             calls[cname] = calls.get(cname, 0) + 1
