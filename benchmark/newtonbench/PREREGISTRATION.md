@@ -310,3 +310,22 @@ Expressibility: the classification above was fixed from the ground-truth source 
 to split the analysis and never selected or excluded a task; the formal sample is the seeded draw over all 36
 cells. That the dialect cannot state transcendental functions or non-integer powers is a limitation of Compass
 v6, reported as such, and Compass's dialect is not changed on this branch.
+
+### Amendment 4 - 2026-10-15T18:54-0700 - evaluated Compass code is the updated release
+
+Before the formal run, `release/6.0.0-compass` gained `80ea043` (eleventh review round: EIG grouping uses the
+two-sided `agree`, IMPROVE requires a treatment arm, output paths may not collide with bound files) and
+`24745cc` (the same `regime_split` fix as amendment 2, now upstream, plus the twelfth review round: `init`
+rejects `synthesis.max_nodes` outside 1..15 or `max_candidates` 0, NUL in agent argv is rejected, corrupt
+library records are skipped). It was merged into this branch (`73ab8b7`); the conflict with `6c8ad0d` was
+resolved to the release version. The formal run evaluates that merged code, and the result file records the
+exact commit. This harness's declaration sets no synthesis bounds (Compass defaults, 7 nodes and 20,000
+candidates, are inside the new limits), so no setting changes. Because the EIG change can alter Compass's
+experiment choices, all six Compass pilot trials were rerun on the merged code; the earlier ones are kept as
+`*.superseded-*`. N stays 2.
+
+Pilot observation, recorded and not acted on: on the noisy, non-expressible pilot task `m7_malus_law/easy/v0` Compass
+ended `GOAL_IDENTIFIED` with a rational function that stays within the 5-sd tolerance of `I_0 (1 + sin 2 theta)` on
+every receipt, and NewtonBench's judge scored it wrong (a false certification). The tolerance rule of amendment 1
+is not revised in response. `GOAL_IDENTIFIED` means only "consistent with every receipt within the declared
+tolerance", never "scientifically supported", and the report uses that wording.
