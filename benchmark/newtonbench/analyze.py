@@ -41,6 +41,32 @@ BOOTSTRAP = 10000
 BOOT_SEED = 20261015
 
 
+PATHS = ['CERTIFIED', 'LIVE_UNCERTIFIED', 'NO_LIVE_RULEBOOK', 'UNTRANSLATABLE', 'EXCEPTION', 'TIMEOUT', 'CRASHED',
+         'MISSING', 'FAILED']
+
+
+def compass_path(row):
+    """Amendment 3: which submission path a Compass trial took."""
+    if row.get('arm') != 'compass':
+        return None
+    if row.get('status') in FAILED and row.get('compass_status') != 'EXCEPTION':
+        return row['status']
+    if row.get('compass_status') == 'EXCEPTION':
+        return 'EXCEPTION'
+    if row.get('untranslatable'):
+        return 'UNTRANSLATABLE'
+    if row.get('compass_status') == 'GOAL_IDENTIFIED':
+        return 'CERTIFIED'
+    return 'LIVE_UNCERTIFIED' if row.get('chosen') else 'NO_LIVE_RULEBOOK'
+
+
+def origin_kind(row):
+    origin = ((row.get('chosen') or {}).get('origin') or '')
+    if not origin:
+        return None
+    return 'JUMP_AGENT' if origin.startswith('jump:') else origin.split(':')[0].upper() or 'UNKNOWN'
+
+
 def cell_of(key):
     return '/'.join(key.split('/')[:3])
 
@@ -119,8 +145,33 @@ def scored(rows):
                         'certified': (sub or {}).get('certified'), 'fallback_used': (sub or {}).get('fallback_used'),
                         'contaminated': contaminated, 'failed': failed, 'queries': row.get('queries'),
                         'law': (sub or {}).get('law'), 'judge_msg': ev.get('symbolic_msg'),
-                        'eval_error': ev.get('error')})
+                        'eval_error': ev.get('error'), 'path': compass_path(row), 'origin': origin_kind(row),
+                        'origin_detail': (row.get('chosen') or {}).get('origin')})
     return out
+
+
+def paths(records):
+    """Per path: Compass trials, cells, and strict / fallback accuracy (amendment 3)."""
+    strict = [r for r in records if r['submission'] == 'compass']
+    fallback = {(r['task_id'], r['trial']): r for r in records if r['submission'] == 'compass_fallback'}
+    out = {}
+    for path in PATHS:
+        mine = [r for r in strict if r['path'] == path]
+        if not mine:
+            continue
+        fb = [fallback[(r['task_id'], r['trial'])] for r in mine if (r['task_id'], r['trial']) in fallback]
+        out[path] = {'trials': len(mine), 'cells': len({r['cell'] for r in mine}),
+                     'compass_correct': sum(r['correct'] for r in mine),
+                     'compass_fallback_correct': sum(r['correct'] for r in fb),
+                     'fallback_called': sum(1 for r in fb if r['fallback_used']),
+                     'origin': _tally(r['origin'] for r in mine if r['origin'])}
+    held = [r for r in strict if r['path'] in ('CERTIFIED', 'LIVE_UNCERTIFIED')]
+    return {'by_path': out, 'compass_trials': len(strict),
+            'rulebook_submitted_trials': len(held), 'rulebook_submitted_share': len(held) / len(strict) if strict else None,
+            'rulebook_submitted_correct': sum(r['correct'] for r in held),
+            'certified_trials': sum(1 for r in strict if r['path'] == 'CERTIFIED'),
+            'cells_with_a_rulebook_submission': len({r['cell'] for r in held}),
+            'cells': len({r['cell'] for r in strict})}
 
 
 def per_unit(records, unit):
@@ -225,7 +276,7 @@ def main(argv=None):
     records = scored(rows)
     strata = sorted({r['stratum'] for r in records})
     views = {'pooled': records, **{s: [r for r in records if r['stratum'] == s] for s in strata}}
-    comparisons, fcr, rmsle, desc = {}, {}, {}, {}
+    comparisons, fcr, rmsle, desc, path_stats = {}, {}, {}, {}, {}
     for label, view in views.items():
         table = per_unit(view, 'cell')
         cells = sorted({r['cell'] for r in view})
@@ -236,6 +287,8 @@ def main(argv=None):
                               for name, subset in subsets.items()}
         fcr[label] = {name: false_certification(view, set(subset)) for name, subset in subsets.items()}
         rmsle[label] = {n: official_rmsle(view, n) for n in SUBMISSIONS}
+        path_stats[label] = {name: paths([r for r in view if r['cell'] in set(subset)])
+                             for name, subset in subsets.items()}
         view_rows = rows if label == 'pooled' else [row for row in rows if stratum_of(row['task_id']) == label]
         desc[label] = descriptive(view_rows, view)
     task_table = per_unit(records, 'task_id')
@@ -253,13 +306,14 @@ def main(argv=None):
                        'expressible_cells': len({r['cell'] for r in records} & EXPRESSIBLE)},
             'primary': comparisons['pooled']['all']['primary'],
             'registered_noise_free_primary': (comparisons.get('noise0') or {}).get('all', {}).get('primary'),
-            'comparisons': comparisons, 'false_certification': fcr, 'official_style_rmsle': rmsle,
+            'comparisons': comparisons, 'false_certification': fcr, 'compass_paths': path_stats,
+            'official_style_rmsle': rmsle,
             'descriptive': desc,
             'per_task': [{'submission': n, 'task_id': t, **v} for (n, t), v in sorted(task_table.items())],
             'trials': [{k: row.get(k) for k in ('arm', 'task_id', 'trial', 'status', 'compass_status', 'queries',
                                                 'wall_seconds', 'contaminated', 'row_sha256', 'ledger_head',
                                                 'report_sha256', 'query_chain_head', 'transcript_sha256')}
-                       | {'receipts': row.get('receipts'),
+                       | {'compass_path': compass_path(row), 'chosen': row.get('chosen'), 'receipts': row.get('receipts'),
                           'submissions': {n: {'law': s.get('law'), 'certified': s.get('certified'),
                                               'fallback_used': s.get('fallback_used'),
                                               'evaluation': {k: (s.get('evaluation') or {}).get(k) for k in
@@ -274,6 +328,7 @@ def main(argv=None):
     Path(args.table).write_text(render_table(task_table, rows), encoding='utf-8')
     print(json.dumps({'primary': body['primary'], 'registered_noise_free_primary': body['registered_noise_free_primary'],
                       'false_certification': {k: v['all'] for k, v in fcr.items()},
+                      'compass_paths': {k: v['all'] for k, v in path_stats.items()},
                       'bundle_sha256': body['bundle_sha256']}, indent=1))
     return 0
 
@@ -287,14 +342,15 @@ def _cell(entry):
 
 
 def render_table(table, rows):
-    status = {(r['task_id'], r['trial']): r.get('compass_status') or r.get('status') for r in rows if r['arm'] == 'compass'}
+    status = {(r['task_id'], r['trial']): f"{compass_path(r)} ({r.get('compass_status') or r.get('status')})"
+              for r in rows if r['arm'] == 'compass'}
     keys = sorted({t for (_, t) in table}, key=lambda k: (stratum_of(k), k))
     lines = ['# Per-task results', '',
              'Each cell: one mark per trial (✓ = NewtonBench judge says equivalent, ✗ otherwise), then the per-task '
              'median RMSLE (inf = no finite score). E = expressible in the Compass dialect (a priori).', '']
     for stratum in sorted({stratum_of(k) for k in keys}):
         lines += [f'## Stratum {stratum}', '',
-                  '| Task | E | vanilla | code_assisted | compass | compass_fallback | Compass end states |',
+                  '| Task | E | vanilla | code_assisted | compass | compass_fallback | Compass path (end state) per trial |',
                   '|---|---|---|---|---|---|---|']
         for t in (k for k in keys if stratum_of(k) == stratum):
             ends = ', '.join(str(status[(t, i)]) for i in sorted({i for (tt, i) in status if tt == t}))

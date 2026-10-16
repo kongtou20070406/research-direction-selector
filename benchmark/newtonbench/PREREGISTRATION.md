@@ -268,7 +268,7 @@ Changes:
 6. **Size.** 432 trials (216 per stratum, 144 per arm). N stays 2; if cost forces a smaller N before the formal
    start, both strata shrink equally, and the change is recorded here.
 
-### Amendment 2 - 2026-10-15T18:24-0700 - Compass crash fixed (pipeline defect found in the pilot)
+### Amendment 2 - 2026-10-15T18:21-0700 - Compass crash fixed (pipeline defect found in the pilot)
 
 Every noise-free Compass pilot trial crashed inside Compass, on all four attempts, with
 `KeyError: 'attempted'`: `regime_split` (scripts/rds_compass_model.py) returned `TOO_FEW_POINTS` without an
@@ -278,3 +278,35 @@ branch adds `'attempted': 0` to that return, with a regression test; the split s
 decision changes. The evaluated RDS code is therefore `release/6.0.0-compass` at `fbff27f` plus this fix (the result
 file records the exact commit). The crashed pilot trials are kept, renamed `*.superseded-*`, and the Compass pilot
 is rerun. The fix was reported to the session reviewing the release. The baseline pilot results above are unaffected.
+
+### Amendment 3 - 2026-10-15T18:30-0700 - submission paths stated explicitly and reported per path
+
+A clarification requested in review, made before any formal trial. It changes no submission rule, no Compass
+setting and no test; it states the existing rules per end state and adds a per-path breakdown to the report.
+Compass pilot output had been read for pipeline checks when this was written; nothing here depends on it.
+
+Every `compass` trial is labelled with exactly one path:
+
+| Path | When | `compass` (strict, primary) submits | `compass_fallback` submits |
+|---|---|---|---|
+| `CERTIFIED` | drive ends `GOAL_IDENTIFIED` | the verified rulebook | the same |
+| `LIVE_UNCERTIFIED` | any other end state (`JUDGMENT_REQUIRED`, `SEARCH_EXHAUSTED`, `BUDGET_EXHAUSTED`, `STEP_LIMIT`, `CONTROLLER_DEADLINE`, `INTERRUPTED`, ...) with at least one live rulebook | the live rulebook with the highest Compass prior (ties by id); not a certification | the same |
+| `NO_LIVE_RULEBOOK` | any end state with no live rulebook | no law (`return float('nan')`, scores 0) | the model's own answer: one Codex call over Compass's measurements |
+| `UNTRANSLATABLE` | the rulebook to submit reads a qualified tool feature (no closed Python form) | no law | no law |
+| `EXCEPTION` | Compass raised on every attempt | no law | no law |
+| `TIMEOUT` / `CRASHED` / `MISSING` | harness failure | scores 0 | scores 0 |
+
+The `compass_fallback` answer on `NO_LIVE_RULEBOOK` is the language model's answer, not a Compass output. It never
+counts as a Compass certification or as a Compass effect. The primary test uses the strict `compass` submission.
+
+Reporting added: per stratum and pooled, the number of trials and cells on each path, and the accuracy of `compass`
+and `compass_fallback` on each path. Also reported: the origin of every submitted Compass rulebook (Compass's own
+synthesis, or a jump-agent proposal or adaptation), and the share of trials in which the submission is a rulebook
+Compass held (`CERTIFIED` or `LIVE_UNCERTIFIED`). Even there, the law's text usually comes from the same model
+acting as jump agent. Compass's own contribution is choosing experiments, refuting rulebooks and certifying, and
+the report says so.
+
+Expressibility: the classification above was fixed from the ground-truth source before any run. It is used only
+to split the analysis and never selected or excluded a task; the formal sample is the seeded draw over all 36
+cells. That the dialect cannot state transcendental functions or non-integer powers is a limitation of Compass
+v6, reported as such, and Compass's dialect is not changed on this branch.
