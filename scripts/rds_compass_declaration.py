@@ -37,6 +37,9 @@ DEFAULTS = {
     'verification': {'confirmations': 2, 'spend_budget': True},
 }
 FLAGS = frozenset(('enabled', 'spend_budget'))
+# The synthesis bounds the model itself enforces; a plan outside them would fail only at its first jump.
+BOUNDS = {('synthesis', 'max_nodes'): (1, model.MAX_NODES),
+          ('synthesis', 'max_candidates'): (1, model.MAX_SYNTH_CANDIDATES)}
 PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 
 
@@ -71,7 +74,8 @@ def _tuned(declaration, key, defaulted):
         if name in FLAGS:
             require(type(value) is bool, f'{key}.{name} must be boolean')
         else:
-            require(type(value) is int and 0 <= value <= model.MAX_SYNTH_CANDIDATES, f'{key}.{name} out of range')
+            low, high = BOUNDS.get((key, name), (0, model.MAX_SYNTH_CANDIDATES))
+            require(type(value) is int and low <= value <= high, f'{key}.{name} must be an integer from {low} to {high}')
     return out
 
 
@@ -233,8 +237,9 @@ def compile_plan(store, declaration, source_sha256, source=None):
     agent = declaration.get('agent')
     if agent is not None:
         _object(agent, {'argv', 'timeout_seconds'}, set(), 'agent')
-        require(isinstance(agent['argv'], list) and agent['argv'] and all(isinstance(a, str) and a for a in agent['argv']),
-                'Agent argv must be a nonempty string list')
+        require(isinstance(agent['argv'], list) and agent['argv']
+                and all(isinstance(a, str) and a and '\x00' not in a for a in agent['argv']),
+                'Agent argv must be a nonempty list of nonempty strings without NUL bytes')
         require(_seconds(agent['timeout_seconds']) and 0 < agent['timeout_seconds'] <= 600,
                 'Agent timeout must be in (0, 600] seconds')
         agent = {'argv': [sys.executable if a == '{python}' else a for a in agent['argv']],

@@ -234,10 +234,11 @@ def library_tools(path, scope=None):
             continue
         try:
             record = json.loads(item.read_text(encoding='utf-8'))
-            require(record.get('schema') == TOOL_SCHEMA, 'Not a Compass tool record')
+            require(isinstance(record, dict) and record.get('schema') == TOOL_SCHEMA, 'Not a Compass tool record')
+            require(isinstance(record.get('scope'), dict), 'Library tool scope must be an object')
             name, entry, code, sha = extract(record['source'])
             require(sha == record['sha256'] and code == record['source'], 'Library tool hash mismatch')
-        except (ValueError, KeyError, OSError, SyntaxError):
+        except (ValueError, KeyError, TypeError, OSError, SyntaxError):
             continue  # A damaged record is not reused; nothing is repaired.
         if scope is not None and record['scope'].get('domain') != scope['domain']:
             continue  # Outside the verified scope.
