@@ -204,7 +204,8 @@ def encode_code_diff(base_code, candidate_code):
     functions_modified = sorted(
         name for name in (fns_0 & fns_1) if p0["functions"][name] != p1["functions"][name]
     )
-    signature_changed = any(
+    # Adding or removing a function changes the module's callable surface as much as editing a signature.
+    signature_changed = bool(functions_added or functions_removed) or any(
         p0["signatures"][name] != p1["signatures"][name] for name in (fns_0 & fns_1)
     )
 

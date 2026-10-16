@@ -328,6 +328,11 @@ def _child(adapter):
                     result = _abstain(request, "code_diff_linear requires candidate parameters.code", "PROVIDER_ABSTAINED")
                     forecasts = []
                     break
+                if set(cand["parameters"]) != {"code"}:
+                    # Explicit knobs are not encoded: scoring them would equate distinct actions.
+                    result = _abstain(request, "code_diff_linear encodes only candidate parameters.code", "PROVIDER_ABSTAINED")
+                    forecasts = []
+                    break
                 scored = score_candidate_diff(base_code, cand_code)
                 forecasts.append({
                     "candidate_id": cand["id"],
@@ -353,6 +358,11 @@ def _child(adapter):
                 cand_code = cand["parameters"].get("code")
                 if not isinstance(cand_code, str) or not cand_code.strip():
                     result = _abstain(request, "cpu_jepa requires candidate parameters.code", "PROVIDER_ABSTAINED")
+                    forecasts = []
+                    break
+                if set(cand["parameters"]) != {"code"}:
+                    # Explicit knobs are not encoded: scoring them would equate distinct actions.
+                    result = _abstain(request, "cpu_jepa encodes only candidate parameters.code", "PROVIDER_ABSTAINED")
                     forecasts = []
                     break
                 pred = predict_transition(before_state, base_code, cand_code, cand["parameters"])

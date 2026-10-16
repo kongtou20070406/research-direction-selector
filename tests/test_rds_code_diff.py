@@ -74,6 +74,20 @@ def treatment(x):
         score_b = code_diff.score_candidate_diff(BASE_NET, cand_b)
         self.assertNotEqual(score_a["score"], score_b["score"])
 
+    def test_an_added_or_removed_function_is_signature_drift(self):
+        import rds_cpu_jepa as cpu_jepa
+        removed = BASE_NET.replace("def treatment(x):\n    y = x + 1\n    return y\n", "")
+        added = BASE_NET + "\ndef helper(x):\n    return x\n"
+        clean = code_diff.score_candidate_diff(BASE_NET, BASE_NET.replace("y = x + 1", "y = 2 * x + 1"))
+        for candidate, field, name in ((removed, "functions_removed", "treatment"), (added, "functions_added", "helper")):
+            diff = code_diff.encode_code_diff(BASE_NET, candidate)
+            self.assertEqual(diff["ast_delta"][field], [name])
+            self.assertTrue(diff["obligation_signals"]["signature_changed"])
+            self.assertLess(code_diff.score_candidate_diff(BASE_NET, candidate)["score"], clean["score"])
+            for model in (cpu_jepa.DirectCodeDiffRidge(), cpu_jepa.LatentCodeDiffJEPA()):
+                obligations = model.predict({}, BASE_NET, candidate)["predicted_obligation_discharge"]
+                self.assertFalse(obligations["signature_preserved"], (name, model))
+
     def test_control_modification_is_flagged_and_penalized(self):
         clean_treatment = BASE_NET.replace("y = x + 1", "y = 2 * x + 1")
         tampered_control = BASE_NET.replace("def control(x):\n    return x", "def control(x):\n    return 0")
