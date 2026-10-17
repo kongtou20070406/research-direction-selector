@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 
 from rds_cas import cas_json
-from rds_project import ProjectStore, canonical, digest, require
+from rds_project import ProjectStore, canonical, digest, require, _shell_argument
 
 PREFIX = 'COMPASS_'
 MAX_RECORD = 256 * 1024
@@ -25,9 +25,31 @@ class CompassIntegrityError(ValueError):
     """A retained Compass row, its CAS record or the hash chain does not verify."""
 
 
+LEDGER_TABLES = ('contract', 'budget', 'runs', 'receipts', 'events')
+
+
 def store_for(root):
+    """The project ledger, checked read-only before any Compass query (#359)."""
     store = ProjectStore(root)
-    require(store.path.is_file(), 'Compass requires an initialized project ledger; run compass init first')
+    uninitialized = (f'Compass ledger is not initialized at {store.root}: no execution contract (a workspace '
+                     'holding only research records is UNINITIALIZED). Review a declaration with a goal, an '
+                     'experiment and a budget, then run: python -B scripts/rds_cli.py --root '
+                     f'{_shell_argument(str(store.root))} compass init --declaration <file>. Nothing was initialized or run.')
+    require(store.path.is_file(), uninitialized)
+    with store._db(True) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        missing = [name for name in LEDGER_TABLES if name not in tables]
+        contract = 'contract' in tables and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone()
+        # Execution history: runs, receipts or Compass rows (pre-init tool preparation rows are not).
+        probes = {'runs': '', 'receipts': '', 'events': " WHERE json_extract(body,'$.kind') LIKE 'COMPASS_%'"}
+        history = any(db.execute(f'SELECT EXISTS(SELECT 1 FROM {name}{where})').fetchone()[0]
+                      for name, where in probes.items() if name in tables)
+    require(contract or history, uninitialized)
+    if missing or not contract:
+        # An execution ledger that lost its schema is preserved and diagnosed, never re-initialized over.
+        raise CompassIntegrityError(f'Compass execution ledger at {store.path} is damaged: '
+                                    + (f'missing tables {", ".join(missing)}' if missing else 'its contract row is missing')
+                                    + '; the file is kept as is. Restore it from a backup; do not re-run init over it.')
     return store
 
 

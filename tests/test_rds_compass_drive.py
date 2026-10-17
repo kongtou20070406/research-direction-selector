@@ -1,4 +1,7 @@
 """Compass end to end on real kernel receipts: law, jumps, RSI, IMPROVE, interrupts."""
+from argparse import Namespace
+from contextlib import closing
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -6,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import sqlite3
 import time
 import unittest
 
@@ -17,6 +21,7 @@ import rds_compass as compass
 import rds_compass_model as model
 import rds_compass_rsi as rsi
 import rds_compass_store as cstore
+from rds_compass_cli import command
 from rds_compass_declaration import initialize
 from rds_compass_drive import drive
 from rds_project import ProjectStore
@@ -400,6 +405,74 @@ class StoreTests(Campaign):
         path.write_bytes(path.read_bytes().replace(b'one', b'two'))
         with self.assertRaises(cstore.CompassIntegrityError):
             cstore.events(store)
+
+
+
+class UninitializedLedgerTests(Campaign):
+    """#359: a workspace holding only research records is not a Compass ledger."""
+
+    def research_only(self):
+        import rds_math
+        root = self.base / 'research'
+        root.mkdir()
+        rds_math.put(root, 'note', 'note', b'Unverified mathematical notes')
+        return root
+
+    @staticmethod
+    def sha(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def test_research_only_ledger_is_refused_with_the_init_command(self):
+        root = self.research_only()
+        ledger = root / '.rds' / 'project.sqlite3'
+        before = self.sha(ledger)
+        for args in (('compass', 'status'), ('compass', 'decide'), ('compass', 'report'), ('compass', 'tools'),
+                     ('compass', 'drive'), ('project', 'drive', '--compass')):
+            done = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(root), *args],
+                                  capture_output=True, text=True, timeout=300)
+            self.assertNotEqual(done.returncode, 0, args)
+            self.assertIn('compass init --declaration', done.stderr, args)
+            self.assertNotIn('no such table', done.stderr, args)
+        self.assertEqual(self.sha(ledger), before)
+        # Pre-init tool preparation rows in an events table are no execution history either.
+        with closing(sqlite3.connect(ledger)) as db, db:
+            db.execute('CREATE TABLE events(id INTEGER PRIMARY KEY,body TEXT NOT NULL)')
+            db.execute("INSERT INTO events(body) VALUES ('{\"kind\":\"TOOL_PREPARATION_STARTED\"}')")
+        with self.assertRaisesRegex(ValueError, 'compass init --declaration') as caught:
+            command(Namespace(root=root, action='status'))
+        self.assertNotIsInstance(caught.exception, cstore.CompassIntegrityError)
+
+    def test_compass_init_in_the_same_root_keeps_research_records(self):
+        import rds_math
+        root = self.research_only()
+        record = rds_math.get(root, 'note')
+        asset = root / record['asset']['path']
+        raw = asset.read_bytes()
+        declaration = fx.law_campaign(root, QUAD['law'], QUAD['xs'], hypotheses=QUAD['hypotheses'])
+        self.assertEqual(initialize(root, declaration)['status'], 'INITIALIZED')
+        self.assertEqual((rds_math.get(root, 'note'), asset.read_bytes()), (record, raw))
+        status = command(Namespace(root=root, action='status'))
+        self.assertEqual((status['observations'], self.runs(root)), (0, {}))
+
+    def test_damaged_execution_ledger_is_diagnosed_not_reinitialized(self):
+        root = self.campaign('damaged', QUAD)
+        ledger = root / '.rds' / 'project.sqlite3'
+        with closing(sqlite3.connect(ledger)) as db, db:
+            db.execute('DROP TABLE events')
+        before = self.sha(ledger)
+        for action in ('status', 'decide', 'report'):
+            with self.assertRaisesRegex(cstore.CompassIntegrityError, 'missing tables events.*do not re-run init'):
+                command(Namespace(root=root, action=action))
+        with self.assertRaisesRegex(cstore.CompassIntegrityError, 'missing tables events'):
+            drive(root, publish=False)
+        self.assertEqual(self.sha(ledger), before)
+
+    def test_absent_ledger_names_the_init_command(self):
+        root = self.base / 'empty'
+        root.mkdir()
+        with self.assertRaisesRegex(ValueError, 'compass init --declaration'):
+            command(Namespace(root=root, action='status'))
+        self.assertFalse((root / '.rds').exists())
 
 
 if __name__ == '__main__':

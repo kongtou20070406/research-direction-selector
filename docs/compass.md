@@ -203,6 +203,8 @@ An interrupted attempt is not an experimental outcome. It is neither a measureme
 
 ## Declaration
 
+`project discover` reporting `EXISTING_PROJECT` does not mean the root is ready for Compass. A workspace that holds only research records reports `workflow.mode: UNINITIALIZED`. On such a root, every Compass command checks the ledger read-only first and refuses, naming `compass init --declaration <file>`; nothing is initialized, repaired or run. Initializing a reviewed declaration in the same root keeps every research record and CAS object. A ledger that has execution history but has lost a table or its contract row is reported as damaged (`CompassIntegrityError`) and kept as is, never re-initialized over (#359).
+
 ```json
 {"schema": "rds-compass-declaration-v1",
  "goal": {"kind": "IDENTIFY_LAW", "statement": "Identify the law mapping x to y", "observable": "y"},
