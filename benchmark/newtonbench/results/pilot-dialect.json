@@ -1,0 +1,3004 @@
+{
+ "schema": "rds-newtonbench-pilot-dialect-v1",
+ "label": "PILOT (amendment 6), descriptive only",
+ "generated_at": "2026-10-17T03:36:39-0700",
+ "runs": "/Users/norriswu/Documents/kongtou\u9879\u76ee/RDS/newtonbench-eval/runs/pilot-dialect",
+ "rds_commit_analysis": "457db8cb69b7f08be1680b30ebf02553169310f2",
+ "rds_commit_runs": [
+  "457db8cb69b7f08be1680b30ebf02553169310f2"
+ ],
+ "grammar": {
+  "operators": [
+   "add",
+   "sub",
+   "mul",
+   "div",
+   "pow",
+   "sqrt",
+   "exp",
+   "log",
+   "sin",
+   "cos",
+   "pi"
+  ],
+  "constants": [
+   "0",
+   "1",
+   "2",
+   "-1",
+   "3",
+   "-2",
+   "1/2",
+   "-1/2",
+   "3/2",
+   "-3/2",
+   "1/3",
+   "2/3"
+  ]
+ },
+ "agent_max_tokens": 1000000,
+ "budget": {
+  "total_cap": 54937698,
+  "pilot_counted": 17889121,
+  "smoke_counted": 71264,
+  "spent_counted": 17960385,
+  "unreported_call_counts_as": 600000,
+  "judge_usage_known": {
+   "input_tokens": 658810,
+   "cached_input_tokens": 394112,
+   "output_tokens": 15781
+  },
+  "judge_trials_usage_unknown": 0
+ },
+ "regression_cells": [
+  "m11_heat_transfer/easy/v1",
+  "m8_sound_speed/medium/v0",
+  "m6_underdamped_harmonic/easy/v1",
+  "m9_hooke_law/hard/v0"
+ ],
+ "still_not_expressible_cells": [
+  "m4_snell_law/easy/v2",
+  "m4_snell_law/hard/v2",
+  "m4_snell_law/medium/v2"
+ ],
+ "aggregate": {
+  "pooled": {
+   "newly_expressible": {
+    "tasks": 38,
+    "trials_run": 38,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 25,
+    "certified": 30,
+    "certified_correct": 24,
+    "false_certified": 6,
+    "fallback_used": 5,
+    "fallback_correct": 28,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 30,
+     "LIVE_UNCERTIFIED": 3,
+     "NO_LIVE_RULEBOOK": 5
+    },
+    "tokens_counted": 10319076,
+    "usage_known": {
+     "input_tokens": 9722880,
+     "cached_input_tokens": 7741952,
+     "output_tokens": 596196
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.6578947368421053,
+    "fallback_accuracy": 0.7368421052631579,
+    "registered": {
+     "vanilla": {
+      "trials": 76,
+      "correct": 70,
+      "accuracy": 0.9210526315789473
+     },
+     "code_assisted": {
+      "trials": 76,
+      "correct": 73,
+      "accuracy": 0.9605263157894737
+     },
+     "compass": {
+      "trials": 76,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 52,
+      "false_certified": 52
+     },
+     "compass_fallback": {
+      "trials": 76,
+      "correct": 17,
+      "accuracy": 0.2236842105263158
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 76,
+      "correct": 70,
+      "accuracy": 0.9210526315789473
+     },
+     "code_assisted": {
+      "trials": 76,
+      "correct": 73,
+      "accuracy": 0.9605263157894737
+     },
+     "compass": {
+      "trials": 76,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 51,
+      "false_certified": 51
+     },
+     "compass_fallback": {
+      "trials": 76,
+      "correct": 22,
+      "accuracy": 0.2894736842105263
+     }
+    }
+   },
+   "still_not_expressible": {
+    "tasks": 6,
+    "trials_run": 6,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 0,
+    "certified": 1,
+    "certified_correct": 0,
+    "false_certified": 1,
+    "fallback_used": 5,
+    "fallback_correct": 5,
+    "contaminated": 0,
+    "paths": {
+     "NO_LIVE_RULEBOOK": 5,
+     "CERTIFIED": 1
+    },
+    "tokens_counted": 6192584,
+    "usage_known": {
+     "input_tokens": 5813278,
+     "cached_input_tokens": 4698752,
+     "output_tokens": 379306
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.0,
+    "fallback_accuracy": 0.8333333333333334,
+    "registered": {
+     "vanilla": {
+      "trials": 12,
+      "correct": 12,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 12,
+      "correct": 6,
+      "accuracy": 0.5
+     },
+     "compass": {
+      "trials": 12,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 12,
+      "false_certified": 12
+     },
+     "compass_fallback": {
+      "trials": 12,
+      "correct": 0,
+      "accuracy": 0.0
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 12,
+      "correct": 12,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 12,
+      "correct": 6,
+      "accuracy": 0.5
+     },
+     "compass": {
+      "trials": 12,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 0,
+      "false_certified": 0
+     },
+     "compass_fallback": {
+      "trials": 12,
+      "correct": 12,
+      "accuracy": 1.0
+     }
+    }
+   },
+   "regression": {
+    "tasks": 8,
+    "trials_run": 8,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 7,
+    "certified": 7,
+    "certified_correct": 6,
+    "false_certified": 1,
+    "fallback_used": 0,
+    "fallback_correct": 7,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 7,
+     "LIVE_UNCERTIFIED": 1
+    },
+    "tokens_counted": 1377461,
+    "usage_known": {
+     "input_tokens": 1297209,
+     "cached_input_tokens": 1052160,
+     "output_tokens": 80252
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.875,
+    "fallback_accuracy": 0.875,
+    "registered": {
+     "vanilla": {
+      "trials": 16,
+      "correct": 16,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 16,
+      "correct": 16,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 16,
+      "correct": 6,
+      "accuracy": 0.375,
+      "certified": 14,
+      "false_certified": 8
+     },
+     "compass_fallback": {
+      "trials": 16,
+      "correct": 6,
+      "accuracy": 0.375
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 16,
+      "correct": 16,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 16,
+      "correct": 16,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 16,
+      "correct": 14,
+      "accuracy": 0.875,
+      "certified": 14,
+      "false_certified": 0
+     },
+     "compass_fallback": {
+      "trials": 16,
+      "correct": 14,
+      "accuracy": 0.875
+     }
+    }
+   },
+   "all": {
+    "tasks": 52,
+    "trials_run": 52,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 32,
+    "certified": 38,
+    "certified_correct": 30,
+    "false_certified": 8,
+    "fallback_used": 10,
+    "fallback_correct": 40,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 38,
+     "LIVE_UNCERTIFIED": 4,
+     "NO_LIVE_RULEBOOK": 10
+    },
+    "tokens_counted": 17889121,
+    "usage_known": {
+     "input_tokens": 16833367,
+     "cached_input_tokens": 13492864,
+     "output_tokens": 1055754
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.6153846153846154,
+    "fallback_accuracy": 0.7692307692307693,
+    "registered": {
+     "vanilla": {
+      "trials": 104,
+      "correct": 98,
+      "accuracy": 0.9423076923076923
+     },
+     "code_assisted": {
+      "trials": 104,
+      "correct": 95,
+      "accuracy": 0.9134615384615384
+     },
+     "compass": {
+      "trials": 104,
+      "correct": 6,
+      "accuracy": 0.057692307692307696,
+      "certified": 78,
+      "false_certified": 72
+     },
+     "compass_fallback": {
+      "trials": 104,
+      "correct": 23,
+      "accuracy": 0.22115384615384615
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 104,
+      "correct": 98,
+      "accuracy": 0.9423076923076923
+     },
+     "code_assisted": {
+      "trials": 104,
+      "correct": 95,
+      "accuracy": 0.9134615384615384
+     },
+     "compass": {
+      "trials": 104,
+      "correct": 14,
+      "accuracy": 0.1346153846153846,
+      "certified": 65,
+      "false_certified": 51
+     },
+     "compass_fallback": {
+      "trials": 104,
+      "correct": 48,
+      "accuracy": 0.46153846153846156
+     }
+    }
+   }
+  },
+  "noise0": {
+   "newly_expressible": {
+    "tasks": 19,
+    "trials_run": 19,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 14,
+    "certified": 16,
+    "certified_correct": 14,
+    "false_certified": 2,
+    "fallback_used": 3,
+    "fallback_correct": 17,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 16,
+     "NO_LIVE_RULEBOOK": 3
+    },
+    "tokens_counted": 4873312,
+    "usage_known": {
+     "input_tokens": 4651585,
+     "cached_input_tokens": 3772416,
+     "output_tokens": 221727
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.7368421052631579,
+    "fallback_accuracy": 0.8947368421052632,
+    "registered": {
+     "vanilla": {
+      "trials": 38,
+      "correct": 36,
+      "accuracy": 0.9473684210526315
+     },
+     "code_assisted": {
+      "trials": 38,
+      "correct": 38,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 38,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 20,
+      "false_certified": 20
+     },
+     "compass_fallback": {
+      "trials": 38,
+      "correct": 16,
+      "accuracy": 0.42105263157894735
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 38,
+      "correct": 36,
+      "accuracy": 0.9473684210526315
+     },
+     "code_assisted": {
+      "trials": 38,
+      "correct": 38,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 38,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 18,
+      "false_certified": 18
+     },
+     "compass_fallback": {
+      "trials": 38,
+      "correct": 20,
+      "accuracy": 0.5263157894736842
+     }
+    }
+   },
+   "still_not_expressible": {
+    "tasks": 3,
+    "trials_run": 3,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 0,
+    "certified": 0,
+    "certified_correct": 0,
+    "false_certified": 0,
+    "fallback_used": 3,
+    "fallback_correct": 3,
+    "contaminated": 0,
+    "paths": {
+     "NO_LIVE_RULEBOOK": 3
+    },
+    "tokens_counted": 3480095,
+    "usage_known": {
+     "input_tokens": 3280250,
+     "cached_input_tokens": 2637312,
+     "output_tokens": 199845
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.0,
+    "fallback_accuracy": 1.0,
+    "registered": {
+     "vanilla": {
+      "trials": 6,
+      "correct": 6,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 6,
+      "correct": 4,
+      "accuracy": 0.6666666666666666
+     },
+     "compass": {
+      "trials": 6,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 6,
+      "false_certified": 6
+     },
+     "compass_fallback": {
+      "trials": 6,
+      "correct": 0,
+      "accuracy": 0.0
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 6,
+      "correct": 6,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 6,
+      "correct": 4,
+      "accuracy": 0.6666666666666666
+     },
+     "compass": {
+      "trials": 6,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 0,
+      "false_certified": 0
+     },
+     "compass_fallback": {
+      "trials": 6,
+      "correct": 6,
+      "accuracy": 1.0
+     }
+    }
+   },
+   "regression": {
+    "tasks": 4,
+    "trials_run": 4,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 4,
+    "certified": 3,
+    "certified_correct": 3,
+    "false_certified": 0,
+    "fallback_used": 0,
+    "fallback_correct": 4,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 3,
+     "LIVE_UNCERTIFIED": 1
+    },
+    "tokens_counted": 296410,
+    "usage_known": {
+     "input_tokens": 286494,
+     "cached_input_tokens": 216704,
+     "output_tokens": 9916
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 1.0,
+    "fallback_accuracy": 1.0,
+    "registered": {
+     "vanilla": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 8,
+      "correct": 4,
+      "accuracy": 0.5,
+      "certified": 8,
+      "false_certified": 4
+     },
+     "compass_fallback": {
+      "trials": 8,
+      "correct": 4,
+      "accuracy": 0.5
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0,
+      "certified": 8,
+      "false_certified": 0
+     },
+     "compass_fallback": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     }
+    }
+   },
+   "all": {
+    "tasks": 26,
+    "trials_run": 26,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 18,
+    "certified": 19,
+    "certified_correct": 17,
+    "false_certified": 2,
+    "fallback_used": 6,
+    "fallback_correct": 24,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 19,
+     "NO_LIVE_RULEBOOK": 6,
+     "LIVE_UNCERTIFIED": 1
+    },
+    "tokens_counted": 8649817,
+    "usage_known": {
+     "input_tokens": 8218329,
+     "cached_input_tokens": 6626432,
+     "output_tokens": 431488
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.6923076923076923,
+    "fallback_accuracy": 0.9230769230769231,
+    "registered": {
+     "vanilla": {
+      "trials": 52,
+      "correct": 50,
+      "accuracy": 0.9615384615384616
+     },
+     "code_assisted": {
+      "trials": 52,
+      "correct": 50,
+      "accuracy": 0.9615384615384616
+     },
+     "compass": {
+      "trials": 52,
+      "correct": 4,
+      "accuracy": 0.07692307692307693,
+      "certified": 34,
+      "false_certified": 30
+     },
+     "compass_fallback": {
+      "trials": 52,
+      "correct": 20,
+      "accuracy": 0.38461538461538464
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 52,
+      "correct": 50,
+      "accuracy": 0.9615384615384616
+     },
+     "code_assisted": {
+      "trials": 52,
+      "correct": 50,
+      "accuracy": 0.9615384615384616
+     },
+     "compass": {
+      "trials": 52,
+      "correct": 8,
+      "accuracy": 0.15384615384615385,
+      "certified": 26,
+      "false_certified": 18
+     },
+     "compass_fallback": {
+      "trials": 52,
+      "correct": 34,
+      "accuracy": 0.6538461538461539
+     }
+    }
+   }
+  },
+  "noise0.01": {
+   "newly_expressible": {
+    "tasks": 19,
+    "trials_run": 19,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 11,
+    "certified": 14,
+    "certified_correct": 10,
+    "false_certified": 4,
+    "fallback_used": 2,
+    "fallback_correct": 11,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 14,
+     "LIVE_UNCERTIFIED": 3,
+     "NO_LIVE_RULEBOOK": 2
+    },
+    "tokens_counted": 5445764,
+    "usage_known": {
+     "input_tokens": 5071295,
+     "cached_input_tokens": 3969536,
+     "output_tokens": 374469
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.5789473684210527,
+    "fallback_accuracy": 0.5789473684210527,
+    "registered": {
+     "vanilla": {
+      "trials": 38,
+      "correct": 34,
+      "accuracy": 0.8947368421052632
+     },
+     "code_assisted": {
+      "trials": 38,
+      "correct": 35,
+      "accuracy": 0.9210526315789473
+     },
+     "compass": {
+      "trials": 38,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 32,
+      "false_certified": 32
+     },
+     "compass_fallback": {
+      "trials": 38,
+      "correct": 1,
+      "accuracy": 0.02631578947368421
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 38,
+      "correct": 34,
+      "accuracy": 0.8947368421052632
+     },
+     "code_assisted": {
+      "trials": 38,
+      "correct": 35,
+      "accuracy": 0.9210526315789473
+     },
+     "compass": {
+      "trials": 38,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 33,
+      "false_certified": 33
+     },
+     "compass_fallback": {
+      "trials": 38,
+      "correct": 2,
+      "accuracy": 0.05263157894736842
+     }
+    }
+   },
+   "still_not_expressible": {
+    "tasks": 3,
+    "trials_run": 3,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 0,
+    "certified": 1,
+    "certified_correct": 0,
+    "false_certified": 1,
+    "fallback_used": 2,
+    "fallback_correct": 2,
+    "contaminated": 0,
+    "paths": {
+     "NO_LIVE_RULEBOOK": 2,
+     "CERTIFIED": 1
+    },
+    "tokens_counted": 2712489,
+    "usage_known": {
+     "input_tokens": 2533028,
+     "cached_input_tokens": 2061440,
+     "output_tokens": 179461
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.0,
+    "fallback_accuracy": 0.6666666666666666,
+    "registered": {
+     "vanilla": {
+      "trials": 6,
+      "correct": 6,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 6,
+      "correct": 2,
+      "accuracy": 0.3333333333333333
+     },
+     "compass": {
+      "trials": 6,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 6,
+      "false_certified": 6
+     },
+     "compass_fallback": {
+      "trials": 6,
+      "correct": 0,
+      "accuracy": 0.0
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 6,
+      "correct": 6,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 6,
+      "correct": 2,
+      "accuracy": 0.3333333333333333
+     },
+     "compass": {
+      "trials": 6,
+      "correct": 0,
+      "accuracy": 0.0,
+      "certified": 0,
+      "false_certified": 0
+     },
+     "compass_fallback": {
+      "trials": 6,
+      "correct": 6,
+      "accuracy": 1.0
+     }
+    }
+   },
+   "regression": {
+    "tasks": 4,
+    "trials_run": 4,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 3,
+    "certified": 4,
+    "certified_correct": 3,
+    "false_certified": 1,
+    "fallback_used": 0,
+    "fallback_correct": 3,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 4
+    },
+    "tokens_counted": 1081051,
+    "usage_known": {
+     "input_tokens": 1010715,
+     "cached_input_tokens": 835456,
+     "output_tokens": 70336
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.75,
+    "fallback_accuracy": 0.75,
+    "registered": {
+     "vanilla": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 8,
+      "correct": 2,
+      "accuracy": 0.25,
+      "certified": 6,
+      "false_certified": 4
+     },
+     "compass_fallback": {
+      "trials": 8,
+      "correct": 2,
+      "accuracy": 0.25
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "code_assisted": {
+      "trials": 8,
+      "correct": 8,
+      "accuracy": 1.0
+     },
+     "compass": {
+      "trials": 8,
+      "correct": 6,
+      "accuracy": 0.75,
+      "certified": 6,
+      "false_certified": 0
+     },
+     "compass_fallback": {
+      "trials": 8,
+      "correct": 6,
+      "accuracy": 0.75
+     }
+    }
+   },
+   "all": {
+    "tasks": 26,
+    "trials_run": 26,
+    "not_run_budget": 0,
+    "failed": 0,
+    "compass_correct": 14,
+    "certified": 19,
+    "certified_correct": 13,
+    "false_certified": 6,
+    "fallback_used": 4,
+    "fallback_correct": 16,
+    "contaminated": 0,
+    "paths": {
+     "CERTIFIED": 19,
+     "LIVE_UNCERTIFIED": 3,
+     "NO_LIVE_RULEBOOK": 4
+    },
+    "tokens_counted": 9239304,
+    "usage_known": {
+     "input_tokens": 8615038,
+     "cached_input_tokens": 6866432,
+     "output_tokens": 624266
+    },
+    "unreported_calls": 0,
+    "compass_accuracy": 0.5384615384615384,
+    "fallback_accuracy": 0.6153846153846154,
+    "registered": {
+     "vanilla": {
+      "trials": 52,
+      "correct": 48,
+      "accuracy": 0.9230769230769231
+     },
+     "code_assisted": {
+      "trials": 52,
+      "correct": 45,
+      "accuracy": 0.8653846153846154
+     },
+     "compass": {
+      "trials": 52,
+      "correct": 2,
+      "accuracy": 0.038461538461538464,
+      "certified": 44,
+      "false_certified": 42
+     },
+     "compass_fallback": {
+      "trials": 52,
+      "correct": 3,
+      "accuracy": 0.057692307692307696
+     }
+    },
+    "corrected": {
+     "vanilla": {
+      "trials": 52,
+      "correct": 48,
+      "accuracy": 0.9230769230769231
+     },
+     "code_assisted": {
+      "trials": 52,
+      "correct": 45,
+      "accuracy": 0.8653846153846154
+     },
+     "compass": {
+      "trials": 52,
+      "correct": 6,
+      "accuracy": 0.11538461538461539,
+      "certified": 39,
+      "false_certified": 33
+     },
+     "compass_fallback": {
+      "trials": 52,
+      "correct": 14,
+      "accuracy": 0.2692307692307692
+     }
+    }
+   }
+  }
+ },
+ "trials": [
+  {
+   "task_id": "m0_gravity/hard/v1",
+   "cell": "m0_gravity/hard/v1",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 6.085224783546167e-18,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3075.9,
+   "tokens_counted": 68001,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 66122,
+    "cached_input_tokens": 50432,
+    "output_tokens": 1879
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 68001,
+   "judge_usage": {
+    "input_tokens": 10624,
+    "cached_input_tokens": 0,
+    "output_tokens": 251,
+    "reasoning_output_tokens": 130
+   }
+  },
+  {
+   "task_id": "m0_gravity/hard/v1/noise0.01",
+   "cell": "m0_gravity/hard/v1",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 2.6773881042293242e-05,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3129.7,
+   "tokens_counted": 90075,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 85395,
+    "cached_input_tokens": 66816,
+    "output_tokens": 4680
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 90075,
+   "judge_usage": {
+    "input_tokens": 10625,
+    "cached_input_tokens": 7680,
+    "output_tokens": 354,
+    "reasoning_output_tokens": 233
+   }
+  },
+  {
+   "task_id": "m10_be_distribution/easy/v1",
+   "cell": "m10_be_distribution/easy/v1",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 6899.9,
+   "tokens_counted": 233857,
+   "calls": 2,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 218203,
+    "cached_input_tokens": 187008,
+    "output_tokens": 15654
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 233857,
+   "judge_usage": {
+    "input_tokens": 10697,
+    "cached_input_tokens": 7680,
+    "output_tokens": 496,
+    "reasoning_output_tokens": 361
+   }
+  },
+  {
+   "task_id": "m10_be_distribution/easy/v1/noise0.01",
+   "cell": "m10_be_distribution/easy/v1",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "LIVE_UNCERTIFIED",
+   "compass_status": "JUDGMENT_REQUIRED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "JUDGMENT_REQUIRED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": 0.001245634495201117,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 5203.3,
+   "tokens_counted": 391518,
+   "calls": 3,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 365247,
+    "cached_input_tokens": 280448,
+    "output_tokens": 26271
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 391518,
+   "judge_usage": {
+    "input_tokens": 10632,
+    "cached_input_tokens": 7680,
+    "output_tokens": 502,
+    "reasoning_output_tokens": 316
+   }
+  },
+  {
+   "task_id": "m10_be_distribution/hard/v0",
+   "cell": "m10_be_distribution/hard/v0",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 4.182167546015717e-17,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 261.2,
+   "tokens_counted": 107805,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 102178,
+    "cached_input_tokens": 82688,
+    "output_tokens": 5627
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 107805,
+   "judge_usage": {
+    "input_tokens": 10643,
+    "cached_input_tokens": 7680,
+    "output_tokens": 233,
+    "reasoning_output_tokens": 116
+   }
+  },
+  {
+   "task_id": "m10_be_distribution/hard/v0/noise0.01",
+   "cell": "m10_be_distribution/hard/v0",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.3513002479119425,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 2996.7,
+   "tokens_counted": 135767,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 123150,
+    "cached_input_tokens": 96384,
+    "output_tokens": 12617
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 135767,
+   "judge_usage": {
+    "input_tokens": 10615,
+    "cached_input_tokens": 7680,
+    "output_tokens": 264,
+    "reasoning_output_tokens": 156
+   }
+  },
+  {
+   "task_id": "m10_be_distribution/medium/v2",
+   "cell": "m10_be_distribution/medium/v2",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 4433.7,
+   "tokens_counted": 872522,
+   "calls": 8,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 820326,
+    "cached_input_tokens": 678272,
+    "output_tokens": 52196
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 872522,
+   "judge_usage": {
+    "input_tokens": 10698,
+    "cached_input_tokens": 7680,
+    "output_tokens": 647,
+    "reasoning_output_tokens": 516
+   }
+  },
+  {
+   "task_id": "m10_be_distribution/medium/v2/noise0.01",
+   "cell": "m10_be_distribution/medium/v2",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "LIVE_UNCERTIFIED",
+   "compass_status": "JUDGMENT_REQUIRED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "EXCEPTION",
+    "JUDGMENT_REQUIRED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": 0.0034699984078681895,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 5446.0,
+   "tokens_counted": 854709,
+   "calls": 7,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 789720,
+    "cached_input_tokens": 612480,
+    "output_tokens": 64989
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 482484,
+   "judge_usage": {
+    "input_tokens": 10618,
+    "cached_input_tokens": 7680,
+    "output_tokens": 371,
+    "reasoning_output_tokens": 260
+   }
+  },
+  {
+   "task_id": "m11_heat_transfer/hard/v1",
+   "cell": "m11_heat_transfer/hard/v1",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 2.6550261416594653e-16,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3250.5,
+   "tokens_counted": 98077,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 95180,
+    "cached_input_tokens": 81408,
+    "output_tokens": 2897
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 98077,
+   "judge_usage": {
+    "input_tokens": 10625,
+    "cached_input_tokens": 7680,
+    "output_tokens": 416,
+    "reasoning_output_tokens": 333
+   }
+  },
+  {
+   "task_id": "m11_heat_transfer/hard/v1/noise0.01",
+   "cell": "m11_heat_transfer/hard/v1",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.006474843552024861,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 6101.6,
+   "tokens_counted": 454350,
+   "calls": 3,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 420519,
+    "cached_input_tokens": 323200,
+    "output_tokens": 33831
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 454350,
+   "judge_usage": {
+    "input_tokens": 10611,
+    "cached_input_tokens": 0,
+    "output_tokens": 206,
+    "reasoning_output_tokens": 107
+   }
+  },
+  {
+   "task_id": "m1_coulomb_force/hard/v0",
+   "cell": "m1_coulomb_force/hard/v0",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 2.8761668240704786e-16,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3474.5,
+   "tokens_counted": 119805,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 114974,
+    "cached_input_tokens": 95616,
+    "output_tokens": 4831
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 119805,
+   "judge_usage": {
+    "input_tokens": 10643,
+    "cached_input_tokens": 7680,
+    "output_tokens": 205,
+    "reasoning_output_tokens": 113
+   }
+  },
+  {
+   "task_id": "m1_coulomb_force/hard/v0/noise0.01",
+   "cell": "m1_coulomb_force/hard/v0",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.013910406640631291,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 5997.3,
+   "tokens_counted": 116634,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 107825,
+    "cached_input_tokens": 73216,
+    "output_tokens": 8809
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 116634,
+   "judge_usage": {
+    "input_tokens": 10643,
+    "cached_input_tokens": 7680,
+    "output_tokens": 190,
+    "reasoning_output_tokens": 86
+   }
+  },
+  {
+   "task_id": "m2_magnetic_force/hard/v0",
+   "cell": "m2_magnetic_force/hard/v0",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3003.8,
+   "tokens_counted": 67783,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 65989,
+    "cached_input_tokens": 50816,
+    "output_tokens": 1794
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 67783,
+   "judge_usage": {
+    "input_tokens": 10630,
+    "cached_input_tokens": 0,
+    "output_tokens": 253,
+    "reasoning_output_tokens": 177
+   }
+  },
+  {
+   "task_id": "m2_magnetic_force/hard/v0/noise0.01",
+   "cell": "m2_magnetic_force/hard/v0",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.003741715951604468,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 5839.2,
+   "tokens_counted": 89303,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 83295,
+    "cached_input_tokens": 63488,
+    "output_tokens": 6008
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 89303,
+   "judge_usage": {
+    "input_tokens": 10631,
+    "cached_input_tokens": 7680,
+    "output_tokens": 187,
+    "reasoning_output_tokens": 118
+   }
+  },
+  {
+   "task_id": "m2_magnetic_force/medium/v2",
+   "cell": "m2_magnetic_force/medium/v2",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3386.8,
+   "tokens_counted": 80413,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 78640,
+    "cached_input_tokens": 63104,
+    "output_tokens": 1773
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 80413,
+   "judge_usage": {
+    "input_tokens": 10614,
+    "cached_input_tokens": 2432,
+    "output_tokens": 215,
+    "reasoning_output_tokens": 145
+   }
+  },
+  {
+   "task_id": "m2_magnetic_force/medium/v2/noise0.01",
+   "cell": "m2_magnetic_force/medium/v2",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0029295153934517856,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3169.5,
+   "tokens_counted": 126863,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 120010,
+    "cached_input_tokens": 98304,
+    "output_tokens": 6853
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 126863,
+   "judge_usage": {
+    "input_tokens": 10616,
+    "cached_input_tokens": 7680,
+    "output_tokens": 140,
+    "reasoning_output_tokens": 72
+   }
+  },
+  {
+   "task_id": "m3_fourier_law/hard/v1",
+   "cell": "m3_fourier_law/hard/v1",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 1.157064401389801e-15,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3320.9,
+   "tokens_counted": 114996,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 112202,
+    "cached_input_tokens": 94208,
+    "output_tokens": 2794
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 114996,
+   "judge_usage": {
+    "input_tokens": 10649,
+    "cached_input_tokens": 7680,
+    "output_tokens": 207,
+    "reasoning_output_tokens": 106
+   }
+  },
+  {
+   "task_id": "m3_fourier_law/hard/v1/noise0.01",
+   "cell": "m3_fourier_law/hard/v1",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.007375357721861305,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3467.1,
+   "tokens_counted": 156356,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 146228,
+    "cached_input_tokens": 120064,
+    "output_tokens": 10128
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 156356,
+   "judge_usage": {
+    "input_tokens": 10661,
+    "cached_input_tokens": 7680,
+    "output_tokens": 365,
+    "reasoning_output_tokens": 208
+   }
+  },
+  {
+   "task_id": "m3_fourier_law/medium/v1",
+   "cell": "m3_fourier_law/medium/v1",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 1.2149391272011516e-15,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3443.3,
+   "tokens_counted": 73189,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 70358,
+    "cached_input_tokens": 53248,
+    "output_tokens": 2831
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 73189,
+   "judge_usage": {
+    "input_tokens": 10639,
+    "cached_input_tokens": 7680,
+    "output_tokens": 259,
+    "reasoning_output_tokens": 167
+   }
+  },
+  {
+   "task_id": "m3_fourier_law/medium/v1/noise0.01",
+   "cell": "m3_fourier_law/medium/v1",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 1.2149391272011516e-15,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3493.3,
+   "tokens_counted": 88198,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 85075,
+    "cached_input_tokens": 67712,
+    "output_tokens": 3123
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 88198,
+   "judge_usage": {
+    "input_tokens": 10635,
+    "cached_input_tokens": 7680,
+    "output_tokens": 254,
+    "reasoning_output_tokens": 160
+   }
+  },
+  {
+   "task_id": "m5_radioactive_decay/easy/v2",
+   "cell": "m5_radioactive_decay/easy/v2",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 13,
+   "wall_seconds": 1559.9,
+   "tokens_counted": 666556,
+   "calls": 9,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 644612,
+    "cached_input_tokens": 504064,
+    "output_tokens": 21944
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 592899,
+   "judge_usage": {
+    "input_tokens": 21191,
+    "cached_input_tokens": 15360,
+    "output_tokens": 381,
+    "reasoning_output_tokens": 245
+   }
+  },
+  {
+   "task_id": "m5_radioactive_decay/easy/v2/noise0.01",
+   "cell": "m5_radioactive_decay/easy/v2",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.01180071135963252,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 4959.7,
+   "tokens_counted": 420286,
+   "calls": 4,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 387635,
+    "cached_input_tokens": 314496,
+    "output_tokens": 32651
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 420286,
+   "judge_usage": {
+    "input_tokens": 10616,
+    "cached_input_tokens": 0,
+    "output_tokens": 277,
+    "reasoning_output_tokens": 174
+   }
+  },
+  {
+   "task_id": "m5_radioactive_decay/hard/v2",
+   "cell": "m5_radioactive_decay/hard/v2",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 5948.5,
+   "tokens_counted": 648720,
+   "calls": 6,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 613472,
+    "cached_input_tokens": 500352,
+    "output_tokens": 35248
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 556963,
+   "judge_usage": {
+    "input_tokens": 21238,
+    "cached_input_tokens": 15360,
+    "output_tokens": 355,
+    "reasoning_output_tokens": 228
+   }
+  },
+  {
+   "task_id": "m5_radioactive_decay/hard/v2/noise0.01",
+   "cell": "m5_radioactive_decay/hard/v2",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 17,
+   "wall_seconds": 2451.2,
+   "tokens_counted": 921135,
+   "calls": 9,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 866147,
+    "cached_input_tokens": 710528,
+    "output_tokens": 54988
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 814051,
+   "judge_usage": {
+    "input_tokens": 21229,
+    "cached_input_tokens": 7680,
+    "output_tokens": 472,
+    "reasoning_output_tokens": 327
+   }
+  },
+  {
+   "task_id": "m5_radioactive_decay/medium/v2",
+   "cell": "m5_radioactive_decay/medium/v2",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 13,
+   "wall_seconds": 1594.5,
+   "tokens_counted": 840558,
+   "calls": 9,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 805898,
+    "cached_input_tokens": 653696,
+    "output_tokens": 34660
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 750282,
+   "judge_usage": {
+    "input_tokens": 21223,
+    "cached_input_tokens": 7680,
+    "output_tokens": 357,
+    "reasoning_output_tokens": 206
+   }
+  },
+  {
+   "task_id": "m5_radioactive_decay/medium/v2/noise0.01",
+   "cell": "m5_radioactive_decay/medium/v2",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 13,
+   "wall_seconds": 2327.0,
+   "tokens_counted": 867927,
+   "calls": 9,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 813555,
+    "cached_input_tokens": 620032,
+    "output_tokens": 54372
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 769155,
+   "judge_usage": {
+    "input_tokens": 21219,
+    "cached_input_tokens": 15360,
+    "output_tokens": 391,
+    "reasoning_output_tokens": 232
+   }
+  },
+  {
+   "task_id": "m6_underdamped_harmonic/medium/v0",
+   "cell": "m6_underdamped_harmonic/medium/v0",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3153.8,
+   "tokens_counted": 82436,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 79727,
+    "cached_input_tokens": 49152,
+    "output_tokens": 2709
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 82436,
+   "judge_usage": {
+    "input_tokens": 10621,
+    "cached_input_tokens": 7680,
+    "output_tokens": 322,
+    "reasoning_output_tokens": 245
+   }
+  },
+  {
+   "task_id": "m6_underdamped_harmonic/medium/v0/noise0.01",
+   "cell": "m6_underdamped_harmonic/medium/v0",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 4.880954782586722e-06,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 2782.2,
+   "tokens_counted": 85681,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 77068,
+    "cached_input_tokens": 54784,
+    "output_tokens": 8613
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 85681,
+   "judge_usage": {
+    "input_tokens": 10605,
+    "cached_input_tokens": 7680,
+    "output_tokens": 296,
+    "reasoning_output_tokens": 221
+   }
+  },
+  {
+   "task_id": "m7_malus_law/easy/v2",
+   "cell": "m7_malus_law/easy/v2",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 7840.0,
+   "tokens_counted": 71926,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 68870,
+    "cached_input_tokens": 60544,
+    "output_tokens": 3056
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 71926,
+   "judge_usage": {
+    "input_tokens": 10617,
+    "cached_input_tokens": 7680,
+    "output_tokens": 261,
+    "reasoning_output_tokens": 188
+   }
+  },
+  {
+   "task_id": "m7_malus_law/easy/v2/noise0.01",
+   "cell": "m7_malus_law/easy/v2",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 8345.8,
+   "tokens_counted": 116178,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 108467,
+    "cached_input_tokens": 79744,
+    "output_tokens": 7711
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 116178,
+   "judge_usage": {
+    "input_tokens": 10615,
+    "cached_input_tokens": 7680,
+    "output_tokens": 229,
+    "reasoning_output_tokens": 151
+   }
+  },
+  {
+   "task_id": "m7_malus_law/hard/v0",
+   "cell": "m7_malus_law/hard/v0",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 8996.9,
+   "tokens_counted": 349864,
+   "calls": 3,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 332278,
+    "cached_input_tokens": 283648,
+    "output_tokens": 17586
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 349864,
+   "judge_usage": {
+    "input_tokens": 10637,
+    "cached_input_tokens": 0,
+    "output_tokens": 133,
+    "reasoning_output_tokens": 69
+   }
+  },
+  {
+   "task_id": "m7_malus_law/hard/v0/noise0.01",
+   "cell": "m7_malus_law/hard/v0",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 3.9019245854790078e-16,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 6666.2,
+   "tokens_counted": 237855,
+   "calls": 2,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 216455,
+    "cached_input_tokens": 164864,
+    "output_tokens": 21400
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 237855,
+   "judge_usage": {
+    "input_tokens": 10643,
+    "cached_input_tokens": 7680,
+    "output_tokens": 303,
+    "reasoning_output_tokens": 178
+   }
+  },
+  {
+   "task_id": "m7_malus_law/medium/v0",
+   "cell": "m7_malus_law/medium/v0",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 8261.6,
+   "tokens_counted": 196793,
+   "calls": 2,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 186650,
+    "cached_input_tokens": 141056,
+    "output_tokens": 10143
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 196793,
+   "judge_usage": {
+    "input_tokens": 10625,
+    "cached_input_tokens": 7680,
+    "output_tokens": 170,
+    "reasoning_output_tokens": 94
+   }
+  },
+  {
+   "task_id": "m7_malus_law/medium/v0/noise0.01",
+   "cell": "m7_malus_law/medium/v0",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 8058.6,
+   "tokens_counted": 90858,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 85248,
+    "cached_input_tokens": 65664,
+    "output_tokens": 5610
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 90858,
+   "judge_usage": {
+    "input_tokens": 10623,
+    "cached_input_tokens": 7680,
+    "output_tokens": 155,
+    "reasoning_output_tokens": 75
+   }
+  },
+  {
+   "task_id": "m8_sound_speed/hard/v0",
+   "cell": "m8_sound_speed/hard/v0",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 4.3926686355455893e-16,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3055.8,
+   "tokens_counted": 83846,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 81345,
+    "cached_input_tokens": 64768,
+    "output_tokens": 2501
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 83846,
+   "judge_usage": {
+    "input_tokens": 10636,
+    "cached_input_tokens": 7680,
+    "output_tokens": 251,
+    "reasoning_output_tokens": 157
+   }
+  },
+  {
+   "task_id": "m8_sound_speed/hard/v0/noise0.01",
+   "cell": "m8_sound_speed/hard/v0",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0008539475343639456,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 5868.1,
+   "tokens_counted": 92282,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 85142,
+    "cached_input_tokens": 63872,
+    "output_tokens": 7140
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 92282,
+   "judge_usage": {
+    "input_tokens": 10633,
+    "cached_input_tokens": 0,
+    "output_tokens": 208,
+    "reasoning_output_tokens": 118
+   }
+  },
+  {
+   "task_id": "m9_hooke_law/easy/v2",
+   "cell": "m9_hooke_law/easy/v2",
+   "stratum": "noise0",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 6703.4,
+   "tokens_counted": 96165,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 94561,
+    "cached_input_tokens": 78336,
+    "output_tokens": 1604
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 96165,
+   "judge_usage": {
+    "input_tokens": 10568,
+    "cached_input_tokens": 7680,
+    "output_tokens": 190,
+    "reasoning_output_tokens": 89
+   }
+  },
+  {
+   "task_id": "m9_hooke_law/easy/v2/noise0.01",
+   "cell": "m9_hooke_law/easy/v2",
+   "stratum": "noise0.01",
+   "subset": "newly_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "LIVE_UNCERTIFIED",
+   "compass_status": "CONTROLLER_DEADLINE",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "CONTROLLER_DEADLINE"
+   ],
+   "certified": false,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0014514867765365246,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 35,
+   "wall_seconds": 9221.2,
+   "tokens_counted": 109789,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 105114,
+    "cached_input_tokens": 93440,
+    "output_tokens": 4675
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 109789,
+   "judge_usage": {
+    "input_tokens": 10566,
+    "cached_input_tokens": 7680,
+    "output_tokens": 191,
+    "reasoning_output_tokens": 124
+   }
+  },
+  {
+   "task_id": "m4_snell_law/easy/v2",
+   "cell": "m4_snell_law/easy/v2",
+   "stratum": "noise0",
+   "subset": "still_not_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 13,
+   "wall_seconds": 1787.7,
+   "tokens_counted": 1080354,
+   "calls": 8,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 1016077,
+    "cached_input_tokens": 839168,
+    "output_tokens": 64277
+   },
+   "agent_tokens_status": "EXHAUSTED",
+   "agent_tokens_spent_last_attempt": 1004962,
+   "judge_usage": {
+    "input_tokens": 21262,
+    "cached_input_tokens": 15360,
+    "output_tokens": 392,
+    "reasoning_output_tokens": 251
+   }
+  },
+  {
+   "task_id": "m4_snell_law/easy/v2/noise0.01",
+   "cell": "m4_snell_law/easy/v2",
+   "stratum": "noise0.01",
+   "subset": "still_not_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 16,
+   "wall_seconds": 2669.6,
+   "tokens_counted": 1172746,
+   "calls": 7,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 1107170,
+    "cached_input_tokens": 918528,
+    "output_tokens": 65576
+   },
+   "agent_tokens_status": "EXHAUSTED",
+   "agent_tokens_spent_last_attempt": 1078046,
+   "judge_usage": {
+    "input_tokens": 21263,
+    "cached_input_tokens": 15360,
+    "output_tokens": 410,
+    "reasoning_output_tokens": 252
+   }
+  },
+  {
+   "task_id": "m4_snell_law/hard/v2",
+   "cell": "m4_snell_law/hard/v2",
+   "stratum": "noise0",
+   "subset": "still_not_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 13,
+   "wall_seconds": 2289.3,
+   "tokens_counted": 1308072,
+   "calls": 9,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 1235830,
+    "cached_input_tokens": 1030656,
+    "output_tokens": 72242
+   },
+   "agent_tokens_status": "EXHAUSTED",
+   "agent_tokens_spent_last_attempt": 1234310,
+   "judge_usage": {
+    "input_tokens": 21287,
+    "cached_input_tokens": 0,
+    "output_tokens": 429,
+    "reasoning_output_tokens": 294
+   }
+  },
+  {
+   "task_id": "m4_snell_law/hard/v2/noise0.01",
+   "cell": "m4_snell_law/hard/v2",
+   "stratum": "noise0.01",
+   "subset": "still_not_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 17,
+   "wall_seconds": 3060.2,
+   "tokens_counted": 1185811,
+   "calls": 9,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 1098396,
+    "cached_input_tokens": 871808,
+    "output_tokens": 87415
+   },
+   "agent_tokens_status": "EXHAUSTED",
+   "agent_tokens_spent_last_attempt": 1081936,
+   "judge_usage": {
+    "input_tokens": 21287,
+    "cached_input_tokens": 15360,
+    "output_tokens": 348,
+    "reasoning_output_tokens": 204
+   }
+  },
+  {
+   "task_id": "m4_snell_law/medium/v2",
+   "cell": "m4_snell_law/medium/v2",
+   "stratum": "noise0",
+   "subset": "still_not_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "NO_LIVE_RULEBOOK",
+   "compass_status": "SEARCH_EXHAUSTED",
+   "origin": null,
+   "attempts": [
+    "SEARCH_EXHAUSTED"
+   ],
+   "certified": false,
+   "correct": 0,
+   "false_certified": 0,
+   "rmsle": null,
+   "fallback_used": true,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 13,
+   "wall_seconds": 2374.5,
+   "tokens_counted": 1091669,
+   "calls": 9,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 1028343,
+    "cached_input_tokens": 767488,
+    "output_tokens": 63326
+   },
+   "agent_tokens_status": "EXHAUSTED",
+   "agent_tokens_spent_last_attempt": 1017354,
+   "judge_usage": {
+    "input_tokens": 21269,
+    "cached_input_tokens": 15360,
+    "output_tokens": 348,
+    "reasoning_output_tokens": 208
+   }
+  },
+  {
+   "task_id": "m4_snell_law/medium/v2/noise0.01",
+   "cell": "m4_snell_law/medium/v2",
+   "stratum": "noise0.01",
+   "subset": "still_not_expressible",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.0007040812448810258,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 5849.5,
+   "tokens_counted": 353932,
+   "calls": 3,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 327462,
+    "cached_input_tokens": 271104,
+    "output_tokens": 26470
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 353932,
+   "judge_usage": {
+    "input_tokens": 10742,
+    "cached_input_tokens": 7680,
+    "output_tokens": 987,
+    "reasoning_output_tokens": 768
+   }
+  },
+  {
+   "task_id": "m11_heat_transfer/easy/v1",
+   "cell": "m11_heat_transfer/easy/v1",
+   "stratum": "noise0",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3242.0,
+   "tokens_counted": 66339,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 65048,
+    "cached_input_tokens": 46080,
+    "output_tokens": 1291
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 66339,
+   "judge_usage": {
+    "input_tokens": 10592,
+    "cached_input_tokens": 7680,
+    "output_tokens": 139,
+    "reasoning_output_tokens": 91
+   }
+  },
+  {
+   "task_id": "m11_heat_transfer/easy/v1/noise0.01",
+   "cell": "m11_heat_transfer/easy/v1",
+   "stratum": "noise0.01",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0017924888103218858,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3338.2,
+   "tokens_counted": 86899,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 83977,
+    "cached_input_tokens": 75136,
+    "output_tokens": 2922
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 86899,
+   "judge_usage": {
+    "input_tokens": 10602,
+    "cached_input_tokens": 7680,
+    "output_tokens": 151,
+    "reasoning_output_tokens": 78
+   }
+  },
+  {
+   "task_id": "m6_underdamped_harmonic/easy/v1",
+   "cell": "m6_underdamped_harmonic/easy/v1",
+   "stratum": "noise0",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3247.0,
+   "tokens_counted": 68800,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 66015,
+    "cached_input_tokens": 50304,
+    "output_tokens": 2785
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 68800,
+   "judge_usage": {
+    "input_tokens": 10610,
+    "cached_input_tokens": 7680,
+    "output_tokens": 222,
+    "reasoning_output_tokens": 153
+   }
+  },
+  {
+   "task_id": "m6_underdamped_harmonic/easy/v1/noise0.01",
+   "cell": "m6_underdamped_harmonic/easy/v1",
+   "stratum": "noise0.01",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 6359.2,
+   "tokens_counted": 510310,
+   "calls": 3,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 466401,
+    "cached_input_tokens": 380928,
+    "output_tokens": 43909
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 510310,
+   "judge_usage": {
+    "input_tokens": 10606,
+    "cached_input_tokens": 7680,
+    "output_tokens": 293,
+    "reasoning_output_tokens": 221
+   }
+  },
+  {
+   "task_id": "m8_sound_speed/medium/v0",
+   "cell": "m8_sound_speed/medium/v0",
+   "stratum": "noise0",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 3030.5,
+   "tokens_counted": 68060,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 66390,
+    "cached_input_tokens": 51200,
+    "output_tokens": 1670
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 68060,
+   "judge_usage": {
+    "input_tokens": 10627,
+    "cached_input_tokens": 7680,
+    "output_tokens": 310,
+    "reasoning_output_tokens": 243
+   }
+  },
+  {
+   "task_id": "m8_sound_speed/medium/v0/noise0.01",
+   "cell": "m8_sound_speed/medium/v0",
+   "stratum": "noise0.01",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0022803968206389783,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 2892.3,
+   "tokens_counted": 84563,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 81784,
+    "cached_input_tokens": 73344,
+    "output_tokens": 2779
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 84563,
+   "judge_usage": {
+    "input_tokens": 10624,
+    "cached_input_tokens": 7680,
+    "output_tokens": 229,
+    "reasoning_output_tokens": 152
+   }
+  },
+  {
+   "task_id": "m9_hooke_law/hard/v0",
+   "cell": "m9_hooke_law/hard/v0",
+   "stratum": "noise0",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "LIVE_UNCERTIFIED",
+   "compass_status": "CONTROLLER_DEADLINE",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "CONTROLLER_DEADLINE"
+   ],
+   "certified": false,
+   "correct": 1,
+   "false_certified": 0,
+   "rmsle": 0.0,
+   "fallback_used": false,
+   "fallback_correct": 1,
+   "contaminated": false,
+   "queries": 35,
+   "wall_seconds": 9194.9,
+   "tokens_counted": 93211,
+   "calls": 1,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 89041,
+    "cached_input_tokens": 69120,
+    "output_tokens": 4170
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 93211,
+   "judge_usage": {
+    "input_tokens": 10601,
+    "cached_input_tokens": 7680,
+    "output_tokens": 253,
+    "reasoning_output_tokens": 143
+   }
+  },
+  {
+   "task_id": "m9_hooke_law/hard/v0/noise0.01",
+   "cell": "m9_hooke_law/hard/v0",
+   "stratum": "noise0.01",
+   "subset": "regression",
+   "status": "COMPLETED",
+   "not_run": false,
+   "path": "CERTIFIED",
+   "compass_status": "GOAL_IDENTIFIED",
+   "origin": "JUMP_AGENT",
+   "attempts": [
+    "GOAL_IDENTIFIED"
+   ],
+   "certified": true,
+   "correct": 0,
+   "false_certified": 1,
+   "rmsle": 0.8608528954344093,
+   "fallback_used": false,
+   "fallback_correct": 0,
+   "contaminated": false,
+   "queries": 40,
+   "wall_seconds": 7287.5,
+   "tokens_counted": 399279,
+   "calls": 3,
+   "unreported_calls": 0,
+   "usage_known": {
+    "input_tokens": 378553,
+    "cached_input_tokens": 306048,
+    "output_tokens": 20726
+   },
+   "agent_tokens_status": "AVAILABLE",
+   "agent_tokens_spent_last_attempt": 399279,
+   "judge_usage": {
+    "input_tokens": 10584,
+    "cached_input_tokens": 7680,
+    "output_tokens": 313,
+    "reasoning_output_tokens": 195
+   }
+  }
+ ],
+ "smoke": [
+  {
+   "dir": "/Users/norriswu/Documents/kongtou\u9879\u76ee/RDS/newtonbench-eval/runs/pilot-dialect/smoke/m7_malus_law/easy/v0/compass-t0",
+   "tokens": 71264,
+   "calls": 1,
+   "unreported_calls": 0
+  }
+ ],
+ "scientific_support": "UNKNOWN",
+ "bundle_sha256": "d97715212aa734d9874d0386f9fb46a55f2a587869b4eebe012e520af74fbdae"
+}

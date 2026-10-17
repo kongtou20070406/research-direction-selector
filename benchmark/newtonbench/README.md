@@ -10,7 +10,8 @@ whether an answer is right. The design, the amendments, and every deviation are 
 Raw numbers: [results/newtonbench-compass.json](results/newtonbench-compass.json) (NewtonBench commit, RDS
 commits, model settings, every trial with its receipt hashes and Codex usage). Per task:
 [results/per-task.md](results/per-task.md) (registered) and
-[results/per-task-corrected.md](results/per-task-corrected.md) (post hoc, amendment 5).
+[results/per-task-corrected.md](results/per-task-corrected.md) (post hoc, amendment 5). The transcendental-dialect
+PILOT (amendment 6, descriptive only, never pooled with the above): [results/pilot-dialect.md](results/pilot-dialect.md).
 
 ## Result
 
@@ -80,6 +81,21 @@ code_assisted 本身没有失败；在 m8 hard v0 上 Compass 自己的答案也
 vanilla 44k、4.7k。Compass 平均耗时 1171 秒，基线是 117 到 151 秒。另有 3 个 Compass trial 的 jump 调用
 在 540 秒超时时被杀、没有上报用量，记为 UNKNOWN，不做估算。
 
+**超越函数方言试点（Amendment 6，PILOT，仅描述）。** 只改 Compass 臂：release `0fb9e96` 的 grammar 打开
+sqrt、exp、log、sin、cos、pi，每 trial 最多 1,000,000 token。在 22 个不可表达格子加 4 个回归格子上，每层各跑
+1 次，共 52 次 trial，由 Codex CLI 执行。修正案 `a3ea0b8` 和分析脚本 `457db8c` 都在任何试点 trial 之前提交。
+- **新可表达的 19 格（38 次）：** Compass 自己的答案从从未正确变为 25/38 正确；假认证从 51/51 降到 6/30。
+- **仍不可表达的 m4（atan，6 次）：** 0/6 正确，有 1 次假认证。
+- **回归格（8 次）：** 7/8 正确，但新出现 1 次假认证。
+- **合计：** 32/52 正确，认证 38 次，其中假认证 8 次。认证和正确分开统计。
+- **两次假认证的 RMSLE 为 0：** 模拟器用 `np.exp(x) - 1` 计算，float64 相消误差远超 1e-6 容差，真规律反被收据
+  反驳。jump agent 于是认证了一个复刻 float64 舍入的公式，judge 判为不等价，按严格口径计为错。
+- **成本与耗时：** 计入上限的 token 为 1796 万，上限 5494 万。每次 trial 耗时中位数约 3400 秒。有 2 次撞到
+  9000 秒的 wall，交了正确但未认证的答案。
+- **Compass 异常：** 1 次 Compass 异常（`_fits` 里的 `ValueError`）已按登记规则重试，原因未查。
+
+结果仅为试点，不做检验，不并入登记或事后分析。
+
 **局限。** 天花板效应；judge 与被测模型是同一个模型（RMSLE 不受影响）；更正分析是事后的；每格 N = 2；只跑了
 vanilla_equation。**下一步：** 给方言加超越函数；认证前做残差结构检验；适配层做输入预检；换更难、基线不在
 天花板的任务。
@@ -121,6 +137,101 @@ answer written from Compass's receipts is right. The remaining trials are certif
 NewtonBench judges wrong: 10 of the 12 m10 trials (the other 2 stay uncertified), the noisy m6 medium, and one
 noisy m8 hard trial. The corrected result is post hoc: it was produced after the registered result was known,
 and the rerun ran a few hours after the formal run.
+
+## Amendment 6: the transcendental dialect, PILOT (descriptive only)
+
+> **PILOT.** One trial per task, descriptive only, no hypothesis test. It is not pooled with the registered or
+> the post-hoc analysis above and changes neither. Raw numbers: [results/pilot-dialect.json](results/pilot-dialect.json)
+> and [results/pilot-dialect.md](results/pilot-dialect.md).
+
+The question: on the 22 laws the registered dialect cannot state, all of Compass's own answers were wrong. How
+much of that was the dialect?
+
+Only the Compass arm changed:
+
+- **Code.** Release `0fb9e96`, merged as `54a18e1`.
+- **Grammar.** The declared grammar opens sqrt, exp, log, sin, cos and pi. Exponents come from generic halves and
+  thirds.
+- **Jump prompt.** The prompt's dialect paragraph is the release's own.
+- **Token cap.** `agent.max_tokens` is 1,000,000 per trial, and the total is capped at the registered Compass
+  arm's 54,937,698 jump tokens.
+
+Amendment 6 (`a3ea0b8`) and its analysis script (`457db8c`) were committed before any pilot trial ran.
+
+The pilot ran 52 trials:
+
+- the 22 not-expressible cells and 4 regression cells (expressible cells drawn by seed);
+- both strata;
+- one trial each.
+
+The Codex CLI ran the orchestrator; it only ran commands and changed no data. Correctness is NewtonBench's own
+judgement, scored strictly. Before the run, the 22 cells were classified a priori from the ground-truth source:
+19 become expressible in the new dialect, and the 3 `m4_snell_law/*/v2` laws (atan) do not.
+
+| Subset (trials) | Compass correct | Certified | Certified and correct | **False certifications** | Fallback correct | Same tasks, corrected Compass (N = 2) | code_assisted (N = 2) | vanilla (N = 2) |
+|---|---|---|---|---|---|---|---|---|
+| Newly expressible, 19 cells (38) | **25/38** | 30 | 24 | **6** | 28/38 | 0/76, false certified 51/51 | 73/76 | 70/76 |
+| Still not expressible, m4 v2 (6) | 0/6 | 1 | 0 | **1** | 5/6 | 0/12 | 6/12 | 12/12 |
+| Regression, 4 expressible cells (8) | 7/8 | 7 | 6 | **1** | 7/8 | 14/16, false certified 0/14 | 16/16 | 16/16 |
+| All (52) | 32/52 | 38 | 30 | **8** | 40/52 | 14/104 | 95/104 | 98/104 |
+
+Newly expressible cells by stratum:
+
+| Stratum | Compass correct | Certified | False certifications |
+|---|---|---|---|
+| Noise-free | 14/19 | 16 | 2 |
+| Noisy | 11/19 | 14 | 4 |
+
+What the numbers show, descriptively:
+
+- **The dialect was most of the failure, not all of it.** On the 19 newly expressible cells:
+  - Compass's own answer went from never right to right in 25 of 38 trials, with at least one correct trial in
+    14 of the 19 cells.
+  - False certifications went from 51 of 51 to 6 of 30.
+  - Every correct law came from the jump agent (the same LLM); Compass chose the experiments, refuted rivals and
+    certified.
+  - The misses concentrate in `m5_radioactive_decay` (all 6 trials wrong; 5 newly-expressible trials ended with
+    no live rulebook) and `m10_be_distribution` (5 of 6 wrong).
+- **Two of the eight false certifications have RMSLE 0**, both noise-free: `m10/easy/v1` and `m10/medium/v2`.
+  - NewtonBench's simulator computes `1 / (np.exp(x) - 1)` at x of about 1e-16 to 1e-12. Float64 cancellation
+    quantizes its output in steps of 2^-52, far outside the 1e-6 tolerance, so the true law is refuted by the
+    receipts.
+  - The jump agent then certified a law that reproduces the float64 rounding,
+    `2**52 / floor((exp(x) - 1) * 2**52 + 1/2)`. The judge called it not equivalent, and it is scored wrong.
+  - This is the simulator's precision meeting exact replay, not a judge error. A tight tolerance cannot tell the
+    law from the simulator's rounding.
+- **The regression cells were not free.**
+  - 7 of 8 were correct (corrected Compass: 14 of 16).
+  - One new false certification appeared on an expressible law, `m9_hooke_law/hard/v0` noisy (RMSLE 0.86).
+    Corrected Compass had none on these cells. A richer dialect also gives more ways to fit within the 5-sd
+    noisy tolerance.
+- **Still not expressible (m4, atan).** 0 of 6 correct, as predicted, with one false certification.
+  - 5 of the 6 trials spent the whole 1,000,000-token cap.
+  - The fallback, which is free Python and not a Compass effect, was right in 5 of 6.
+- **Cost and time.**
+  - Tokens counted against the cap:
+    - pilot: 17,889,121 for 52 trials, a mean of 344k per trial (1.03M on m4);
+    - smoke trial: 71,264;
+    - total: 17.96M of 54.94M. The launch guard never refused a trial.
+  - Known usage: input 16.83M (13.49M cached), output 1.06M. The judge used 0.66M input and 16k output.
+  - Reference on the same tasks: registered Compass used 505k per trial, corrected Compass 790k.
+  - The Codex operator ran outside the cap. The smoke run used 6.82M input (6.72M cached) and 14k output; the
+    pilot run used 34.80M input (34.55M cached) and 31k output. That is more input than the trials themselves,
+    almost all of it cached context re-sent on each 30-minute check.
+  - Wall time: median about 3,400 s per trial, against 1,257 s for corrected Compass on the same tasks. Every step
+    reruns the rival synthesis (about 94k candidates) with 40-digit enclosures.
+  - The run used 8 trials in parallel on a 12-core Apple M6. Two trials reached Compass's 9,000 s wall
+    (`CONTROLLER_DEADLINE`) and submitted a correct but uncertified law, so machine speed affects those two.
+- **One Compass exception.** Attempt 1 of `m10/medium/v2` noisy raised
+  `ValueError: Expected a finite number or exact rational string`. It came from `rds_compass._fits`, which calls
+  `model.exact` on a counterexample residual in the transcendental path of `0fb9e96`.
+  - The trial was restarted, as registered, and ended `JUDGMENT_REQUIRED`.
+  - The cause was not investigated here; it is a candidate Compass defect.
+
+Limits: N = 1. The judge is the same model. The constants list was chosen knowing the laws; it is disclosed in
+Amendment 6 and holds only generic halves and thirds. The regression sample is 4 cells, and nothing here is a
+test. The pilot says the dialect is worth a pre-registered N = 2 run. That run would come with the float64 and
+deadline issues above declared in advance.
 
 ## Where Compass's answers came from (amendment 3 paths)
 
@@ -317,8 +428,8 @@ means sign-test p < 0.05 and a bootstrap CI that excludes 0 (as registered).
 
 ## Deviations and amendments
 
-All five amendments are in [PREREGISTRATION.md](PREREGISTRATION.md) with their timestamps; 1-4 were committed
-before the formal run started, 5 after it finished.
+All six amendments are in [PREREGISTRATION.md](PREREGISTRATION.md) with their timestamps; 1-4 were committed
+before the formal run started, 5 after it finished, and 6 (a PILOT) after the reports and before its own trials.
 
 1. **Amendment 1 (ceiling).** A noise 0.01 stratum of the same 36 cells was added after the baseline pilot
    (12/12 correct) and NewtonBench's published accuracies showed the noise-free tasks near ceiling. It was
@@ -336,6 +447,9 @@ before the formal run started, 5 after it finished.
    the tolerance rule was not changed.
 5. **Amendment 5 (harness defect, after the run).** See above. The registered analysis is unchanged; the rerun
    and the corrected analysis are post hoc.
+6. **Amendment 6 (transcendental dialect, PILOT).** See above. Only the Compass arm's grammar, the jump prompt's
+   dialect paragraph and a token cap changed. It ran 52 trials, N = 1, and is descriptive only. The baselines
+   were not rerun.
 
 Other deviations and facts a reader needs:
 
@@ -373,9 +487,10 @@ Other deviations and facts a reader needs:
 
 ## Next steps
 
-1. **Dialect:** add transcendental functions (exp, log, sin/cos, arcsin) and real-valued powers with interval or
-   tolerance semantics, so that the laws NewtonBench uses become expressible. This is a Compass change and is
-   out of scope for this branch.
+1. **Dialect:** release `0fb9e96` added exp, log, sin, cos, pi and rational powers with rigorous enclosures. The
+   Amendment 6 pilot above suggests a pre-registered N = 2 run is worthwhile. That run should declare three
+   things in advance: how a float64 simulator artifact is handled under exact replay, the wall budget, and a
+   fix for the `_fits` exception. Inverse trigonometric functions (atan, for m4) are still missing.
 2. **Residual-structure test before certification:** a certified law should leave residuals without structure
    (sign runs, correlation with inputs, scale with the noise model), not only fit within tolerance; that would
    have refused most of the 64 approximate certifications.
@@ -397,6 +512,8 @@ python -B run.py --phase formal-rerun --trials 2 --parallel 12 --arms compass   
 python -B audit_inputs.py --out results/input-audit.md
 python -B analyze.py --phase formal --rerun-phase formal-rerun --out results/newtonbench-compass.json \
     --table results/per-task.md --corrected-table results/per-task-corrected.md
+python -B run.py --phase pilot-dialect --trials 1 --arms compass --parallel 8     # amendment 6, PILOT
+python -B analyze_pilot.py --out results/pilot-dialect.json --table results/pilot-dialect.md
 ```
 
 `run.py` skips trials that already have a `trial.json`, so rerunning it resumes. A trial that times out or exits
@@ -411,3 +528,4 @@ without a result is written as TIMEOUT or CRASHED and scored as a failure.
 | `run.py` | Orchestrator with a 4-hour wall per trial |
 | `audit_inputs.py` | Amendment 5 audit: which inputs the simulator ignores under each harness |
 | `analyze.py` | The registered analysis, plus the descriptive and post-hoc parts marked as such |
+| `analyze_pilot.py` | Amendment 6 PILOT: descriptive per-trial and per-subset report, certification counted apart from correctness |
