@@ -24,6 +24,8 @@ MAX_NODES = 15  # One synthesized expression.
 # or a declared or agent rulebook of the same order. Synthesis itself stays within MAX_NODES.
 MAX_RULEBOOK_NODES = 64
 MAX_BITS = 512
+# Longest spelling text() writes (sign, two MAX_BITS-bit integers, slash): exact() reads every one back.
+MAX_TEXT = 2 * len(str(2 ** MAX_BITS)) + 2
 MAX_POWER = 8
 MAX_ROOT = 8  # Largest denominator of a rational exponent.
 MAX_POINTS = 256
@@ -91,7 +93,7 @@ def exact(value):
     elif isinstance(value, float):
         require(math.isfinite(value), 'Non-finite measurement')
         result = Fraction(repr(value))
-    elif isinstance(value, str) and 0 < len(value) <= 256:
+    elif isinstance(value, str) and 0 < len(value) <= MAX_TEXT:
         try:
             result = Fraction(value.strip())
         except (ValueError, ZeroDivisionError) as exc:

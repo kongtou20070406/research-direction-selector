@@ -86,6 +86,17 @@ class LawTests(Campaign):
         result = model.replay(hyp, rows, {'y': (0, 0)})
         self.assertEqual((result['status'], result['tested'], result['unknown_measurements']), ('CONSISTENT', 2, 2))
 
+    def test_a_long_exact_residual_does_not_stop_the_campaign(self):
+        # NewtonBench pilot crash: a refuted rival's exact residual spelled more than 256
+        # characters, and basin() and _fits() could not read it back with model.exact().
+        scaled = f'x * {3 ** 280} / {2 ** 440}'
+        root = self.campaign('long-residual', dict(QUAD, hypotheses=[('scaled', scaled)]))
+        result = drive(root, max_steps=40)
+        hyp = compass.fold(cstore.store_for(root))['hypotheses']['scaled']
+        self.assertEqual(hyp['status'], 'REFUTED')
+        self.assertGreater(max(len(c['residual']) for c in hyp['replay']['counterexamples']), 256)
+        self.assertEqual(result['status'], 'GOAL_IDENTIFIED', result)
+
     def test_rivals_that_differ_only_on_an_untoleranced_observable_share_a_class(self):
         root = self.base / 'side-rivals'
         path = fx.law_campaign(root, 'x', range(4))

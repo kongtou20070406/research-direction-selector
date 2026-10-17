@@ -76,6 +76,17 @@ class TranscendentalDialectTests(unittest.TestCase):
             self.assertNotIsInstance(value, model.Inexact, source)
         self.assertEqual(model.predict(hyp('root', '(-x) ** (1/2)'), {'x': Fraction(4)})[1], 'UNDEFINED')
 
+    def test_every_exact_spelling_reads_back(self):
+        x = Fraction('0.123456789012345678')
+        cell = [{'id': 'x', 'inputs': {'x': x}, 'outputs': {'y': Fraction(3, 2)}}]
+        residual = model.replay(hyp('octic', 'x ** 8 / 7'), cell, EXACT)['counterexamples'][0]['residual']
+        self.assertGreater(len(residual), 256)
+        self.assertEqual(model.exact(residual), Fraction(3, 2) - x ** 8 / 7)
+        widest = Fraction(-(2 ** model.MAX_BITS - 1), 2 ** model.MAX_BITS - 3)
+        self.assertEqual(model.exact(model.text(widest)), widest)
+        with self.assertRaises(ValueError):  # The spelling bound itself stays.
+            model.exact('1' * (len(model.text(widest)) + 1))
+
     def test_replay_never_decides_a_cell_the_enclosure_straddles(self):
         law = hyp('root2', 'sqrt(2) * x')
         midpoint = Fraction(model.evaluate(law['predict']['y'], {'x': Fraction(1)}))
