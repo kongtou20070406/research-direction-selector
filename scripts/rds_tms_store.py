@@ -10,7 +10,8 @@ from pathlib import Path
 from rds_hypergraph import ASSURANCE, _validate, review_hypergraph, audit_sources
 from rds_math import MAX_BYTES, blob
 from rds_project import ProjectStore, canonical, digest, require
-from rds_quick import brief, cas_bytes
+from rds_cas import cas_bytes
+from rds_result_record import brief
 
 
 class SnapshotConflict(ValueError):

@@ -678,7 +678,9 @@ class QuickCoverageAdmissionTests(unittest.TestCase):
                 rds_quick.execute(args, review=(advice, context))
 
         self.assertNotEqual(observed['sha256'], initial_sha)
-        self.assertEqual(observed['registered'], 'coverage-race')
+        # Since 85f74a0 native choice preparation runs on admission entry, so the
+        # change is refused before the admission guard sees the reservation.
+        self.assertNotIn('registered', observed)
         retained = ProjectStore(workspace).snapshot()
         self.assertEqual(len(retained['runs']), 1)
         self.assertEqual(retained['runs'][0]['status'], 'RESERVED')

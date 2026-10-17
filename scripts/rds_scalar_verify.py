@@ -1,6 +1,6 @@
 """Adapt the existing scalar threshold certificate to declarative statements."""
 from rds_formal_kernel import check_certificate as check_scalar, exact_probe
-from rds_probe import parse_source
+from rds_scalar_values import parse_source
 from rds_verify_types import require
 
 

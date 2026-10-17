@@ -3,7 +3,6 @@
 Completion supplies file identities and operational fields, never scientific facts.
 """
 import ast
-from collections import Counter
 from contextlib import contextmanager, ExitStack, nullcontext
 from copy import deepcopy
 import hashlib
@@ -11,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import re
-import sqlite3
 import sys
 import tempfile
 import time
@@ -19,38 +17,22 @@ import uuid
 
 from rds_project import ProjectStore, canonical, digest, execution_route, file_sha, number, require
 from rds_mutation import mutation
+from rds_advisor_choice import _discarded_choice_hint, choice
+from rds_output_values import _brief_move, serialize_brief, compact_brief_planning
+from rds_result_record import brief
+from rds_quick_ledger import (
+    _policy_route, _charge_ledger, _checkpoint_name, _validate_recorded_choice,
+    _pending_quick_choices, _publish_quick_request, _pending_partial_child,
+    _is_unmaterialized_allowance, _prospective_completion, _complete_prospective,
+    _recover_prospective,
+)
+from rds_cas import (
+    cas_json, cas_bytes
+)
 
 MAX_INPUT_BYTES = 2 * 1024 * 1024
 MAX_FILES = 128
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
-
-
-def cas_json(root, value, *, max_bytes=None):
-    require(max_bytes is None or type(max_bytes) is int and max_bytes > 0,
-            'Invalid CAS JSON publication byte limit')
-    raw = canonical(value).encode('utf-8')
-    require(max_bytes is None or len(raw) <= max_bytes, 'CAS JSON exceeds its publication byte limit')
-    return cas_bytes(root, raw, 'json')
-
-
-@mutation()
-def cas_bytes(root, raw, suffix='bin'):
-    from rds_campaign import enforce
-    enforce(root)
-    from rds_workspace import check_admission
-    check_admission(root)
-    require(isinstance(raw, bytes) and re.fullmatch(r'[a-z0-9]{1,12}', suffix), 'Invalid CAS bytes or suffix')
-    sha = hashlib.sha256(raw).hexdigest()
-    directory = Path(root).resolve() / '.rds' / 'cas'
-    require(directory.resolve().is_relative_to(Path(root).resolve()), 'CAS escapes project root')
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / (sha + '.' + suffix)
-    try:
-        with path.open('xb') as handle:
-            handle.write(raw)
-    except FileExistsError:
-        require(file_sha(path) == sha, 'CAS integrity failure')
-    return {'sha256': sha, 'path': str(path), 'bytes': len(raw)}
 
 
 def latest_decision(root, checkpoint_id=None):
@@ -72,105 +54,49 @@ def latest_decision(root, checkpoint_id=None):
     return decision, restored
 
 
-def _discarded_choice_hint(records):
-    def bounded(value, limit):
-        value = value if isinstance(value, str) else 'UNKNOWN'
-        escaped = json.dumps(value[:limit], ensure_ascii=True)[1:-1]
-        return escaped[:limit] + ('...' if len(value) > limit or len(escaped) > limit else '')
-
-    hints = ['"' + bounded(c.get('id', c.get('rule_id')), 96) + '": ' + bounded(c.get('reason'), 200)
-             for c in records[:3]]
-    if len(records) > 3:
-        hints.append(str(len(records) - 3) + ' more discarded actions')
-    return '; '.join(hints) + '. Repair the configured action; inspect full advice for original reasons'
 
 
-def choice(advice, context, candidate_id=None):
-    from rds_advisor import _scope, _text, _loop_route
-    decision = context.get('decision', {})
-    require(isinstance(decision, dict) and _text(decision.get('id')) and _text(decision.get('goal_revision')),
-            'Recording a choice needs decision.id and goal_revision in the context')
-    _scope(decision.get('scope'))
-    searches = [r['search'] for r in advice.get('recommendations', []) if r.get('type') == 'EXECUTABLE_DIRECTION_SEARCH']
-    available = [c for search in searches for c in search['candidates']]
-    discarded = [c for search in searches for c in search.get('discarded_candidates', [])]
-    matches = ([c for c in available if c.get('status') == 'READY'] if candidate_id is None else
-               [c for c in available if c.get('id') == candidate_id or c.get('action', {}).get('id') == candidate_id])
-    discarded_matches = ([] if candidate_id is None else
-                         [c for c in discarded if c.get('id') == candidate_id or c.get('action_id') == candidate_id])
-    if not matches and candidate_id is None:
-        unresolved = [c for c in available if c.get('method_review', {}).get('status') == 'UNKNOWN']
-        require(not unresolved, 'Method scope is unresolved; inspect method_review questions and clarify only the affected work')
-        if not available and discarded and not any(search.get('blocked_candidates') for search in searches):
-            raise ValueError('No READY candidate; configured actions were discarded: ' + _discarded_choice_hint(discarded))
-    if not matches and len(discarded_matches) == 1:
-        raise ValueError('Selected candidate was discarded: ' + _discarded_choice_hint(discarded_matches))
-    from rds_advisor_coverage import require_complete
-    require_complete(searches)
-    require(all(search.get('context_sha256') == digest(context) for search in searches),
-            'Advisor context changed after complete graph analysis; review the current graph and facts again')
-    require(len(matches) == 1, 'Choose one returned candidate ID; missing, pruned or ambiguous candidate')
-    candidate = deepcopy(matches[0])
-    from rds_methods import review_candidate
-    method_review = review_candidate(context, candidate)
-    require(method_review is None or method_review['status'] in {'COMPATIBLE', 'UNCONSTRAINED'},
-            'Method scope is unresolved or conflicting; describe missing steps or ask the user to clarify the affected restriction')
-    require(candidate.get('status') == 'READY', 'Candidate still needs evidence; inspect its pending prerequisites')
-    require(type(context.get('require_goal_link', False)) is bool, 'require_goal_link must be boolean')
-    goal_guard = None
-    if context.get('require_goal_link'):
-        from rds_advisor_search import _dependency_review, _goal_contribution
-        guarded_context = deepcopy(context)
-        if advice.get('objective_binding') is not None:
-            require(guarded_context.get('objective_binding') == advice['objective_binding'],
-                    'Goal-link guard: advice objective binding differs from the current checked context')
-        dependency = _dependency_review(guarded_context, audit_receipts=True, audit_files=True)
-        contribution = _goal_contribution(candidate.get('action', {}), guarded_context, dependency)
-        mapped = (contribution or {}).get('graph_path', {})
-        if mapped.get('status') != 'DECLARED_CONNECTED_PATH' and mapped.get('blocked_bindings'):
-            binding = mapped['blocked_bindings'][0]
-            require(False, 'Goal-link guard: this route relies on a binding whose checked evidence is not grounded; '
-                           'repair ' + binding['token'] + ' (' + binding['reason'] + ') before dispatch')
-        require(dependency is not None and mapped.get('status') == 'DECLARED_CONNECTED_PATH'
-                and mapped.get('goal_review', {}).get('blocker_sets_complete') is True,
-                'Goal-link guard needs a complete actual dependency map and a connected original-goal path')
-        require(mapped['goal_review']['status'] != 'DECLARED_SUPPORTED',
-                'Goal-link guard: the declared goal is already closed; inspect retained evidence before another job')
-        require(not set(contribution['path'][1:-1]).intersection(dependency['declared_supported_closure']),
-                'Goal-link guard: the path crosses an already closed intermediate obligation; inspect retained evidence')
-        token = mapped['start_token']
-        require(token in {row['token'] for row in dependency['ready_obligations']},
-                'Goal-link guard: this target is not a current ready obligation; inspect existing evidence or earlier premises')
-        goal_guard = {'dependency_map': deepcopy(guarded_context['dependency_map']),
-                      'input_sha256': dependency['input_sha256'], 'ready_obligation': token,
-                      'contribution': deepcopy(contribution)}
-    history_errors = [str(f.get('reason', '')) for r in advice.get('recommendations', [])
-                      for f in r.get('review', {}).get('flags', []) if f.get('kind') == 'LOOP_HISTORY_REVIEW_ERROR']
-    require(not history_errors, 'Repair checkpoint integrity before executing a candidate'
-            + (': ' + history_errors[0] if history_errors and history_errors[0] else ''))
-    require(_loop_route(candidate) is not None, 'Candidate has no structured route identity')
-    record = {'question_id': decision['id'], 'goal_revision': decision['goal_revision'],
-              'scope': deepcopy(decision['scope']), 'candidate': deepcopy(candidate),
-              'outcome': 'plan_locked', 'evidence': deepcopy(context.get('facts', {})),
-              'scientific_support': 'UNKNOWN'}
-    if goal_guard is not None:
-        record['goal_guard'] = goal_guard
-    for recommendation in advice.get('recommendations', []):
-        search = recommendation.get('search', {})
-        if any(c.get('id') == candidate['id'] for c in search.get('candidates', [])) and 'selection_review' in search:
-            record['selection_review'] = deepcopy(search['selection_review'])
-            break
-    if 'goal_conditions' in decision:
-        record['goal_conditions'] = deepcopy(decision['goal_conditions'])
-    if 'method_constraints' in context:
-        record['method_constraints'] = deepcopy(context['method_constraints'])
-    if 'require_goal_link' in context:
-        record['require_goal_link'] = context['require_goal_link']
-    return record
+
+
+def _prepare_choice(root, advice, context, candidate_id, request):
+    from rds_admission_read import StaleAdmission, prepare
+    from rds_advisor_coverage import project_context
+    from rds_quick_admission import PreparedQuickChoice, evidence_fence
+    store = ProjectStore(root)
+    with store._db(True) as db:
+        db.execute('BEGIN')
+        context = project_context(root, context)
+        files, receipts, source_bytes = (), (), 0
+        if context.get('require_goal_link'):
+            from rds_hypergraph_input import prepare_input
+            spec, _ = prepare_input(context['dependency_map'])
+            records = spec['nodes'] + spec['hyperedges']
+            files = tuple(str(Path(row['source']['file']).absolute()) for row in records
+                          if isinstance(row['source'], dict) and 'file' in row['source'])
+            receipts = tuple(sorted({(row['evidence']['receipt']['project_root'],
+                                     row['evidence']['receipt']['sha256'])
+                                    for row in records if row.get('evidence') is not None}))
+            source_bytes = spec.get('limits', {}).get('max_source_bytes', 8 * 1024 * 1024)
+        before = evidence_fence(db, root, files, receipts, source_bytes)
+        record = choice(advice, context, candidate_id)
+        if evidence_fence(db, root, files, receipts, source_bytes) != before:
+            raise StaleAdmission('QUICK evidence changed during selection; STALE')
+        row = (db.execute('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
+               if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone()
+               else None)
+        require((row['sha256'] if row else None) == context.get('dependency_snapshot_sha256'),
+                'Dependency snapshot changed during QUICK preparation')
+        record['advice'] = cas_json(root, advice)
+        ref = record['advice']
+        originals = [{'path': Path(ref['path']).relative_to(store.root).as_posix(),
+                      'sha256': ref['sha256'], 'size': ref['bytes']}]
+        admission = prepare(db, store.path, request, originals, json.loads(row['body']) if row else None)
+    return PreparedQuickChoice(admission, canonical(record), digest(context), record['candidate']['id'],
+                               context.get('dependency_snapshot_sha256'), files, receipts, source_bytes, before)
 
 
 def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
-                  _expected_contract_sha256=None, _parent_db=None):
+                  _expected_contract_sha256=None, _parent_db=None, _prepared_choice=None):
     from rds_checkpoints import save_checkpoint, append_checkpoint
     from rds_advisor_coverage import project_context
     # QUICK contracts remain frozen; native activation changes ownership.
@@ -192,8 +118,17 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
             'Expected choice contract differs from the current QUICK contract; inspect the original decision')
     expected_contract = (snapshot['contract_sha256'] if _expected_contract_sha256 is None
                          else _expected_contract_sha256)
-    context = project_context(root, context)
-    record = choice(advice, context, candidate_id)
+    if _parent_db is None:
+        context = project_context(root, context)
+        record = choice(advice, context, candidate_id)
+    else:
+        from rds_quick_admission import PreparedQuickChoice
+        require(type(_prepared_choice) is PreparedQuickChoice
+                and _prepared_choice.admission.ledger_path == str(store.path.resolve())
+                and _prepared_choice.context_sha256 == digest(context)
+                and _prepared_choice.candidate_id == candidate_id,
+                'Locked choice publication needs its original native preparation')
+        record = json.loads(_prepared_choice.decision_json)
     if _parent_db is not None:
         head = None
         if _parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
@@ -203,7 +138,8 @@ def record_choice(root, advice, context, candidate_id, checkpoint_id, *,
     # Analysis stays outside the gate; its original snapshot guards are checked
     # again while publishing the CAS and checkpoint as one bounded operation.
     with mutation():
-        record['advice'] = cas_json(root, advice)
+        if _parent_db is None:
+            record['advice'] = cas_json(root, advice)
         if _parent_db is None:
             saved = save_checkpoint(root, checkpoint_id, snapshot, kind='project', decision=record,
                                     _expected_contract_sha256=expected_contract,
@@ -262,383 +198,6 @@ def record_falsification(root, *, witness, reason, route=None, domain=None):
         ref = cas_json(root, witness)
         return reject_route(SimpleNamespace(root=root, route=route, reason=reason, evidence=ref['path'], id=None,
                                            domain=cas_json(root, domain)['path'] if domain is not None else None))
-
-
-def _policy_route(request, route):
-    guard = request.get('guard')
-    if guard is None:
-        return route
-    return {'advisor_route': route, 'guard': {key: guard.get(key) for key in ('engine_sha256', 'verifier_sha256')},
-            'native_executable_sha256': guard.get('native_binding', {}).get('sha256')}
-
-
-def _charge_ledger(root, workspace, request, seconds, route=None, source_root=None, dispatch=True, executor_sha256=None, existing_only=False, *, _parent_db=None):
-    """Conservatively charge external controller work to the existing budget.
-
-    This decreases allowance; it never extends the contract or grants execution
-    authority. The child still has its own frozen command and run admission.
-    """
-    store = ProjectStore(root)
-    from rds_workspace import check_admission
-    check_admission(root)
-    with (store._db() if _parent_db is None else nullcontext(_parent_db)) as db:
-        if _parent_db is None:
-            db.execute('BEGIN IMMEDIATE')
-        else:
-            require(db.in_transaction and Path(db.execute('PRAGMA database_list').fetchone()[2]).resolve() == store.path,
-                    'Allowance publication requires its owning parent transaction')
-        if dispatch:
-            from rds_campaign import detached_admission
-            detached_admission(root, db)
-        contract = store._contract(db)
-        if dispatch and request.get('research_context'):
-            # Bind allowance admission to the graph revision reviewed by the
-            # caller. The final launch path also rechecks the current snapshot.
-            reviewed = request['research_context'].get('dependency_snapshot_sha256')
-            snapshot = None
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
-                snapshot = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
-            require((snapshot['sha256'] if snapshot else None) == reviewed,
-                    'Dependency snapshot changed before execution allowance; review the complete graph again')
-        require('advisor_policy' not in contract,
-                'Program-owned Advisor requires project advance/create/execute; quick child allowance cannot bypass it')
-        require('stop_policy' not in contract and 'maintenance_allowance' not in contract,
-                'Configured stop/maintenance policies require project create/execute; quick child allowance cannot bypass them')
-        require(set(contract['budget']) == {'wall_seconds'}, 'Quick exec supports a wall-only parent ledger; use a full project manifest for other resources')
-        _, errors = store._bindings(contract)
-        require(not errors, '; '.join(errors))
-        require(not existing_only or dispatch and 'execution_policy' in contract,
-                'Execution policy: observation requires its configured parent ledger')
-        if dispatch and 'execution_policy' in contract:
-            if executor_sha256 is not None:
-                require(file_sha(request['argv'][0]) == executor_sha256, 'Execution policy: command executable changed before charge')
-            key = execution_route(request['argv'], request['inputs'], request['outputs'], source_root or workspace,
-                                  contract.get('objective_sha256', request.get('objective_sha256')), route=_policy_route(request, None),
-                                  arm='tool', executor_sha256=executor_sha256)
-            request['execution_policy_owner'] = {'root': str(store.root), 'contract_sha256': digest(contract),
-                                                'policy_sha256': digest(contract['execution_policy']), 'route_sha256': key}
-            rows = [json.loads(row['body']) for row in db.execute(
-                "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
-                "AND json_extract(body,'$.execution_route_sha256')=? ORDER BY id", (key,))]
-            if existing_only:
-                rows = [prior for prior in rows if Path(prior['job_root']).resolve() == workspace.resolve()]
-                require(len(rows) == 1 and rows[0]['request_sha256'] == digest(request),
-                        'Execution policy: existing child has no matching parent allowance for this job and request')
-            else:
-                same_job = [prior for prior in rows if Path(prior['job_root']).resolve() == workspace.resolve()]
-                if same_job:
-                    require(len(same_job) == 1, 'Execution policy: child allowance is ambiguous; inspect retained state')
-                    prior = same_job[0]
-                    require(prior.get('contract_sha256') == digest(contract)
-                            and prior.get('execution_policy_sha256') == digest(contract['execution_policy']),
-                            'Execution policy: retained parent allowance binding differs')
-                    if not Path(workspace).exists() or _pending_partial_child(db, workspace):
-                        _is_unmaterialized_allowance(db, workspace, request, prior)
-                        return {'status': 'PENDING_MATERIALIZATION_RECOVERY', 'execution_started': False,
-                                'job_root': str(workspace), 'ledger_root': str(store.root)}
-            for prior in rows:
-                require(prior.get('contract_sha256') == digest(contract)
-                        and prior.get('execution_policy_sha256') == digest(contract['execution_policy']),
-                        'Execution policy: retained parent allowance binding differs')
-                require(Path(prior['job_root']).is_dir(),
-                        'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
-                child = ProjectStore(prior['job_root'])
-                check_admission(child.root)
-                require(child.path.is_file(), 'Execution policy: charged child state is unavailable; inspect retained allowance, no refund or new launch')
-                from rds_project import load_json
-                stored = load_json(child.root / 'rds-exec-request.json')
-                require(digest(stored) == prior['request_sha256'] and stored.get('execution_policy_owner') == request['execution_policy_owner'],
-                        'Execution policy: retained child request binding differs')
-                with child._db(True) as child_db:
-                    runs = list(child_db.execute('SELECT id FROM runs'))
-                    require(len(runs) == 1, 'Execution policy: charged child has an incomplete or ambiguous run; recover it without a new allowance')
-                    run = child._run(child_db, runs[0]['id'])
-                    observed = child._observe(child_db, run)
-                    reviewed = stored.get('guard') is not None and (run['status'] == 'COMPLETED'
-                               or existing_only and run['status'] in {'FAILED', 'INTERRUPTED'})
-                    guard_event = (child_db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' ORDER BY id DESC LIMIT 1").fetchone()
-                                   if reviewed else None)
-                if existing_only or run['status'] in {'RESERVED', 'RUNNING', 'COMPLETED'}:
-                    result = {'status': 'EXISTING_JOB', 'job_root': str(child.root), 'ledger_root': str(store.root),
-                            'receipt': observed if 'sha256' in observed else None, 'execution_started': False,
-                            'policy_observation': 'Retained attempt; inspect or recover it', 'scientific_support': 'UNKNOWN'}
-                    if reviewed:
-                        require(guard_event is not None, 'Guard review is unfinished; inspect retained job and allowance')
-                        ref = json.loads(guard_event['body'])['report']
-                        report_path = Path(ref['path']).resolve()
-                        require(report_path.is_relative_to((child.root / '.rds/cas').resolve()) and file_sha(report_path) == ref['sha256'],
-                                'Guard report CAS integrity failure')
-                        from rds_guard import read
-                        result['regression_review'] = read(report_path)[0]
-                    return result
-            require(len(rows) < contract['execution_policy']['max_attempts'],
-                    'Execution policy: unchanged route reached max_attempts; failures do not establish scientific impossibility')
-        elif dispatch:
-            rows = [json.loads(row['body']) for row in db.execute(
-                "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
-                "AND json_extract(body,'$.job_root')=? ORDER BY id", (str(workspace),))]
-            if rows:
-                require(len(rows) == 1, 'External job allowance is ambiguous; inspect retained state')
-                prior = rows[0]
-                require(prior.get('request_sha256') == digest(request)
-                        and prior.get('contract_sha256') == digest(contract),
-                        'External job allowance differs from the original request or contract')
-                if not Path(workspace).exists() or _pending_partial_child(db, workspace):
-                    _is_unmaterialized_allowance(db, workspace, request, prior)
-                    return {'status': 'PENDING_MATERIALIZATION_RECOVERY', 'execution_started': False,
-                            'job_root': str(workspace), 'ledger_root': str(store.root)}
-                raise ValueError('External job allowance already consumed; inspect its preserved state')
-        from rds_steering import current
-        require(current(db) is None,
-                'Human steering requires project create/execute; new quick child allowances cannot bypass it')
-        amount = number(seconds, 'external wall allowance', True)
-        row = db.execute("SELECT * FROM budget WHERE resource='wall_seconds'").fetchone()
-        require(row['spent'] + row['charged'] + row['reserved'] + amount <= row['cap'] + 1e-9,
-                'Insufficient parent ledger wall_seconds budget')
-        event = {'kind': 'EXTERNAL_RUN_ALLOWANCE', 'job_root': str(workspace), 'request_sha256': digest(request),
-                 'contract_sha256': digest(contract),
-                 'resource': 'wall_seconds', 'amount': amount, 'accounting': 'CONSERVATIVE_ALLOWANCE',
-                 'execution_authority': 'UNCHANGED'}
-        if dispatch:
-            event['materialization_state'] = 'PENDING'
-        if dispatch and 'execution_policy' in contract:
-            event.update(execution_route_sha256=key, contract_sha256=digest(contract),
-                         execution_policy_sha256=digest(contract['execution_policy']), advisor_route_sha256=route)
-        require(db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' AND json_extract(body,'$.job_root')=? LIMIT 1",
-                           (str(workspace),)).fetchone() is None, 'External job allowance already consumed; inspect its preserved state')
-        db.execute("UPDATE budget SET charged=charged+? WHERE resource='wall_seconds'", (amount,))
-        db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
-
-
-def _checkpoint_name(stage, name):
-    value = 'exec-' + stage + '-' + name
-    return value if len(value) <= 64 else 'exec-' + stage + '-' + digest(name)[:48]
-
-
-def _validate_recorded_choice(db, root, checkpoint_id, candidate_id, expected_contract_sha256):
-    """Validate, but never recompute, the original QUICK choice during recovery."""
-    from rds_checkpoints import read_checkpoint
-    saved = read_checkpoint(db, checkpoint_id, root=root)
-    require(saved is not None and saved['record']['kind'] == 'project',
-            'Original prospective before checkpoint is missing; inspect the charged allowance')
-    require(saved['record']['contract_sha256'] == expected_contract_sha256,
-            'Original prospective choice contract changed; inspect the charged allowance')
-    decision = saved['record']['decision']
-    require(decision.get('outcome') == 'plan_locked'
-            and isinstance(decision.get('candidate'), dict)
-            and decision['candidate'].get('id') == candidate_id,
-            'Original prospective choice differs from the charged request')
-    return {'schema': 'rds-checkpoint-v1', 'status': 'ALREADY_SAVED', 'id': checkpoint_id,
-            'kind': 'project', 'sha256': saved['sha256'], 'contract_sha256': expected_contract_sha256,
-            'candidate_id': candidate_id}
-
-
-def _pending_quick_choices(root, owner, requested_name=None):
-    """Find only explicitly pending, not-yet-materialized prospective QUICK jobs."""
-    if owner is None:
-        return []
-    root = Path(root).resolve()
-    store = ProjectStore(owner)
-    exec_root = (root / '.rds' / 'exec').resolve()
-    require(exec_root.is_relative_to(root), 'Exec workspace escapes root')
-    from rds_checkpoints import read_checkpoint
-    from rds_campaign import QUICK_JOB_KIND
-    with store._db(True) as db:
-        db.execute('BEGIN')
-        contract_sha256 = digest(store._contract(db))
-        rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' ORDER BY id").fetchall()
-        pending = []
-        for row in rows:
-            prior = json.loads(row['body'])
-            raw_job = prior.get('job_root')
-            if not isinstance(raw_job, str):
-                continue
-            job = Path(raw_job)
-            resolved_job = job.resolve()
-            if os.path.normcase(str(resolved_job.parent)) != os.path.normcase(str(exec_root)):
-                continue
-            name = resolved_job.name
-            if requested_name is not None and name != requested_name:
-                continue
-            if job.exists() and not _pending_partial_child(db, job):
-                continue
-            require(not job.is_symlink(), 'Retained QUICK workspace is a dangling symlink; inspect the original state')
-            if prior.get('materialization_state') != 'PENDING':
-                if requested_name is not None:
-                    raise ValueError('Charged QUICK child state is unavailable; inspect retained allowance, no refund or new launch')
-                continue
-            marker = db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')=? "
-                                "AND json_extract(body,'$.job_root')=? LIMIT 1", (QUICK_JOB_KIND, raw_job)).fetchone()
-            require(marker is None,
-                    'Charged QUICK child was previously materialized but is missing; inspect retained state, no new launch')
-            require(isinstance(prior.get('request_sha256'), str)
-                    and re.fullmatch('[0-9a-f]{64}', prior['request_sha256']),
-                    'Pending QUICK allowance identity is invalid')
-            require(prior.get('contract_sha256') == contract_sha256,
-                    'Pending QUICK allowance contract changed; inspect the original request')
-            checkpoint_id = _checkpoint_name('before', name)
-            saved = read_checkpoint(db, checkpoint_id, root=owner)
-            require(saved is not None and saved['record']['kind'] == 'project'
-                    and saved['record']['contract_sha256'] == contract_sha256,
-                    'Pending QUICK allowance has no original prospective checkpoint')
-            decision = saved['record']['decision']
-            candidate = decision.get('candidate') if isinstance(decision, dict) else None
-            require(decision.get('outcome') == 'plan_locked' and isinstance(candidate, dict)
-                    and isinstance(candidate.get('id'), str),
-                    'Pending QUICK allowance has no unambiguous original choice')
-            pending.append({'name': name, 'candidate_id': candidate['id'], 'candidate': candidate,
-                            'request_sha256': prior['request_sha256'], 'job_root': raw_job,
-                            'checkpoint_id': checkpoint_id})
-        return pending
-
-
-def _publish_quick_request(workspace, request):
-    """A process interruption leaves either no identity or its complete bytes."""
-    target = workspace / 'rds-exec-request.json'
-    temporary = workspace / ('.request-' + uuid.uuid4().hex + '.tmp')
-    with temporary.open('xb') as handle:
-        handle.write(canonical(request).encode('utf-8'))
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, target)
-
-
-def _pending_partial_child(db, workspace):
-    """An owning allowance, without a durable publication marker, is intent only."""
-    from rds_campaign import QUICK_JOB_KIND
-    raw_job = str(workspace)
-    marker = db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')=? "
-                        "AND json_extract(body,'$.job_root')=? LIMIT 1", (QUICK_JOB_KIND, raw_job)).fetchone()
-    if marker is not None:
-        return False
-    rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
-                      "AND json_extract(body,'$.job_root')=?", (raw_job,)).fetchall()
-    return len(rows) == 1 and json.loads(rows[0]['body']).get('materialization_state') == 'PENDING'
-
-
-def _is_unmaterialized_allowance(db, workspace, request, prior):
-    """Permit the one charged request to resume only before its child marker exists."""
-    path = Path(workspace)
-    require(not path.is_symlink(), 'Retained QUICK child is a symlink; inspect its original state')
-    require(prior.get('materialization_state') == 'PENDING'
-            and prior.get('request_sha256') == digest(request),
-            'Charged QUICK child state is unavailable; inspect retained allowance, no refund or new launch')
-    require(prior.get('contract_sha256') is not None,
-            'Charged QUICK allowance lacks its original contract binding')
-    from rds_campaign import QUICK_JOB_KIND
-    raw_job = str(path)
-    marker = db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')=? "
-                        "AND json_extract(body,'$.job_root')=? LIMIT 1", (QUICK_JOB_KIND, raw_job)).fetchone()
-    require(marker is None,
-            'Charged QUICK child was previously materialized but is missing; inspect retained state, no new launch')
-    if path.exists():
-        require(path.is_dir(), 'Retained QUICK child is not a directory')
-        request_path = path / 'rds-exec-request.json'
-        if request_path.exists() or request_path.is_symlink():
-            from rds_project import load_json
-            require(not request_path.is_symlink() and load_json(request_path) == request,
-                    'Job identity is frozen; changed inputs need a new --name')
-        child = ProjectStore(path)
-        if child.path.exists() or child.path.is_symlink():
-            # Never recreate a launched child, even if its parent marker is lost.
-            # Read incomplete initialization without requiring a contract table.
-            with child._db(True) as child_db:
-                tables = {r[0] for r in child_db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                for table in ('receipts', 'exposures'):
-                    if table in tables:
-                        require(child_db.execute('SELECT count(*) FROM ' + table).fetchone()[0] == 0,
-                                'Retained QUICK child has execution evidence; no new launch')
-                if 'runs' in tables:
-                    for row in child_db.execute('SELECT body FROM runs'):
-                        run = json.loads(row['body'])
-                        require(run.get('status') == 'RESERVED' and run.get('attempt_id') is None
-                                and run.get('started_at') is None,
-                                'Retained QUICK child has an attempt; no new launch')
-    return True
-
-
-def _prospective_completion(workspace, request, receipt, regression=None, guard_ref=None, *, parent_db=None):
-    """Read the original decision and exact completion; never choose a new route."""
-    context = request.get('research_context')
-    if context is None or receipt is None:
-        return None
-    from rds_checkpoints import read_checkpoint
-    workspace = Path(workspace).resolve()
-    ledger = Path(context['ledger'])
-    require(ledger.is_absolute(), 'Prospective completion ledger must be absolute')
-    ledger = ledger.resolve()
-    require(receipt.get('run_id') == workspace.name and isinstance(receipt.get('sha256'), str),
-            'Prospective completion requires the original terminal receipt')
-    if parent_db is None:
-        with ProjectStore(ledger)._db(True) as db:
-            db.execute('BEGIN')
-            return _prospective_completion(workspace, request, receipt, regression, guard_ref, parent_db=db)
-    filename = parent_db.execute('PRAGMA database_list').fetchone()[2]
-    require(Path(filename).resolve() == ProjectStore(ledger).path,
-            'Prospective completion transaction belongs to another ledger')
-    before = read_checkpoint(parent_db, _checkpoint_name('before', workspace.name), root=ledger)
-    require(before is not None and before['record']['kind'] == 'project', 'Original prospective before checkpoint is missing')
-    original = before['record']['decision']
-    require(original.get('outcome') == 'plan_locked' and original.get('candidate', {}).get('id') == context['candidate'],
-            'Original prospective decision differs from the frozen request')
-    decision = {**original, 'execution': {'job_root': str(workspace), 'receipt_sha256': receipt['sha256'],
-                'run_status': receipt.get('run_status', 'UNKNOWN')},
-                'pending_evidence': ['Assess the original output; completion alone does not reject or prove a hypothesis']}
-    if request.get('guard') is not None:
-        require(regression is not None and guard_ref is not None, 'Prospective guard completion is unfinished')
-        decision['regression_review'] = {'status': regression['status'], 'report': guard_ref, 'scientific_support': 'UNKNOWN'}
-    else:
-        require(regression is None and guard_ref is None, 'Unexpected prospective guard completion')
-    identity = _checkpoint_name('after', workspace.name)
-    after = read_checkpoint(parent_db, identity, root=ledger)
-    if after is not None:
-        require(after['record']['kind'] == 'project' and after['record']['decision'] == decision
-                and after['record']['contract_sha256'] == before['record']['contract_sha256'],
-                'Original prospective after checkpoint conflicts with the retained completion')
-    return {'ledger_root': str(ledger), 'contract_sha256': before['record']['contract_sha256'],
-            'decision': decision, 'id': identity, 'after_checkpoint': after}
-
-
-@mutation()
-def _complete_prospective(workspace, request, receipt, regression=None, guard_ref=None):
-    if receipt is None or receipt.get('sha256') is None:
-        return  # A still-live background attempt has no completion to record.
-    tail = _prospective_completion(workspace, request, receipt, regression, guard_ref)
-    if tail is not None and tail['after_checkpoint'] is None:
-        from rds_checkpoints import save_checkpoint
-        save_checkpoint(tail['ledger_root'], tail['id'], ProjectStore(tail['ledger_root']).snapshot(),
-                        kind='project', decision=tail['decision'],
-                        _expected_contract_sha256=tail['contract_sha256'])
-
-
-def _recover_prospective(store, contract, receipt):
-    """Finish a frozen QUICK tail through the existing public recover boundary."""
-    if receipt is None or receipt.get('sha256') is None:
-        return
-    entries = [entry for entry in contract['bindings']
-               if entry['path'] == 'rds-exec-request.json' and entry['role'] == 'config']
-    if not entries:
-        return
-    require(len(entries) == 1, 'Retained QUICK request binding is ambiguous')
-    from rds_project import load_json
-    path = store.root / entries[0]['path']
-    require(path.resolve().is_relative_to(store.root) and file_sha(path) == entries[0]['sha256'],
-            'Retained QUICK request differs from its original binding')
-    request = load_json(path)
-    if request.get('research_context') is None:
-        return
-    regression, ref = None, None
-    if request.get('guard') is not None:
-        with store._db(True) as db:
-            rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' LIMIT 2").fetchall()
-        require(len(rows) == 1, 'Guard review is unfinished or ambiguous; inspect the retained job and allowance')
-        ref = json.loads(rows[0]['body'])['report']
-        report_path = Path(ref['path']).resolve()
-        require(report_path.is_relative_to((store.root / '.rds/cas').resolve()) and file_sha(report_path) == ref['sha256'],
-                'Guard report CAS integrity failure')
-        from rds_guard import read
-        regression = read(report_path)[0]
-    _complete_prospective(store.root, request, receipt, regression, ref)
 
 
 def _inputs(root, argv, binds):
@@ -940,9 +499,13 @@ def execute(args, review=None, *, _native_preparation_root=None):
             args.name = prior['name']
         resume_materialization = True
     locked_parents = {}
+    prepared_choice = None
 
     @contextmanager
     def admission_context():
+        nonlocal prepared_choice
+        prepared_choice = (_prepare_choice(args.ledger, review[0], review[1], args.choose, request)
+                           if review is not None and not resume_materialization else None)
         # The original allowance path acquires parent before child. Keep that
         # order during preparation and through the child's attempt commit.
         with mutation(), ExitStack() as locks:
@@ -986,8 +549,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 require(steering is None,
                         'Human steering changed before quick admission; use project create/execute')
         if review is not None and validate_choice:
-            from rds_advisor_coverage import project_context
-            choice(review[0], project_context(args.ledger, review[1]), args.choose)
+            from rds_quick_admission import check_choice
+            check_choice(locked_parents[owner], owner, request, prepared_choice)
     def admit_quick(_db, _run):
         check_quick_parents(validate_choice=not resume_materialization)
 
@@ -1011,6 +574,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 with ProjectStore(workspace)._db(True) as db:
                     event = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' ORDER BY id DESC LIMIT 1").fetchone()
                 guard_ref = json.loads(event['body'])['report'] if event is not None else None
+            if result.get('receipt') is None:
+                return result  # e.g. PENDING_MATERIALIZATION_RECOVERY: retained state, nothing to complete.
             _complete_prospective(workspace, request, result['receipt'], result.get('regression_review'), guard_ref)
             return result
         check_admission(workspace)
@@ -1062,7 +627,8 @@ def execute(args, review=None, *, _native_preparation_root=None):
                                               parent_contracts[owner])
                 else:
                     record_choice(args.ledger, review[0], review[1], args.choose, _checkpoint_name('before', args.name),
-                                  _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner])
+                                  _expected_contract_sha256=parent_contracts[owner], _parent_db=locked_parents[owner],
+                                  _prepared_choice=prepared_choice)
     if goal_raw is not None:
         bind_objective(root, goal_raw)
     with admission_context():
@@ -1173,9 +739,6 @@ def execute(args, review=None, *, _native_preparation_root=None):
                                 'request_sha256': digest(request), 'materialization_state': 'MATERIALIZED'}),))
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
-    if review is not None and not resume_materialization:
-        from rds_advisor_coverage import project_context
-        choice(review[0], project_context(args.ledger, review[1]), args.choose)
     receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,
                             admission_context=admission_context)
     regression = None
@@ -1197,288 +760,3 @@ def execute(args, review=None, *, _native_preparation_root=None):
     if regression is not None:
         result['regression_review'] = regression
     return result
-
-
-def _brief_move(summary, move):
-    """Retain a bounded explanation while keeping the historical next_move string."""
-    if not isinstance(move, dict):
-        summary['next_move'] = move
-        summary.pop('next_move_detail', None)
-        return
-    summary['next_move'] = move.get('kind', move)
-    detail = {}
-    for key in ('reason', 'basis', 'source'):
-        if isinstance(move.get(key), str):
-            limit = 512 if key == 'reason' else 128
-            detail[key] = move[key][:limit]
-            if len(move[key]) > limit:
-                detail[key + '_truncated'] = True
-    if detail:
-        summary['next_move_detail'] = detail
-    else:
-        summary.pop('next_move_detail', None)
-
-
-def serialize_brief(summary, *, newline=False):
-    """Share CLI JSON formatting and account for print's platform newline."""
-    raw = json.dumps(summary, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
-    return raw + os.linesep if newline else raw
-
-
-def compact_brief_planning(summary):
-    """Fit display-only planning around exact locators and deciding observations."""
-    planning = summary.get('planning')
-    if not isinstance(planning, dict):
-        return
-    # Match CLI serialization, including its newline and platform-dependent path.
-    def fits():
-        return len(serialize_brief(summary, newline=True).encode('utf-8')) < 1024
-
-    for key, omitted in (('ready_obligations', 'omitted_ready_obligations'),
-                         ('local_checks', 'local_checks_omitted'),
-                         ('open_predicates', 'open_predicates_omitted')):
-        rows = planning.get(key, [])
-        while rows and not fits():
-            rows.pop()
-            planning[omitted] = planning.get(omitted, 0) + 1
-        if not rows:
-            planning.pop(key, None)
-    if not fits():
-        summary['planning'] = {'scope': planning.get('scope'), 'details_omitted': True}
-        if planning.get('open_predicates_truncated'):
-            summary['planning']['open_predicates_truncated'] = planning['open_predicates_truncated']
-    if not fits():
-        minimal = summary.pop('planning')
-        # Keep the scope/alert only when required fields alone exceed the budget.
-        if not fits():
-            summary['planning'] = minimal
-
-
-def brief(root, value, version, formal=False):
-    """Persist full output and expose a bounded, truthful operational digest."""
-    ref = cas_json(root, value)
-    summary = {'status': value.get('status', value.get('run_status', 'RECORDED')), 'sha256': ref['sha256'], 'record': ref['path']}
-    for key in ('id', 'name', 'source_sha256', 'module', 'assurance'):
-        if key in value:
-            summary[key] = value[key]
-    # Wrapped results from project advance carry the Advisor owner under 'advisor';
-    # direct advise results are the owner. Select recommendations from that owner.
-    owner = value.get('advisor') or value
-    if 'dependency_map' in value and 'input_review' in value:
-        summary['authorization'] = 'UNCHANGED'
-        if 'snapshot_sha256' in value:
-            summary['snapshot_sha256'] = value['snapshot_sha256']
-        goals = value.get('goals', {})
-        summary['goals'] = {name: row['status'] for name, row in list(goals.items())[:3]}
-        summary['omitted_goals'] = max(0, len(goals) - 3)
-        review = value['input_review']
-        summary['input_repairs'] = len(review['repairs']) + len(review.get('format_repairs', []))
-        summary['input_warnings'] = len(review['warnings'])
-        summary['input_issues'] = len(review['errors'])
-        step = value.get('next_step', {})
-        # Full field diagnostics and tables remain at the existing CAS locator.
-        summary['next_step'] = {k: v for k, v in step.items() if k != 'fields'}
-        if step.get('fields'):
-            summary['next_step']['fields'] = step['fields'][:3]
-            summary['next_step']['omitted_fields'] = max(0, len(step['fields']) - 3)
-        if 'revision' in value:
-            summary['lost_support_count'] = len(value['revision']['lost_support'])
-            summary['gained_support_count'] = len(value['revision']['gained_support'])
-            summary['lost_support'] = value['revision']['lost_support'][:3]
-            summary['gained_support'] = value['revision']['gained_support'][:3]
-        if 'support_cone' in value:
-            cone = value['support_cone']
-            summary['support_cone'] = {key: cone[key] for key in ('node_id', 'supported', 'derivation_rule')}
-            for key in ('support_cone_nodes', 'support_cone_rules'):
-                summary['support_cone'][key] = cone[key][:3]
-                summary['support_cone']['omitted_' + key] = max(0, len(cone[key]) - 3)
-    if value.get('status') == 'LOCAL_CATALOG' and isinstance(value.get('tools'), list):
-        registered = {row['data']['name'] for row in value['tools'] if row['kind'] == 'tool-adoption'}
-        candidates = sorted((row['data'] for row in value['tools'] if row['kind'] == 'tool'),
-                            key=lambda item: item['name'])
-        summary['tool_count'] = len(candidates)
-        summary['omitted_tools'] = max(0, len(candidates) - 3)
-        summary['reuse_checked'] = False
-        summary['tools'] = []
-        for item in candidates[:3]:
-            entry = item['entry']
-            row = {'name': item['name'], 'entry': entry if len(entry) <= 128 else None,
-                   'recorded_registration': item['name'] in registered}
-            if len(entry) > 128:
-                row['entry_omitted'] = True
-            summary['tools'].append(row)
-    if 'affected' in value:
-        summary['affected_count'] = len(value['affected'])
-    if 'recommendations' in owner:
-        recommendations = owner['recommendations']
-        summary['gaps'] = sum(len(r.get('frontier', {}).get('gaps', [])) for r in recommendations)
-        summary['candidates'] = [c.get('id') for r in recommendations for c in r.get('search', {}).get('candidates', [])][:3]
-        selection = next((r['search']['selection_review'] for r in recommendations
-                          if 'selection_review' in r.get('search', {})), None)
-        flags = [f.get('kind') for r in recommendations for f in r.get('review', {}).get('flags', [])]
-        if selection is not None:
-            summary['selection_basis'] = selection['basis']
-            flags += [f['kind'] for f in selection['flags']]
-            if 'next_move' in selection:
-                _brief_move(summary, selection['next_move'])
-            if 'goal' in selection:
-                summary['goal_input_status'] = selection['goal']['status']
-            if 'planning' in selection:
-                owner = value.get('advisor') or value
-                planning = (owner.get('planning', selection['planning'])
-                            if owner.get('assurance') == 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
-                            else selection['planning'])
-                checks = [{'candidate': row['candidate'][:64],
-                           **({'candidate_truncated': True} if len(row['candidate']) > 64 else {}),
-                           'target': row['target'][:128],
-                           **({'target_truncated': True} if len(row['target']) > 128 else {}),
-                           **({'goal_target': row['goal_target'][:128],
-                               **({'goal_target_truncated': True} if len(row['goal_target']) > 128 else {})}
-                              if 'goal_target' in row else {})}
-                          for row in planning.get('local_checks', [])[:8]]
-                open_predicates = [name[:128] for name in planning.get('open_predicates', [])[:8]]
-                summary['planning'] = {'scope': planning.get('scope'),
-                                       'local_checks': checks,
-                                       'local_checks_omitted': max(0, len(planning.get('local_checks', [])) - 8),
-                                       'open_predicates': open_predicates,
-                                       'open_predicates_omitted': max(0, len(planning.get('open_predicates', [])) - 8),
-                                       'ready_obligations': list(planning.get('ready_obligations', [])),
-                                       'omitted_ready_obligations': planning.get('omitted_ready_obligations', 0)}
-                projected = summary['planning']
-                truncated = sum(len(name) > 128 for name in planning.get('open_predicates', [])[:8])
-                if truncated:
-                    projected['open_predicates_truncated'] = truncated
-                for key, omitted in (('local_checks', 'local_checks_omitted'),
-                                     ('open_predicates', 'open_predicates_omitted'),
-                                     ('ready_obligations', 'omitted_ready_obligations')):
-                    if not projected[key]:
-                        projected.pop(key)
-                    if not projected[omitted] and key != 'open_predicates':
-                        projected.pop(omitted)
-                if not open_predicates and not projected['open_predicates_omitted']:
-                    projected.pop('open_predicates_omitted')
-        advisory_moves = {'GOAL_CONTRIBUTION_UNDECLARED': 'REVIEW_GOAL_LINK',
-                          'GOAL_CONTRIBUTION_INVALID': 'REVIEW_GOAL_LINK'}
-        relevant = [kind for kind in flags if kind in advisory_moves and advisory_moves[kind] == summary.get('next_move')]
-        flags = relevant + [kind for kind in flags if kind not in advisory_moves]
-        summary['flags'] = list(dict.fromkeys(flags))[:3]
-    owned = value.get('advisor') or value
-    graph_reviews = [r['search'].get('analysis_coverage') for r in owned.get('recommendations', [])
-                     if 'search' in r]
-    analysis = owned.get('analysis_coverage') or next((r for r in graph_reviews if r), None)
-    if analysis:
-        # Per-graph identities and diagnostics remain in the hashed full record.
-        # Keep coverage visible without repeating hashes alongside decision detail.
-        summary['analysis_coverage'] = {key: analysis[key] for key in ('status', 'full')}
-        summary['analysis_coverage']['graph_count'] = len(analysis['graphs'])
-        for key in ('node_count', 'edge_count'):
-            counts = [graph.get(key) for graph in analysis['graphs']]
-            summary['analysis_coverage'][key] = sum(counts) if all(type(n) is int for n in counts) else None
-        if analysis['reasons']:
-            summary['analysis_coverage']['reasons'] = analysis['reasons'][:3]
-            summary['analysis_coverage']['omitted_reasons'] = max(0, len(analysis['reasons']) - 3)
-    if 'steering' in owned:
-        state = owned['steering']
-        summary['steering'] = {key: state.get(key) for key in ('revision', 'paused', 'kind', 'instruction_id')}
-        for key in ('withdrawn_runs', 'preferred_runs'):
-            summary['steering'][key] = state.get(key, [])[:3]
-            summary['steering']['omitted_' + key] = max(0, len(state.get(key, [])) - 3)
-    if 'working_set' in owned:
-        summary['working_set'] = owned['working_set']
-    if 'shadow_plan' in owned:
-        plan = owned['shadow_plan']
-        summary['shadow_plan'] = {'status': plan['status'], 'summary': plan.get('summary'),
-                                  'comparison': plan.get('comparison'), 'selection_applied': False,
-                                  'expand': 'project plan --shadow'}
-    if 'advisor' in value and 'receipt' in value:
-        summary.update(status=value['receipt'].get('run_status', 'UNKNOWN'),
-                       run_id=value['receipt'].get('run_id'), receipt_sha256=value['receipt'].get('sha256'),
-                       advisor_status=owned.get('status'), scientific_support='UNKNOWN')
-        if owned.get('reason'):
-            summary['advisor_reason'] = str(owned['reason'])[:512]
-    if owned.get('assurance') == 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF':
-        summary.update(selected_run=owned.get('selected_run'), snapshot_sha256=owned.get('snapshot_sha256'),
-                       authorization='UNCHANGED', scientific_support='UNKNOWN', assurance=owned['assurance'])
-        if owned.get('graph_ranker'):
-            ranker = owned['graph_ranker']
-            summary['graph_ranker'] = {key: ranker.get(key) for key in (
-                'status', 'mode', 'selection_applied', 'precedence', 'reason')}
-            summary['graph_ranker']['preferred'] = ranker.get('preferred', [])[:4]
-            summary['graph_ranker']['scope_count'] = len(ranker.get('scope', []))
-        if owned.get('next_move'):
-            move = owned['next_move']
-            _brief_move(summary, move)
-        if owned.get('feasibility'):
-            forecast = owned['feasibility']
-            summary['feasibility'] = {'next_action':forecast['next_action'],
-                'plans':[{'id':p['id'],'status':p['status']} for p in forecast['plans'][:4]],
-                'pilot_budget':forecast['pilot_budget']}
-            repair = forecast.get('repair_request')
-            if repair:
-                summary['tool_workbench_command'] = repair['tool_workbench_command']
-        coverage = owned.get('coverage', {})
-        summary['coverage'] = {key: coverage.get(key, 0) for key in ('runs', 'receipts', 'artifacts', 'parsed_observations')}
-        summary['coverage']['unparsed_outputs'] = len(coverage.get('unparsed_outputs', []))
-        summary['coverage']['errors'] = len(coverage.get('errors', []))
-        summary['coverage']['gaps'] = len(coverage.get('gaps', []))
-        summary['coverage']['declared_outputs'] = len(coverage.get('declared_outputs', []))
-        summary['coverage']['missing_outputs'] = sum(row.get('status') == 'MISSING'
-                                                     for row in coverage.get('declared_outputs', []))
-        summary['coverage_errors'] = coverage.get('errors', [])[:3]
-        summary['coverage_gaps'] = coverage.get('gaps', [])[:3]
-        if 'tool_utilization' in owned:
-            use = owned['tool_utilization']
-            summary['tool_utilization'] = {key: use[key] for key in
-                ('scope', 'counts', 'applicable_use_rate', 'applicable_consumption_rate')}
-        warnings = [row['kind'] for row in owned.get('warnings', []) if 'kind' in row]
-        summary['flags'] = list(dict.fromkeys(warnings + summary.get('flags', [])))[:5]
-        summary['omitted_flags'] = max(0, len(set(warnings)) - len(summary['flags']))
-    if 'job_root' in value:
-        summary['job_root'] = value['job_root']
-        summary['run_status'] = (value.get('receipt') or {}).get('run_status', 'UNKNOWN')
-    if 'regression_review' in value:
-        summary['regression_status'] = value['regression_review'].get('status', 'UNKNOWN')
-        summary['promotion_eligible'] = value['regression_review'].get('promotion_eligible') is True
-    if 'checkpoint' in value:
-        summary['checkpoint'] = value['checkpoint'].get('id')
-        summary['route'] = value['checkpoint'].get('candidate_id', value.get('route'))
-    if isinstance(value.get('runs'), list):
-        summary['runs'] = len(value['runs'])
-        summary['receipts'] = len(value.get('receipts', []))
-        summary['run_states'] = dict(Counter(run.get('status', run.get('run_status', 'UNKNOWN')) for run in value['runs']))
-        latest = max((receipt for receipt in value.get('receipts', [])
-                      if isinstance(receipt, dict) and type(receipt.get('ended_at')) in (int, float)
-                      and isinstance(receipt.get('cwd'), str) and Path(receipt['cwd']).is_absolute()),
-                     key=lambda receipt: receipt['ended_at'], default=None)
-        if latest is not None:
-            summary['latest_receipt'] = {key: latest.get(key) for key in ('run_id', 'run_status', 'exit_code')}
-            if latest.get('errors'):
-                error = latest['errors'][0]
-                summary['latest_receipt']['error_count'] = len(latest['errors'])
-                summary['latest_receipt']['errors'] = [error[:197] + '...' if len(error) > 200 else error]
-            stderr = next((artifact for artifact in latest.get('artifacts', [])
-                           if artifact.get('kind') == 'stderr.bin' and artifact.get('size', 0) > 0), None)
-            if stderr is not None:
-                summary['latest_receipt']['stderr_path'] = str((Path(latest['cwd']) / stderr['path']).resolve())
-    ledger_root = Path(value.get('ledger_root', root)).resolve()
-    ledger = ledger_root / '.rds' / 'project.sqlite3'
-    if ledger.is_file() and isinstance(value.get('runs'), list) and isinstance(value.get('contract'), dict):
-        try:
-            summary['next_move'] = ({'next_move': 'inspect current program-owned evidence and selection',
-                                     'command': 'python -B scripts/rds_cli.py project next'}
-                                    if 'advisor_policy' in value['contract'] else ProjectStore(ledger_root).next_move())
-        except (ValueError, OSError, sqlite3.Error):
-            summary['next_move'] = {'next_move': 'inspect recorded project state', 'command': 'python -B scripts/rds_cli.py project status'}
-    assurance = value.get('assurance') if formal else None
-    formal_status = value.get('status', 'UNKNOWN') if formal and assurance in {'CERTIFICATE_CHECKED', 'LEAN_KERNEL_CHECKED'} else 'UNKNOWN'
-    if formal:
-        summary['formal_status'] = formal_status
-        summary['formal_assurance'] = assurance or 'NONE'
-        summary['application_status'] = value.get('application_status', 'UNKNOWN')
-    if ledger.is_file():
-        store = ProjectStore(ledger_root)
-        with store._db(True) as db:
-            summary['ledger_checkpoints'] = 0
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
-                summary['ledger_checkpoints'] = db.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0]
-    return summary

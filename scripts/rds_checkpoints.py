@@ -38,7 +38,7 @@ def _checkpoint_record(root, checkpoint_id, snapshot, *, kind, decision=None):
         raise ValueError("Decision context must be an object")
     if decision:
         # Checkpoints are append-only: a route record review would refuse must never be written.
-        from rds_advisor import validate_checkpoint_decision
+        from rds_checkpoint_decision import validate_checkpoint_decision
         validate_checkpoint_decision(decision, checkpoint_id, Path(root).resolve() / ".rds")
     record = {"schema": SCHEMA, "id": checkpoint_id, "kind": kind,
               "created_ns": time.time_ns(), "contract_sha256": _sha(snapshot["contract"]),
@@ -74,7 +74,7 @@ def read_checkpoint(db, checkpoint_id, *, root):
             or not isinstance(record['snapshot'].get('contract'), dict)
             or _sha(record['snapshot']['contract']) != record.get('contract_sha256')):
         raise ValueError('Checkpoint contract mismatch: ' + checkpoint_id)
-    from rds_advisor import validate_checkpoint_decision
+    from rds_checkpoint_decision import validate_checkpoint_decision
     validate_checkpoint_decision(record.get('decision', {}), checkpoint_id, Path(root).resolve() / '.rds')
     return {'record': record, 'sha256': sha}
 

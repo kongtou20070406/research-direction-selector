@@ -24,6 +24,12 @@ import rds_autonomy as autonomy
 import rds_method_revision as revision
 from rds_autonomy_worker import output_paths
 
+# Startup headroom per fixture process, not a value under test. The kernel clock
+# starts before launch; loaded Windows runners have exceeded 2 s for the solve
+# run and 4 s for the repair worker plus provider. Timeout tests pass their own.
+RUN_SECONDS = 10
+REPAIR_SECONDS = 10
+
 OLD = "import json,pathlib,sys\nvalue=0\npathlib.Path(sys.argv[1]).write_text(json.dumps({'score':value}),encoding='utf-8')\n"
 NEW = "import json,pathlib,sys\nvalue=sum([1,2,3])\npathlib.Path(sys.argv[1]).write_text(json.dumps({'score':value}),encoding='utf-8')\n"
 PROVIDER = '''import json,pathlib,sys,time
@@ -64,7 +70,7 @@ class AutonomyTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value if isinstance(value, str) else json.dumps(value, allow_nan=False), encoding='utf-8')
 
-    def build(self, *, modes=None, slots=1, max_steps=4, timeout=4, budget=60, baseline=False, control_wall=None,
+    def build(self, *, modes=None, slots=1, max_steps=4, timeout=REPAIR_SECONDS, budget=60, baseline=False, control_wall=None,
               legacy_worker=False):
         self.write('code.py', OLD)
         self.write('provider.py', PROVIDER.replace('MODES', repr(modes or {})).replace('NEW_SOURCE', repr(NEW)))
@@ -96,7 +102,7 @@ class AutonomyTests(unittest.TestCase):
             response = 'outputs/' + rid + '.json'
             argv = [sys.executable, '-B', 'worker.py', '--run', rid] if is_repair else [sys.executable, '-B', 'code.py', response]
             outputs = output_paths(response) if is_repair else [response]
-            duration = timeout if is_repair else 2
+            duration = timeout if is_repair else RUN_SECONDS
             manifest = {'schema': 1, 'id': rid, 'arm': 'tool', 'control_id': None, 'protocol': ref,
                         'argv': argv, 'outpaths': outputs, 'timeout_seconds': duration,
                         'resource_estimates': {'wall_seconds': duration}}
@@ -287,7 +293,7 @@ class AutonomyTests(unittest.TestCase):
                 self.assertEqual(releases[0]['controller_wall_seconds'], phase['real_wall_seconds'])
                 self.assertEqual(releases[0]['executed'], [])
                 after = state['budget']['wall_seconds']
-                self.assertEqual(after['reserved'], 2.)  # Only the unstarted baseline holds budget.
+                self.assertEqual(after['reserved'], RUN_SECONDS)  # Only the unstarted baseline holds budget.
                 self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], 1.)
                 self.assertAlmostEqual(after['charged_estimate'] - before['charged_estimate'],
                                        phase['real_wall_seconds'] - 1.)
@@ -334,7 +340,14 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(self.calls(), ['repair1'])
         response.write_bytes(original)
         recovered = self.cli('project', 'drive', '--max-steps', '4')
-        self.assertEqual(self.calls(), ['repair1'])
+        # A later experiment timeout can legitimately select another repair.
+        # Retain its original result instead of losing the cause to a call-count diff.
+        diagnostics = {'phase': 'RESTORED_ORIGINAL', 'status': recovered.get('status'),
+                       'executed': recovered.get('executed'),
+                       'receipts': [{key: row.get(key) for key in
+                                    ('run_id', 'run_status', 'timeout', 'exit_code', 'errors')}
+                                   for row in self.store.snapshot()['receipts']]}
+        self.assertEqual(self.calls(), ['repair1'], diagnostics)
         self.assertEqual(len(self.events('METHOD_REVISION_ADOPTED')), 1)
         self.assertEqual(self.events(autonomy.PROCESSED)[0]['outcome'], 'ADOPTED')
         self.assertNotEqual(recovered['status'], 'HANDOFF_REQUIRED', recovered)
@@ -410,7 +423,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(prepared['request'], event['request'])
         self.assertEqual(prepared['parent_sha256'], event['parent_sha256'])
         self.assertEqual(prepared['provider'], self.contract['advisor_policy']['autonomy']['provider'])
-        self.assertEqual(prepared['provider_timeout_seconds'], 2)
+        self.assertEqual(prepared['provider_timeout_seconds'], REPAIR_SECONDS - 2)
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
         self.assertEqual(state['runs'], before['runs'])
@@ -434,6 +447,26 @@ class AutonomyTests(unittest.TestCase):
         self.assert_single_model_cost(after)
         self.assertEqual(self.calls(), ['repair1'])
         self.assertEqual(self.events('CAMPAIGN_STARTED'), [start])
+
+    def test_outer_sigterm_settles_the_controller_claim_and_names_partial_work(self):
+        # #215: an outer harness timeout arrives as SIGTERM mid-pass. The claim is
+        # released, measured overhead charged, and the next pass is admitted.
+        import signal
+        import rds_owned_advisor
+        self.build(baseline=True)
+        previous = signal.getsignal(signal.SIGTERM)
+        def terminated(*args, **kwargs):
+            signal.raise_signal(signal.SIGTERM)
+        with patch.object(rds_owned_advisor, 'review', side_effect=terminated):
+            result = autonomy.drive(self.store, max_steps=1)
+        self.assertEqual(result['status'], 'INTERRUPTED')
+        self.assertEqual(result['reason'], 'SIGTERM')
+        self.assertEqual(result['partial']['executed'], [])
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        released = self.events('AUTONOMY_DRIVE_RELEASED')
+        self.assertEqual([e['reason'] for e in released], ['INTERRUPTED'])
+        self.assertEqual(self.store.snapshot()['budget']['wall_seconds']['reserved'], 0)
+        self.assertNotEqual(autonomy.drive(self.store, max_steps=1)['status'], 'CONTROLLER_ADMISSION_BLOCKED')
 
     def test_request_carries_hash_checked_task_inputs_and_original_outputs(self):
         # A wrong value that exits 0 leaves no stderr tail; the model needs the task content itself.
@@ -468,6 +501,20 @@ class AutonomyTests(unittest.TestCase):
             self.assertLessEqual(len(entry['text']), 4)
             self.assertEqual(entry['truncated'], entry['size'] > 4)
         self.assertTrue(excerpts['original_outputs'][0]['truncated'])
+        # The drift is named, never silently dropped or serialized as task content (#203).
+        drift = [e for e in excerpts['unusable_evidence'] if e['path'] == 'config.json']
+        self.assertEqual([e['reason'] for e in drift], ['INPUT_HASH_MISMATCH'])
+        self.assertEqual(drift[0]['observed_sha256'], hashlib.sha256((self.root / 'config.json').read_bytes()).hexdigest())
+        self.assertNotEqual(drift[0]['observed_sha256'], drift[0]['sha256'])
+
+    def test_base_source_must_match_the_prepared_workbench_bytes(self):
+        path = self.root / 'base.py'
+        path.write_bytes(b'value = 0\n')
+        prepared = hashlib.sha256(b'value = 0\n').hexdigest()
+        self.assertEqual(autonomy._base_source(self.store, 'base.py', prepared), 'value = 0\n')
+        path.write_bytes(b'value = 1\n')  # Edited after preparation: not the bound base.
+        with self.assertRaisesRegex(Exception, 'changed after workbench preparation'):
+            autonomy._base_source(self.store, 'base.py', prepared)
 
     def test_inputs_and_outputs_share_the_aggregate_excerpt_allowance(self):
         self.build(baseline=True)
@@ -596,12 +643,17 @@ class AutonomyTests(unittest.TestCase):
         self.assertFalse((self.root / 'outputs/solve.json').exists())
 
     def test_timed_out_provider_retains_original_attempt_and_fee(self):
-        self.build(modes={'repair1': 'timeout'}, timeout=3)
+        # Deliberately short: the worker stops the 5-second provider after 5 - 2 s,
+        # which leaves the provider time to start and log its single call.
+        self.build(modes={'repair1': 'timeout'}, timeout=5)
         self.cli('project', 'drive', '--max-steps', '4')
         before = self.store.snapshot()
         self.cli('project', 'drive', '--max-steps', '4')
         self.assertEqual(self.calls(), ['repair1'])
         self.assert_single_model_cost(before)
+        receipt = before['receipts'][0]
+        # The worker, not the kernel deadline, must have stopped the provider.
+        self.assertEqual((receipt['run_status'], receipt['timeout']), ('SUCCEEDED', False), receipt)
         self.assertTrue(json.loads((self.root / 'outputs/repair1.json').read_text())['timed_out'])
         self.assertGreater(before['budget']['wall_seconds']['spent_measured'], 0)
 

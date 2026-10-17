@@ -16,7 +16,9 @@ from types import SimpleNamespace
 
 from rds_math import blob, get, put, read_bytes, records
 from rds_project import ProjectStore, canonical, digest, file_sha, number, require
-from rds_quick import cas_bytes, execute, _charge_ledger
+from rds_cas import cas_bytes
+from rds_quick_ledger import _charge_ledger
+from rds_quick import execute
 from rds_mutation import mutation
 
 BUILTINS = set('abs all any bool dict enumerate filter float frozenset int isinstance len list map max min next range reversed round set sorted str sum tuple zip ArithmeticError AssertionError IndexError KeyError TypeError ValueError ZeroDivisionError RecursionError UnicodeError'.split())
@@ -120,7 +122,7 @@ def extract(root, source, entry, name):
 
 
 def _cases(raw):
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     cases = strict_json(raw.decode('utf-8-sig'))
     require(isinstance(cases, list) and 1 <= len(cases) <= 64, 'Supply 1–64 explicit local cases')
     for case in cases:

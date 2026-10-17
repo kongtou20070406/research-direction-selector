@@ -1,0 +1,29 @@
+{
+  "decisions": [
+    {
+      "id": "j01-0",
+      "disposition": "adopt",
+      "reason": "The cubic reproduces all three receipts: y(-1)=0, y(0)=1, and y(-2)=-7. Retain it as a testable hypothesis; these measurements do not uniquely identify the law.",
+      "next_step": "Measure y at x=1, where this cubic predicts 2, the proposed quadratic predicts -4, and the proposed magnitude cubic predicts 0.",
+      "hypothesis": null
+    }
+  ],
+  "proposals": [
+    {
+      "id": "quadratic_rival",
+      "predict": {
+        "y": "1 - 2*x - 3*x**2"
+      },
+      "applies": null,
+      "statement": "This quadratic fits all three receipts and offers a different extrapolation: y=-4 at x=1."
+    },
+    {
+      "id": "magnitude_cubic_rival",
+      "predict": {
+        "y": "1 - abs(x)**3"
+      },
+      "applies": null,
+      "statement": "All measured inputs are nonpositive, where this magnitude-based cubic agrees with the candidate. It predicts y=0 at x=1."
+    }
+  ]
+}

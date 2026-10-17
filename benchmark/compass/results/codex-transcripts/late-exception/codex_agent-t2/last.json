@@ -1,0 +1,1 @@
+{"status":"CLAIM","law_python":"def law(x):\n    return x*x + 1 if x < 7 else 0\n","accepted_arm":null,"rationale":"Measured all 10 declared candidates exactly once. For x=0 through 9, outputs were [1,2,5,10,17,26,37,0,0,0], matching this law exactly. The claim covers only the declared domain; a corrected measurement would require revision.","confidence":1}

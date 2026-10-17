@@ -1,0 +1,7 @@
+{
+  "status": "CLAIM",
+  "law_python": "def law(x):\n    return 1 + 2 * sum(x % d == 0 for d in range(1, x + 1))\n",
+  "accepted_arm": null,
+  "rationale": "y equals twice the number of positive divisors of x, plus one. This matches all 20 individually measured candidates exactly. The claim covers the declared domain, integers 1 through 20; a corrected measurement contradicting this formula would change it.",
+  "confidence": 1.0
+}

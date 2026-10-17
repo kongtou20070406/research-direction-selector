@@ -2,7 +2,7 @@
 import argparse
 import traceback
 
-from rds_project import ProjectStore
+from rds_app import open_store
 
 
 def main():
@@ -11,7 +11,7 @@ def main():
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--attempt-id", required=True)
     args = parser.parse_args()
-    store = ProjectStore(args.root)
+    store = open_store(args.root)
     try:
         store._execute_claim(args.run_id, args.attempt_id)
     except Exception:

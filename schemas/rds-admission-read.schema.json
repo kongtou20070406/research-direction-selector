@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rds-admission-read-v1",
+  "title": "Native prepared admission data (audit representation only)",
+  "$comment": "No JSON loader or permission grant; production accepts the native frozen type only. Original contract, budget and execution checks remain required.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "ledger_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ledger_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "relative": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "relative",
+          "sha256",
+          "size"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "ledger_path",
+    "manifest_sha256",
+    "ledger_sha256",
+    "files"
+  ]
+}

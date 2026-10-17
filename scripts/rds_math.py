@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 
 from rds_project import ProjectStore, canonical, digest, require
-from rds_quick import cas_bytes
+from rds_cas import cas_bytes
 from rds_mutation import mutation
 
 MAX_BYTES = 8 * 1024 * 1024
@@ -27,7 +27,7 @@ def read_bytes(path):
 
 def objective_spec(raw):
     require(len(raw) <= 64 * 1024, 'Objective declaration exceeds 64 KiB')
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     spec = strict_json(raw.decode('utf-8-sig'))
     require(isinstance(spec, dict) and set(spec) == FIELDS | {'schema', 'question_id', 'goal_revision', 'scope'},
             'Objective needs schema, question_id, goal_revision, scope and all six mathematical fields')

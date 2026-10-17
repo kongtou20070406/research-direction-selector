@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rds-maintenance-admission-v1",
+  "title": "Prepared maintenance review (audit representation only)",
+  "$comment": "No JSON loader or permission grant. A frozen review or refusal crosses the write-lock boundary; original budget and execution rules remain authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_sha256", "review_json", "rejection", "fence"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "review_json": {"type": ["string", "null"]},
+    "rejection": {"type": ["string", "null"]},
+    "fence": {"$ref": "rds-admission-read.schema.json"}
+  },
+  "oneOf": [
+    {"properties": {"review_json": {"type": "string"}, "rejection": {"type": "null"}}},
+    {"properties": {"review_json": {"type": "null"}, "rejection": {"type": "string"}}}
+  ]
+}

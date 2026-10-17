@@ -1,0 +1,2468 @@
+{
+ "schema": "rds-compass-benchmark-v1",
+ "generated_at": "2026-10-15T09:08:53Z",
+ "environment": {
+  "python": "3.12.0",
+  "platform": "macOS-27.0-arm64-arm-64bit",
+  "git_head": "445a1379b7fa383b2fdde7a0cbd039376e892a1a"
+ },
+ "arms": {
+  "codex_agent": "REAL bare frontier agent: Codex CLI gpt-6.1-sol, reasoning xhigh, default tier (no Fast), measurements bridged through the same kernel receipts; transcript audited for contamination",
+  "compass_codex": "RDS v6 Compass drive with Codex gpt-6.1-sol (xhigh, default tier) as the jump agent",
+  "provider_agent": "RUN as codex_agent"
+ },
+ "shared": "Same kernel contract, receipts, grammar and synthesis bound for every arm",
+ "tasks": [
+  {
+   "id": "visible-check-trap",
+   "trap": "A simple law passes the first visible checks but not the declared space",
+   "xs": [
+    -1,
+    0,
+    1,
+    2,
+    -2,
+    3,
+    -3,
+    4
+   ],
+   "hypotheses": [
+    [
+     "linear",
+     "x+1"
+    ],
+    [
+     "linear_same",
+     "1+x"
+    ],
+    [
+     "square",
+     "x*x+1"
+    ]
+   ]
+  },
+  {
+   "id": "late-exception",
+   "trap": "A regime change sits away from the inputs an in-order agent buys first",
+   "xs": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+   ],
+   "hypotheses": [
+    [
+     "linear",
+     "x+1"
+    ]
+   ]
+  },
+  {
+   "id": "capability-gap",
+   "trap": "No law exists in the arithmetic grammar without a new feature tool",
+   "xs": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20
+   ],
+   "hypotheses": [
+    [
+     "linear",
+     "x+1"
+    ]
+   ],
+   "sessions": 2
+  },
+  {
+   "id": "mean-masking",
+   "trap": "The best mean hides a large per-sample regression",
+   "acceptable": [
+    "variant_2"
+   ],
+   "max_degradation": 1
+  }
+ ],
+ "ground_truth": "Sealed in the scorer; arms never read it",
+ "summary": {
+  "codex_agent": {
+   "tasks": 4,
+   "runs": 12,
+   "verified_discoveries": 12,
+   "false_certifications": 0,
+   "contaminated": 0,
+   "repeat_refutation_waste": 0,
+   "experiments": 112
+  },
+  "compass_codex": {
+   "tasks": 4,
+   "runs": 15,
+   "verified_discoveries": 15,
+   "false_certifications": 0,
+   "contaminated": 0,
+   "repeat_refutation_waste": 0,
+   "experiments": 87
+  }
+ },
+ "trials": 3,
+ "tool_compounding": [
+  {
+   "arm": "compass_codex",
+   "trial": 1,
+   "session": 1,
+   "tools_tried": 16,
+   "library_offered": 0,
+   "qualified": [
+    [
+     "divisors",
+     "SYNTHESIZED",
+     null
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  },
+  {
+   "arm": "compass_codex",
+   "trial": 1,
+   "session": 2,
+   "tools_tried": 1,
+   "library_offered": 1,
+   "qualified": [
+    [
+     "divisors",
+     "LIBRARY",
+     "ORIGIN_VERIFIED"
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  },
+  {
+   "arm": "compass_codex",
+   "trial": 2,
+   "session": 1,
+   "tools_tried": 16,
+   "library_offered": 0,
+   "qualified": [
+    [
+     "divisors",
+     "SYNTHESIZED",
+     null
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  },
+  {
+   "arm": "compass_codex",
+   "trial": 2,
+   "session": 2,
+   "tools_tried": 1,
+   "library_offered": 1,
+   "qualified": [
+    [
+     "divisors",
+     "LIBRARY",
+     "ORIGIN_VERIFIED"
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  },
+  {
+   "arm": "compass_codex",
+   "trial": 3,
+   "session": 1,
+   "tools_tried": 16,
+   "library_offered": 0,
+   "qualified": [
+    [
+     "divisors",
+     "SYNTHESIZED",
+     null
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  },
+  {
+   "arm": "compass_codex",
+   "trial": 3,
+   "session": 2,
+   "tools_tried": 1,
+   "library_offered": 1,
+   "qualified": [
+    [
+     "divisors",
+     "LIBRARY",
+     "ORIGIN_VERIFIED"
+    ]
+   ],
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED"
+  }
+ ],
+ "rows": [
+  {
+   "task": "visible-check-trap",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 35.5,
+    "requests": 8,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 79472,
+     "cached_input_tokens": 46592,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 812,
+     "reasoning_output_tokens": 380
+    },
+    "commands": 10,
+    "events_sha256": "5bb038a391812016e641a954d36c2affd6a6a4bc995081c369ea07cab4b9d7b3"
+   },
+   "confidence": 1.0,
+   "rationale": "Measured all eight declared candidates exactly once. For x = -3,-2,-1,0,1,2,3,4, observed y = -26,-7,0,1,2,9,28,65, respectively. Every value equals x**3 + 1. This exhausts the declared domain; a contradictory measurement would change the claim.",
+   "law": "def law(x):\n    return x**3 + 1\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 8,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "4a285a0554c64f0c6355c3c985564ea98fb372c0c8815b30ea63dc3df02b2837"
+    },
+    {
+     "run_id": "compass-m2",
+     "sha256": "fd401a6eb14660527bc23f3ecd7d44a29262c369938741d14907bfbc5e3d72dc"
+    },
+    {
+     "run_id": "compass-m3",
+     "sha256": "e4f5616da495164ac59b019a95241d349052992daac703828b648f6708f7fb9b"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "24d4b11f8beda2972c5c295d83dafd06d829e3c03a99444ff25e3a9ebd0d7268"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "2d18c37b714dafe4d59110b3ff61efd415ab7eead3e4c9b5ca46ff36e7f2d631"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "50691c9e78a9f02b2af2df99199ffc4d3ebaa7d34a653de8c1b6b83e8ab54fe9"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "062308fb76a9f7d22edfea78d228a9e40615350061e362a0215744a2c5c68f54"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "6cf41673e97dc29b23aeacd3313dcb61795c42e0e7713adead6576314eea5bdc"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 35.565
+  },
+  {
+   "task": "visible-check-trap",
+   "trial": 1,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "(((x * x) * x) + 1)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 0,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 13,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j01",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j01-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j01-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 30.4,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 31409,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 998,
+       "reasoning_output_tokens": 730
+      },
+      "events_sha256": "4a869951f4c9cf9004e4b4997e0c19c3497da3d6565a3a4ab397d5818ee99513"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 5,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "d0b4ccd552403c6241d2c7f696bc1bed24b41975a88c276b5e20a837471044bc"
+    },
+    {
+     "run_id": "compass-m2",
+     "sha256": "3631add461a61e46935cea29edcfb82678dc31ba5402023575556b6ddb084d2b"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "e33760d06b5d7ad2a89da5a135beff905f0c7f584b5d56bb9ac68bf2c62196e3"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "e50ed9ca56c407a6dfcae8daa23502bc0038297460e3d80356cf7228b7038203"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "b9c875393892ea235da796a2aae2c9897dcddc608fa1ede7b88a7a49a9422b2b"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 32.803
+  },
+  {
+   "task": "visible-check-trap",
+   "trial": 2,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 43.2,
+    "requests": 8,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 112189,
+     "cached_input_tokens": 102144,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 961,
+     "reasoning_output_tokens": 504
+    },
+    "commands": 10,
+    "events_sha256": "3edb3650d48c0c85335b5fe67552ba17089b5ba8d6e6c4c3e1de8f20b83ae492"
+   },
+   "confidence": 1,
+   "rationale": "All eight declared candidates were measured. For x = -3,-2,-1,0,1,2,3,4, the outputs were -26,-7,0,1,2,9,28,65, exactly matching x**3 + 1. This exhausts the declared domain. A corrected measurement could change the conclusion; an expanded domain would require further evidence.",
+   "law": "def law(x):\n    return x**3 + 1\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 8,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "8dcb7bba421c8c51a5d3a8424fc45bdf068ed6965b16e66166789a5ec43b9d85"
+    },
+    {
+     "run_id": "compass-m2",
+     "sha256": "0126c7d2c6428a6c0142f7f0f0ab1cb1a95fcf9b367b86dba76474d502711ab6"
+    },
+    {
+     "run_id": "compass-m3",
+     "sha256": "7e46f6bd4ff742632bf9a0f903398565ddeb741051671c083214702d5d4b0b1e"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "1b24e1ddda6a5eb8cf36970078946cb1ed382a6f3da0e1e9aaf97ac52be75c28"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "b2a005c379bf3c93c61c1097d7f9295804aee59dfcb4f68941725f462a45607d"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "36b333795f026f607d5bf8abb6a269790f6e6f4e010e19bf341bed7480cee5a0"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "ed40ae12f47c832d5b6051f904562cc719de46ebd4c63b6cb4ca635759572cca"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "739a6c6c224bacd1ee19c452ce9985b04737f5d4021ebe6234f7aeacdfa5a82c"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 43.212
+  },
+  {
+   "task": "visible-check-trap",
+   "trial": 2,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "(((x * x) * x) + 1)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 0,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 17,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j01",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j01-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j01-0",
+       "quadratic_rival"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 39.0,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 31439,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 1111,
+       "reasoning_output_tokens": 822
+      },
+      "events_sha256": "534d0cab8efdd3160d04daf51532ea78b9cf34f48cd008d26eeff0fcf6a8c344"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 5,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "c9b0c09d56fc40a6bd5b4756f3f24d0baa0012030bc182132a51717ad9e8d985"
+    },
+    {
+     "run_id": "compass-m2",
+     "sha256": "983dde1816cbfb6101cdf355a671a6bfae5df018814db9496050d9bfc0588d95"
+    },
+    {
+     "run_id": "compass-m3",
+     "sha256": "025a21130893e3e8c242bff6e17e0053eae6b50dbd245d1a6ad748d4f24f6cc8"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "93c130160362d181e4ddf5efd61471ec773c09d4eea58bf6b9cc2f1a3d094b6b"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "dfd9ea02d239ba3aff6998af1d29bc9d876d108d994640e23872998022ed86b1"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 41.277
+  },
+  {
+   "task": "visible-check-trap",
+   "trial": 3,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 40.9,
+    "requests": 8,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 95967,
+     "cached_input_tokens": 77568,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 928,
+     "reasoning_output_tokens": 443
+    },
+    "commands": 10,
+    "events_sha256": "1d8b7675a39138a81b7de409f9a930827196dcd725e4b32fdf930ebd3d34f5b6"
+   },
+   "confidence": 1.0,
+   "rationale": "All eight declared candidates were measured once. For x=-3,-2,-1,0,1,2,3,4, the outputs were -26,-7,0,1,2,9,28,65, exactly matching x**3+1. A conflicting corrected measurement would change this claim; behavior outside the declared domain is untested.",
+   "law": "def law(x):\n    return x**3 + 1\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 8,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "d18593f0b64cce6a653853c8d7440eb47e5f4303fc5d73aa115c56747dd6b6d9"
+    },
+    {
+     "run_id": "compass-m2",
+     "sha256": "e5f1170f4081c54afb709d9331934482f08db0d93ee991a2b54276a36ecc891b"
+    },
+    {
+     "run_id": "compass-m3",
+     "sha256": "61f51c1740cdc5469ebfee30df58dafb3432b470d697f58b8dc5781bf47e9cf8"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "436fe0c7d06ed8be333427e1584c5f47f8411fef26603bd9ed12a60bb903683d"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "f5c47abcadebcb1f7904a00ccadcba3bda76213647898adf300d5cfeb7e092c8"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "3a3f126d8b5c7078e325d852afa34c53bd5ee7c8c2a7e592833dc8c1b94363a8"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "82c8915b81d028ab030cbccfb0b6781c45060dbcc45a0ad95b2a027ce1eaffdc"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "eb74d7b3c672e8f896994e2795ab9636d64706b05de69327962f13396a005e37"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 40.946
+  },
+  {
+   "task": "visible-check-trap",
+   "trial": 3,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "(((x * x) * x) + 1)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 0,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 16,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j01",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j01-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j01-0",
+       "quadratic_rival",
+       "magnitude_cubic_rival"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 37.9,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 31464,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 1202,
+       "reasoning_output_tokens": 851
+      },
+      "events_sha256": "0037fecbb26c1636bc37711619c24a27cc9401389cdb7ece587aa7c4898d0fe7"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 5,
+   "receipts": [
+    {
+     "run_id": "compass-m1",
+     "sha256": "69f21f3670558f89e75b9d58c77db2654d8e4c6d23cd3cda6c1d4618de6340e0"
+    },
+    {
+     "run_id": "compass-m2",
+     "sha256": "61a80bb8e79f22ea256c5339af35a9a488d2f6a2f575b5a832f2c14e02d20b02"
+    },
+    {
+     "run_id": "compass-x0",
+     "sha256": "ce2d95fcfee773504a4bf64550d35fa50b9f24c601b7d62d0509a32b8dd23ba6"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "75931a515fd4a10caca68072962c54a6a6ef3ed969a11b965e68d6b9c7b31edb"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "6fbdff2fb0e10ece9669f8e509e43bf4295d62728111319c0338632399a6b397"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 40.347
+  },
+  {
+   "task": "late-exception",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 39.8,
+    "requests": 10,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 95848,
+     "cached_input_tokens": 77568,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 843,
+     "reasoning_output_tokens": 455
+    },
+    "commands": 12,
+    "events_sha256": "3e4b9af42c11252680126641676e95ffa153114bbe32ee09ded762c6dfdd0771"
+   },
+   "confidence": 1.0,
+   "rationale": "Measured all 10 declared candidates. For x=0..9, outputs were [1,2,5,10,17,26,37,0,0,0], exactly matching this law. Contradictory measurements would change the claim; no extrapolation beyond the declared domain is asserted.",
+   "law": "def law(x):\n    return x*x + 1 if x < 7 else 0\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 10,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "d58b0218b65e183f55926e3b4dde0f5f806c7d2de52903c419951ac595cb3dcb"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "d7468695302504271fcfec40a6db0944283395fdda34d3a6c1e8ca1debe1c312"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "225f1d33056c3e7d2f3af070c895a0ceecbd50035a22b0d0591dd1604b50eecb"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "97aae17c09c7e7da7e2cf78987c5650b75a73c0a644fda61778976360e69674a"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "0b5e96039f7a86ac08639d82e5828d037328d88c25b2003734c22f77ef97c482"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "78e8b652a672483edc0fd1dae4165456f31b28ceee014ff369b8f6e50eb20508"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "870b81a18fe382596b6a938a6d498528d791ebdbeca1adfe6168a71f2f9d3175"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "74b3e1e88709a40dd992a37296e170c7c891934b1e000c63aadd6ec285c0f248"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "8b93c41a7173e1baf50e0b75fa4e6d777f9b392a88a2921aa32dbd580ac2b018"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "43e1a74bdef9cda43eb90880a67e6a1ae9be0b05aa54e5bb297ff7af5fd152c0"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 39.772
+  },
+  {
+   "task": "late-exception",
+   "trial": 1,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "ite((x < 7), ((x * x) + 1), 0)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 57,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 15,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j05",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j05-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j05-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 35.9,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 31525,
+       "cached_input_tokens": 0,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 1115,
+       "reasoning_output_tokens": 878
+      },
+      "events_sha256": "9ef1ccc00a9f8b88a90df73c980a8b66b150d7ad568550064f9bc53640a4f75f"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 9,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "4a8f36a254b397b5b6be5e0a5a4981c090f015461a97acbec5e599e3e2b56663"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "d38bcd821f3be95bfed2bb9b81fed2d151360101f0e2e09759f4dcad7612999b"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "01dba8d0f95a63df2f71bcf81679dc155581d106d322d6f58d4a1f0ff183441a"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "e4fa0480ef5054b21343aa9b3026b086815fbeee8c91565a4fa63ff07c1b7bc4"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "b162f704a863ed2167de2094d4bce2ec54efcc55cc7e7fed10586c21d4c411cd"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "62b74b68d2f4be5dcbf3203e66cf9d1f33ecb5394682a94f65be4453337ebf11"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "43514cbdf816411aa7964840435ba22d0f3cdf3aa73e8ff856a30cc8a3cf7674"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "c695d9647da26fcca5fc5f0441bd8f479464a40395e96179d0ce0ca631ead0a4"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "9a64d2fc9814095506a4bf3487f5b2331ec90b52b68f91472e5e3b61e09e200f"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 41.518
+  },
+  {
+   "task": "late-exception",
+   "trial": 2,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 39.1,
+    "requests": 10,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 95967,
+     "cached_input_tokens": 89984,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 867,
+     "reasoning_output_tokens": 435
+    },
+    "commands": 12,
+    "events_sha256": "0b4800bf3151f80355a4c109b278c042d26edf9023e6ed30ec62686e5c16aff8"
+   },
+   "confidence": 1,
+   "rationale": "Measured all 10 declared candidates exactly once. For x=0 through 9, outputs were [1,2,5,10,17,26,37,0,0,0], matching this law exactly. The claim covers only the declared domain; a corrected measurement would require revision.",
+   "law": "def law(x):\n    return x*x + 1 if x < 7 else 0\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 10,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "7df9d65345e8753000b7ee691a30a9eea2e0e500288e51e696834ade6335c252"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "a55ecd87e7a1808d4232903daa359c3673004df492627ca5429ac039f44a61ad"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "6736ec95a7e20a1d40f9b9308c4ff217716924dbc10a6e724ee102c848347b5c"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "2810eae2537ec5c7313f5b16035c5a189358efa163add1f01b584e96d05651b9"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "daba5f3eb5f059278d0b3a59483ce316d3d9846ed7fbc230af6a9491fcea88db"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "0c68bd02b55a341d6d8063f6a60ea5d46e26cadef26be563c8a9b79795b08e9e"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "a67b3a4cc643e9165bbbb5374045eb9b0b489dbb7f95e0510a3ee2f25348879d"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "1031dc95e33cf7a87450a0b32c74570e0ef71e8438e4bebb6714f5f53dc73d46"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "68196f5b828f44be969b4c4bac355678c02025c217a6f5001c185bac535ad7c3"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "56a395fb14d21057fd41d86823e86faa49267e4a355c19696f83d8746c70522e"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 39.144
+  },
+  {
+   "task": "late-exception",
+   "trial": 2,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "ite((x < 7), ((x * x) + 1), 0)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 57,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 15,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j05",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j05-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j05-0",
+       "cutoff_8"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 45.2,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 31528,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 1164,
+       "reasoning_output_tokens": 922
+      },
+      "events_sha256": "d4cdd6aebcc26323b279ce51698875c6f338b6615939280e2a42114af6800c6f"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 9,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "bf41e794a6f506893024484d757579a6d46c2b991be8c817049f18e5764131f9"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "dd5fed0b5dc865e5770f5d125c45eaa72dc2e0bf393ec32133bd729886d15f53"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "3d87561b0ff90d131b4c26b33eb43cf741af0c22603f1fb0767c38178e17bcd4"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "a21ecdb880b9d85a13cdedc47e3de4a306cc0e302527ca7e30f6e720872bc39e"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "7a36804e1a4b5e3d34e5470307f28a32305b7b704031bd24e21c66deaddb336e"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "d0f87168c73a636a30d6a2982e27642c69dd364694884fb457e3b35abc8985e0"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "4bbb46ce518d23502bddb0263c55ded096e0a51dedf01466b7bfb827bab9e3ed"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "8ac1e410415231b2958cd5f6efe6d8b512c18d212736cbbb1411a4f1ac30f8cd"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "e9c62a31a88d7689a6d29f7b9249e4c1c4ee945c68b54e5e1b7209ccd8a5a01f"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 50.434
+  },
+  {
+   "task": "late-exception",
+   "trial": 3,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 36.5,
+    "requests": 10,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 79267,
+     "cached_input_tokens": 61056,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 894,
+     "reasoning_output_tokens": 488
+    },
+    "commands": 12,
+    "events_sha256": "19074ff37904e8a1e5296cbfba2a06a466e64f81c91be2f810d1f0ecddf701a5"
+   },
+   "confidence": 1.0,
+   "rationale": "Measured all 10 declared candidates once. Inputs 0\u20136 yield 1, 2, 5, 10, 17, 26, 37; inputs 7\u20139 yield 0. The law matches every candidate exactly. Corrected measurements would change the answer; an expanded domain would require further validation.",
+   "law": "def law(x):\n    return x*x + 1 if x < 7 else 0\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 10,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "6ccf2788bf6de5f1338546f8b135717f4ac1e30472fb150ecfb78d151361811a"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "b574a998430288c4827dd0245a0442c91af48c603c6da1accffe4e439f70cb06"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "66855e70fd5808b445d503030db0c3ea265f5e9ba12d84b435bedb7042684c05"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "e05f4aa12ec060a4cf07659de598602bf6315091125a29d1b8bbb0505be772f2"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "16dc06a06c79f380756c4a7a3a16fe9f2893cc342cb6ba0803d1e359549bc5ec"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "c6d6350ec5cd1c952b60130280f6775fa4082aea20dfe891bccd739e9c4b3200"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "5d7baa6df4bd3d98dfb1644c82e591f1687a0664aea54984bb087413dde9f1c1"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "c871cd72cf91d443184352aa40298ee8ad4cca4d4b1a7c0064ffa1447449419a"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "67d7754ab701ad045200bc6064473fbbd2e56950889f1f2df8f3ee674465a55f"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "917b7b61d4b10bd32045f9a73dafab66aae92bf90ffbd6cbf557cf86506900b4"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 36.532
+  },
+  {
+   "task": "late-exception",
+   "trial": 3,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "ite((x < 7), ((x * x) + 1), 0)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 57,
+    "library_offered": 0,
+    "qualified": []
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 15,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j05",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j05-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j05-0",
+       "cutoff_eight"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 51.9,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 31528,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 1740,
+       "reasoning_output_tokens": 1446
+      },
+      "events_sha256": "2b31c3b418d2255e17c7685fdf93db4b46206a20c1822c8ad7aeac00a59002ec"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 9,
+   "receipts": [
+    {
+     "run_id": "compass-x0",
+     "sha256": "261bb3c59483411ec9d993b18bd016f8a4ffe67418891795a236c42ac37900e0"
+    },
+    {
+     "run_id": "compass-x1",
+     "sha256": "c3acba13594e0dcf2cee3b060c30d85e85a87c7d55b8497cf0ff20be50bacb3b"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "007a9f43a9dff041d769d82d10592614a115f8dde597d6d649d0cb1c8aa94c97"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "c4c11dffd5d99ca81a0df878a4cb17d0c5fc835235f265d8574f50ef912f74f7"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "09ce708f2c3ed69b76bf00034cee6179033dc24fce8b081e136b8f9a3204dd7d"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "678d039fecf82bf7b2a4248b14db70855453dddc2a105c07bdf9c53d570b5c42"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "997878450af400347a2afe0f03a8d3548fe7721e4d10e0ef06c4e598b891e725"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "5c32518af0323b2c73aea2e428dca1e7647f84f80a081c11503bd8acc3eea454"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "12e3bce8777b12cfe7f7d5af1f06cce3e26a50fd5c83626f06c6736e5df78f1d"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 57.077
+  },
+  {
+   "task": "capability-gap",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 48.2,
+    "requests": 20,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 101472,
+     "cached_input_tokens": 81152,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 1135,
+     "reasoning_output_tokens": 537
+    },
+    "commands": 23,
+    "events_sha256": "af28fd2e3b6411fb2eccf35758466dc0d6791470e98f96bbd4eb8a876c1cbde7"
+   },
+   "confidence": 1.0,
+   "rationale": "y equals twice the number of positive divisors of x, plus one. This matches all 20 individually measured candidates exactly. The claim covers the declared domain, integers 1 through 20; a corrected measurement contradicting this formula would change it.",
+   "law": "def law(x):\n    return 1 + 2 * sum(x % d == 0 for d in range(1, x + 1))\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 20,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "a9866a064d61b78a86b917cd5d17acbdb7414fa0d4eb4f9e67ccb58445bd3b15"
+    },
+    {
+     "run_id": "compass-x10",
+     "sha256": "bd79a50a88e16407f720b880c3f83c196878da446c479ec289694f98662c6064"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "53f461b4a645272297246de0eb3a32027ebcbf4c00ededb3e1f36910a0f23c1b"
+    },
+    {
+     "run_id": "compass-x12",
+     "sha256": "6fff029486a3be5c00f2d47d2e52f5d25dba2f7d996c73503ff8d2ff4ce52a0e"
+    },
+    {
+     "run_id": "compass-x13",
+     "sha256": "f16c493280d6b9682f9adc0b21e10d978d9acb822bffcae3383e34ca5682f45a"
+    },
+    {
+     "run_id": "compass-x14",
+     "sha256": "6ce95ed710a230af5bc91ba0699ef9e64a4a92082483725960cdc62b8d6c023b"
+    },
+    {
+     "run_id": "compass-x15",
+     "sha256": "ff93dd7a3834965b8fbe91732f059658820c04d851ff74ad5fdf3abad58f4c30"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "b9139e4dbf2fb7d83861aabb73aab93f5bb94a2ce3d5eba1492097d997b267cf"
+    },
+    {
+     "run_id": "compass-x17",
+     "sha256": "919d86d4cfdcdde6d1e2d9854a36dbe882ac1db7d0b90226c3b1689db46bae4a"
+    },
+    {
+     "run_id": "compass-x18",
+     "sha256": "b9ab9f998028f20ee38edc2a45d258e21c97b08bfa58f2dba80290e0e7a4ebb3"
+    },
+    {
+     "run_id": "compass-x19",
+     "sha256": "0c1f648486643748b4c5c3fb37bfa3682e4924b1336a4402746fb95db6cd6371"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "c4d9c17f1a3ec88c6a5cce830d5bc3b4768216960b442aca43d5784b522e0bfe"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "af43efb6211544ad8280c38673ee1f46e44f6ea2ad54dfe23019407b8a6d29f7"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "6547ccbc087af035218599266b6cd8a2f8594612bde212b3d7a14b51d4476b56"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "46d02610735fe046afc47547421ee72d3b277f3ad7fd06e6522ea49514b6f077"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "dfcd620ffadc60f93e8afab8116260e1a66b8ce921a7bd0c326789dea6461f73"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "d6849d55f459f256718062ee58b4c34bf60f2094584312598a1baa79a070e654"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "393ecec4ccb8450afe63138ee3ea6413fbf157cb0d74e2901028acef7e41a026"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "0e1021b87f3edf7f50cabf8c0a75b563a72a3b90cf4ba540e92e4446bbbca1a9"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "a4c5c8d2cde9f2e7442b9d2767acef64dd23d3e98b38525a17760e78afe88d12"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 48.261
+  },
+  {
+   "task": "capability-gap",
+   "trial": 1,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 16,
+    "library_offered": 0,
+    "qualified": [
+     [
+      "divisors",
+      "SYNTHESIZED",
+      null
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j02",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j02-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j02-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 23.3,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 30474,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 575,
+       "reasoning_output_tokens": 378
+      },
+      "events_sha256": "c69b73ca6936caafd6c3a1dd9dde5367653078738f5491a483eb8dfcf4624bc9"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "0a163b2aa98bba9ff1f6e8f1acf84f35a96d0283ff34a9f19bcebc67e2e08fcc"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "708c38a0386f118cba966357d20f5f11e94f97222d5a234ffce240e9b5401aac"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "9a50306b10f5646b14158f3ce69380a8fb5d1a2647d5168d20d54c34d5f94a06"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "b54ab2a737011d8b9565a749d485623c3861faf129b6ded4ffe907c0a76fe303"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "bd1d58e952c3919a1793624f4f0d07f8129c87347b92b00c23d5bcef5b9d796e"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "2c05b9f183de3f7e23d4981db260e92ca70dc478bde5586bf1289edc2e67db47"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 34.715
+  },
+  {
+   "task": "capability-gap",
+   "trial": 1,
+   "session": 2,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 1,
+    "library_offered": 1,
+    "qualified": [
+     [
+      "divisors",
+      "LIBRARY",
+      "ORIGIN_VERIFIED"
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j02",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j02-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j02-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 29.9,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 30471,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 886,
+       "reasoning_output_tokens": 679
+      },
+      "events_sha256": "1623829f4b1b651adcc4d499fdea86a65f90e2ffd2ec233baaf9064eef87f747"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "63eaf616d6c9127f885e41ab312f0f222bc2fc1357959f605fe68d4185b2d7c5"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "c1832d8feda840b10a3f4ca03128bd3e1e632d682f1bff9a259adba8b24a784d"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "ca248257dbffa0866519966c2d437f04734b6004c5e53f835493cdc2a7b2ed15"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "cb00d6239873332cd0da28b1aef6968dba16fe698aa409c54de648991cc295fd"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "06d7914de21d9d83f2297abc45293dc7035c848ac65bd147a15adeb2c36230d9"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "e05b2bec3dd678ec2ca66f02028668c325abc619ae248759b01587f05dae2b8b"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 41.622
+  },
+  {
+   "task": "capability-gap",
+   "trial": 2,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 151.2,
+    "requests": 9,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 213043,
+     "cached_input_tokens": 189696,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 4456,
+     "reasoning_output_tokens": 3736
+    },
+    "commands": 11,
+    "events_sha256": "2c4c914fe6eed0ea197c6de980cde6b59725acfcc7aae7d38a2f3f6d44dc4927"
+   },
+   "confidence": 0.97,
+   "rationale": "The law is twice the number of positive divisors of x, plus one. All nine measurements agree: (1,3), (2,5), (3,5), (4,7), (7,5), (9,7), (15,9), (16,11), (20,13). These cover every divisor count occurring in the declared domain. Agreement on unmeasured candidates is inferred; any mismatch would overturn the claim.",
+   "law": "def law(x):\n    return 2 * sum(x % d == 0 for d in range(1, x + 1)) + 1\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 9,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "25890169a57f0e29dceb211a9c40f1515e001fd00c9b927d31fbfa270b39d901"
+    },
+    {
+     "run_id": "compass-x15",
+     "sha256": "5b8c878e66ef827a39095e553bcfabf372cc3416d831c5fc9988e231e6d98044"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "3551ddd407c99cc9f359059f396f2e1eae2de988b73fee49ed92ee404df3ab72"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "009f94db0d8dff49950d97988b220a8a5131a23ea035ef3fc29fc1a5b9ec395f"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "d5a7f33d9d7a36e9a3ee9b92886d3d03d8741fc483c14118e7b6194c4c7657c2"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "7a8f8a276c16139796d9a2b298bc011cd244b1aae9fe8eb0d0c757a794c2022d"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "1bd0b6053f27165db070da45f10739952ea4d2af72048487be5685af2ed06e06"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "ec26956b0ac7e4474eb7600aebc81f3de1a775b1a47355f4931eb568e415bcab"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "ab15f1857eee888bb27a11987ca122097f5706e02b298d455d186669ac4840bc"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 151.265
+  },
+  {
+   "task": "capability-gap",
+   "trial": 2,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 16,
+    "library_offered": 0,
+    "qualified": [
+     [
+      "divisors",
+      "SYNTHESIZED",
+      null
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j02",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j02-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j02-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 29.0,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 30471,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 816,
+       "reasoning_output_tokens": 592
+      },
+      "events_sha256": "3d50460b79a2a0913b6eab4c2524e3cc6e914114e89e99d585cda1fbd0e685ec"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "65948e53835133c0ea5fe5f09c4539c07b9f86e4bb60bb259aac98ab2d05ce81"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "fa939fb708ea624be3246ffdfcf3be7dc33ba91f8af018172025fd2b8567ae35"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "efb14a763466ea6af113cbb927064987ac26a64498ef09b0db1f5ca2ea4e422e"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "08796abc5d5fb2290ac3a269ed020c70f9b15511b2bcd1e78a9517a7f02d7759"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "835fbb4e7c4bd6329e07c75c86d3f32455a83b56e81be8e1996d6da1e7e6d158"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "44f6eaa1ec4fe59e2a95b9044eda9bbb431b28b55647e3eea02047d47ca73ed1"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 41.321
+  },
+  {
+   "task": "capability-gap",
+   "trial": 2,
+   "session": 2,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 1,
+    "library_offered": 1,
+    "qualified": [
+     [
+      "divisors",
+      "LIBRARY",
+      "ORIGIN_VERIFIED"
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j02",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j02-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j02-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 27.4,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 30466,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 741,
+       "reasoning_output_tokens": 516
+      },
+      "events_sha256": "9435d21449156e2e6a7ebbef23220d4814f101a51bd0cf6fe55320ccb6e474ea"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "0d46962c935ae056920de7a991f92a09d565baf32854d9b6e41f48c7e60e5b7c"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "e26fc8b7d4f1a87594477cd2f34c7c68ef321a8dea1db6c943261c63e543bb9b"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "61ee78a527dfd110593b50085af07e03024ad0c661bb4970ade59335be747ff5"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "f359f888764968032ae4578087508c956d84e24ca461bfb9db1a908386fa418e"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "cf795742a22ec4a900547292fb5a69bd6cbfcedccf894de34b40a139f01623a9"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "7b28717f55791e9259c87e5e694481091f115638ca02f7ce407a9bfa872d07aa"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 42.008
+  },
+  {
+   "task": "capability-gap",
+   "trial": 3,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 59.4,
+    "requests": 20,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 134576,
+     "cached_input_tokens": 95232,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 1499,
+     "reasoning_output_tokens": 817
+    },
+    "commands": 7,
+    "events_sha256": "a77309a46bb3f188de7cb7da88c66abdf9f5d6ee66ada3889dfb2e4813f68916"
+   },
+   "confidence": 1.0,
+   "rationale": "The law is twice the number of positive divisors of x, plus one. It exactly matches all 20 declared candidates, each measured once. A contradictory measurement or an expanded domain would require reassessment.",
+   "law": "def law(x):\n    return 2 * sum(x % d == 0 for d in range(1, x + 1)) + 1\n",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "arm": "codex_agent",
+   "experiments": 20,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "baad885cb9a872d3423563a5c531e90396b9708f87d4852ac7d114fd7d0963e6"
+    },
+    {
+     "run_id": "compass-x10",
+     "sha256": "698ea403c2c5f7f5db7c7ba5dedfa776c10674758e7c1710c3d82d2d14cd1918"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "072e897ee3010cd20e39f77209ce504c72a403ebd4a0538c70a7d5d2386f18d1"
+    },
+    {
+     "run_id": "compass-x12",
+     "sha256": "8cb8b83094aaaf350a60e8393e0846c345914b699e2bca2868334b6ac9c28f78"
+    },
+    {
+     "run_id": "compass-x13",
+     "sha256": "bb1cb29a4af271d7eddbf7a38644160e8f4d89121bef40ed4ce8bdca5fdbbe42"
+    },
+    {
+     "run_id": "compass-x14",
+     "sha256": "84599f9a8062af1ddede5df58ed6f0b2b2127bd841fa841407e86074e39eb85e"
+    },
+    {
+     "run_id": "compass-x15",
+     "sha256": "b10b73577f345fd70cf10e856eadebfe5dbb50ab2f55eb367f6ee51416993ecf"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "13801d34439c59bbf8ca30a10ba89033b61add6c8909ece0b77c1a9668ac5228"
+    },
+    {
+     "run_id": "compass-x17",
+     "sha256": "fd85dab3fbeed7d5d32221b08fb314e44e9509165fdd371db3dfb4c5e965d8db"
+    },
+    {
+     "run_id": "compass-x18",
+     "sha256": "dbf675504a5313d76b30be5b79533354516dd6d0fc757aef6afb1bb6edfc1e1b"
+    },
+    {
+     "run_id": "compass-x19",
+     "sha256": "69961665aa5506827bcb53b5f9db2cb08f99b4f2bec017e0d6a440d0d7a9e1b9"
+    },
+    {
+     "run_id": "compass-x2",
+     "sha256": "3bda35ea3c14243c6de759aedea22646e765bd633962aeabf6026d484fab2744"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "2e4d66ed81e0c43065f9ebfe46974329b7dbbaf0cefe20aed07e0cfccfc0a4a0"
+    },
+    {
+     "run_id": "compass-x3",
+     "sha256": "afbed9c6967d1c4cc0f111c99120b14e3371a2878a987dc3a3af3c883409ec98"
+    },
+    {
+     "run_id": "compass-x4",
+     "sha256": "4f0ff3348ba441f26b4096cac3de41f902071b4e0191e763f840fb4f27ba8be2"
+    },
+    {
+     "run_id": "compass-x5",
+     "sha256": "d4df42bff2269c6cbba5a4115489977780e6c8433de110b99fe03b3d19ad54b3"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "bf9b766fc34f01c02d054e1cea2d8f0082c606bcd9a415d173ff084e56774470"
+    },
+    {
+     "run_id": "compass-x7",
+     "sha256": "c21b9f61944adb5cb1ab18e05d483ae12480d3684953a2697a4719a882efe3dc"
+    },
+    {
+     "run_id": "compass-x8",
+     "sha256": "651d8677f41c1ba9ff62affdedef476828ea8e77ae9b8b4133659ff8b8d2b2a2"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "cff0968b6b8b6b56544cd92aba329c771921d688e2cd1afc156ea808fcfcfaf5"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 59.429
+  },
+  {
+   "task": "capability-gap",
+   "trial": 3,
+   "session": 1,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 16,
+    "library_offered": 0,
+    "qualified": [
+     [
+      "divisors",
+      "SYNTHESIZED",
+      null
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j02",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j02-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j02-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 24.0,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 30451,
+       "cached_input_tokens": 0,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 701,
+       "reasoning_output_tokens": 510
+      },
+      "events_sha256": "2708641bf4976545cbafdcc4dae24c3a3c3f3826f91b2f5539927203a0c17c50"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "428135e9594c6d00219f94e7246905e75f3256a39560649bcedfec565fef8912"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "7e5bd09f0f1f52819af93b6d964279e759d26506117c08ee202fc486e98b0f7f"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "7f0048ff5c2626d7c35a1749795b95b5df6c479e0eb0737f1ff384e4eac2fbe2"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "bdedc33b023ae819cc309b8d0e385af9e8072aec59977bac1eb22e5d9a140031"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "8c4f38f74e083756e3bfe986dda6e289c2ed7a64c95f78c14de19ec2632216db"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "12d22486a71bf4daeba32180626a07a30c983740f1b07915574326d9238b528a"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 35.605
+  },
+  {
+   "task": "capability-gap",
+   "trial": 3,
+   "session": 2,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "GOAL_IDENTIFIED_WITHIN_BOUND",
+   "law": "((1 + divisors_x) + divisors_x)",
+   "score": {
+    "verified": true,
+    "disagrees_on": []
+   },
+   "rsi": {
+    "tools_tried": 1,
+    "library_offered": 1,
+    "qualified": [
+     [
+      "divisors",
+      "LIBRARY",
+      "ORIGIN_VERIFIED"
+     ]
+    ]
+   },
+   "repeat_refutation_waste": 0,
+   "equivalent_partitions_skipped": 0,
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [
+     {
+      "jump": "j02",
+      "disposer": "AGENT",
+      "errors": [],
+      "decisions": [
+       [
+        "j02-0",
+        "adopt"
+       ]
+      ],
+      "admitted": [
+       "j02-0"
+      ]
+     }
+    ],
+    "calls": [
+     {
+      "exit_code": 0,
+      "wall_seconds": 21.9,
+      "contaminated": false,
+      "hits": [],
+      "commands": 1,
+      "usage": {
+       "input_tokens": 30464,
+       "cached_input_tokens": 14592,
+       "cache_write_input_tokens": 0,
+       "output_tokens": 646,
+       "reasoning_output_tokens": 448
+      },
+      "events_sha256": "49ffd31061f9ea6f3dbd822971b768d4590926dac108b05456ad9813fe3cb215"
+     }
+    ],
+    "contaminated": false
+   },
+   "arm": "compass_codex",
+   "experiments": 6,
+   "receipts": [
+    {
+     "run_id": "compass-x1",
+     "sha256": "2b0e4cd9878d2a40d330a410ed32ec91730753fbcbbbf2364e0cf2fcb37b4b9b"
+    },
+    {
+     "run_id": "compass-x11",
+     "sha256": "a850eb3a2c71609c6780760abc36e57d6f1a7935f3298352e1e366698a4ef031"
+    },
+    {
+     "run_id": "compass-x16",
+     "sha256": "85d64f0e5b2c050a49d784f8f8f63b14fb86407ed4e88ee347f10c8bcc7444e9"
+    },
+    {
+     "run_id": "compass-x20",
+     "sha256": "6c9fbff542177fa280da8bab805ed1d182b3288d7cde9cb6d3c958cad655654c"
+    },
+    {
+     "run_id": "compass-x6",
+     "sha256": "a2bb8dbba796441f060580c149aa60a8431defddf6a2ab9dc11f557bc5eea12d"
+    },
+    {
+     "run_id": "compass-x9",
+     "sha256": "11a4a02388956bb6a9bbf27bda676f51703cfbd91574bf70f99b392e5668c20e"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 33.812
+  },
+  {
+   "task": "mean-masking",
+   "trial": 1,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 27.6,
+    "requests": 3,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 78499,
+     "cached_input_tokens": 70656,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 712,
+     "reasoning_output_tokens": 262
+    },
+    "commands": 5,
+    "events_sha256": "77a4646d5be3bba6e2fb1b73fc2e3fd78e221dc4d59be6d274c54c6e4377f04f"
+   },
+   "confidence": 1,
+   "rationale": "Measured all three candidates. Variant_2 improves the mean from 10 to 10.75; per-sample changes are +2, +1, 0, 0, so no sample regresses. Variant_1 fails the allowed degradation of 1 because s4 drops by 8. Revised measurements or acceptance thresholds could change this conclusion.",
+   "accepted": "variant_2",
+   "score": {
+    "verified": true
+   },
+   "arm": "codex_agent",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "95ac6d72977a580a556c8d003b8a5922d3a1482e4b4f80ccdb97a14f1b2faa54"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "af6bfa944217dbafe5c7a2a9fa99dd41f1f6f1179fc7f38889e02b34988e4ec5"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "a75c3e8027303277a89a09bc325c8f9ccd6d7d0db276ae89d27c86cadad99b3b"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 27.628
+  },
+  {
+   "task": "mean-masking",
+   "trial": 1,
+   "session": 1,
+   "status": "IMPROVEMENT_EVALUATED",
+   "claim": "ARM_ACCEPTED_BY_PROFILE_RULE",
+   "accepted": "variant_2",
+   "verdicts": {
+    "variant_1": "LOCAL_REGRESSION",
+    "variant_2": "ACCEPT"
+   },
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [],
+    "calls": [],
+    "contaminated": false
+   },
+   "score": {
+    "verified": true
+   },
+   "arm": "compass_codex",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "411feddc385d791cf6b0db692ba6b6010088090cea49bf99f75bc9518c40c5bb"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "b69d3ba28469a3e7f6ab0eb4ef040672e3e9f429fb2cf290d04c1ce57a4fc891"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "2a4f4f4fc19ce139e2d3c45cffbdacfffcebe5dd3c45b5226e3b25a5d415e539"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 0.286
+  },
+  {
+   "task": "mean-masking",
+   "trial": 2,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 30.1,
+    "requests": 3,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 93190,
+     "cached_input_tokens": 60416,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 485,
+     "reasoning_output_tokens": 155
+    },
+    "commands": 5,
+    "events_sha256": "780346d95240a80d5961a57a0e0d108f3e5ca449f940fb3486aa4b673052f978"
+   },
+   "confidence": 1,
+   "rationale": "Measured all three declared candidates. Baseline mean is 10. variant_2 improves the mean to 10.75, with per-sample changes [+2, +1, 0, 0], satisfying the maximum degradation of 1. variant_1 fails because s4 drops by 8 despite its higher mean. A corrected measurement showing insufficient gain or degradation greater than 1 would change the conclusion.",
+   "accepted": "variant_2",
+   "score": {
+    "verified": true
+   },
+   "arm": "codex_agent",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "18f188ee26e76d35bde6014ee35d669a7d0e93573698b73b24af0c12e4db8426"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "e3ed48ac0d284f3319f83a8ebc2121981164116c756229300c4263997b023fd7"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "0a083ddf8279e20922dba47a440ad515993143829b3371c3a04d22d9306e533c"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 30.128
+  },
+  {
+   "task": "mean-masking",
+   "trial": 2,
+   "session": 1,
+   "status": "IMPROVEMENT_EVALUATED",
+   "claim": "ARM_ACCEPTED_BY_PROFILE_RULE",
+   "accepted": "variant_2",
+   "verdicts": {
+    "variant_1": "LOCAL_REGRESSION",
+    "variant_2": "ACCEPT"
+   },
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [],
+    "calls": [],
+    "contaminated": false
+   },
+   "score": {
+    "verified": true
+   },
+   "arm": "compass_codex",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "77c537489bbc2f8df35754ab4a8e4b4fb3229b4b5f25bbc8f35b02eb1dd4bee0"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "a805d5c57e284f78ec8a0ddc6d29738d2c8c5be24e805430f7ab11527beede66"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "1b41557955142d2fb40a2761cb9c5a1234beea0c350f49bf9c38f5c5d7a55fd3"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 0.404
+  },
+  {
+   "task": "mean-masking",
+   "trial": 3,
+   "session": 1,
+   "status": "SUPPORTED",
+   "claim": "AGENT_CLAIMED",
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "exit_code": 0,
+    "timed_out": false,
+    "wall_seconds": 23.6,
+    "requests": 3,
+    "repeat_requests": 0,
+    "contaminated": false,
+    "hits": [],
+    "usage": {
+     "input_tokens": 95396,
+     "cached_input_tokens": 77696,
+     "cache_write_input_tokens": 0,
+     "output_tokens": 616,
+     "reasoning_output_tokens": 120
+    },
+    "commands": 7,
+    "events_sha256": "05c70b27643e8abbd1152dbf72b48d2637a653c3cbc34dbf025c64baae2729fe"
+   },
+   "confidence": 1,
+   "rationale": "All three declared candidates were measured. Variant_2 improves the baseline mean from 10 to 10.75; its per-sample changes are +2, +1, 0, 0, so no sample regresses. Variant_1 fails the allowed degradation of 1 with a drop of 8 on s4. Revised measurements showing insufficient mean gain or degradation greater than 1 would invalidate this acceptance.",
+   "accepted": "variant_2",
+   "score": {
+    "verified": true
+   },
+   "arm": "codex_agent",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "3233a2f003fd98852f6f0b3cd518a0e43a9cf0c6becda3f4fc9e49ff9f1b250d"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "7742c79de7a0b058a0010ec97b7684d356c649eaffcefb869a0ea6dc99783d0d"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "5a9d22da0eb99f7512abc739e0d9d63d28cf1f7786a2f5f244dc39ff7c87c944"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 23.627
+  },
+  {
+   "task": "mean-masking",
+   "trial": 3,
+   "session": 1,
+   "status": "IMPROVEMENT_EVALUATED",
+   "claim": "ARM_ACCEPTED_BY_PROFILE_RULE",
+   "accepted": "variant_2",
+   "verdicts": {
+    "variant_1": "LOCAL_REGRESSION",
+    "variant_2": "ACCEPT"
+   },
+   "agent": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "service_tier": "default",
+    "dispositions": [],
+    "calls": [],
+    "contaminated": false
+   },
+   "score": {
+    "verified": true
+   },
+   "arm": "compass_codex",
+   "experiments": 3,
+   "receipts": [
+    {
+     "run_id": "compass-base",
+     "sha256": "c5444043236f05c520a139fc0c9c90380de6ad179e879898918f73c45002455b"
+    },
+    {
+     "run_id": "compass-variant_1",
+     "sha256": "4eca33b7df3a979e6c66ed766d1d36d2438dc43634975dfa99a4dcb5d527f038"
+    },
+    {
+     "run_id": "compass-variant_2",
+     "sha256": "7685463a399fae5599f783524dc3f3552ee190c1bfc913f7a6eeeeab9a030155"
+    }
+   ],
+   "verified_discovery": true,
+   "false_certification": false,
+   "contaminated": false,
+   "wall_seconds": 0.416
+  }
+ ],
+ "scientific_support": "UNKNOWN",
+ "limits": "Synthetic toy worlds; N=3 run(s) per arm and task (deterministic arms repeat identically); mechanism evidence only",
+ "bundle_sha256": "3421f225193d84015178231ad39bf07859d1c71fdae2be85d51aff0378de6347"
+}

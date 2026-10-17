@@ -44,12 +44,19 @@ section and its needed guide; reuse unchanged resources already read.
             OR the frozen autonomy allowance; READ docs/deterministic-continuation.md
             CONSUME the exact stop, original evidence and settled resources; NEVER infer new authority
         KEEP original receipt + automatic Advisor update; unknown remains UNKNOWN
+        EXPLAIN the actual observation against the frozen prediction/control and evaluation scope
+        SAY which explanation it supports or weakens, what remains unknown and what to test next
+        KEEP failed, negative and resource-limited outcomes visible; do not infer REFUTE from process failure
+        CONTINUE the next admitted step without a default card, menu or repeated approval
         IF advisor_policy declares tool_bindings:
             READ tool_utilization FOR obligation applicability, actual calls and decision consumers
             USE only qualified current-input candidates within frozen routes and budget
             KEEP UNKNOWN and unconsumed outputs visible; do not optimize for command counts
             READ docs/owned-tool-consumers.md FOR the finite native application interface
         IF collection failed: recover collection; NEVER repeat completed training
+        IF execution/delivery is uncertain: reconcile original attempt before any replacement
+        FOR cross-session Windows work: use the available Task Scheduler runner within its contract
+        DO NOT promise durable long-job event wakeups; see docs/experiment-assistant.md for planned boundaries
 ```
 
 ## Blocked method

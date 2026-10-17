@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RDS research policy version (unintegrated candidate)",
+  "description": "Data only; no writer authority. Runtime additionally enforces unique rule IDs and a 64 KiB byte bound. Identity is SHA-256 of exact retained bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "parent_sha256",
+    "rules"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rds-research-policy-v1"
+    },
+    "parent_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rules": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "enabled",
+          "scope",
+          "target",
+          "reason",
+          "source"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "\\S"
+          },
+          "kind": {
+            "enum": [
+              "VETO",
+              "FAILURE",
+              "HYPOTHESIS_REJECTED"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 8,
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "\\S"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "\\S"
+            },
+            "required": [
+              "project_id",
+              "decision_id"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "\\S"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "\\S"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "hypothesis_id"
+                ],
+                "properties": {
+                  "hypothesis_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "\\S"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "methods"
+                ],
+                "properties": {
+                  "methods": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "maxProperties": 8,
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "\\S"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "\\S"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "HYPOTHESIS_REJECTED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "target": {
+                  "required": [
+                    "hypothesis_id"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

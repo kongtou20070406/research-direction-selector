@@ -12,7 +12,7 @@ import re
 from rds_artifacts import strict_json
 from rds_project import ProjectStore, digest, file_sha, require
 
-MAX_BYTES = 2 * 1024 * 1024
+from rds_confirmation_read import MAX_BYTES, _ref, _json, _output
 DOMAINS = {'mathematics': 'exact_certificate', 'algorithms': 'integer_sum_squares',
            'deep_learning': 'torch_linear_regression', 'continuous': 'numerical_expression_evaluation'}
 
@@ -36,27 +36,6 @@ def confirmation_fact(confirmation):
     return {'id': 'confirmation.task_status', 'kind': 'DERIVED' if settled else 'UNKNOWN',
             'value': verdict, 'reliable': settled,
             'source': {'locator': 'program replay of frozen domain evidence ' + digest(confirmation)}}
-
-
-def _ref(store, contract, ref, role):
-    require(isinstance(ref, dict) and set(ref) == {'path', 'sha256'} and
-            isinstance(ref['sha256'], str) and re.fullmatch('[a-f0-9]{64}', ref['sha256']),
-            'Invalid domain confirmation file reference')
-    path = store._path(ref['path'])
-    matches = [b for b in contract['bindings'] if store._path(b['path']) == path]
-    require(matches and {b['role'] for b in matches} == {role} and
-            all(b['sha256'] == ref['sha256'] for b in matches),
-            'Domain confirmation file must be exclusively frozen as ' + role)
-    return path
-
-
-def _json(path, expected, *, max_bytes=MAX_BYTES):
-    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= max_bytes,
-            'Domain confirmation input missing, linked, or too large')
-    raw = path.read_bytes()
-    import hashlib
-    require(hashlib.sha256(raw).hexdigest() == expected, 'Domain confirmation input changed')
-    return strict_json(raw.decode('utf-8-sig'))
 
 
 def validate_policy(store, contract, policy):
@@ -174,17 +153,6 @@ def _matched_baseline(store, state, contract, value):
                 {(b['path'], b['role'], b['sha256']) for b in contract['bindings'] if b['role'] in {'config', 'data', 'evaluator'}},
                 'Baseline data, claim or evaluator differs')
     return receipt
-
-
-def _output(store, receipt, path, *, max_bytes=MAX_BYTES):
-    from rds_owned_advisor import _read_original
-    artifacts = [a for a in receipt['artifacts'] if a['kind'] == 'project_output' and a['path'] == path]
-    require(len(artifacts) == 1, 'Domain original output missing or ambiguous')
-    require(type(artifacts[0].get('size')) is int and artifacts[0]['size'] <= max_bytes,
-            'Domain original exceeds bounded JSON size')
-    raw = _read_original(store, artifacts[0], keep=True)
-    require(raw is not None, 'Domain original exceeds bounded JSON size')
-    return strict_json(raw.decode('utf-8-sig')), artifacts[0]
 
 
 def _finite(value):

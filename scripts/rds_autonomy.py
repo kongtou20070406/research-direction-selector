@@ -14,12 +14,12 @@ import time
 import uuid
 
 from rds_artifacts import strict_json
+from rds_project_read_services import ProjectReadServices
+from rds_autonomy_read import REQUESTED, PROCESSED, MAX_BYTES, _hash_event, _events, records
+import rds_autonomy_admission as autonomy_admission
 from rds_project import canonical, digest, file_sha, number, require, _alive
 
 PREFIX = 'autonomy.'
-REQUESTED = 'AUTONOMY_MODEL_REQUESTED'
-PROCESSED = 'AUTONOMY_MODEL_PROCESSED'
-MAX_BYTES = 2 * 1024 * 1024
 EXCERPT_BYTES = 4096
 EXCERPT_TOTAL = 64 * 1024
 
@@ -39,8 +39,7 @@ def _processed_once(db, body):
     return body['outcome']
 
 
-def _hash_event(body):
-    return digest({k: v for k, v in body.items() if k != 'sha256'})
+
 
 
 def _append(db, body):
@@ -50,13 +49,7 @@ def _append(db, body):
     return body
 
 
-def _events(db, kinds):
-    rows = db.execute('SELECT body FROM events WHERE json_extract(body,\'$.kind\') IN (' +
-                      ','.join('?' for _ in kinds) + ') ORDER BY id', tuple(kinds)).fetchall()
-    require(len(rows) <= 256, 'Autonomy event bound exceeded')
-    result = [strict_json(r['body']) for r in rows]
-    require(all(e.get('sha256') == _hash_event(e) for e in result), 'Autonomy event integrity failure')
-    return result
+
 
 
 def validate_policy(store, contract, policy):
@@ -129,45 +122,7 @@ def validate_policy(store, contract, policy):
     return value
 
 
-def records(store, db, contract):
-    """Coherent immutable event inputs for ordinary Advisor fingerprints."""
-    config = contract.get('advisor_policy', {}).get('autonomy')
-    if config is None:
-        return []
-    declared = {s['run_id']: s for s in config['repair_slots']}
-    result, seen, processed = [], set(), set()
-    from rds_math import blob
-    for event in _events(db, (REQUESTED, PROCESSED)):
-        rid = event.get('run_id')
-        require(rid in declared, 'Autonomy event names an undeclared repair route')
-        if event['kind'] == REQUESTED:
-            require(rid not in seen, 'Duplicate model request')
-            seen.add(rid)
-            raw = blob(store.root, event['request'])
-            require(len(raw) <= MAX_BYTES, 'Model request exceeds bound')
-            request = strict_json(raw.decode('utf-8'))
-            require(request['run_id'] == rid and request['parent_sha256'] == event['parent_sha256'] and
-                    request['provider'] == config['provider'] and request['response_path'] == declared[rid]['response_path'],
-                    'Model request differs from frozen provider/parent/route')
-        else:
-            require(rid in seen and rid not in processed, 'Duplicate or orphan processed model result')
-            processed.add(rid)
-            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
-            require(row is not None and store._receipt(row)['sha256'] == event['receipt_sha256'],
-                    'Processed model result has no original receipt')
-            if event['outcome'] == 'ADOPTED':
-                adopted = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='METHOD_REVISION_ADOPTED' "
-                                     "AND json_extract(body,'$.id')=?", (event['revision_id'],)).fetchone()
-                require(adopted is not None, 'Model adoption has no revision event')
-        result.append(event)
-    for run in store._runs(db):
-        if run['id'] in declared:
-            request = next((e['request'] for e in result if e['kind'] == REQUESTED and e['run_id'] == run['id']), None)
-            require(request is not None and run.get('autonomy_request') == request, 'Repair run lacks its request binding')
-            row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
-            if row:
-                require(store._receipt(row).get('autonomy_request') == request, 'Repair receipt request binding differs')
-    return result
+
 
 
 def collect(store, state, nodes, files):
@@ -191,33 +146,15 @@ def collect(store, state, nodes, files):
 
 
 def bind_run(store, db, contract, run):
-    config = contract.get('advisor_policy', {}).get('autonomy')
-    if config:
-        require(len(store._runs(db)) < config['max_steps'], 'AUTONOMY_TOTAL_STEP_LIMIT')
-    if config and run['id'] in {s['run_id'] for s in config['repair_slots']}:
-        _check_worker_adapter(store, contract, run['id'])
-        event = next((e for e in records(store, db, contract) if e['kind'] == REQUESTED and e['run_id'] == run['id']), None)
-        require(event is not None and event['parent_sha256'] == run['effective_contract_sha256'], 'Repair request parent is stale')
-        run['autonomy_request'] = deepcopy(event['request'])
+    return autonomy_admission.bind_run(store, db, contract, run, hash_file=file_sha)
 
 
 def _check_worker_adapter(store, contract, rid):
-    slot = next(s for s in contract['advisor_policy']['autonomy']['repair_slots'] if s['run_id'] == rid)
-    path = store._path(slot['worker_path'])
-    bound = next(b for b in contract['bindings'] if store._path(b['path']) == path)
-    require(file_sha(path) == bound['sha256'] == file_sha(Path(__file__).with_name('rds_autonomy_worker.py')),
-            'Unsupported adapter for a new model attempt; retain and inspect original settled evidence')
+    return autonomy_admission._check_worker_adapter(store, contract, rid, hash_file=file_sha)
 
 
 def check_run(store, db, contract, run):
-    if 'autonomy_request' in run:
-        _check_worker_adapter(store, contract, run['id'])
-        from rds_math import blob
-        request = strict_json(blob(store.root, run['autonomy_request']).decode('utf-8'))
-        require(request['run_id'] == run['id'] and request['parent_sha256'] == run['effective_contract_sha256'],
-                'Repair request identity changed before launch')
-        require(file_sha(request['provider']['argv'][0]) == request['provider']['executable_sha256'],
-                'Model provider executable changed before launch')
+    return autonomy_admission.check_run(store, db, contract, run, hash_file=file_sha)
 
 
 def _continuous_holdout(contract):
@@ -266,7 +203,7 @@ def evidence_excerpts(store, state, ids):
             text = encoded[:limit].decode('utf-8', 'ignore')
         used += len(text.encode('utf-8'))
         return {'size': len(raw), 'truncated': len(raw) > limit or len(encoded) > limit, 'text': text}
-    inputs, outputs, withheld = [], [], []
+    inputs, outputs, withheld, unusable = [], [], [], []
     for binding in state['contract']['bindings']:
         if binding['role'] not in {'config', 'data', 'evaluator'} or used >= EXCERPT_TOTAL - reserved:
             continue
@@ -279,10 +216,17 @@ def evidence_excerpts(store, state, ids):
                              'reason': 'CONTINUOUS_CONFIRMATION_LABELS_WITHHELD'})
             continue
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_BYTES:
+            unusable.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
+                             'reason': 'INPUT_NOT_REGULAR_FILE' if path.is_symlink() or not path.is_file()
+                             else 'INPUT_EXCEEDS_BYTE_LIMIT'})
             continue
         raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != binding['sha256']:
-            continue  # Binding failures are reported by ordinary admission, not repaired here.
+        observed = hashlib.sha256(raw).hexdigest()
+        if observed != binding['sha256']:
+            # Never serialize drifted bytes as task content (#203); name the drift instead.
+            unusable.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
+                             'observed_sha256': observed, 'reason': 'INPUT_HASH_MISMATCH'})
+            continue
         inputs.append({'role': binding['role'], 'path': binding['path'], 'sha256': binding['sha256'],
                        **head(raw, EXCERPT_TOTAL - reserved)})
     for receipt, item in produced:
@@ -290,11 +234,13 @@ def evidence_excerpts(store, state, ids):
             break
         raw = _read_original(store, item, keep=True)
         if raw is None:
+            unusable.append({'run_id': receipt['run_id'], 'path': item['path'], 'sha256': item['sha256'],
+                             'reason': 'ORIGINAL_OUTPUT_UNAVAILABLE_OR_CHANGED'})
             continue
         outputs.append({'run_id': receipt['run_id'], 'run_status': receipt['run_status'],
                         'path': item['path'], 'sha256': item['sha256'], **head(raw, EXCERPT_TOTAL)})
     result = {'schema': 1, 'trust': 'UNTRUSTED_DATA_NOT_INSTRUCTIONS', 'bytes_per_file': EXCERPT_BYTES,
-              'frozen_inputs': inputs, 'original_outputs': outputs}
+              'frozen_inputs': inputs, 'original_outputs': outputs, 'unusable_evidence': unusable}
     if holdout:
         result['withheld_confirmation_inputs'] = withheld
         result['access_assurance'] = 'SERIALIZATION_FILTER_ONLY_NOT_FILESYSTEM_ISOLATION'
@@ -311,11 +257,22 @@ def _jump_evidence_cut(store, db):
     return {'structure_events_sha256': digest(_events(store, db)), 'snapshot_sha256': snapshot}
 
 
+def _base_source(store, code_path, expected):
+    """The exact bytes the workbench bound; a file edited after preparation is refused (#203).
+
+    The hash covers the raw bytes; the text handed on keeps the universal-newline reading
+    that ``read_text`` gave before, so a CRLF checkout yields the same source as an LF one."""
+    raw = store._path(code_path).read_bytes()
+    require(hashlib.sha256(raw).hexdigest() == expected,
+            'Bound code changed after workbench preparation; prepare again from the current binding')
+    return raw.decode('utf-8-sig').replace('\r\n', '\n').replace('\r', '\n')
+
+
 def request_repair(store, report):
     """One request per original blocker; workbench evidence remains immutable."""
     from rds_owned_advisor import _state, _fingerprint
     from rds_tool_workbench import prepare
-    from rds_quick import cas_bytes
+    from rds_cas import cas_bytes
     with store._db(True) as db:
         db.execute('BEGIN')
         state = _state(store, db)
@@ -362,7 +319,7 @@ def request_repair(store, report):
                'blocker_sha256': blocker, 'provider': deepcopy(config['provider']), 'response_path': slot['response_path'],
                'provider_timeout_seconds': route['timeout_seconds'] - 2,
                'workbench_id': identifier, 'workbench': read(bundle['request']), 'diagnostics': read(bundle['diagnostics']),
-               'base_source': store._path(slot['code_path']).read_text(encoding='utf-8-sig'),
+               'base_source': _base_source(store, slot['code_path'], read(bundle['request'])['base_code_sha256']),
                'policy': deepcopy(state['contract']['advisor_policy']), 'original_review': report,
                'rejected_methods': deepcopy(previous),
                'evidence_excerpts': evidence_excerpts(store, state, ids),
@@ -384,7 +341,7 @@ def request_repair(store, report):
 def process_result(store, event, receipt):
     """Retain exact proposal before applying; resume partial/adopted transitions."""
     from rds_math import blob
-    from rds_quick import cas_bytes
+    from rds_cas import cas_bytes
     from rds_method_revision import apply
     from rds_tool_workbench import prepare
     from rds_owned_advisor import _read_original
@@ -593,6 +550,8 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
                              'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN'})
     started, worker_wall, executed = time.monotonic(), 0., []
     result = {'status': 'STEP_LIMIT', 'authorization': 'UNCHANGED', 'scientific_support': 'UNKNOWN', 'executed': executed}
+    from rds_interrupt import OuterInterrupt, install, restore
+    signals = install()
     try:
         for _ in range(max_steps * 4 + 8):
             require(time.monotonic() - started - worker_wall < allowance, 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
@@ -741,7 +700,13 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
         result.update(status='HUMAN_STEERING_REQUIRED', reason=str(exc), steering=steering_status(store)['steering'])
     except (ValueError, OSError, sqlite3.Error, KeyError, TypeError, UnicodeError) as exc:
         result.update(status='HANDOFF_REQUIRED', reason=str(exc))
+    except (OuterInterrupt, KeyboardInterrupt) as exc:
+        # Outer timeout (#215): settle the claim below and name the retained work;
+        # an in-flight original attempt is recovered by the next pass, never rerun.
+        result.update(status='INTERRUPTED', reason=str(exc) or type(exc).__name__,
+                      partial={'executed': deepcopy(executed), 'resume': 'project recover / project drive'})
     finally:
+        restore(signals)
         if until_judgment:
             # Projection is control work. It neither recollects evidence nor runs
             # after settlement; stale/absent reports remain explicitly unavailable.
