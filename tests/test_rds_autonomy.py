@@ -24,6 +24,12 @@ import rds_autonomy as autonomy
 import rds_method_revision as revision
 from rds_autonomy_worker import output_paths
 
+# Startup headroom per fixture process, not a value under test. The kernel clock
+# starts before launch; loaded Windows runners have exceeded 2 s for the solve
+# run and 4 s for the repair worker plus provider. Timeout tests pass their own.
+RUN_SECONDS = 10
+REPAIR_SECONDS = 10
+
 OLD = "import json,pathlib,sys\nvalue=0\npathlib.Path(sys.argv[1]).write_text(json.dumps({'score':value}),encoding='utf-8')\n"
 NEW = "import json,pathlib,sys\nvalue=sum([1,2,3])\npathlib.Path(sys.argv[1]).write_text(json.dumps({'score':value}),encoding='utf-8')\n"
 PROVIDER = '''import json,pathlib,sys,time
@@ -64,7 +70,7 @@ class AutonomyTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value if isinstance(value, str) else json.dumps(value, allow_nan=False), encoding='utf-8')
 
-    def build(self, *, modes=None, slots=1, max_steps=4, timeout=4, budget=60, baseline=False, control_wall=None,
+    def build(self, *, modes=None, slots=1, max_steps=4, timeout=REPAIR_SECONDS, budget=60, baseline=False, control_wall=None,
               legacy_worker=False):
         self.write('code.py', OLD)
         self.write('provider.py', PROVIDER.replace('MODES', repr(modes or {})).replace('NEW_SOURCE', repr(NEW)))
@@ -96,7 +102,7 @@ class AutonomyTests(unittest.TestCase):
             response = 'outputs/' + rid + '.json'
             argv = [sys.executable, '-B', 'worker.py', '--run', rid] if is_repair else [sys.executable, '-B', 'code.py', response]
             outputs = output_paths(response) if is_repair else [response]
-            duration = timeout if is_repair else 2
+            duration = timeout if is_repair else RUN_SECONDS
             manifest = {'schema': 1, 'id': rid, 'arm': 'tool', 'control_id': None, 'protocol': ref,
                         'argv': argv, 'outpaths': outputs, 'timeout_seconds': duration,
                         'resource_estimates': {'wall_seconds': duration}}
@@ -287,7 +293,7 @@ class AutonomyTests(unittest.TestCase):
                 self.assertEqual(releases[0]['controller_wall_seconds'], phase['real_wall_seconds'])
                 self.assertEqual(releases[0]['executed'], [])
                 after = state['budget']['wall_seconds']
-                self.assertEqual(after['reserved'], 2.)  # Only the unstarted baseline holds budget.
+                self.assertEqual(after['reserved'], RUN_SECONDS)  # Only the unstarted baseline holds budget.
                 self.assertAlmostEqual(after['spent_measured'] - before['spent_measured'], 1.)
                 self.assertAlmostEqual(after['charged_estimate'] - before['charged_estimate'],
                                        phase['real_wall_seconds'] - 1.)
@@ -417,7 +423,7 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(prepared['request'], event['request'])
         self.assertEqual(prepared['parent_sha256'], event['parent_sha256'])
         self.assertEqual(prepared['provider'], self.contract['advisor_policy']['autonomy']['provider'])
-        self.assertEqual(prepared['provider_timeout_seconds'], 2)
+        self.assertEqual(prepared['provider_timeout_seconds'], REPAIR_SECONDS - 2)
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.events('AUTONOMY_MODEL_DISPATCH_INTENT'), [])
         self.assertEqual(state['runs'], before['runs'])
@@ -637,12 +643,17 @@ class AutonomyTests(unittest.TestCase):
         self.assertFalse((self.root / 'outputs/solve.json').exists())
 
     def test_timed_out_provider_retains_original_attempt_and_fee(self):
-        self.build(modes={'repair1': 'timeout'}, timeout=3)
+        # Deliberately short: the worker stops the 5-second provider after 5 - 2 s,
+        # which leaves the provider time to start and log its single call.
+        self.build(modes={'repair1': 'timeout'}, timeout=5)
         self.cli('project', 'drive', '--max-steps', '4')
         before = self.store.snapshot()
         self.cli('project', 'drive', '--max-steps', '4')
         self.assertEqual(self.calls(), ['repair1'])
         self.assert_single_model_cost(before)
+        receipt = before['receipts'][0]
+        # The worker, not the kernel deadline, must have stopped the provider.
+        self.assertEqual((receipt['run_status'], receipt['timeout']), ('SUCCEEDED', False), receipt)
         self.assertTrue(json.loads((self.root / 'outputs/repair1.json').read_text())['timed_out'])
         self.assertGreater(before['budget']['wall_seconds']['spent_measured'], 0)
 
