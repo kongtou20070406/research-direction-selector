@@ -12,6 +12,7 @@ commits, model settings, every trial with its receipt hashes and Codex usage). P
 [results/per-task.md](results/per-task.md) (registered) and
 [results/per-task-corrected.md](results/per-task-corrected.md) (post hoc, amendment 5). The transcendental-dialect
 PILOT (amendment 6, descriptive only, never pooled with the above): [results/pilot-dialect.md](results/pilot-dialect.md).
+Raw run directories and how to recompute every number: [raw/README.md](raw/README.md).
 
 ## Result
 
