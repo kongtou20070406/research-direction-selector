@@ -116,6 +116,20 @@ class LawTests(Campaign):
         self.assertEqual(model.equivalent(near, far, [{'x': 1}], {'y': (0, 0)}), 'OBSERVATIONALLY_EQUIVALENT')
         self.assertIsNone(model.equivalent(near, far, [{'x': 1}], {}))  # Nothing adjudicable: never equivalent.
 
+    def test_an_open_grammar_escalates_when_the_arithmetic_bound_is_exhausted(self):
+        # A sine law is outside the default add/sub/mul/div grammar. With the grammar left open,
+        # the synthesizer escalates once to the wider dialect instead of declaring exhaustion.
+        root = self.base / 'sine'
+        path = fx.law_campaign(root, 'sin(x)', range(0, 5), hypotheses=[('lin', 'x+1')])
+        value = json.loads(path.read_text(encoding='utf-8'))
+        value['observables']['y']['tolerance'] = {'abs': 0.01}
+        fx.write(path, value)
+        self.assertEqual(initialize(root, path)['status'], 'INITIALIZED')
+        result = drive(root, max_steps=80)
+        self.assertEqual(result['status'], 'GOAL_IDENTIFIED', result)
+        notes = [jump.get('synthesis') or {} for jump in compass.fold(cstore.store_for(root))['jumps']]
+        self.assertTrue(any('GRAMMAR_ESCALATION' in note for note in notes), notes)
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)

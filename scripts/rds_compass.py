@@ -509,6 +509,9 @@ def _novel(state, hyp, points, tolerances, extra=()):
     return {'novel': True}
 
 
+EXTENDED_OPERATORS = ('add', 'sub', 'mul', 'div', 'exp', 'log', 'sin', 'cos')
+
+
 def _grammar(state):
     plan = state['plan']
     names = variables(state)
@@ -519,7 +522,7 @@ def _grammar(state):
     return grammar, names
 
 
-def _fits(state, *, rows=None, probes=None, bound=None):
+def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     """Counterexample-filtered synthesis in three modes; exhaustion is bound-relative."""
     plan = state['plan']
     tolerances = _tolerances(plan)
@@ -534,7 +537,20 @@ def _fits(state, *, rows=None, probes=None, bound=None):
     found, notes = [], {}
     whole = model.synthesize(rows, names, observable, tolerances, grammar=grammar, max_nodes=bound['max_nodes'],
                              max_candidates=bound['max_candidates'], probes=probes, keep=4)
+    escalated = None
+    if escalate and not whole['fits'] and not (plan.get('grammar') or {}).get('operators'):
+        # An open grammar may still be expressible in the wider dialect: escalate only after the
+        # declared arithmetic bound is exhausted, so a cheap fit is never displaced.
+        wider = {**grammar, 'operators': list(EXTENDED_OPERATORS)}
+        escalated = model.synthesize(rows, names, observable, tolerances, grammar=wider,
+                                     max_nodes=bound['max_nodes'],
+                                     max_candidates=min(6000, bound['max_candidates']),
+                                     probes=probes, keep=4)
+        if escalated['fits']:
+            whole = escalated
     notes['WHOLE_LAW'] = {k: whole[k] for k in ('status', 'attempted') if k in whole}
+    if escalated is not None:
+        notes['GRAMMAR_ESCALATION'] = {k: escalated[k] for k in ('status', 'attempted') if k in escalated}
     found += [(fit, 'WHOLE_LAW', None) for fit in whole['fits']]
     refuted = [h for h in state['hypotheses'].values() if h['status'] == 'REFUTED' and observable in h['predict']]
     if refuted:
@@ -825,13 +841,13 @@ def _tool_premises(state, hyp):
 def escape(store, state, diagnosis):
     """Abductive jump: synthesize counterexample-filtered rivals, packetize, dispose."""
     from rds_compass_rsi import escalate, propose
-    found, notes = _fits(state)
+    found, notes = _fits(state, escalate=True)
     rsi = None
     if not found and state['plan']['rsi']['enabled'] and state['plan']['inputs']:
         rsi = escalate(store, state, {'trigger': diagnosis['trigger'], 'synthesis': notes})
         if rsi['qualified']:
             state = fold(store)
-            found, notes = _fits(state)
+            found, notes = _fits(state, escalate=True)
             notes['rsi'] = {'qualified': rsi['qualified']}
     tolerances = _tolerances(state['plan'])
     points = _points(state)
