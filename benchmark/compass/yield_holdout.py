@@ -21,11 +21,12 @@ import rds_compass as compass
 import rds_compass_store as cstore
 from rds_compass_drive import drive
 
-WORLD = ('sparse', 'x+1 if x != 30 else 1000', list(range(0, 32)), 0, {'experiments': 12})
+WORLD = ('sparse', 'x+1 if x != 14 else 1000', list(range(0, 16)), 0, {'experiments': 8})
 VARIANTS = [
     ('economy', {'spend_budget': False, 'confirmations': 2}),
-    ('economy-holdout2', {'spend_budget': False, 'confirmations': 2, 'holdout': 2}),
-    ('default', {}),
+    ('holdout1', {'spend_budget': False, 'confirmations': 2, 'holdout': 1}),
+    ('holdout2', {'spend_budget': False, 'confirmations': 2, 'holdout': 2}),
+    ('holdout3', {'spend_budget': False, 'confirmations': 2, 'holdout': 3}),
 ]
 ENV = {'popcount': lambda n: bin(abs(n)).count('1'), 'sin': math.sin, 'cos': math.cos,
        'exp': math.exp, 'log': math.log, 'sqrt': math.sqrt}

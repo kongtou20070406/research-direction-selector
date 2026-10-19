@@ -149,6 +149,29 @@ Tools take one integer input. A gap over real-valued inputs is not closed by too
 
 For one-input unconditional laws, Compass also builds the unique polynomial of degree `≤ m-2` through `m` receipted points (one spare equation). The independent `rds_math_router.check_certificate` replays that certificate (#194), and the result is compared with the law on every declared input. The two agree at an input only if each value would survive the other as the measurement. If they disagree (`POLYNOMIAL_RIVAL_DISAGREES`), some rival outside the synthesis bound fits every receipt, and the drive returns `JUDGMENT_REQUIRED` instead of `GOAL_IDENTIFIED`.
 
+### Holdout and confirmation budget
+
+`verification.holdout: N` reserves the last N candidates in declaration order. The
+drive buys them only after the leader is fitted; the synthesizer and the confirmation
+count ignore them, so a claim is checked on points that did not shape it. A failed
+holdout prediction refutes the leader through replay. `verification.max_confirmations: N`
+caps the confirmation purchases `spend_budget` would otherwise keep buying; 0 keeps the
+previous unlimited behavior.
+
+The committed probes are mechanism evidence, one world at N=1:
+
+- `benchmark/compass/yield_holdout.py`: a sparse exception at x=14 in a 16-input world
+  is falsely certified by the economy rule (3 experiments) and by the default
+  `spend_budget` rule (12 experiments, the point is never bought). With `holdout: 2`
+  the drive buys x=14 after the fit, refutes the leader and reaches `SEARCH_EXHAUSTED`
+  with no false certification (8 experiments).
+- `benchmark/compass/yield_ablation.py`: on a 32-input quadratic world
+  `max_confirmations: 5` cuts the campaign from 12 to 8 experiments with the same
+  correct claim.
+
+Both remain `INPUT_REPORTED` / `scientific_support: UNKNOWN`; the counts are replayable
+from the committed result files.
+
 ## Fit trends (train and test)
 
 An experiment that trains a model at each level of an input (epochs, width, depth, data size, a regularization strength) and reports a metric on both the training and the test set can declare `"trend": {"along": "x", "train": "train_loss", "test": "test_loss", "replicate": "seed"}`. `replicate` is optional. Both observables need a tolerance and the same `higher_is_better`. A missing direction is listed as unknown and never defaulted.
