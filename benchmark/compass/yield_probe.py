@@ -22,8 +22,10 @@ from rds_compass_drive import drive
 WORLDS = [
     ('arith', 'x*x+1', list(range(-4, 5)), 0),
     ('sin', 'sin(x)', list(range(0, 5)), 0.01),
+    ('cos', 'cos(x)', list(range(0, 5)), 0.01),
     ('sqrt', 'sqrt(x)', [0, 1, 4, 9, 16], 0.01),
     ('exp', 'exp(x/4)', list(range(0, 9)), 0.05),
+    ('log', 'log(x+1)', list(range(0, 9)), 0.01),
     ('popcount', '2*popcount(x)+1', list(range(0, 17)), 0),
 ]
 

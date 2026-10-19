@@ -32,6 +32,22 @@
   "observations": 5
  },
  {
+  "world": "cos",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 5,
+  "claim": "cos(x)",
+  "observations": 5
+ },
+ {
+  "world": "cos",
+  "grammar": "arithmetic",
+  "status": "SEARCH_EXHAUSTED",
+  "experiments": 5,
+  "claim": null,
+  "observations": 5
+ },
+ {
   "world": "sqrt",
   "grammar": "open",
   "status": "GOAL_IDENTIFIED",
@@ -57,6 +73,22 @@
  },
  {
   "world": "exp",
+  "grammar": "arithmetic",
+  "status": "SEARCH_EXHAUSTED",
+  "experiments": 9,
+  "claim": null,
+  "observations": 9
+ },
+ {
+  "world": "log",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 9,
+  "claim": "log((1 + x))",
+  "observations": 9
+ },
+ {
+  "world": "log",
   "grammar": "arithmetic",
   "status": "SEARCH_EXHAUSTED",
   "experiments": 9,
