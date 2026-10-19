@@ -528,7 +528,7 @@ def _novel(state, hyp, points, tolerances, extra=()):
     return {'novel': True}
 
 
-EXTENDED_OPERATORS = ('add', 'sub', 'mul', 'div', 'exp', 'log', 'sin', 'cos')
+EXTENDED_OPERATORS = ('add', 'sub', 'mul', 'div', 'sqrt', 'exp', 'log', 'sin', 'cos', 'pi')
 
 
 def _grammar(state):

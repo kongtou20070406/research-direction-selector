@@ -161,6 +161,17 @@ class LawTests(Campaign):
         state['plan']['verification']['confirm_by_eig'] = False
         self.assertEqual(compass._confirm_candidate(state, [lin, quad], compass.remaining(state), tolerances), 'x0')
 
+    def test_an_open_grammar_reaches_a_root_law(self):
+        # A square-root law needs the wider unary operators; the arithmetic bound cannot express it.
+        root = self.base / 'sqrt'
+        path = fx.law_campaign(root, 'sqrt(x)', [0, 1, 4, 9, 16], hypotheses=[('lin', 'x+1')])
+        value = json.loads(path.read_text(encoding='utf-8'))
+        value['observables']['y']['tolerance'] = {'abs': 0.01}
+        fx.write(path, value)
+        self.assertEqual(initialize(root, path)['status'], 'INITIALIZED')
+        result = drive(root, max_steps=80)
+        self.assertEqual(result['status'], 'GOAL_IDENTIFIED', result)
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)

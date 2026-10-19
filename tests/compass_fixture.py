@@ -14,7 +14,8 @@ if 'arms' in task:
 else:
     x = int(a.x)
     y = eval(task['law'], {'__builtins__': {}}, {'x': x, 'popcount': lambda n: bin(abs(n)).count('1'),
-                                                  'sin': math.sin, 'cos': math.cos, 'exp': math.exp, 'log': math.log})
+                                                  'sin': math.sin, 'cos': math.cos, 'exp': math.exp,
+                                                  'log': math.log, 'sqrt': math.sqrt})
     body = {'outputs': {'y': y}}
 out = pathlib.Path(a.output); out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps(body), encoding='utf-8')
