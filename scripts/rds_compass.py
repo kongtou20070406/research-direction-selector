@@ -1378,6 +1378,9 @@ def report(store):
             'interrupted_attempts': [{'candidate': v['candidate'], 'run_id': k, 'receipt_sha256': v['receipt_sha256']}
                                      for k, v in sorted(state['interrupted'].items())],
             'experiments': sum(1 for rid in state['runs'] if rid.startswith('compass-')),
+            'cost': {'experiments': sum(1 for rid in state['runs'] if rid.startswith('compass-')),
+                     'jumps': len(state['jumps']),
+                     'agent_tokens': agent_tokens(state)['spent'] if plan.get('agent') else None},
             'labels': {'measurement': 'INPUT_REPORTED', 'replay': 'CONSISTENT|REFUTED|UNTESTED',
                        'scientific_support': 'UNKNOWN'},
             'scientific_support': 'UNKNOWN'}

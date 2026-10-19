@@ -191,6 +191,14 @@ class LawTests(Campaign):
         decisions = self.events(root, 'DECISION')
         self.assertEqual([d['candidate'] for d in decisions if d['action'] == 'HOLDOUT'], ['x4'])
 
+    def test_report_publishes_a_recomputable_cost_summary(self):
+        root = self.campaign('cost', QUAD)
+        drive(root, publish=False)
+        body = compass.report(cstore.store_for(root))
+        self.assertEqual(body['cost']['experiments'], body['experiments'])
+        self.assertEqual(body['cost']['jumps'], len(body['jumps']))
+        self.assertIsNone(body['cost']['agent_tokens'])  # No agent declared: no model spend.
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)
