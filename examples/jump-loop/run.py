@@ -15,6 +15,11 @@ sys.path.insert(0, str(REPO / 'scripts'))
 from rds_project import ProjectStore, canonical, file_sha, require
 from rds_autonomy_worker import output_paths
 
+# Fixture repair headroom, not a value under test. Each repair is two fresh Python processes (the
+# adapter, then the fixture provider), and the provider gets the cap minus 2 s. A loaded Windows runner
+# exceeded the 8 s that a 10 s cap leaves, which ended the loop in RECONCILE_MODEL_DELIVERY_REQUIRED.
+FIXTURE_REPAIR_SECONDS = 30
+
 
 def write(root, name, value):
     (root / name).write_text(value if isinstance(value, str) else canonical(value), encoding='utf-8')
@@ -70,7 +75,7 @@ def build(root, native=None):
     for i in (1, 2):
         rid, response = 'repair' + str(i), 'out/repair' + str(i) + '.json'
         specs.append((rid, [python, '-B', 'adapter.py', '--run', rid], output_paths(response),
-                      [{'fact': 'autonomy.' + rid + '.ready', 'op': 'eq', 'value': True}], 185 if native else 10))
+                      [{'fact': 'autonomy.' + rid + '.ready', 'op': 'eq', 'value': True}], 185 if native else FIXTURE_REPAIR_SECONDS))
         candidate, check = 'candidate' + str(i), 'check' + str(i)
         conditions = ([{'fact': 'autonomy.repair1.adopted', 'op': 'eq', 'value': True}] if i == 1 else
                       [{'fact': 'pilot.verdict', 'op': 'eq', 'value': 'PASS'}])
