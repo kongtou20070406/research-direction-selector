@@ -67,7 +67,7 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
             if action == 'RECOVER':
                 if _recover(store, state, step['runs']) == 'WAITING':
                     return finish('WAITING_FOR_ORIGINAL_ATTEMPT', {'runs': step['runs']})
-            elif action in ('EXPERIMENT', 'PROBE', 'CONFIRM'):
+            elif action in ('EXPERIMENT', 'PROBE', 'CONFIRM', 'HOLDOUT'):
                 compass.record(store, state, step)
                 manifest = compass.manifest(state, step['candidate'])
                 in_flight = manifest['id']

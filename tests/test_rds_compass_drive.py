@@ -181,6 +181,16 @@ class LawTests(Campaign):
         confirms = [d for d in self.events(root, 'DECISION') if d['action'] == 'CONFIRM']
         self.assertLessEqual(len(confirms), 1)
 
+    def test_a_holdout_point_is_measured_after_the_fit_and_never_used_to_fit(self):
+        # verification.holdout reserves the last candidate ids: the drive buys them only after the
+        # leader is fitted, and the synthesizer and confirmation counter never see them.
+        root = self.campaign('holdout', QUAD,
+                             verification={'holdout': 1, 'confirmations': 1, 'max_confirmations': 1})
+        result = drive(root, publish=False)
+        self.assertIn(result['status'], ('GOAL_IDENTIFIED', 'JUDGMENT_REQUIRED'), result)
+        decisions = self.events(root, 'DECISION')
+        self.assertEqual([d['candidate'] for d in decisions if d['action'] == 'HOLDOUT'], ['x4'])
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)

@@ -35,13 +35,14 @@ DEFAULTS = {
     # spend_budget: before a claim, the unspent experiment budget buys coverage points that try to
     # refute the leader. A minimum of confirmations cannot rule out sparse exceptions on its own.
     'verification': {'confirmations': 2, 'spend_budget': True, 'confirm_by_eig': True,
-                     'max_confirmations': 0},
+                     'max_confirmations': 0, 'holdout': 0},
 }
 FLAGS = frozenset(('enabled', 'spend_budget', 'confirm_by_eig'))
 # The synthesis bounds the model itself enforces; a plan outside them would fail only at its first jump.
 BOUNDS = {('synthesis', 'max_nodes'): (1, model.MAX_NODES),
           ('synthesis', 'max_candidates'): (1, model.MAX_SYNTH_CANDIDATES),
-          ('verification', 'max_confirmations'): (0, MAX_CANDIDATES)}
+          ('verification', 'max_confirmations'): (0, MAX_CANDIDATES),
+          ('verification', 'holdout'): (0, MAX_CANDIDATES)}
 PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 
 
@@ -312,11 +313,13 @@ def compile_plan(store, declaration, source_sha256, source=None):
             if argv not in commands:
                 commands.append(argv)
     contract['allowed_commands'] = commands
+    verification = _tuned(declaration, 'verification', defaulted)
+    holdout = sorted(c['id'] for c in candidates)[-verification['holdout']:] if verification['holdout'] else []
     plan = {'schema': PLAN_SCHEMA, 'goal': deepcopy(goal), 'inputs': inputs, 'tolerances': tolerances,
             'observables': sorted(observables), 'candidates': candidates, 'hypotheses': hypotheses,
             'grammar': deepcopy(grammar), 'synthesis': _tuned(declaration, 'synthesis', defaulted),
             'escape': _tuned(declaration, 'escape', defaulted), 'rsi': _tuned(declaration, 'rsi', defaulted),
-            'verification': _tuned(declaration, 'verification', defaulted),
+            'verification': verification, 'holdout': holdout,
             'budget': {'wall_seconds': budget['wall_seconds'],
                        'experiments': budget.get('experiments', len(candidates))},
             'experiment': {'timeout_seconds': timeout, 'wall_seconds': wall}, 'protocol': protocol_ref,

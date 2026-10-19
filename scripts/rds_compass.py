@@ -180,7 +180,9 @@ def next_attempt(state, item):
 
 
 def remaining(state):
-    return [c for c in state['plan']['candidates'] if next_attempt(state, c) is not None]
+    holdout = set(state['plan'].get('holdout') or [])
+    return [c for c in state['plan']['candidates']
+            if c['id'] not in holdout and next_attempt(state, c) is not None]
 
 
 # --- Receipt ingestion --------------------------------------------------------
@@ -273,8 +275,9 @@ def confirmations(state, hyp):
     observable confirms nothing.
     """
     goal, count, tolerances = _goal_observable(state['plan']), 0, _tolerances(state['plan'])
+    holdout = set(state['plan'].get('holdout') or [])
     for ident, obs in state['observations'].items():
-        if obs['status'] != 'MEASURED' or not _novel_for(state, obs, hyp):
+        if ident in holdout or obs['status'] != 'MEASURED' or not _novel_for(state, obs, hyp):
             continue
         values, status = model.predict(hyp, env(state, candidate(state, ident)))
         keys = [goal] if goal is not None else list(values)
@@ -442,6 +445,9 @@ def decide(state):
                     'confirmations': done, 'required': plan['verification']['confirmations'],
                     'reason': 'MINIMUM_CONFIRMATIONS' if done < plan['verification']['confirmations']
                     else 'SPEND_BUDGET_ON_REFUTATION'}
+    holdout_pending = [cid for cid in plan.get('holdout') or [] if cid not in state['observations']]
+    if rows and holdout_pending and can_buy:
+        return {'action': 'HOLDOUT', 'candidate': holdout_pending[0], 'leader': rows[0]['id']}
     if rows:
         return {'action': 'VERIFY', 'live': [h['id'] for h in rows]}
     return {'action': 'HANDOFF', 'reason': 'JUDGMENT_REQUIRED', 'basin': diagnosis}
@@ -551,7 +557,8 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     tolerances = _tolerances(plan)
     observable = plan['goal']['observable']
     rows = measured(state) if rows is None else rows
-    rows = [r for r in rows if observable in r['outputs']]
+    holdout = set(plan.get('holdout') or [])
+    rows = [r for r in rows if observable in r['outputs'] and r['id'] not in holdout]
     if not rows or observable not in tolerances:
         return [], {'status': 'NO_MEASUREMENTS'}
     grammar, names = _grammar(state)
