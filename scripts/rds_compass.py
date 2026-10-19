@@ -275,9 +275,8 @@ def confirmations(state, hyp):
     observable confirms nothing.
     """
     goal, count, tolerances = _goal_observable(state['plan']), 0, _tolerances(state['plan'])
-    holdout = set(state['plan'].get('holdout') or [])
     for ident, obs in state['observations'].items():
-        if ident in holdout or obs['status'] != 'MEASURED' or not _novel_for(state, obs, hyp):
+        if obs['status'] != 'MEASURED' or not _novel_for(state, obs, hyp):
             continue
         values, status = model.predict(hyp, env(state, candidate(state, ident)))
         keys = [goal] if goal is not None else list(values)
