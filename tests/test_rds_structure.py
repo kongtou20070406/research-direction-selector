@@ -20,6 +20,10 @@ spec = importlib.util.spec_from_file_location('structure_fixture', REPO / 'examp
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 
+# Start-up headroom per owned run, not a value under test: a loaded Windows runner did not finish the
+# 2 s candidate/verifier pair, and an unfinished run leaves the goal UNKNOWN instead of PASS.
+OWNED_RUN_SECONDS = 10
+
 
 class StructureTests(unittest.TestCase):
     def setUp(self):
@@ -324,9 +328,9 @@ class StructureTests(unittest.TestCase):
                 action(self.root, 'candidate')
 
     def test_owned_admission_collection_and_goal_consumption_are_reused(self):
-        other = fixture.prepare(Path(self.tmp.name) / 'owned', owned=True)
+        other = fixture.prepare(Path(self.tmp.name) / 'owned', owned=True, timeout=OWNED_RUN_SECONDS)
         task = structure.request(other)['tasks'][0]
-        p = fixture.proposal(other, task)
+        p = fixture.proposal(other, task, timeout=OWNED_RUN_SECONDS)
         structure.propose(other, p)
         self.assertEqual(structure.advance(other, 'candidate')['goal_status'], 'PASS')
         state = ProjectStore(other).snapshot()
