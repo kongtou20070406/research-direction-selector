@@ -129,6 +129,15 @@ class LawTests(Campaign):
         self.assertEqual(result['status'], 'GOAL_IDENTIFIED', result)
         notes = [jump.get('synthesis') or {} for jump in compass.fold(cstore.store_for(root))['jumps']]
         self.assertTrue(any('GRAMMAR_ESCALATION' in note for note in notes), notes)
+        # Control: an explicit arithmetic grammar never escalates, so the same world stays unsolved.
+        control = self.base / 'sine-control'
+        control_path = fx.law_campaign(control, 'sin(x)', range(0, 5), hypotheses=[('lin', 'x+1')])
+        value = json.loads(control_path.read_text(encoding='utf-8'))
+        value['observables']['y']['tolerance'] = {'abs': 0.01}
+        value['grammar'] = {'operators': ['add', 'sub', 'mul', 'div']}
+        fx.write(control_path, value)
+        self.assertEqual(initialize(control, control_path)['status'], 'INITIALIZED')
+        self.assertNotEqual(drive(control, max_steps=80)['status'], 'GOAL_IDENTIFIED')
 
     def _minimal_state(self, confirm_by_eig=True):
         candidates = [{'id': f'x{i}', 'inputs': {'x': i}, 'cost': '1', 'run_id': f'c-x{i}',
