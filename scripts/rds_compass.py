@@ -430,7 +430,11 @@ def decide(state):
         done = confirmations(state, leader)
         # Plans compiled before spend_budget existed keep their recorded stopping rule.
         spend = plan['verification'].get('spend_budget', False)
-        if done < plan['verification']['confirmations'] or spend:
+        cap = plan['verification'].get('max_confirmations', 0)
+        bought = sum(1 for d in state['decisions'] if d['action'] == 'CONFIRM')
+        confirmed = done < plan['verification']['confirmations'] and (not cap or bought < cap)
+        spending = spend and (not cap or bought < cap)
+        if confirmed or spending:
             # Falsification test: a fitted law must survive predictions it did not see. While budget
             # remains, a leader is tested at the uncovered inputs before any claim is made.
             return {'action': 'CONFIRM', 'candidate': _confirm_candidate(state, rows, pending, tolerances),

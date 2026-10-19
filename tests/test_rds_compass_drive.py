@@ -172,6 +172,15 @@ class LawTests(Campaign):
         result = drive(root, max_steps=80)
         self.assertEqual(result['status'], 'GOAL_IDENTIFIED', result)
 
+    def test_a_confirmation_cap_stops_the_refutation_budget(self):
+        # spend_budget buys confirmation points until the experiment budget ends; a declared cap
+        # stops it at the stated number, so a large declared domain stays affordable.
+        root = self.campaign('cap', QUAD, verification={'confirmations': 1, 'max_confirmations': 1})
+        result = drive(root, publish=False)
+        self.assertIn(result['status'], ('GOAL_IDENTIFIED', 'JUDGMENT_REQUIRED'), result)
+        confirms = [d for d in self.events(root, 'DECISION') if d['action'] == 'CONFIRM']
+        self.assertLessEqual(len(confirms), 1)
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)
