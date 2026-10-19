@@ -1,0 +1,34 @@
+[
+ {
+  "world": "sparse",
+  "variant": "economy",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "(1 + x)",
+  "correct": false,
+  "false_certification": true,
+  "holdout": [],
+  "experiments": 3
+ },
+ {
+  "world": "sparse",
+  "variant": "economy-holdout2",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "correct": false,
+  "false_certification": false,
+  "holdout": [
+   "x30"
+  ],
+  "experiments": 9
+ },
+ {
+  "world": "sparse",
+  "variant": "default",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "(1 + x)",
+  "correct": false,
+  "false_certification": true,
+  "holdout": [],
+  "experiments": 12
+ }
+]

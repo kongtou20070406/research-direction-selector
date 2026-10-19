@@ -314,7 +314,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
                 commands.append(argv)
     contract['allowed_commands'] = commands
     verification = _tuned(declaration, 'verification', defaulted)
-    holdout = sorted(c['id'] for c in candidates)[-verification['holdout']:] if verification['holdout'] else []
+    holdout = [c['id'] for c in candidates][-verification['holdout']:] if verification['holdout'] else []
     plan = {'schema': PLAN_SCHEMA, 'goal': deepcopy(goal), 'inputs': inputs, 'tolerances': tolerances,
             'observables': sorted(observables), 'candidates': candidates, 'hypotheses': hypotheses,
             'grammar': deepcopy(grammar), 'synthesis': _tuned(declaration, 'synthesis', defaulted),
