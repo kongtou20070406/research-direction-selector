@@ -337,6 +337,24 @@ def _spread(state, count):
     return [c.pop('_id') for c in chosen]
 
 
+def _confirm_candidate(state, rows, pending, tolerances):
+    """The confirmation point with the highest EIG, or the farthest spread point when none separates.
+
+    A confirmation buys a prediction the leader did not see. Buying an input that no live rival
+    can separate spends an experiment without ruling anything out, so the separating input wins;
+    the spread point remains the fallback for coverage, where a sparse exception could sit.
+    """
+    if state['plan']['verification'].get('confirm_by_eig', True):
+        adjudicable = [{**h, 'predict': {k: v for k, v in h['predict'].items() if k in tolerances}} for h in rows]
+        seen = [env(state, candidate(state, i)) for i in state['observations']]
+        ranking = model.rank_experiments(
+            adjudicable, [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']} for c in pending],
+            tolerances, observed=seen, weights=_weights(rows), limit=1)
+        if ranking['ranked']:
+            return ranking['ranked'][0]['id']
+    return _spread(state, 1)[0]
+
+
 def _barren(state, jump):
     """A jump that added no rival at its evidence: ask again only after new evidence."""
     if any(tool['seq'] > jump['seq'] for tool in state['proposed_tools'].values()):
@@ -415,7 +433,8 @@ def decide(state):
         if done < plan['verification']['confirmations'] or spend:
             # Falsification test: a fitted law must survive predictions it did not see. While budget
             # remains, a leader is tested at the uncovered inputs before any claim is made.
-            return {'action': 'CONFIRM', 'candidate': _spread(state, 1)[0], 'leader': leader['id'],
+            return {'action': 'CONFIRM', 'candidate': _confirm_candidate(state, rows, pending, tolerances),
+                    'leader': leader['id'],
                     'confirmations': done, 'required': plan['verification']['confirmations'],
                     'reason': 'MINIMUM_CONFIRMATIONS' if done < plan['verification']['confirmations']
                     else 'SPEND_BUDGET_ON_REFUTATION'}

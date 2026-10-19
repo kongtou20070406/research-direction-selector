@@ -130,6 +130,28 @@ class LawTests(Campaign):
         notes = [jump.get('synthesis') or {} for jump in compass.fold(cstore.store_for(root))['jumps']]
         self.assertTrue(any('GRAMMAR_ESCALATION' in note for note in notes), notes)
 
+    def _minimal_state(self, confirm_by_eig=True):
+        candidates = [{'id': f'x{i}', 'inputs': {'x': i}, 'cost': '1', 'run_id': f'c-x{i}',
+                       'retry': {'run_id': f'c-x{i}-a2'}, 'output': f'outputs/compass/x{i}.json',
+                       'argv': ['python', 'experiment.py', '--x', str(i), '--output', f'outputs/compass/x{i}.json']}
+                      for i in range(5)]
+        return {'plan': {'verification': {'confirm_by_eig': confirm_by_eig},
+                         'inputs': {'x': {'min': 0, 'max': 4, 'integer': True}},
+                         'observables': {'y': {'tolerance': {'abs': 0}}},
+                         'candidates': candidates, 'goal': {'observable': 'y'}},
+                'runs': {}, 'hypotheses': {}, 'observations': {}, 'tools': {},
+                'decisions': [], 'jumps': []}
+
+    def test_confirmation_buys_a_separating_point_when_one_exists(self):
+        state = self._minimal_state()
+        lin = model.compile_hypothesis({'id': 'lin', 'predict': {'y': 'x'}}, ['x'], ['y'])
+        quad = model.compile_hypothesis({'id': 'quad', 'predict': {'y': 'x*x'}}, ['x'], ['y'])
+        tolerances = {'y': (model.exact(0), model.exact(0))}
+        # x0 and x1 agree for both rivals; x2 first separates them. x0 is the farthest spread point.
+        self.assertEqual(compass._confirm_candidate(state, [lin, quad], compass.remaining(state), tolerances), 'x2')
+        state['plan']['verification']['confirm_by_eig'] = False
+        self.assertEqual(compass._confirm_candidate(state, [lin, quad], compass.remaining(state), tolerances), 'x0')
+
     def test_law_identified_from_receipts_with_bound_relative_claim(self):
         root = self.campaign('quad', QUAD)
         result = drive(root)

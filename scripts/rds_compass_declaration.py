@@ -34,9 +34,9 @@ DEFAULTS = {
     'rsi': {'enabled': True, 'max_tools': 3, 'max_mutants': 24},
     # spend_budget: before a claim, the unspent experiment budget buys coverage points that try to
     # refute the leader. A minimum of confirmations cannot rule out sparse exceptions on its own.
-    'verification': {'confirmations': 2, 'spend_budget': True},
+    'verification': {'confirmations': 2, 'spend_budget': True, 'confirm_by_eig': True},
 }
-FLAGS = frozenset(('enabled', 'spend_budget'))
+FLAGS = frozenset(('enabled', 'spend_budget', 'confirm_by_eig'))
 # The synthesis bounds the model itself enforces; a plan outside them would fail only at its first jump.
 BOUNDS = {('synthesis', 'max_nodes'): (1, model.MAX_NODES),
           ('synthesis', 'max_candidates'): (1, model.MAX_SYNTH_CANDIDATES)}
