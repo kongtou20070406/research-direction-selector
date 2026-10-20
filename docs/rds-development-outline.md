@@ -1,33 +1,105 @@
-# RDS 开发大纲（2026-10-20）
+# RDS 开发纲领（2026-10-20 修订版）
 
-来源：外部审计（四代子系统、SCC 依赖环、fold O(N²)、表达力锁死、自我帕累托支配、Agent 先验倒置、合规税）+ 本轮代码核实。
+制定：lead session + kimi-k3 决策搭档（决策责任方）。
+依据：`RDS-Compass-structure-review-20261020.md`（结构审查）、`RDS-Compass-AI4S-review-20261019.md`（收益审计）、`handoff-20261020.md`（逐条核实后的口径）、devset 实验（5 Feynman 方程 × B=8/16/32）。
 
-目标：**强化 agent 的科研能力，站上质量 × 成本帕累托前沿**。质量 = claim_exact + 假认证率；成本 = 实验数 + token + 墙钟 + 计算。
+**本次修订说明**：上一版正文直接采信了外部审计，其中三条事实已被核实为假（`52 模块 SCC` 实为 49、`_confirmation_plan` 函数在全部 git 历史中不存在、「29→61」出自旧停止规则）。本版正文只保留已核实的事实；审计原文降为附录并逐条标注裁定。
 
-## P0 止血（先做，影响前沿形状）
+---
 
-1. **VoI 停机**：`spend_budget: True` 默认 + `_boundary_probe` 有 gap 就继续买，导致 B=16/24/32 被 B=12 自我支配。改成「只在下一实验的期望信息增益 > 0 时买」，并记录 `STOP_EARLY` 原因。
-2. **fold 缓存**：`ingest` 一次调 3 次 `fold`、`drive` 每步 1 次，每次全量重放。加 replay 结果缓存（key = 假设 sha + 测量 receipt sha + 容差），目标：同一 campaign 的 fold 耗时降一个量级。
-3. **全口径成本账**：`report.cost` 现在只记实验数/jumps/agent_tokens（INPUT_REPORTED），缺 token 实际量、合规税、RSI 计算。补字段，但不伪造数值。
+## 一、目标泛函
 
-## P1 表达力与先验（1 周）
+```
+max  E[ claim_exact 独立复核正确率 ]
+     − λ · (每正确解 token)
+s.t. 假认证率 ≤ 对照
+     best_effort_exact 永不计入正确
+     成本可从账本重算
+```
 
-4. **多变量/向量化算子**：`rds_compass_rsi.py` 只收单变量整数函数 + `sys.settrace`（20–50× 开销）。改成向量化沙箱（numpy 数组输入、超时用 signal/子进程，不用 settrace）。
-5. **LLM 先验路由**：枚举耗尽前先问 agent（当前是「先枚举到死，再叫 LLM」）。最小实现：当 `synthesize` 的 `SEARCH_TRUNCATED` 出现两次，返回 `HANDOFF_FOR_PRIOR`，由 agent 给候选结构或派生特征。
-6. **多保真度**：先用小数据子集/低保真跑 probe 剪枝，再全量确认。
+- `λ` 未标定 → 保持 `UNKNOWN`，fail-closed，不允许猜默认值。
+- 主指标是**独立复核正确率**，不是成功率、不是实验增速、不是工程完整性。
+- 质量 = `claim_exact` + 假认证率；成本 = 实验数 + token + 墙钟 + 计算。
 
-## P2 架构（2–4 周，非阻塞）
+## 二、七条铁律
 
-7. **单一内核**：L3/Quick/Full/Compass 四套账本收拢到 Compass 声明式契约 + 事件账本；`compass.json` 伪装 `mode='quick'` 的借壳要拆。
-8. **破环**：`scripts/` 平铺 170 个 `rds_*.py`，52 模块 SCC + 21 条反向依赖。按 `rds/{kernel,graph,compass,adapters,cli}` 分包，先清反向边。
+1. **口径分离**：`claim_exact`（`GOAL_IDENTIFIED` 且对全部真值点 0 反例）与 `best_effort_exact`（`PARTIAL_FIT`）分开统计，**后者永不算正确**。假认证率不升是安全门槛，不是可优化目标。
+2. **预注册 + 相对门槛**：判定规则在跑之前写死；门槛用相对比例，不用绝对点数；判定脚本读结果文件自动判，不靠人眼。现有基线：NewtonBench 预注册 `claim_exact` Compass 0.264 vs `code_assisted` 0.938 / `vanilla` 0.958；成本 1.32M vs 85k input token/正确解。
+3. **成本必须可对账**：token 未进入 `budget` 表之前，**禁止宣称任何成本优势**。现状是 1.32M vs 85k 这个 15.5 倍差距由人在 PR 评论里手算，系统内自算不出来。
+4. **瓶颈先归因**：改预算前必须先证明瓶颈是预算。devset 证据：4/5 方程每 **4 次实验**就锁定，B 从 8 提到 32 结果**零变化**；唯一失败的 `feynman-I.6.20a`（需 π+exp+sqrt）实验数停在 14 不再增长——这是**合成器表达力边界，不是预算边界**。表达力优先于预算。
+5. **饱和即停**：定律锁定后继续买 PROBE/HOLDOUT 是纯烧钱。已观测现象：`audit-verify-cost` 上 B=12 锁定 leader 后仍买到 16/21/21，出现 `RDS(B=16/24/32)` 被 `RDS(B=12)` **自我支配**。根因是 `max_gap=2` 覆盖规则 + `holdout: 2` + 缺早停，**不是 `spend_budget`**。
+6. **引用必须可查**：外部审计/报告的每条 claim，先在 `git archive` 干净快照上 grep 钉死再写进文档。审计给的行号常偏移或指错函数。
+7. **口径改动独立复核**：任何触及统计口径的改动（阈值、容差、闸门、分类）必须带一条最小反向测试，并由独立复核子 agent 复判。防的是「为了过测试而放水」。
 
-## 不做
+## 三、结构债处理（S1–S7）
+
+结构审查发现七处问题。**关键裁定（kimi-k3）：`rds_compass.py` 拆分缓议，合并后再做。**
+
+| 编号 | 问题 | 处置 |
+|---|---|---|
+| S1 | `rds_compass.py` 1491 行 / 86KB 装 8 类职责，是其依赖两个 L1 模块之和的 2.4 倍 | **合并后拆**，只按两刀（B1 agent 传输+校验、B2 呈现+TMS 镜像），纯移动 + re-export |
+| S2 | token 不是一等预算资源，卡死帕累托前沿 | 立 issue（C1），优先级高 |
+| S3 | fold-on-every-read 无物化层 + 20000 行硬 cap | 立 issue（C2） |
+| S4 | 治理口径三方打架 + 负结果未归档 + auto-merge 开启 | **已处理**（auto-merge 于 2026-10-20 关闭） |
+| S5 | RSI 工具库是账本外 sidecar；`publish_tms` 冲突即崩 | 立 issue（C3） |
+| S6 | 测试按历史 PR 号命名；docs 平铺；`rds_models` 空包 | Batch A 机械处理 |
+| S7 | Compass 直接 `from rds_project import`（125KB 遗留上帝文件） | 标注释，等 #325 中央服务落地 |
+| S8 | 四代平行子系统（L3 SQLite / Quick 账本 / ProjectStore / Compass 事件链）；`rds_compass_declaration.py:405` 把 `compass.json` 伪装成 `mode='quick'` 借壳 | **先出收拢计划，不直接改**（风险最高） |
+
+### 拆分的翻转条件（三条，任一满足即执行）
+
+1. 合并完成且 `rds_compass.py` 连续两周无功能改动 → 立即拆；
+2. 合并前若需第三次功能改动且单次触及 ≥3 类职责 → 先拆再改；
+3. 拆分验收标准：函数体 diff 为空、公共符号全可达、focused 测试绿。
+
+**为什么现在不拆**：会和开发 session 的未提交改动直接冲突，让未合并的 PR diff 再膨胀，且零科研收益。理由写在这里，避免下次重新论证。
+
+## 四、优先级路线
+
+| 序 | 事项 | 完成判据 |
+|---|---|---|
+| 0 | **工作区清算**：`paid_query` 补登记 `LAYERS`；11 项未提交改动分批定性（提交或回滚）；`git status` 干净 | import 测试全绿；`git status` 无残留 |
+| 1 | **饱和早停**（P0）：`_gap_wide_enough` 阈值收紧走完 | devset 15 runs 重跑：4/5 已锁定方程实验数 ≤6；B=8 与 B=32 实验数差 ≤2；`claim_exact` 12/15 不降；假认证不升。达不到即回滚 |
+| 2 | **Batch A**：~~A1 关 auto-merge~~（已完成）；A2 归档 NewtonBench 负结果进 `docs/benchmarks/`；A3 测试按被测对象改名；A4 docs 分层 | A2 文档入库且 release notes 有指针；A3/A4 grep 零残留 |
+| 3 | **C1**：token 进入 `budget` 表，`report` 能自算每正确解成本 | 成本误差 0（与手算对账一致） |
+| 4 | 结构拆分（B1/B2） | 见翻转条件 |
+| 5 | **表达力**：无理常数 + 超越函数组合（`I.6.20a`） | devset 上 5/5 `claim_exact` |
+| 6 | **四代子系统收拢计划**（S8） | 只出计划，不动代码 |
+
+## 五、防再犯机制（三条，必须落成可执行检查）
+
+1. **行数闸门（CI）**：`scripts/rds_*.py` 新文件 >800 行、或改动后 >1000 行即 fail。现存超标文件进「只减不增」白名单。这条直接防 S1 类问题第二次发生——`rds_cli.py` 124KB、`rds_project.py` 125.5KB、`rds_compass.py` 86KB 都是这么长出来的。
+2. **符号引用校验**：文档/评论合入前，对每条 `符号@commit` 在 `git archive` 快照里 grep，不存在则红。防「引用不存在的函数」（`_confirmation_plan` 事件）和数字漂移（52 vs 49）。
+3. **负结果强制归档**：release 文档必须链接 `docs/benchmarks/` 下的负结果归档，PR 模板加 checkbox。防 NewtonBench 负结果只活在 PR 评论里、PR 一合就沉没。
+
+## 六、不可逆风险与防护
+
+| 风险 | 防护 | 状态 |
+|---|---|---|
+| auto-merge 触发合并、绕过科研增益门槛；负结果随评论沉没 | 关 auto-merge；合并条件写进 `versioning.md`；负结果归档前不合 | **auto-merge 已于 2026-10-20 关闭**；归档待做 |
+| 脏工作区混提污染 HEAD（`_gap_wide_enough` 未跑 regression、fold 缓存测试未跑完） | `git status` 干净前禁止开发；每批独立提交；fold 缓存单独跑完全量测试 | 处理中 |
+| 口径放水污染假认证率基线（PARTIAL_FIT 算正确、放宽容差或闸门） | 每个改动带最小反向测试；假认证率对 NewtonBench 51 次基线对照；口径改动由独立复核子 agent 复判 | 铁律 7 |
+
+## 七、合并/发布门槛
+
+满足以下四条之前，6.0.0 只能定位为**「可审计、可复现的执行内核」**，不得宣称科研能力提升：
+
+1. 预注册、未见过的、不可穷举域上，正确率增益 95% 下界 > 0；
+2. 假认证率不高于对照，上界 < 1%；
+3. 每正确解成本 ≤ 对照 1.25 倍（或明确只宣称质量、不宣称效率）；
+4. 全部负结果、无 claim、超时、预算超限、模型未调用、适配失败率公开。
+
+**现状判定：工程可过（CI 绿 + adversarial 全绿），科研未过（NewtonBench 0.264 vs 0.958、51 次假认证）。**
+
+## 八、不做
 
 - 不为单任务写特化补丁（如只为 sparse 世界调参）。
 - 不在无独立复核的情况下宣称「RDS 超过 baseline」。
-- 不改 `scientific_support` 的 UNKNOWN 语义。
+- 不改 `scientific_support` 的 `UNKNOWN` 语义。
+- 不放宽 pilot/campaign/forecast/drive 的任何超时上限来让测试通过。
+- 不在 `git status` 干净之前开始任何功能开发。
 
-## 验收（每步）
+## 九、每步验收
 
 - 同模型、同预算（实验数 × token × 墙钟）对照；
 - 主指标 `claim_exact`，安全项 `false_certification` 不升；
@@ -36,65 +108,60 @@
 
 ---
 
-## 附录：外部审计原文（2026-10-20，全文保留）
+## 附录 A：本版剔除的伪事实
 
-基于对 `kongtou20070406/research-direction-selector`（`release/6.0.0-compass` 分支，`scripts/` 下共 **148 个 Python 模块、51,397 行代码**，加上 `tools/import_graph.py` 追踪的 **173 个模块、638 条依赖边**）的完整代码审计，以下从**代码结构性病灶**、**质量-成本帕累托前沿的深层矛盾与展望**、**RDS 简洁纲领**以及**纲领驱动的 RSI 架构设计**四个维度给出完整评估与方案。
+| 上一版引用 | 核实结论 | 出处 |
+|---|---|---|
+| 52 模块 SCC / 48 双向对 | 实为 **49 / 41**（`tools/import_graph.py` 在 160→173 五个历史版本一致输出） | handoff §3 |
+| `rds_compass.py:466-478` 的 `_confirmation_plan` | 该函数**全部 git 历史中不存在** | handoff §3 |
+| 「29→61 次实验」 | 出自 10-17 的**旧停止规则**，非 `spend_budget` | handoff §3 |
+| 「agent 先验倒置：枚举耗尽才叫 LLM」 | 因果反了：真实原因是「枚举成功即收工」，HEAD 已改为失败也发 `PROPOSALS` | handoff §3 |
+| 「表达力锁死」 | 真限制只有「RSI 只能单参数整数函数」；15 节点/200k 候选是硬上界（默认只用 7/20000）；分母 ≤8 是设计选择 | handoff §3 |
+| 「合规税 Schema 22 个」 | 实为 **21** 个 | handoff §3 |
+| `rds_cli.py:66-190` 含 sqlite | 不含 sqlite；物理只有 2 个 sqlite 文件 | handoff §3 |
+| 「自我帕累托支配归因于 spend_budget」 | 现象成立但归因错：多出来的是 **PROBE+HOLDOUT** | handoff §3 |
+| 「ingest 调 3 次 fold」 | 实为 **4 次** | handoff §3 |
 
-### 一、代码级结构性问题诊断
+## 附录 B：外部审计原文（2026-10-20，保留，逐条标注裁定）
 
-当前 RDS 代码库最核心的特征是"地质沉积式演进"：由于历史开发规范（`AGENTS.md`）要求每次仅修改指定文件、单次切片不超过 250 行且严禁破坏旧 Schema，系统在 1.0 到 6.0 的演进中没有重构统一内核，而是不断在旧层之上平铺新引擎。
+> 裁定标记：✗ = 已证伪；≈ = 部分正确；✓ = 成立。以上文附录 A 与 handoff §3 为准。
 
-| 结构性问题维度 | 核心病灶模块与精确代码位置 | 架构级后果与长期隐患 |
-| --- | --- | --- |
-| **1. 四代平行子系统并存** | • **状态与账本（4套）**：L3 SQLite（`rds_cli.py:66-190`, `rds_state.py`） vs. Quick 账本（`rds_quick.py`, `rds_quick_ledger.py`） vs. Full ProjectStore（`rds_project.py:1-2039`） vs. Compass 事件链（`rds_compass_store.py:78-137`）<br>• **Advisor 引擎（4套）**：`rds_advisor.py` + `rds_advisor_search.py`（2,427 行） vs. `rds_owned_advisor.py`（797 行） vs. `rds_research_advisor.py`（375 行） vs. `rds_compass.py`（1,477 行）<br>• **Jump / 越狱引擎（3套）**：`rds_structure.py` + `rds_jump.py`（2,065 行） vs. `rds_theory_progression.py` + `rds_frontier.py`（1,017 行） vs. `rds_compass.py:escape()`<br>• **RSI / 算子演化（3套）**：`rds_rsi.py`（254 行） vs. `rds_tools.py` + `rds_tool_workbench.py`（1,060 行） vs. `rds_compass_rsi.py`（552 行） | 同一概念（假设、实验收据、停机判据、越狱跳变、RSI 晋升）在代码库中有 **3～4 套互不兼容的 JSON Schema 与状态机**。`rds_compass_declaration.py:405` 甚至被迫将 `compass.json` 伪装编译成 `mode='quick'` 的 `ProjectStore`，再把 `COMPASS_*` 哈希链塞进 `events(body)` 字段中"借壳上市"。 |
-| **2. 52 模块强连通依赖环与反向依赖** | • `tools/import_graph.py` 实测：`173` 个模块中存在 **21 条跨层向上依赖边**、**48 对双向互引模块**<br>• 核心层形成一个包含 **52 个模块的巨型强连通分量**，横跨 L1（`rds_project`, `rds_campaign`, `rds_cas`, `rds_tms_store`）、L2（`rds_hypergraph`）、L3（`rds_advisor`, `rds_owned_advisor`, `rds_autonomy`, `rds_jump`）与 L4（`rds_quick`）<br>• `rds_project_hooks.py:1-60` 与函数内局部 `from rds_... import ...` | 148 个 `rds_*.py` 平铺在单一 `scripts/` 目录下，没有包层级隔离；为了绕开 Python 导入死锁，代码中充斥着函数体内延迟导入与字符串动态注册表（`rds_project_hooks.py`），导致静态类型检查、单元测试解耦与模块级重构极度脆弱。 |
-| **3. Compass 状态折叠的 O(N²) 全量重放与磁盘 I/O 放大** | • `rds_compass_drive.py:53-86`（单步循环）<br>• `rds_compass.py:54-108`（`fold(store)`）<br>• `rds_compass.py:217-244`（`ingest()` 内部连续调用 **3 次** `fold(store)`）<br>• `rds_compass.py:1228-1244`（`stale_bindings()` 全盘重算 SHA-256） | 每次执行 `step`、`decide` 或 `status`，`fold(store)` 都会从创世块全量重读 SQLite 中所有 `COMPASS_*` 事件（上限 `MAX_EVENTS=20,000`），逐个打开 `.rds/cas/<sha>.json` 反序列化，并在 `_derive(state)`（`rds_compass.py:145-159`）中把所有存活假设对所有历史观测重跑一遍；同时 `stale_bindings` 对磁盘上所有历史 `stdout.bin`/`stderr.bin` 重新计算 SHA-256。长周期科研任务中 I/O 与 CPU 开销呈二次方爆炸。 |
-| **4. 表达力硬编码锁死在"一维玩具定律"** | • `rds_compass_model.py:17-24`（`MAX_NODES=15`, `MAX_CANDIDATES=200,000` 自底向上枚举器）<br>• `rds_compass_rsi.py:104-149, 421`（仅允许 `len(defs[0].args.args) == 1` 的单变量整数函数，硬编码 `digitsum`/`totient`/`collatz` 等 30 个数论原语）<br>• `rds_compass_rsi.py:63-69`（子进程使用 `sys.settrace` 逐字节码计步） | `rds_compass_model.py` 只能枚举简单闭合标量代数式，`rds_compass_rsi.py` 只能对**单自变量整数输入**触发特征合成，且 `sys.settrace` 带来 20～50 倍解释器开销并禁止调用 NumPy/PyTorch。这使得 Compass 无法直接表达多维连续物理场或深度学习架构演化。 |
+**审计对象**：`release/6.0.0-compass` 分支，`scripts/` 下 148 个 Python 模块、51,397 行代码，`tools/import_graph.py` 追踪 173 个模块、638 条依赖边。
 
-### 二、站在"质量-成本帕累托前沿"审视：当前问题与长远展望
+### B.1 代码级结构性问题
 
-RDS 的终极使命是**强化 Agent 的科研能力，并站在科学发现质量与全生命周期成本的帕累托前沿**。
+**1. 四代平行子系统并存 ≈ 部分正确**
+- 状态与账本（4 套）：L3 SQLite（`rds_cli.py:66-190` ✗ 不含 sqlite）、Quick 账本（`rds_quick.py`, `rds_quick_ledger.py`）、Full ProjectStore（`rds_project.py`）、Compass 事件链（`rds_compass_store.py`）—— 12 组文件都在，借壳成立。
+- Advisor 引擎（4 套）：`rds_advisor.py` + `rds_advisor_search.py`、`rds_owned_advisor.py`、`rds_research_advisor.py`、`rds_compass.py` —— ✓
+- Jump / 越狱引擎（3 套）：`rds_structure.py` + `rds_jump.py`、`rds_theory_progression.py` + `rds_frontier.py`、`rds_compass.py:escape()` —— ✓
+- RSI / 算子演化（3 套）：`rds_rsi.py`、`rds_tools.py` + `rds_tool_workbench.py`、`rds_compass_rsi.py`（审计称 1,060 行，实为 740 行 ≈）
 
-#### 1. 当前偏离帕累托前沿的三大症结
+**2. 52 模块强连通依赖环 ✗ 已证伪**
+- `tools/import_graph.py` 在 160→173 五个历史版本上一致输出 **49 / 41**，不是 52 / 48。
+- 173 个模块 / 638 条边 / **21 条反向边** ✓（反向边已打破 3 条，21→18，清单见 `docs/audit-verify-structure.md §4`，其中 3 条明确不可拆）。
+- 148 个 `rds_*.py` 平铺单一 `scripts/` 目录、无包层级隔离、函数体内延迟导入与动态注册表 —— ✓
 
-* **保守确认策略造成"自我帕累托支配"**：为了防范稀疏异常点，`rds_compass_declaration.py:38` 将 `spend_budget` 默认设为 `True`，且 `rds_compass.py:466-478` 在存活集仅剩 1 个假设但存在边界未探测间隙时，会**强制花光所有剩余实验预算**去买确认点。这直接导致 Compass 在 4 任务基准上的实验次数从 **29 次暴增至 61 次**，并在 `benchmark/newtonbench/pareto-review.md:126-130` 的 `regime-double` 任务上出现 `RDS(B=16, 24, 32)` 被 `RDS(B=12)` **自我支配**——定律在第 12 步早已锁定，系统却机械烧光剩余预算，把帕累托前沿向右上方大幅推离。
-* **Agent 先验与符号枚举的本末倒置**：在 `docs/releases/6.0.0.md` 预注册的 Hard Tier（30 次运行）中，`compass_codex` 的 **Codex Token 消耗量为 0**，且在 `hard-posthoc-picking` 和 `hard-belief-drift` 上输给了裸 `codex_agent`。原因在于 `rds_compass.py` 把昂贵的机械 AST 枚举放在第一顺位，仅在自身枚举池枯竭时才把 LLM 当作"善后工"调用。这完全浪费了大模型最核心的**跨领域语义先验与结构猜想能力**，同时让机械枚举在组合爆炸中空转。
-* **隐性合规税未被计入成本账本**：RDS 账本只统计了实验次数和显式上报的 Jump Token，却忽略了 Agent 为了阅读长达数百行的 `SKILL.md`、拼装 22 个严格 JSON Schema、以及被拒绝打回重试所消耗的巨额 Context Token。当治理协议本身的 Token 开销超过实验收益时，系统在真实总成本维度上便落在了裸 Agent 之后。
+**3. Compass 状态折叠 O(N²) ≈ 部分正确**
+- 每步全量 fold 成立，单次 2ms→40–57ms；但 `ingest` 是 **4 次** fold 不是 3 次；`decide` 是纯函数。
+- `stale_bindings` 全盘重算 SHA-256 ✓
 
-#### 2. 长远展望：从"防作弊裁判"走向"贝叶斯-符号联合科研加速器"
+**4. 表达力硬编码锁死在「一维玩具定律」≈ 部分正确**
+- 真限制只有「RSI 只能单参数整数函数」（`rds_compass_rsi.py`）。
+- `MAX_NODES=15` / `MAX_CANDIDATES=200,000` 是硬上界，默认只用 7 / 20000。
+- `sys.settrace` 计步已移除（`fa2dce6`，省 6–47× 开销）✓ 已修。
 
-* **角色重构**：RDS 不应通过捆住 Agent 手脚或花光预算来换取形式安全，而应成为 Agent 的**外部工作记忆 + 零幻觉验证器 + 信息增益调度器**。
-* **范式统一**：让 LLM 负责**高维、非局部结构猜想**，让 RDS 内核负责**毫秒级历史重放剪枝**与**最大化期望信息增益选点**。用 1 次精准选点的实验替代裸 Agent 10 次盲目试错。
-* **全域科研拓展**：将假设空间从 15 节点标量代数树扩展至**计算图算子、偏微分方程/物理守恒律约束、以及多保真度实验代理模型**。
+### B.2 帕累托前沿审视
 
-### 三、RDS 核心纲领
+- **自我帕累托支配 ≈ 部分正确，归因错**：现象成立（B=12/16/24/32 = 12/16/21/21，claim 都 32/32）；但多出来的是 **PROBE+HOLDOUT**，不是 CONFIRM；`_confirmation_plan` 全 git 历史不存在；「29→61」出自 10-17 旧停止规则。
+- **Agent 先验倒置（0 token）≈ 部分正确，因果反了**：0 token 属实，但原因是「枚举成功即收工」，不是「枚举耗尽才叫 LLM」；HEAD 已改为失败也发 `PROPOSALS`。
+- **合规税未计入 ✓ 成立**：`cost` 只有 experiments/jumps/agent_tokens；schema 是 **21** 个不是 22。
 
-> **核心目标泛函**：在受控伪发现率（FDR ≤ α）与全口径真实资源预算 C_total = w_exp·C_exp + w_tok·C_tok + w_gpu·C_gpu + w_wall·C_wall ≤ B 约束下，最大化单位边际成本的科学效用增益：max_π E_π[Q(H_supported)] − λ·C_total(π)，s.t. Pr(False Positive Claim) ≤ α。
+### B.3 纲领驱动的 RSI 三层架构（未核实，作为方向参考）
 
-1. **先验生成与机械证伪正交**：Agent 只负责提出高先验结构猜想与候选算子，RDS 内核负责以确定性代码与物理收据执行零妥协证伪；严禁用机械穷举替代语义先验，也严禁用语义自评替代物理收据。
-2. **边际信息价值停机律**：任何实验或确认步仅当其期望净收益 VoI(x) = E[ΔQ(x)] − λ·c(x) > 0 时才允许立项执行；彻底废除"有剩余预算就花光"的机械填坑逻辑。
-3. **全口径诚实记账**：一切治理开销——包括宿主 Agent 读写工具的 Prompt/Completion Token、RSI 后台合成算力、失败重试开销与实验机时——必须全部计入统一成本向量；任何不降低总成本或提升总质量的中间层协议均视为架构负债。
-4. **单一事件溯源内核**：全库仅保留一套基于增量物化视图的 Ledger + CAS + TMS 内核，所有命令与模式均为该内核之上的策略插件。
-5. **帕累托可证伪自演化**：系统自身的代码、算子库与超参数与科研假设遵循同一套证据法则——唯有在跨任务分布上通过保守下界检验（r̂_lb > 1）证明能外推帕累托前沿的变更，方可晋升入核。
+| 层级 | 现状 | 演进机制 | 判定 |
+|---|---|---|---|
+| L1 表示层 | RSI 仅单变量整数函数 | 跨任务反统一算子蒸馏 + MDL 库学习 | 方向合理，未验证 |
+| L2 先验与路由 | 固定节点数均匀枚举 | 条件先验 P(operator\|domain,residual) + VoI 路由器 | 与「饱和早停」同源 |
+| L3 停机与分配 | 自我帕累托支配 | 参数化停机策略 + 帕累托超体积校准 λ | **与 P0 一致，优先做** |
 
-### 四、纲领驱动的 RSI 架构
-
-当前的 `rds_compass_rsi.py` 只是在单次运行内拼凑单变量整数函数，而 `rds_rsi.py` 只是对超图排序权重做离线回放。真正的"纲领驱动 RSI"，是让 RDS 以 J(π) = ΔQ − λ·ΔC_total 为适应度函数，在三个层级上实现跨任务的递归自我改进：
-
-| 层级 | 当前局限 | 演进机制 | 帕累托收益 |
-| --- | --- | --- | --- |
-| **L1 表示层 RSI** | 仅支持单变量整数函数与硬编码数论表 | 跨任务反统一算子蒸馏：对成功 AST 做反统一，提取使 MDL 下降最多的参数化子结构作为新算子，自动生成契约测试与向量化求值器 | 压缩搜索深度，枚举复杂度从指数级降为多项式级 |
-| **L2 先验与路由 RSI** | 按固定节点数均匀枚举；枚举耗尽才叫 LLM | 条件先验 P(operator \| domain, residual) + VoI 路由器：当符号枚举的边际信息增益率低于阈值时主动唤醒 LLM | 解决"0 Token 死磕枚举"与"盲目调 LLM 烧钱"两极分化 |
-| **L3 停机与分配 RSI** | `spend_budget=True` 无脑花光，自我帕累托支配 | 参数化停机策略：按后验置信度、残差方差与未探测域体积算 VoI，max VoI ≤ 0 时立即停机；用帕累托超体积校准 λ | 根除自我支配，预算上限真正成为安全上限 |
-
-#### 准入与防退化闭环
-
-1. **影子分支对偶回放**：新原语/先验/停机参数先进 CANDIDATE 沙箱，在分层抽样的历史账本与红队任务上与基线策略配对评估。
-2. **双侧统计晋升门禁**：FDR 不劣化且契约不变量 100% 通过；帕累托保守回报率置信下界 r̂_lb > 1。
-3. **自动淘汰**：后续 K 个周期内边际贡献率回落至 r̂_ub < 1 的原语自动降级归档。
-
-### 五、近期落地的三步重构路线图
-
-1. **第一步（止血与帕累托修复，1～2 天）**：修改 `rds_compass.py:466-478` 与 `rds_compass_declaration.py:38`，将 `spend_budget: True` 的无脑耗尽逻辑替换为基于边界未覆盖度与边际收益递减的**动态确认停机准则**；在 `rds_compass_store.py` 中引入基于最后一个事件 SHA-256 的**增量快照缓存**，把 `fold(store)` 和 `stale_bindings()` 从 O(N²) 降为 O(1) 增量更新。
-2. **第二步（内核收拢与破环，1～2 周）**：按 `docs/architecture.md` 的规划，将 `scripts/` 下 148 个平铺文件按 `rds/{kernel, graph, compass, adapters, cli}` 拆分为正式 Python 子包，清理 52 模块 SCC 中的 21 条反向依赖边，并将 Legacy/Quick/Full 统一收敛到 Compass 的声明式契约 + 增量事件账本内核上。
-3. **第三步（启动 L1-L3 纲领 RSI，2～4 周）**：解除 `rds_compass_rsi.py` 对"单变量整数函数 + `sys.settrace`"的硬编码限制，接入向量化多变量算子沙箱与 LLM 早周期先验提案路由，用 NewtonBench + Hard Tier 的帕累托超体积作为自动化 CI 门禁。
+准入闭环（影子回放 + 双侧统计门禁 + 自动淘汰）：方向合理，但 `r̂_lb > 1` 的检验需要先有可对账的成本账本（依赖 C1），**当前无法执行**。
