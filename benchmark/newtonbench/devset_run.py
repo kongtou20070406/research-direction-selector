@@ -71,6 +71,7 @@ def truth_ast(law, variables):
 
 
 EXPERIMENT = '''import argparse, json, math, pathlib
+from fractions import Fraction
 p = argparse.ArgumentParser()
 p.add_argument('--output', required=True)
 task = json.loads(pathlib.Path('task.json').read_text(encoding='utf-8'))
@@ -104,7 +105,9 @@ def campaign(name, budget, base):
                        'integer': all(v.denominator == 1 for v in values)}
     argv = ['{python}', '-B', 'experiment.py', '--output', '{output}']
     for var in variables:
-        argv += ['--' + var, '{' + var + '}']
+        # Glue the value onto the flag: a negative rational such as -9/4 passed
+        # as a separate token is read by argparse as an option, not a value.
+        argv += ['--' + var + '={' + var + '}']
     declaration = {
         'schema': 'rds-compass-declaration-v1',
         'goal': {'kind': 'IDENTIFY_LAW',
