@@ -16,7 +16,13 @@ from rds_project import canonical, digest
 SCHEMA = 'rds-compass-operator-v2'
 HOLE = '$'  # model._name rejects this spelling, so a hole name can never collide with a variable.
 MAX_NODES = model.MAX_RULEBOOK_NODES  # 64: the instantiated-rulebook bound of 2.2.
-OPCODE_BITS, MIN_RATIO = 8, 1.5
+OPCODE_BITS = 8
+# Admission gate (docs/l1a-blockers-diagnosis.md section 4, recommendation (b)): a template has to be
+# both relatively non-lossy (R >= 1.0, the MDL break-even line) and absolutely worth its bookkeeping.
+MIN_RATIO = 1.0
+# 32 bits is the order of the overhead a template must recover: two constant positions plus one support
+# row. Sized from the measured savings in that report's section 4 table, not from a chosen ratio.
+MIN_SAVING_BITS = 32
 _KINDS = {'CONST_INT': 'C', 'CONST_RATIONAL': 'C', 'VAR': 'V', 'EXPR': 'E'}
 
 
@@ -134,7 +140,10 @@ def _node_bits(node, nvars, holes):
         text = node['const']
         if text.startswith(HOLE):
             return OPCODE_BITS + _gamma_bits(_zigzag(len(holes[text].get('members') or ()) + 1))
-        return _const_bits(text)
+        # A literal carries its opcode too.  Every other branch already pays it; leaving the
+        # constant branch alone made `mdl_bits({'const': '2'})` disagree with `_sigma_bits`
+        # for the same value, so template and residual were priced on different scales.
+        return OPCODE_BITS + _const_bits(text)
     return OPCODE_BITS + sum(_node_bits(arg, nvars, holes) for arg in node['args'])
 
 
@@ -142,8 +151,10 @@ def _sigma_bits(sigma, holes, nvars):
     total = 0
     for name, value in sigma.items():
         kind = holes[name]['kind']
+        # A constant residual carries its own opcode, like the hole it refills in _node_bits: MDL items
+        # must decode on their own, and the reader has to know integer from rational before reading it.
         total += _node_bits(value, nvars, holes) if kind == 'EXPR' else (
-            _var_bits(nvars) if kind == 'VAR' else _const_bits(value))
+            _var_bits(nvars) if kind == 'VAR' else OPCODE_BITS + _const_bits(value))
     return total
 
 
@@ -176,7 +187,8 @@ def _mdl(operator):
     support = len(operator['laws']) * (OPCODE_BITS + _var_bits(len(operator['laws'])))
     total = mdl_bits(operator) + sum(residual) + support
     return {'template_bits': mdl_bits(operator), 'residual_bits': residual, 'support_bits': support,
-            'standalone_bits': standalone, 'ratio': round(sum(standalone) / total, 6) if total else 0.0}
+            'standalone_bits': standalone, 'ratio': round(sum(standalone) / total, 6) if total else 0.0,
+            'saving_bits': sum(standalone) - total}
 
 
 def _non_trivial(operator):
@@ -187,11 +199,11 @@ def _non_trivial(operator):
 
 
 def admit(template, support):
-    """2.2: all three gates. R >= 1.5, support >= 2, non-trivial, plus the 64-node refill bound."""
+    """2.2: all three gates. R >= 1.0 and saving >= 32, support >= 2, non-trivial, 64-node refill bound."""
     if len(support) < 2:
         return False
     template['mdl'] = _mdl(template)
-    if template['mdl']['ratio'] < MIN_RATIO:
+    if template['mdl']['ratio'] < MIN_RATIO or template['mdl']['saving_bits'] < MIN_SAVING_BITS:
         return False
     if max(model.size(instantiate(template['template_ast'], s)) for s in template['sigmas']) > MAX_NODES:
         return False
@@ -283,12 +295,19 @@ def _tolerance_bucket(spec):
     return 0 if spec.get('abs') in zero and spec.get('rel') in zero else 1 if spec.get('abs') not in zero else 2
 
 
+def _num(text):
+    """A declared numeric bound.  Devset domains are exact fractions (``1/10``), toy worlds are
+    integers; ``int()`` raised on the former and bucketed the two differently for one shape."""
+    value = Fraction(str(text))
+    return int(value) if value.denominator == 1 else value
+
+
 def domain_signature(plan):
     """3.1 canonical bucket signature: shapes only, never law content."""
     inputs, tolerances = plan['inputs'], plan.get('tolerances') or {}
     return digest({'inputs': len(inputs),
                    'integer': sorted(bool(spec.get('integer')) for spec in inputs.values()),
-                   'span': sorted(_decade(int(spec['max']) - int(spec['min'])) for spec in inputs.values()),
+                   'span': sorted(_decade(_num(spec['max']) - _num(spec['min'])) for spec in inputs.values()),
                    'tolerance': {name: _tolerance_bucket(spec) for name, spec in sorted(tolerances.items())},
                    'candidates': _decade(len(plan['candidates'])),
                    'operators': digest(sorted((plan.get('grammar') or {}).get('operators') or ()))})
@@ -297,13 +316,13 @@ def domain_signature(plan):
 def collect(events, observable):
     """2.1 sources: (a) TOOL_QUALIFIED oracle law_ast, (b) jump-originated HYPOTHESIS predict ASTs."""
     plan, variable = events[0]['value'], next(iter(events[0]['value']['inputs']))
-    points = {candidate['id']: int(model.exact(candidate['inputs'][variable])) for candidate in plan['candidates']}
+    points = {candidate['id']: model.exact(candidate['inputs'][variable]) for candidate in plan['candidates']}
     values = {event['value']['candidate']: model.text(event['value']['outputs'][observable])
               for event in events
               if event['kind'] == cstore.PREFIX + 'OBSERVATION' and event['value'].get('status') != 'INTERRUPTED'
               and observable in (event['value'].get('outputs') or {})}
     witness = [{'input': points[key], 'value': values[key]} for key in points if key in values]
-    domain = {'min': int(plan['inputs'][variable]['min']), 'max': int(plan['inputs'][variable]['max'])}
+    domain = {'min': _num(plan['inputs'][variable]['min']), 'max': _num(plan['inputs'][variable]['max'])}
     out = []
     for event in events:
         kind, value = event['kind'][len(cstore.PREFIX):], event['value']

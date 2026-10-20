@@ -63,8 +63,8 @@ class LggTest(unittest.TestCase):
 class MdlTest(unittest.TestCase):
     def test_leaf_bits_follow_the_2_2_encoding(self):
         self.assertEqual(antiu.mdl_bits(X), 8)                 # 1 opcode, one name -> 0 name bits
-        self.assertEqual(antiu.mdl_bits({'const': '3'}), 13)    # 8 + gamma(zigzag 3 = 7) = 8 + 5
-        self.assertEqual(antiu.mdl_bits({'const': '1/2'}), 16)  # 8 + gamma(3) + gamma(5)
+        self.assertEqual(antiu.mdl_bits({'const': '3'}), 21)    # 8 + gamma(zigzag 3 = 7) = 8 + 5
+        self.assertEqual(antiu.mdl_bits({'const': '1/2'}), 24)  # 8 + gamma(3) + gamma(5)
 
     def test_gamma_length_is_the_2_2_bit_count(self):
         self.assertEqual([antiu._gamma_bits(1), antiu._gamma_bits(2), antiu._gamma_bits(7)], [1, 3, 5])
@@ -77,15 +77,47 @@ class AdmitTest(unittest.TestCase):
         """Defect: a typical 5-node devset law pair scores R = 0.862, far below 1.5."""
         operator = antiu.generalize([A, C])
         self.assertEqual(antiu.model.size(A), 5)
-        self.assertAlmostEqual(antiu._mdl(operator)['ratio'], 0.861789, places=6)
+        self.assertAlmostEqual(antiu._mdl(operator)['ratio'], 0.890323, places=6)
         self.assertFalse(antiu.admit(operator, [case(A, A_VALUES), case(C, C_VALUES)]))
 
-    def test_ratio_gate_only_opens_at_max_nodes(self):
-        """The gate opens only near MAX_NODES=15 and only when the two laws differ in a single leaf."""
+    def test_admission_needs_both_the_ratio_and_the_saving(self):
+        """The gate is R >= 1.0 and saving >= 32: relative non-loss plus an absolute, measured win."""
+        self.assertEqual((antiu.MIN_RATIO, antiu.MIN_SAVING_BITS), (1.0, 32))
+
+        def verdict(ratio, saving):
+            template = {'mdl': {'ratio': ratio, 'saving_bits': saving}}
+            return not (template['mdl']['ratio'] < antiu.MIN_RATIO
+                        or template['mdl']['saving_bits'] < antiu.MIN_SAVING_BITS)
+
+        self.assertTrue(verdict(1.5, 32))    # both hold
+        self.assertFalse(verdict(1.5, 31))   # one bit short
+        self.assertFalse(verdict(0.99, 200))  # big win, still lossy
+
+    def test_a_large_shared_spine_is_admitted(self):
+        """Positive: 15 nodes, one constant leaf apart -> saving 101 bits, R 1.4449."""
         operator = antiu.generalize([SPINE, SPINE_B])
         self.assertEqual(antiu.model.size(SPINE), 15)
-        self.assertGreater(antiu._mdl(operator)['ratio'], antiu.MIN_RATIO)
+        mdl = antiu._mdl(operator)
+        self.assertAlmostEqual(mdl['ratio'], 1.6, places=6)
+        self.assertEqual(mdl['saving_bits'], 165)
         self.assertTrue(antiu.admit(operator, [case(SPINE, A_VALUES), case(SPINE_B, A_VALUES)]))
+
+    def test_a_small_two_case_template_does_not_admit(self):
+        """Negative: 2x+c over two cases saves only 2 bits even after the residual opcode is charged."""
+        operator = antiu.generalize([A, {'op': 'add', 'args': [{'op': 'mul', 'args': [X, {'const': '2'}]},
+                                                              {'const': '2'}]}])
+        mdl = antiu._mdl(operator)
+        self.assertAlmostEqual(mdl['ratio'], 1.135593, places=6)
+        self.assertEqual(mdl['saving_bits'], 16)
+        self.assertFalse(antiu.admit(operator, [case(A, A_VALUES), case(A, A_VALUES)]))
+
+    def test_a_constant_residual_pays_its_own_opcode(self):
+        """A hole and its refill are priced on one scale: the residual is not the cheap leaf of the template."""
+        nvars = 1
+        holes = {'$C1': {'name': '$C1', 'kind': 'CONST_INT', 'members': ['1', '2']}}
+        self.assertEqual(antiu._sigma_bits({'$C1': '2'}, holes, nvars), 21)
+        self.assertEqual(antiu._sigma_bits({'$C1': '2'}, holes, nvars),
+                         antiu.mdl_bits({'const': '2'}))
 
     def test_one_support_case_is_never_admitted(self):
         self.assertFalse(antiu.admit(antiu.generalize([A]), [case(A, A_VALUES)]))
@@ -105,7 +137,7 @@ class AdmitTest(unittest.TestCase):
                          operator['laws'][1])
         mdl = antiu._mdl(operator)
         self.assertIn('ratio', mdl)
-        self.assertAlmostEqual(mdl['ratio'], 0.744186, places=6)
+        self.assertAlmostEqual(mdl['ratio'], 0.795031, places=6)
         # The refill must still reproduce every case exactly, and admit() must not raise.
         self.assertEqual([antiu.instantiate(operator['template_ast'], sigma) for sigma in operator['sigmas']],
                          operator['laws'])
