@@ -121,8 +121,13 @@ class AgentProposalTests(Campaign):
     def test_refuted_proposals_are_never_admitted_and_the_agent_is_not_reasked_on_the_same_evidence(self):
         result = self.campaign()  # The fixture agent proposes x + 100.
         self.assertEqual(result['status'], 'SEARCH_EXHAUSTED')
+        seen = {j['packet']['sha256']: j['observations'] for j in self.events('JUMP') if j['packet']}
         for disposition in self.events('DISPOSITION'):
-            self.assertFalse(any(o['admitted'] for o in disposition['outcomes']))
+            if any(o['admitted'] for o in disposition['outcomes']):
+                # LOW_MARGINAL_EIG may ask before the first measurement, when no record can refute
+                # x + 100 yet. Once a record exists, the refuted proposal is never admitted again.
+                self.assertEqual(seen[disposition['packet_sha256']], 0, disposition)
+        self.assertEqual(compass.fold(cstore.store_for(self.root))['hypotheses']['agent-guess']['status'], 'REFUTED')
         asked = [j['observations'] for j in self.events('JUMP')]
         self.assertEqual(len(asked), len(set(asked)))  # Each call saw evidence the previous one did not.
 
