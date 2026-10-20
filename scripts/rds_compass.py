@@ -445,7 +445,8 @@ def decide(state):
                     'reason': 'MINIMUM_CONFIRMATIONS' if done < plan['verification']['confirmations']
                     else 'SPEND_BUDGET_ON_REFUTATION'}
     holdout_pending = [cid for cid in plan.get('holdout') or [] if cid not in state['observations']]
-    if rows and holdout_pending and can_buy:
+    if rows and holdout_pending and spent < plan['budget']['experiments'] \
+            and wall >= plan['experiment']['wall_seconds']:
         return {'action': 'HOLDOUT', 'candidate': holdout_pending[0], 'leader': rows[0]['id']}
     if rows:
         return {'action': 'VERIFY', 'live': [h['id'] for h in rows]}
