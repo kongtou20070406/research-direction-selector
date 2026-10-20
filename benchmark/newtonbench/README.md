@@ -64,3 +64,11 @@ v0 it chose (1,1.5,1) and recovered the law. On the popcount task it wrote the
 bit-count loop itself (17/17 exact). The EIG advisor is therefore not yet shown
 to beat the agent's own point choice on these tasks; the next distinction has
 to come from a larger candidate set or an interactive complex system.
+
+## Selection comparison (EIG vs random)
+
+With the five committed candidates, the two initial points already leave a
+single survivor under the relative tolerance, so both arms need no extra
+measurement (EIG 2 points; random 30/30 trials at 2 points). The comparison is
+therefore not discriminative yet. `compare_selection.py` is committed so the
+same test can be rerun once a larger candidate pool exists.
