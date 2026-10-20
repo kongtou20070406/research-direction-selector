@@ -347,10 +347,11 @@ def _gen_feynman_I_18_4():
     Raw from the AI Feynman set: `(m1 * r1 + m2 * r2) / (m1 + m2)`.
     """
     names = ['m1', 'r1', 'm2', 'r2']
+    # 3 x 3 x 3 x 2 = 54 rows: a campaign declares at most MAX_CANDIDATES (64) candidates.
     columns = [[Fraction(1), Fraction(2), Fraction(4)],
                [Fraction(-2), Fraction(1), Fraction(3)],
                [Fraction(1), Fraction(3), Fraction(5)],
-               [Fraction(-1), Fraction(2), Fraction(4)]]
+               [Fraction(-1), Fraction(4)]]
     rows = [_row(i, c, (c['m1'] * c['r1'] + c['m2'] * c['r2']) / (c['m1'] + c['m2']))
             for i, c in enumerate(_product(names, columns))]
     return _exact_spec(rows, names, ['0', '1', '2'], ['add', 'div', 'mul'],
@@ -395,7 +396,7 @@ def _gen_feynman_II_38_3():
     columns = [[Fraction(1), Fraction(2), Fraction(5)],
                [Fraction(1), Fraction(3), Fraction(6)],
                [Fraction(0), Fraction(1), Fraction(2)],
-               [Fraction(1), Fraction(2), Fraction(4)]]
+               [Fraction(1), Fraction(4)]]
     rows = [_row(i, c, c['Y'] * c['A'] * c['x'] / c['d'])
             for i, c in enumerate(_product(names, columns))]
     return _exact_spec(rows, names, ['0', '1'], ['div', 'mul'],
@@ -462,7 +463,7 @@ def _gen_feynman_III_10_19():
     columns = [[Fraction(1), Fraction(2), Fraction(5)],
                [Fraction(-3), Fraction(0), Fraction(4)],
                [Fraction(-2), Fraction(1), Fraction(3)],
-               [Fraction(-1), Fraction(2), Fraction(5)]]
+               [Fraction(-1), Fraction(5)]]
     rows = [_row(i, c, c['mom'] * math.sqrt(c['Bx'] ** 2 + c['By'] ** 2 + c['Bz'] ** 2))
             for i, c in enumerate(_product(names, columns))]
     return _float_spec(rows, names, ['0', '1', '2'], ['add', 'mul', 'pow', 'sqrt'],
@@ -518,7 +519,7 @@ def _gen_feynman_I_40_1():
     columns = [[Fraction(1), Fraction(2), Fraction(5)],
                [1.0e-25, 2.0e-25, 5.0e-25],
                [100.0, 500.0, 1000.0],
-               [250.0, 300.0, 350.0]]
+               [250.0, 350.0]]
     rows = [_row(i, c, c['n_0'] * math.exp(-c['m'] * g * c['x'] / (k * c['T'])))
             for i, c in enumerate(_product(names, columns))]
     return _float_spec(rows, names, ['0', '1'], ['div', 'exp', 'mul', 'neg'],

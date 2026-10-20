@@ -87,5 +87,25 @@ class EigRoutingTests(unittest.TestCase):
         self.assertEqual(result['steps'][1]['trigger'], 'LOW_MARGINAL_EIG')
 
 
+class DerivedExpansionTests(unittest.TestCase):
+    """An intermediate the synthesizer invented must not reach the hypothesis compiler."""
+
+    def test_a_derived_intermediate_is_expanded_before_it_is_compiled(self):
+        # ``_fits`` asks for pairwise intermediates such as ``B_times_g_factor``; a fit may use
+        # that leaf, but the campaign never declares it as an input.
+        node = compass.model.parse('B_times_g_factor * q / (2 * m)', {'B_times_g_factor', 'q', 'm'})
+        expanded = compass._expand_derived(node, {'B_times_g_factor': 'B * g_factor'},
+                                           ['B', 'g_factor', 'q', 'm'])
+        self.assertEqual(compass.model.render(expanded), '(((B * g_factor) * q) / (2 * m))')
+        hyp = compass.model.compile_hypothesis({'id': 'h', 'predict': {'y': expanded}},
+                                               ['B', 'g_factor', 'q', 'm'], ['y'], goal='y')
+        self.assertIn('y', hyp['predict'])
+
+    def test_an_expression_without_derived_leaves_is_unchanged(self):
+        node = compass.model.parse('q / m', {'q', 'm'})
+        self.assertEqual(compass.model.render(compass._expand_derived(node, None, ['q', 'm'])),
+                         compass.model.render(node))
+
+
 if __name__ == '__main__':
     unittest.main()

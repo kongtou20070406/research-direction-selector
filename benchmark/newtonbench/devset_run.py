@@ -108,6 +108,9 @@ def campaign(name, budget, base):
         # Glue the value onto the flag: a negative rational such as -9/4 passed
         # as a separate token is read by argparse as an option, not a value.
         argv += ['--' + var + '={' + var + '}']
+    # One budget unit is one attempt, and a campaign declares two slots per candidate (the run and
+    # its single retry). A row set smaller than B/2 cannot fill the declared budget, so cap it.
+    experiments = min(budget, 2 * len(rows))
     declaration = {
         'schema': 'rds-compass-declaration-v1',
         'goal': {'kind': 'IDENTIFY_LAW',
@@ -123,7 +126,7 @@ def campaign(name, budget, base):
         'candidates': [{'id': row['id'], 'inputs': dict(row['inputs'])} for row in rows],
         'hypotheses': [],
         'grammar': spec['grammar'],
-        'budget': {'wall_seconds': 900, 'experiments': budget, 'max_experiments': budget},
+        'budget': {'wall_seconds': 900, 'experiments': experiments, 'max_experiments': experiments},
     }
     (root / 'compass.json').write_text(json.dumps(declaration, indent=1), encoding='utf-8')
     return root, spec
@@ -194,7 +197,7 @@ def _evaluate(ast, variables):
         hyp = model.compile_hypothesis({'id': 'p', 'predict': {'y': ast}}, variables, ['y'], goal='y')
     except (ValueError, TypeError) as exc:
         return None, 'UNEVALUABLE_EXPRESSION: ' + str(exc)[:120]
-    if hyp['applies'] is not None or any(rule['op'] in BOOLEAN_OPS for rule in hyp['predict'].values()):
+    if hyp['applies'] is not None or any(rule.get('op') in BOOLEAN_OPS for rule in hyp['predict'].values()):
         return None, 'COMPARISON_EXPRESSION: not a numeric law'
     return hyp, None
 

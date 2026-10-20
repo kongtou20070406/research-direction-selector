@@ -719,6 +719,7 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
         if escalated['fits']:
             whole = escalated
     derived_fit = None
+    derived_used = None
     if escalate and not whole['fits'] and len(names) >= 2:
         # A domain intermediate (two masses added, two currents multiplied) shrinks the search
         # from the full tree to the remaining structure; try the pairwise forms before giving up.
@@ -734,10 +735,11 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
                                        probes=probes, keep=4, derived=derived)
         if derived_fit['fits']:
             whole = derived_fit
+            derived_used = derived
     notes['WHOLE_LAW'] = {k: whole[k] for k in ('status', 'attempted') if k in whole}
     if escalated is not None:
         notes['GRAMMAR_ESCALATION'] = {k: escalated[k] for k in ('status', 'attempted') if k in escalated}
-    found += [(fit, 'WHOLE_LAW', None) for fit in whole['fits']]
+    found += [({**fit, 'derived': derived_used}, 'WHOLE_LAW', None) for fit in whole['fits']]
     refuted = [h for h in state['hypotheses'].values() if h['status'] == 'REFUTED' and observable in h['predict']]
     if refuted:
         best = min(refuted, key=lambda h: (sum(abs(model.exact(c['residual'])) for c in h['replay']['counterexamples']
@@ -793,6 +795,23 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     return found, notes
 
 
+def _expand_derived(node, derived, variables):
+    """Replace a leaf naming a synthesized intermediate with the expression it abbreviates.
+
+    `_fits` asks the synthesizer to invent pairwise intermediates (``B_times_g_factor`` standing
+    for ``B * g_factor``) so the search shrinks. Those names are leaves of the fit, but they are
+    not inputs of the campaign: a hypothesis built from one must carry the expanded form or the
+    compiler rejects it as an undeclared variable.
+    """
+    if not derived:
+        return node
+    if isinstance(node, dict) and 'var' in node and node['var'] in derived:
+        return model.parse(derived[node['var']], set(variables))
+    if isinstance(node, dict) and 'args' in node:
+        return {**node, 'args': [_expand_derived(arg, derived, variables) for arg in node['args']]}
+    return node
+
+
 def _hypothesis_from_fit(state, fit, mode, parent, ident):
     plan = state['plan']
     observable = plan['goal']['observable']
@@ -800,7 +819,8 @@ def _hypothesis_from_fit(state, fit, mode, parent, ident):
     for tool in state['tools'].values():
         if tool['status'] == 'QUALIFIED' and set(tool['features']) & model.variables_of(fit['expression']):
             premises.append('tool:' + tool['sha256'])
-    return model.compile_hypothesis({'id': ident, 'predict': {observable: fit['expression']},
+    expression = _expand_derived(fit['expression'], fit.get('derived'), variables(state))
+    return model.compile_hypothesis({'id': ident, 'predict': {observable: expression},
                                      'premises': premises, 'origin': mode, 'parent': parent,
                                      'statement': f"{observable} = {fit['text']}"},
                                     variables(state), plan['observables'])
