@@ -1,3 +1,5 @@
+> 更新（2026-10-20 晚）：PySR 已安装并可用（2.7.2 / Julia 1.13.2），见 [pysr_smoke.md](pysr_smoke.md)。本报告是安装前基线，保留作对照。
+
 # PySR 环境检查报告（rds-357 本机）
 
 - 检查时间：2026-10-20（Asia/Shanghai）
