@@ -650,25 +650,40 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
                                         'base': best['id']}
         found += [(fit, 'RESIDUAL_CORRECTION', best['id']) for fit in shifted['fits']]
     if refuted and len(plan['inputs']) == 1 and not found:
-        # A single sparse exception should explain the main law, not erase it: patch the least
-        # refuted rulebook with one indicator term at its counterexample input.
-        best = min(refuted, key=lambda h: (len(h['replay']['counterexamples']), h['size'], h['id']))
-        if len(best['replay']['counterexamples']) == 1:
-            counter = best['replay']['counterexamples'][0]
+        # A single sparse exception should explain the main law, not erase it. The patch is built
+        # on training rows only (holdout stays unseen), the leader must not already carry an
+        # exception term, and the training set must be large enough for the 5% policy to mean
+        # something; one pulse per rulebook, never a chain.
+        holdout_ids = set(plan.get('holdout') or [])
+        training = [row for row in measured(state) if row['id'] not in holdout_ids]
+        notes['PULSE_PATCH'] = {'training': len(training), 'accepted': False}
+        if len(training) >= 4:
             name = next(iter(plan['inputs']))
-            value = next(row['inputs'][name] for row in rows if row['id'] == counter['id'])
-            patched = {'op': 'ite', 'args': [{'op': 'eq', 'args': [{'var': name}, {'const': model.text(value)}]},
-                                             {'const': counter['observed']},
-                                             model.parse(best['predict'][observable], set(names))]}
-            text = model.render(patched)
-            candidate = model.parse(text, set(names))
-            hypothesis = model.compile_hypothesis({'id': 'pulse', 'predict': {observable: text}},
-                                                  names, plan['observables'])
-            replay = model.replay(hypothesis, measured(state), {observable: tolerances[observable]})
-            if not replay['counterexamples']:
-                found.append(({'expression': candidate, 'text': text, 'size': model.size(candidate)},
-                              'PULSE_PATCH', best['id']))
-            notes['PULSE_PATCH'] = {'base': best['id'], 'accepted': not replay['counterexamples']}
+            for hypothesis in sorted(refuted, key=lambda h: (h['size'], h['id']))[:4]:
+                expression = hypothesis['predict'][observable]
+                if 'ite' in expression or 'eq' in expression:
+                    continue
+                trial = model.compile_hypothesis({'id': 'pulse-probe', 'predict': {observable: expression}},
+                                                 names, plan['observables'])
+                witness = model.replay(trial, training, {observable: tolerances[observable]})
+                if witness['status'] != 'REFUTED' or len(witness['counterexamples']) != 1:
+                    continue
+                counter = witness['counterexamples'][0]
+                value = next(row['inputs'][name] for row in training if row['id'] == counter['id'])
+                patched = {'op': 'ite', 'args': [{'op': 'eq', 'args': [{'var': name}, {'const': model.text(value)}]},
+                                                 {'const': counter['observed']},
+                                                 model.parse(expression, set(names))]}
+                text = model.render(patched)
+                candidate = model.parse(text, set(names))
+                compiled = model.compile_hypothesis({'id': 'pulse', 'predict': {observable: text}},
+                                                    names, plan['observables'])
+                replay = model.replay(compiled, training, {observable: tolerances[observable]})
+                if replay['status'] == 'CONSISTENT' and not replay['counterexamples']:
+                    found.append(({'expression': candidate, 'text': text, 'size': model.size(candidate)},
+                                  'PULSE_PATCH', hypothesis['id']))
+                    notes['PULSE_PATCH']['accepted'] = True
+                    notes['PULSE_PATCH']['base'] = hypothesis['id']
+                    break
     if not found and len(rows) >= 4:
         for name in plan['inputs']:
             split = model.regime_split(rows, names, observable, tolerances, variable=name, grammar=grammar,
