@@ -32,8 +32,8 @@ def run(out_path):
     y = y * (1 + rng.uniform(-0.01, 0.01, y.size))
     X = np.column_stack([m1, m2, r, m1 + m2])
     started = time.time()
-    search = PySRRegressor(niterations=20, binary_operators=['+', '-', '*', '/'],
-                           unary_operators=[], procs=0, random_state=0, verbosity=0)
+    search = PySRRegressor(niterations=25, binary_operators=['+', '-', '*', '/'],
+                           unary_operators=['sqrt'], procs=0, random_state=0, verbosity=0)
     search.fit(X, y)
     elapsed = round(time.time() - started, 2)
     equations = search.equations_['equation'].head(6).tolist()

@@ -38,3 +38,12 @@ python -B benchmark/compass/yield_ablation.py benchmark/compass/results/yield-ab
   the declaration owns that trade-off.
 - The grammar escalation only fires for an open declaration grammar; an explicit
   operator list keeps precedence.
+
+## PySR with an RDS-derived intermediate
+
+`benchmark/newtonbench/pysr_rds_derived.py` gives PySR the intermediate
+`s12 = m1 + m2` and a `sqrt` operator. On the 24-point noisy law
+`6.674e-05 * (m1+m2)^2 / r^1.5`, PySR's frontier (3.0 s) contains
+`(6.699815e-5 / r) / ((sqrt(r) / s12) / s12)`; the adapter maps it back to the
+original variables and RDS replays it with 0 counterexamples. The other five
+frontier equations are refuted. The search time is recorded as its own cost.
