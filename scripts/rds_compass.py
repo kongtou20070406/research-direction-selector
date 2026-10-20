@@ -357,7 +357,7 @@ def _confirm_candidate(state, rows, pending, tolerances):
     return _spread(state, 1)[0]
 
 
-def _boundary_probe(state):
+def _boundary_probe(state, min_gap=2):
     """The unmeasured input closest to the midpoint of two measured neighbours.
 
     A regime change hides between measured levels; the farthest-point probe does not close
@@ -372,7 +372,7 @@ def _boundary_probe(state):
         return None
     best = None
     for left, right in zip(seen, seen[1:]):
-        if right - left <= 2:
+        if right - left <= min_gap:
             continue  # the gap is already resolved to adjacent levels
         middle = (left + right) / 2
         for item in remaining(state):
@@ -480,6 +480,12 @@ def decide(state):
     if rows and holdout_pending and spent < plan['budget'].get('max_experiments', plan['budget']['experiments']) \
             and wall >= plan['experiment']['wall_seconds']:
         return {'action': 'HOLDOUT', 'candidate': holdout_pending[0], 'leader': rows[0]['id']}
+    max_gap = plan['verification'].get('max_gap', 0)
+    if max_gap and rows and can_buy:
+        # A claim must not be made over a never-measured interval: fill the widest gaps first.
+        probe = _boundary_probe(state, min_gap=max_gap)
+        if probe:
+            return {'action': 'PROBE', 'candidate': probe, 'reason': 'COVERAGE_GAP', 'leader': rows[0]['id']}
     if rows:
         return {'action': 'VERIFY', 'live': [h['id'] for h in rows]}
     return {'action': 'HANDOFF', 'reason': 'JUDGMENT_REQUIRED', 'basin': diagnosis}
@@ -646,7 +652,7 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     if not found and len(rows) >= 4:
         for name in plan['inputs']:
             split = model.regime_split(rows, names, observable, tolerances, variable=name, grammar=grammar,
-                                       max_nodes=min(5, bound['max_nodes']), max_candidates=3000, probes=probes)
+                                       max_nodes=min(5, bound['max_nodes']), max_candidates=3000, probes=[])
             notes['REGIME_SPLIT:' + name] = {'status': split['status'], 'attempted': split['attempted']}
             found += [(fit, 'REGIME_SPLIT', None) for fit in split['fits'][:2]]
     return found, notes

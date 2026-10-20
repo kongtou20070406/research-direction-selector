@@ -36,7 +36,7 @@ DEFAULTS = {
     # spend_budget: before a claim, the unspent experiment budget buys coverage points that try to
     # refute the leader. A minimum of confirmations cannot rule out sparse exceptions on its own.
     'verification': {'confirmations': 2, 'spend_budget': True, 'confirm_by_eig': True,
-                     'max_confirmations': 0, 'holdout': 0, 'holdout_seed': 0},
+                     'max_confirmations': 0, 'holdout': 0, 'holdout_seed': 0, 'max_gap': 0},
 }
 FLAGS = frozenset(('enabled', 'spend_budget', 'confirm_by_eig'))
 # The synthesis bounds the model itself enforces; a plan outside them would fail only at its first jump.
@@ -44,7 +44,8 @@ BOUNDS = {('synthesis', 'max_nodes'): (1, model.MAX_NODES),
           ('synthesis', 'max_candidates'): (1, model.MAX_SYNTH_CANDIDATES),
           ('verification', 'max_confirmations'): (0, MAX_CANDIDATES),
           ('verification', 'holdout'): (0, MAX_CANDIDATES),
-          ('verification', 'holdout_seed'): (0, 10 ** 9)}
+          ('verification', 'holdout_seed'): (0, 10 ** 9),
+          ('verification', 'max_gap'): (0, MAX_CANDIDATES)}
 PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 
 
