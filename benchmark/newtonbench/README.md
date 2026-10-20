@@ -1,0 +1,30 @@
+# NewtonBench adapter
+
+Two small CLIs expose the RDS mechanism to [NewtonBench](https://github.com/HKUST-KnowComp/NewtonBench)
+(ICLR 2026) without importing Compass or a ledger:
+
+- [`rds_tool.py`](rds_tool.py): the expression synthesizer. Given measured
+  points and a grammar, it returns counterexample-filtered candidate laws.
+- [`eig_advisor.py`](eig_advisor.py): the EIG advisor. Given measured points
+  and a rival set, it ranks the unmeasured inputs by expected information gain
+  per cost.
+
+Both are pure Python and make no model call.
+
+## What the adapter established
+
+- `m0_gravity` easy v1 (`C * mass1 / distance ** 2`) and medium v1
+  (`C * mass1 / distance ** 2.6`) are recovered from six measured points.
+- `m0_gravity` hard v0 (`C * (mass1 + mass2) ** 2 / distance ** 1.5`) does
+  not fit: the synthesizer truncates at 200,000 candidates with a
+  three-variable grammar and a hidden constant. That is a bound of the current
+  search, not a statement about the task.
+- `mass1 ** 1.3` (medium v1's exponent) is outside the dialect: the rational
+  exponent must have a denominator at most 8, and `13/10` has denominator 10.
+
+## Limits
+
+- The hidden constant has to be known to the grammar or fitted outside the
+  synthesizer; the adapter does not invent it.
+- Input domains are the discrete candidate points the caller supplies.
+- The adapter is a mechanism probe, not a benchmark score.
