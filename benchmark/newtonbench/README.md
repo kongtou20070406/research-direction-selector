@@ -43,3 +43,15 @@ candidates. Replayable files are in [`results/`](results/):
 
 This is the motivating case for staged synthesis and for an LLM-proposal
 plus RDS-verification loop: both need to close the two-point gap.
+
+## Proposal-and-verify probe (m2 hard v0, three points)
+
+One `gpt-6.1-sol` call proposed five laws from the two initial points. The EIG
+advisor chose `(current1=1, current2=5, distance=3)` (2.09 bits), the third
+measurement filtered the proposals by replay, and exactly one survived:
+
+`4.78e-02 * (current1 + current2) ** (3 / 2) / distance ** 3`
+
+The bare two-point arm failed (RMSLE 0.099); this arm reaches the correct law
+at three measured points, with the third point chosen by RDS rather than
+supplied by a human. Result: `results/llm-verify-m2.json`.
