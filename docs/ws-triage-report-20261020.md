@@ -253,7 +253,7 @@ Ran 97 tests — OK
 | `tools/.dsh-ops-update-9b5d730f...lock` | 删除（同上） | 同上；时间戳 17:53:48，由本次 triage 会话的 ops 文件操作产生 |
 | `__pycache__/`、`*.pyc` | 不干预 | `.gitignore` 已含 `__pycache__/` 与 `*.py[cod]`；`git status --porcelain -uall` 中不出现 |
 | `benchmark/newtonbench/saturation-protocol.md` | **不入本批次**（见 §7） | lead 声明为他的写入范围（G2 的预注册协议），不是并发第三方 |
-| `benchmark/newtonbench/.dsh-ops-update-3e56c816...lock` | 收尾统一删除 | 同类的 DSH 遗留锁；ops 工具每动一次文件就在**目标目录**留一个，边删边长，故留到最后一次清 |
+| `benchmark/newtonbench/.dsh-ops-update-3e56c816...lock` | 收尾统一删除 | 同类的 DSH 遗留锁（生成条件见 §8，标 UNKNOWN）；删了还会长，故留到最后统一清 |
 | `docs/.dsh-ops-update-8a19f1fb...lock` | 收尾统一删除 | 本次写报告产生的 DSH 遗留锁 |
 | `benchmark/newtonbench/probe_cell.py` | **来路待确认，未动** | 本轮 triage 期间出现的未跟踪文件，不在 lead 声明的写入范围，也不在交接清单 11 项内；已报 lead（见 §7） |
 | `_lead_graph_head.json` / `_lead_graph_ws.json`（仓库根） | **不入本批次** | lead 的 import 图对比输出（260912 / 260579 字节），不在其声明的 `docs/` 范围内；已报 lead 处置 |
@@ -267,7 +267,7 @@ Ran 97 tests — OK
 | B2 | `rds_owned_advisor.py`、`rds_owned_tools.py`、`rds_tool_workbench.py` | `test_rds_owned_advisor.py` / `test_rds_owned_tools.py` | 36 OK / 16 OK |
 | B3 | `rds_compass.py` | `git checkout -- scripts/rds_compass.py` + `-k LawTests` | **已回滚**（未达预注册门槛 9 vs ≤2，零行为差异；见 §1 G2） |
 | B5 | `benchmark/newtonbench/results/smoke-devset.json` | `git checkout -- <该文件>` | **恢复，不删**（见 §4 最终裁定） |
-| 不入库 | 两个 `.dsh-ops-update-*.lock` | `git status --short` 不再出现 | — |
+| 不入库 | 全部 `.dsh-ops-update-*.lock` | `git status --short` 不再出现（lead 已加 `.gitignore` 规则） | — |
 
 - **B4 必须排在 B1 之前**：否则 B1 的验收会看到预存在的 `paid_query` 红灯（96/97），分不清责任。
 - **与 G1 无关、不得混进 G1 的**：`rds_compass.py`（B3）、`tools/import_graph.py`（B4）。G1 的 8 个文件本身没有夹带，全部服务于打破那 3 条 upward edge。
@@ -315,20 +315,24 @@ d89b1eb refactor(kernel): point the confirmation readers at rds_original_read
 c873e9d docs: update the handoff with the finished devset table
 28741fa test(benchmark): five Feynman equations at B=8/16/32
 
-$ git status --short          # 本报告回填提交之后
-（空）
-
-$ git status --short          # 收尾前（lock 残留未删时）
+$ git status --short          # 收尾前（lock 尚未处置）
 ?? benchmark/newtonbench/.dsh-ops-update-3e56c816....lock
 ?? docs/.dsh-ops-update-2eaab6d4....lock
 ?? docs/.dsh-ops-update-452c2722....lock
 ?? docs/.dsh-ops-update-72832a6e....lock
 ?? docs/.dsh-ops-update-8a19f1fb....lock
+
+$ git status --short          # 本报告回填 + lead 的 .gitignore 规则之后
+ M .gitignore                            ← lead 加 `.dsh-ops-update-*.lock` 忽略规则
+ M docs/ws-triage-report-20261020.md     ← 本次 §8 回填
+
+$ git status --short          # 两者都提交之后
+（空）
 ```
 
 **这五个 lock 的性质：UNKNOWN，但确定不是仓库产物。** 事实：全部 0 字节，时间戳为 `18:21:59`（`docs/8a19f1fb`，与本报告首次落盘同刻）、`18:27:55`（`benchmark/newtonbench/3e56c816`）、`18:43:08` / `18:44:14` / `18:45:21`（`docs/` 下三个，与 lead 写 `satstop-*` 文档同刻）。**被证伪的推断**：曾以为是「DSH 文件工具每次写操作留一个」，但本次 §8 回填共写入 2 次（含 1 次 `EDIT_CONFLICT` 失败）**未新增任何 lock**，推断作废；真实生成条件未查明，标 UNKNOWN。
 
-不影响判断的部分：它们 0 字节、不进任何 commit、删除后不影响任何测试或导入，`git status` 也随之干净。本次收尾已把五个全部删除；更早两个（`benchmark/newtonbench/results/` 与 `tools/` 下）已在 §5 处置，`_lead_graph_head.json` / `_lead_graph_ws.json` 已由 lead 删除。
+不影响判断的部分：它们 0 字节、不进任何 commit、删除后不影响任何测试或导入。**根治措施：lead 在 `.gitignore` 末尾加了 `.dsh-ops-update-*.lock`**（diff 一行，`git diff -- .gitignore` 可验），所以即使 DSH 以后继续生成，也**永久不再进 `git status`**；现存五个已由本次收尾全部删除，**但删除只能治标**——此后 DSH 仍在继续生成（本次回填期间又观察到新的），正因如此才需要 `.gitignore` 那条规则兜底。更早两个（`benchmark/newtonbench/results/` 与 `tools/` 下）见 §5，`_lead_graph_head.json` / `_lead_graph_ws.json` 已由 lead 删除。
 
 `git status -sb` 首行：`## release/6.0.0-compass...origin/release/6.0.0-compass [ahead 7]`（`5e4ff46` + 本次 3 个提交 + lead 的 `62559f5` / `d202124` / `eec22b1`，**全部未推送**）。
 
