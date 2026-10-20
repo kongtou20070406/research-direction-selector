@@ -28,3 +28,18 @@ Both are pure Python and make no model call.
   synthesizer; the adapter does not invent it.
 - Input domains are the discrete candidate points the caller supplies.
 - The adapter is a mechanism probe, not a benchmark score.
+
+## Two-point probe (m2 hard v0)
+
+With two measured points the bare agent (`gpt-6.1-sol`, reasoning max) fits
+both exactly but extrapolates the wrong law: RMSLE **0.099** on a 125-point
+grid (pass threshold 0.05). The synthesizer does not recover it either: with
+the true constant and exponents in the grammar it truncates at 200,000
+candidates. Replayable files are in [`results/`](results/):
+
+- `req-m2-2pt.json` — the two points and the grammar;
+- `baseline-6.1sol-m2-2pt.json` — the agent's law and its score;
+- `m2-2pt-tool.json` — the synthesizer result (`SEARCH_TRUNCATED`).
+
+This is the motivating case for staged synthesis and for an LLM-proposal
+plus RDS-verification loop: both need to close the two-point gap.

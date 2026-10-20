@@ -1,0 +1,31 @@
+{
+ "status": "SEARCH_TRUNCATED",
+ "fits": [],
+ "attempted": 200000,
+ "distinct_behaviours": 109956,
+ "limits": {
+  "max_nodes": 12,
+  "max_candidates": 200000
+ },
+ "grammar": {
+  "variables": [
+   "current1",
+   "current2",
+   "distance"
+  ],
+  "constants": [
+   "239/5000",
+   "3/2",
+   "3"
+  ],
+  "operators": [
+   "add",
+   "div",
+   "mul",
+   "pow",
+   "sub"
+  ]
+ },
+ "mode": "WHOLE_LAW",
+ "scientific_support": "UNKNOWN"
+}
