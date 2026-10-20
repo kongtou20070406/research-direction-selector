@@ -1,4 +1,4 @@
-"""Feynman devset Compass sweep: 5 equations x budgets B in {8, 16, 32}.
+"""Feynman devset Compass sweep: every registered equation x budgets B in {8, 16, 32}.
 
 Each campaign declares the devset rows as candidates (exact rational text), an
 experiment that evaluates the equation's law in a subprocess, and an empty

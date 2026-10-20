@@ -95,10 +95,15 @@ def main():
         new_cells = {(r['equation'], r['B']): r for r in rows_of(devset_new)}
 
         # Criterion 3: claim_exact 12/15 maintained
-        old_ok = sum(1 for r in rows_of(devset_old) if r.get('claim_exact'))
-        new_ok = sum(1 for r in rows_of(devset_new) if r.get('claim_exact'))
-        ok &= check(f'devset claim_exact >= baseline ({old_ok}/15)',
-                    new_ok >= old_ok, f'{new_ok}/15')
+        old_rows = rows_of(devset_old)
+        new_rows = rows_of(devset_new)
+        old_ok = sum(1 for r in old_rows if r.get('claim_exact'))
+        new_ok = sum(1 for r in new_rows if r.get('claim_exact'))
+        # The baseline denominator tracks the file, not a literal 15: the devset
+        # grew from 5 equations to 30, and a hardcoded 15 would misreport every
+        # later run against the old control.
+        ok &= check(f'devset claim_exact >= baseline ({old_ok}/{len(old_rows)})',
+                    new_ok >= old_ok, f'{new_ok}/{len(new_rows)}')
 
         # Criterion 4: no cell flipped from True to False
         flips = [(eq, b) for (eq, b), ro in old_cells.items()
