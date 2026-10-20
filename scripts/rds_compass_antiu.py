@@ -318,8 +318,42 @@ def domain_signature(plan):
                    'operators': digest(sorted((plan.get('grammar') or {}).get('operators') or ()))})
 
 
-def collect(events, observable):
-    """2.1 sources: (a) TOOL_QUALIFIED oracle law_ast, (b) jump-originated HYPOTHESIS predict ASTs."""
+CONSISTENT = 'CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS'
+
+
+def _adoption(events):
+    """2.1 source (b) reads "the *adopted* jump patch", and the ledger offers two readings.
+
+    (A) drop every hypothesis named by a ``COMPASS_REFUTATION`` row;
+    (B) keep only a hypothesis whose ``COMPASS_VERIFICATION`` row claims
+        ``CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS`` (measured replay CONSISTENT on every
+        receipted measurement *and* the declared confirmation count met).
+
+    They are not equivalent: a hypothesis that nothing ever tested, or one left at
+    ``CONSISTENT_BUT_UNCONFIRMED``, is adopted under (A) and rejected under (B).  (A) is
+    fail-open -- "no counterexample yet" is not an adoption, and AGENTS.md derives scientific
+    state only from replay.  So source (b) takes (B): a positive replay verdict.  The
+    divergence is never silent: every excluded hypothesis is logged with its reason.
+    """
+    refuted, claims = {}, {}
+    for event in events:
+        kind, value = event['kind'][len(cstore.PREFIX):], event['value']
+        if kind == 'REFUTATION':
+            refuted[value.get('hypothesis')] = value
+        elif kind == 'VERIFICATION':
+            best = (value.get('hypothesis') or {}).get('id')
+            for ident in set(value.get('equivalence_class') or ()) | ({best} if best else set()):
+                claims.setdefault(ident, set()).add(str(value.get('claim')))
+    return refuted, {ident for ident, seen in claims.items() if CONSISTENT in seen}, claims
+
+
+def collect(events, observable, log=None):
+    """2.1 sources: (a) TOOL_QUALIFIED oracle law_ast, (b) adopted jump-originated HYPOTHESIS ASTs.
+
+    See ``_adoption`` for why an adopted patch is one with a CONSISTENT-WITH-ALL verification row
+    rather than merely one without a refutation.  Excluded hypotheses go to ``log`` (a JSONL path)
+    with their origin and the evidence that excluded them, so a reviewer sees which cases and why.
+    """
     plan, variable = events[0]['value'], next(iter(events[0]['value']['inputs']))
     # A candidate carries every declared input, not just the one this bucket counts as "the" variable:
     # a multi-input law replayed from a single projection raises DomainError("Missing input") and
@@ -332,12 +366,29 @@ def collect(events, observable):
               and observable in (event['value'].get('outputs') or {})}
     witness = [{'input': points[key], 'value': values[key]} for key in points if key in values]
     domain = {'min': _num(plan['inputs'][variable]['min']), 'max': _num(plan['inputs'][variable]['max'])}
-    out = []
+    refuted, adopted, claims = _adoption(events)
+    signature, out = None, []
     for event in events:
         kind, value = event['kind'][len(cstore.PREFIX):], event['value']
         if kind == 'TOOL_QUALIFIED':
             ast = ((value.get('oracle') or {}).get('known_positive') or {}).get('law_ast')
         elif kind == 'HYPOTHESIS' and str(value.get('origin') or '').startswith('jump:'):
+            ident = str(value.get('name') or value.get('id'))
+            reason = ('REFUTED_HYPOTHESIS' if ident in refuted else
+                      None if ident in adopted else 'UNVERIFIED_HYPOTHESIS')
+            if reason:
+                signature = signature or domain_signature(plan)
+                row = {'signature': signature, 'reason': reason, 'hypothesis': ident,
+                       'origin': str(value.get('origin') or '')}
+                if reason == 'REFUTED_HYPOTHESIS':
+                    refutation = refuted[ident]
+                    row['refuted_by'] = {'basis': refutation.get('basis'),
+                                         'counterexamples': refutation.get('counterexamples')}
+                else:
+                    # A hypothesis seen only under another claim (CONSISTENT_BUT_UNCONFIRMED, ...).
+                    row['verification_claims'] = sorted(claims.get(ident) or [])
+                _log(log, row)
+                continue
             ast = (value.get('predict') or {}).get(observable)
         else:
             continue
@@ -376,7 +427,7 @@ def run(roots, library, log=None):
         store = cstore.store_for(Path(root))
         events = cstore.events(store)
         signature = domain_signature(events[0]['value'])
-        for case in collect(events, events[0]['value']['goal']['observable']):
+        for case in collect(events, events[0]['value']['goal']['observable'], log):
             bucket.setdefault(signature, []).append({**case, 'ledger_root': str(store.root.resolve())})
     for signature, cases in sorted(bucket.items()):
         operator = generalize([case['law_ast'] for case in cases])

@@ -91,8 +91,11 @@ TypeError: argument should be a string or a Rational instance
 admitted 0 records 0
 ```
 
-buckets 只有 **4 行**（`feynman-I.6.20a` 与 `feynman-II.2.42` 落在同一个 bucket，因为
-`domain_signature` 只由输入域、容差、候选数、算子集合决定，与 law 内容无关）：
+buckets 只有 **4 行**：`feynman-I.6.20a` 的 `collect()` 结果恒为 0 条 case（无
+`TOOL_QUALIFIED`、无 jump 假设），不建桶；其余四个方程各占一个签名。
+
+> 本节数字是第 1 轮（只修 `Missing input`、采纳判据未修）的状态。第二轮补上采纳判据后的
+> 数字见 §第二轮：把「采纳」判据补进 support。
 
 | signature | cases | ratio | saving_bits | admit | contract |
 |---|---|---|---|---|---|
@@ -113,7 +116,7 @@ buckets 只有 **4 行**（`feynman-I.6.20a` 与 `feynman-II.2.42` 落在同一�
 
 ## 为什么 `admitted` 仍是 0（与任务书验收的冲突）
 
-任务书要求跑出 `"admitted": 1` 且 contract 不再报 WITNESS_REPLAY。实测表明这两条在
+第 1 轮任务书要求跑出 `"admitted": 1` 且 contract 不再报 WITNESS_REPLAY。实测表明这两条在
 **不放宽 oracle** 的前提下无法同时成立：
 
 - `collect()` 把 jump 的三个 `COMPASS_HYPOTHESIS` 全部收进 support，**不看 campaign 后续是否已反驳**。
@@ -142,6 +145,90 @@ buckets 只有 **4 行**（`feynman-I.6.20a` 与 `feynman-II.2.42` 落在同一�
    属于假认证，不建议。
 3. 换一个 support 本身就是干净 CONSISTENT 假设的方程做验收目标。
 
+## 第二轮：把「采纳」判据补进 support
+
+上一轮把「`collect()` 丢弃 `COMPASS_REFUTATION` 指向的假设」列为超范围的口径变更（见
+§为什么 `admitted` 仍是 0 的第 1 条）。本轮实现了它：设计文档
+`docs/rsi-l1l2-plan-20261020.md:36` 要求反统一的第二个来源是「jump **采纳的** patch」，
+而 `collect()` 只查了 `origin` 前缀。
+
+### 判据：(B) 正的重放判决，而不是 (A) 排除被反驳
+
+两种候选口径：
+
+- **(A) 排除出现在任何 `COMPASS_REFUTATION` 里的假设。**
+- **(B) 只收 `COMPASS_VERIFICATION.claim == 'CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS'`
+  的假设**（成员取该事件的 `equivalence_class` 与 `hypothesis.id`）。
+
+选 (B)，理由是 (A) 是 fail-open：「暂时没有反例」不是「被采纳」。`claim` 的第三个取值
+`CONSISTENT_BUT_UNCONFIRMED`（`scripts/rds_compass.py:1413-1416`）和「从未被检验」的假设都
+不会被 `REFUTATION` 覆盖，(A) 会把它们当成采纳收进 support。campaign 用
+`claim=CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS` 表示「重放覆盖了全部已接收观测」，
+这与 AGENTS.md「科学状态只由重放原始测量得出」对齐。(B) 的代价是把 `CONSISTENT_BUT_UNCONFIRMED`
+也挡在外面，这是有意的 fail-closed。
+
+两口径**不等价**：分歧发生在「未被反驳、也未被判为完全一致」的假设上。本轮 15 个 root 里没有
+这种样本（每个 jump 假设要么在 `REFUTATION` 里、要么在 `CONSISTENT_WITH_ALL` 的
+`equivalence_class` 里），所以两者在这批数据上恰好同解；判据按 (B) 实现，不依赖这个巧合。
+既没被反驳也没通过的假设记 `UNVERIFIED_HYPOTHESIS`，与 `REFUTED_HYPOTHESIS` 分开，
+复核者能区分「已被证据杀掉」和「还没被检验」。
+
+### 实现与日志
+
+`collect(events, observable, log=None)` 先跑 `_adoption(events)`，返回
+`(refuted, adopted, claims)`；HYPOTHESIS 分支在原来的 `origin.startswith('jump:')` 之后
+再判采纳。被排除的假设写进 `--log` 的 JSONL，`reason` 为 `REFUTED_HYPOTHESIS` 或
+`UNVERIFIED_HYPOTHESIS`，字段含 `origin`、`hypothesis`、`signature`；被反驳的附
+`refuted_by = {'basis', 'counterexamples'}`，未验证的附 `verification_claims`。一条实测：
+
+```
+{"hypothesis": "j01-0", "origin": "jump:j01:WHOLE_LAW", "reason": "REFUTED_HYPOTHESIS",
+ "refuted_by": {"basis": "RECEIPTED_MEASUREMENT_COUNTEREXAMPLE",
+                "counterexamples": [{"id": "pt_25", "observable": "y",
+                                     "observed": "25", "predicted": "5", "residual": "20"}]},
+ "signature": "e635443d9b766a880063dec87918faa519417831442a937bdf26cbfa35831cf1"}
+```
+
+本轮 15-root 日志共 9 条 `REFUTED_HYPOTHESIS`：`feynman-I.14.3` 的 `j01-0`/`j01-2`
+各 3 个 budget 共 6 条，`feynman-II.2.42` 的 `j01-1` 3 条。
+
+### 15-root 前后对照
+
+同一份代码、同一批 ledger，只切换采纳判据（`_adoption` 换成旧的全收行为）跑两遍，
+脚本 `.tmpcmd/run_15root.py`，输出 `.tmpcmd/adoption/{before,after}.json`。
+`feynman-I.6.20a` 的 `collect()` 结果恒为 0 条 case（无 `TOOL_QUALIFIED`、无 jump 假设），
+不建桶，所以**五个方程落在四个桶**里：
+
+| 方程 | signature（前 12） | before cases / ratio / saving / admit / contract | after cases / ratio / saving / admit / contract |
+|---|---|---|---|
+| `feynman-II.2.42` | `43dfa00cdbe5` | 6 / 0.857143 / -56 / False / — | 3 / 2.042553 / 98 / False / — |
+| `feynman-I.12.1` | `55c35f278e64` | 3 / 1.392857 / 22 / False / — | 3 / 1.392857 / 22 / False / — |
+| `feynman-I.9.18` | `6e1b156013a1` | 3 / 2.042553 / 98 / False / — | 3 / 2.042553 / 98 / False / — |
+| `feynman-I.14.3` | `e635443d9b76` | 9 / 2.090047 / 230 / **True** / **False** | 3 / 1.815789 / 62 / False / — |
+| `feynman-I.6.20a` | 无桶 | 0 条 case | 0 条 case |
+
+`admitted` 前后都是 0。`feynman-II.2.42` 与 `feynman-I.9.18` 的 after 行数字相同
+（3 / 2.042553 / 98）是 MDL 恰好一致，两者 signature 不同、桶独立，不是串桶。
+
+### 结论：这是负结果，不是待修的 bug
+
+修完采纳判据后，五个方程在「存活假设」口径下**全部 `admit=False`**：
+
+- `feynman-I.14.3`：被反驳的 `m*g*g`、`m*h*h` 不再进 support，三个 root 的存活 law
+  完全相同（`((h * m) * g)`）→ anti-unification 无洞 → `_non_trivial` 返回 `False`。
+  模板不再从错误结构里学洞，`WITNESS_REPLAY` 也随之不报（根本不跑 contract）。
+- `feynman-II.2.42`：`j01-1`（`(t2 - t1) / (kappa * kappa)`）被 `pt_11` 反驳后只剩
+  单个 law，同样 trivial。cases 6→3、saving -56→98 是只剩干净结构后的 MDL 重算。
+- `feynman-I.12.1`、`feynman-I.9.18`：本来就只有一个存活假设，前后不变。
+
+`admit()` 要求 `_non_trivial()` 为真，即模板里得有洞；洞只能来自结构不同的两个 law。
+存活假设过滤后每个桶只剩一种 law，**没有跨预算的结构差异可供泛化**。要凑出
+`admitted >= 1`，只能放宽 `_non_trivial`（把无洞模板也放出）或改 contract 的 witness
+口径（自证），两者都是假认证，不做。
+
+所以本轮的 L1-b 结论是：当前 devset 五个方程在「存活假设」口径下没有可复用的
+跨预算泛化结构。这是 support 口径修对之后的真结果，不是实现缺陷。
+
 ## 其他已知缺陷（本轮未修，超出范围）
 
 - `contract()` 的 boundary probe 用标量 `edge`，对多输入 law 同样退化成
@@ -153,8 +240,12 @@ buckets 只有 **4 行**（`feynman-I.6.20a` 与 `feynman-II.2.42` 落在同一�
 
 ## diff stat
 
+代码改动（不含本文档；docs 的计数随本节编辑变化，故不写死）：
+
 ```
- scripts/rds_compass_antiu.py    | 13 +++++++++++--
- tests/test_rds_compass_antiu.py | 38 ++++++++++++++++++++++++++++++++++++++
- 2 files changed, 49 insertions(+), 2 deletions(-)
+ scripts/rds_compass_antiu.py    | 55 ++++++++++++++++++++++++++++++++---
+ tests/test_rds_compass_antiu.py | 75 ++++++++++++++++++++++++++++++++++++++++++
 ```
+
+第 1 轮的数字是 13 / 38；本轮新增 `_adoption`、`collect()` 的采纳分支和 3 条回归测试
+（`tests/test_rds_compass_antiu.py` 从 21 条到 24 条）。

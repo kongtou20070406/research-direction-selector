@@ -1,4 +1,7 @@
 """Focused tests for scripts/rds_compass_antiu.py (plan L1-a)."""
+import json
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 import sys
@@ -31,6 +34,11 @@ def case(law, values, origin='tool:t'):
     return {'law_ast': law, 'law': '', 'origin': origin, 'record_sha256': '', 'variable': 'x',
             'domain': {'min': 1, 'max': 3},
             'witness': [{'input': int(point), 'value': value} for point, value in values.items()]}
+
+
+def _event(kind, value):
+    """A Compass ledger row as ``collect`` reads it: only the COMPASS_ kind and the value matter."""
+    return {'kind': 'COMPASS_' + kind, 'value': value}
 
 
 class LggTest(unittest.TestCase):
@@ -213,6 +221,73 @@ class MultiInputWitnessTest(unittest.TestCase):
 
     def test_a_bare_point_still_binds_the_single_named_variable(self):
         self.assertEqual(antiu._runner([self.mul(self.M, self.M)], ['2'], 'm'), [['4']])
+
+
+class AdoptedHypothesisTest(unittest.TestCase):
+    """2.1 source (b) is the *adopted* jump patch, not every jump-originated hypothesis.
+
+    feynman-I.14.3 regression: ``collect`` kept all three jump hypotheses, two of them refuted by
+    ``pt_25`` (observed 25, predicted 5 and 125), so anti-unification generalised
+    ``mul(mul($V1,m),$V2)`` out of a refuted structure and the contract had to reject the result.
+    """
+
+    PLAN = {'inputs': {'x': {'min': '1', 'max': '3', 'integer': True}},
+            'goal': {'observable': 'y'}, 'observables': ['y'],
+            'tolerances': {'y': {'abs': '0', 'rel': '0'}},
+            'candidates': [{'id': 'x1', 'inputs': {'x': '1'}}],
+            'grammar': {'operators': ['add', 'mul']}}
+    SQUARE = {'op': 'mul', 'args': [{'var': 'x'}, {'var': 'x'}]}
+    LINEAR = {'op': 'add', 'args': [{'var': 'x'}, {'const': '1'}]}
+    REFUTATION = {'hypothesis': 'j01-0', 'basis': 'RECEIPTED_MEASUREMENT_COUNTEREXAMPLE',
+                  'counterexamples': [{'id': 'pt_25', 'observed': '25', 'predicted': '5'}]}
+
+    def setUp(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        self.log = str(Path(folder) / 'log.jsonl')
+
+    def events(self, *tail):
+        return [_event('DECLARED', self.PLAN), *tail]
+
+    def jump(self, ident, ast):
+        return _event('HYPOTHESIS', {'id': ident, 'origin': 'jump:j01:WHOLE_LAW', 'predict': {'y': ast}})
+
+    def entries(self):
+        return [json.loads(line) for line in Path(self.log).read_text(encoding='utf-8').splitlines()]
+
+    def test_only_the_verified_hypothesis_enters_support(self):
+        events = self.events(self.jump('j01-0', self.SQUARE), self.jump('j01-1', self.LINEAR),
+                             _event('REFUTATION', self.REFUTATION),
+                             _event('VERIFICATION', {'claim': 'CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS',
+                                                     'hypothesis': {'id': 'j01-1'},
+                                                     'equivalence_class': ['j01-1']}))
+        self.assertEqual([case['origin'] for case in antiu.collect(events, 'y', self.log)], ['j01-1'])
+        self.assertEqual([case['origin'] for case in antiu.collect(events, 'y')], ['j01-1'])
+        self.assertEqual(self.entries(), [{'signature': antiu.domain_signature(self.PLAN),
+                                           'reason': 'REFUTED_HYPOTHESIS', 'hypothesis': 'j01-0',
+                                           'origin': 'jump:j01:WHOLE_LAW',
+                                           'refuted_by': {'basis': 'RECEIPTED_MEASUREMENT_COUNTEREXAMPLE',
+                                                          'counterexamples': self.REFUTATION['counterexamples']}}])
+
+    def test_an_unverified_hypothesis_is_not_adopted(self):
+        """The reading that only drops refuted hypotheses would keep this one: nothing refuted it."""
+        events = self.events(self.jump('j01-3', self.LINEAR),
+                             _event('VERIFICATION', {'claim': 'NOT_ESTABLISHED', 'hypothesis': None,
+                                                     'equivalence_class': []}))
+        self.assertEqual(antiu.collect(events, 'y', self.log), [])
+        self.assertEqual(self.entries(), [{'signature': antiu.domain_signature(self.PLAN),
+                                           'reason': 'UNVERIFIED_HYPOTHESIS', 'hypothesis': 'j01-3',
+                                           'origin': 'jump:j01:WHOLE_LAW', 'verification_claims': []}])
+
+    def test_consistent_but_unconfirmed_is_not_adopted(self):
+        events = self.events(self.jump('j01-3', self.LINEAR),
+                             _event('VERIFICATION', {'claim': 'CONSISTENT_BUT_UNCONFIRMED',
+                                                     'hypothesis': {'id': 'j01-3'},
+                                                     'equivalence_class': ['j01-3']}))
+        self.assertEqual(antiu.collect(events, 'y'), [])
+        self.assertEqual(antiu.collect(events, 'y', self.log), [])
+        self.assertEqual([(row['reason'], row['verification_claims']) for row in self.entries()],
+                         [('UNVERIFIED_HYPOTHESIS', ['CONSISTENT_BUT_UNCONFIRMED'])])
 
 
 class SignatureTest(unittest.TestCase):
