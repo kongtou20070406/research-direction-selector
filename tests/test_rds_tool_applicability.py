@@ -20,6 +20,9 @@ from rds_tool_applicability import application_request, inspect, validate_bindin
 
 CASES = [{'args': [1, 2], 'kwargs': {}, 'expected': 3},
          {'args': [-1, 2], 'kwargs': {}, 'expected': 1}]
+# Start-up headroom for the tool check, not a value under test: a loaded Windows runner did not finish
+# the two-case check within 3 s, and the setUp then saw a FAILED validation instead of LOCAL_CASES_PASSED.
+VALIDATION_SECONDS = 30
 
 
 class ToolApplicabilityTests(unittest.TestCase):
@@ -31,7 +34,7 @@ class ToolApplicabilityTests(unittest.TestCase):
         self.write('original.py', 'def add(a, b):\n    return a + b\n')
         self.write_json('cases.json', CASES)
         tools.extract(self.root, self.root / 'original.py', 'add', 'add-v1')
-        validation = tools.validate(self.root, 'add-v1', self.root / 'cases.json', timeout=3)
+        validation = tools.validate(self.root, 'add-v1', self.root / 'cases.json', timeout=VALIDATION_SECONDS)
         self.assertEqual(validation['status'], 'LOCAL_CASES_PASSED', validation)
         tools.register(self.root, 'add-v1', validation['id'])
         tools.command(SimpleNamespace(action='use', root=self.root, name='add-v1', output='qualified.py'))
