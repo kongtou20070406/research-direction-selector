@@ -432,9 +432,11 @@ def decide(state):
         probes_since = [d for d in state['decisions'] if d['action'] == 'PROBE'
                         and d['seq'] > max((j['seq'] for j in state['jumps']), default=0)]
         boundary = _boundary_probe(state)
-        if can_buy and (len(probes_since) < plan['escape']['probe_points'] or boundary):
+        reserve = plan['verification']['confirmations'] + 1
+        allow_gap = boundary and plan['budget']['experiments'] - spent > reserve
+        if can_buy and (len(probes_since) < plan['escape']['probe_points'] or allow_gap):
             # An uncovered gap is evidence the regime boundary is still unknown; keep probing it
-            # even after the declared probe budget, because one probe cannot close several gaps.
+            # while the experiment budget still leaves room for the required confirmations.
             return {'action': 'PROBE', 'candidate': boundary or _spread(state, 1)[0], 'basin': diagnosis}
         return {'action': 'ESCAPE', 'basin': diagnosis}
     if len(rows) >= 2 and can_buy:
