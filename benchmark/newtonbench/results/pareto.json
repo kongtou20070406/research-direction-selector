@@ -1,0 +1,167 @@
+[
+ {
+  "task": "sparse-tail",
+  "arm": "baseline-6pts",
+  "budget": 6,
+  "experiments": 6,
+  "exact_match": 31
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "baseline-6pts",
+  "budget": 6,
+  "experiments": 6,
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "baseline-6pts",
+  "budget": 6,
+  "experiments": 6,
+  "exact_match": 10
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "rds",
+  "budget": 6,
+  "experiments": 6,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 31
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "rds",
+  "budget": 6,
+  "experiments": 6,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "rds",
+  "budget": 6,
+  "experiments": 6,
+  "status": "JUDGMENT_REQUIRED",
+  "exact_match": 30
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "rds",
+  "budget": 8,
+  "experiments": 8,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 31
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "rds",
+  "budget": 8,
+  "experiments": 8,
+  "status": "SEARCH_EXHAUSTED",
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "rds",
+  "budget": 8,
+  "experiments": 8,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 30
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "rds",
+  "budget": 12,
+  "experiments": 12,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 31
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "rds",
+  "budget": 12,
+  "experiments": 11,
+  "status": "SEARCH_EXHAUSTED",
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "rds",
+  "budget": 12,
+  "experiments": 12,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 32
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "rds",
+  "budget": 16,
+  "experiments": 16,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 31
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "rds",
+  "budget": 16,
+  "experiments": 15,
+  "status": "SEARCH_EXHAUSTED",
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "rds",
+  "budget": 16,
+  "experiments": 16,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 32
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "rds",
+  "budget": 24,
+  "experiments": 24,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 31
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "rds",
+  "budget": 24,
+  "experiments": 19,
+  "status": "SEARCH_EXHAUSTED",
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "rds",
+  "budget": 24,
+  "experiments": 21,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 32
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "rds",
+  "budget": 32,
+  "experiments": 32,
+  "status": "JUDGMENT_REQUIRED",
+  "exact_match": 32
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "rds",
+  "budget": 32,
+  "experiments": 19,
+  "status": "SEARCH_EXHAUSTED",
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "rds",
+  "budget": 32,
+  "experiments": 21,
+  "status": "GOAL_IDENTIFIED",
+  "exact_match": 32
+ }
+]

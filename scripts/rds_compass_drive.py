@@ -110,6 +110,14 @@ def drive(root, *, max_steps=200, wall_seconds=None, publish=True):
                                                    'stale': verification['stale'][:8]},
                               verification=verification, report_sha256=body['sha256'])
             elif action == 'HANDOFF':
+                if step['reason'] == 'SEARCH_EXHAUSTED':
+                    # A failed search must not erase every candidate: verify keeps the least-refuted
+                    # rulebook as a best-effort partial fit, explicitly not a claim.
+                    verification = compass.verify(store, state)
+                    body = compass.report(store)
+                    cstore.append(store, 'REPORT', body['sha256'][:32], body)
+                    return finish(step['reason'], step.get('detail') or step.get('basin'),
+                                  verification=verification, report_sha256=body['sha256'])
                 return finish(step['reason'], step.get('detail') or step.get('basin'))
             else:
                 raise RuntimeError('Unknown Compass action: ' + action)

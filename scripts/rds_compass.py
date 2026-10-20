@@ -467,7 +467,7 @@ def decide(state):
         cap = plan['verification'].get('max_confirmations', 0)
         bought = sum(1 for d in state['decisions'] if d['action'] == 'CONFIRM')
         confirmed = done < plan['verification']['confirmations'] and (not cap or bought < cap)
-        spending = spend and (not cap or bought < cap)
+        spending = spend and (not cap or bought < cap) and _boundary_probe(state) is not None
         if confirmed or spending:
             # Falsification test: a fitted law must survive predictions it did not see. While budget
             # remains, a leader is tested at the uncovered inputs before any claim is made.
@@ -1246,6 +1246,13 @@ def verify(store, state):
             else:
                 classes.append([hyp])
         best = min(classes[0], key=lambda h: (h['size'], h['id'])) if classes else None
+        fallback = None
+        if not classes:
+            # A failed search must not erase every candidate: keep the refuted rulebook with the
+            # fewest counterexamples as a partial fit, explicitly not a claim.
+            refuted = [h for h in state['hypotheses'].values() if h['status'] == 'REFUTED']
+            if refuted:
+                fallback = min(refuted, key=lambda h: (len(h['replay']['counterexamples']), h['size'], h['id']))
         replay = model.replay(best, measured(state), {k: tolerances[k] for k in best['predict'] if k in tolerances}) if best else None
         value = {'goal': 'IDENTIFY_LAW', 'receipts_rechecked': not stale, 'stale': stale,
                  'hypothesis': _compact_hyp(best) if best else None,
@@ -1253,6 +1260,11 @@ def verify(store, state):
                  # named, never asserted.
                  'predict': {k: model.render(v) for k, v in best['predict'].items() if k in tolerances} if best else None,
                  'unadjudicated': sorted(k for k in best['predict'] if k not in tolerances) if best else [],
+                 **({'best_effort': {'hypothesis': _compact_hyp(fallback),
+                                     'predict': {k: model.render(v) for k, v in fallback['predict'].items()
+                                                 if k in tolerances},
+                                     'counterexamples': len(fallback['replay']['counterexamples']),
+                                     'note': 'PARTIAL_FIT: a refuted candidate, not a claim'}} if fallback else {}),
                  'equivalence_class': [h['id'] for h in classes[0]] if classes else [],
                  'distinct_live_classes': len(classes),
                  'replay': {k: replay[k] for k in ('status', 'tested', 'not_applicable', 'unknown_measurements')} if replay else None,
