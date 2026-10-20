@@ -20,6 +20,8 @@ from rds_project import IDENTITY, ProjectStore, canonical, digest, file_sha, req
 
 SCHEMA = 'rds-compass-declaration-v1'
 PLAN_SCHEMA = 'rds-compass-plan-v1'
+# The token ledger switch lives in the deployment layer, not the frozen declaration (§2.4).
+TOKEN_LEDGER_ENV = 'RDS_COMPASS_TOKEN_LEDGER'
 MAX_BYTES = 1024 * 1024
 MAX_CANDIDATES = 64
 MAX_HYPOTHESES = 64
@@ -52,6 +54,13 @@ PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 def _seconds(value):
     """A JSON number of seconds; booleans are not numbers here."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def token_ledger_enabled():
+    """The explicit token-ledger switch; off unless set (§2.4), so old declarations keep running."""
+    value = os.environ.get(TOKEN_LEDGER_ENV, '')
+    require(value in ('', '0', '1'), f'{TOKEN_LEDGER_ENV} must be 0 or 1')
+    return value == '1'
 
 
 def _object(value, required, optional, label):
@@ -270,6 +279,10 @@ def compile_plan(store, declaration, source_sha256, source=None):
         require(cap is None or (type(cap) is int and 0 < cap <= 10 ** 10),
                 'Agent max_tokens must be an integer from 1 to 10000000000')
         if cap is None:
+            # Phase A keeps today's CAP_UNKNOWN campaign; with the ledger switched on an uncapped
+            # agent is refused instead, because token spend is never left uncapped (§2.1, §2.4).
+            require(not token_ledger_enabled(),
+                    'agent.max_tokens is required once the token ledger is enabled; token spend is never left uncapped')
             unknown.append('agent.max_tokens')  # No cap is declared; spend is still reported per call.
         agent = {'argv': [sys.executable if a == '{python}' else a for a in agent['argv']],
                  'timeout_seconds': agent['timeout_seconds'], **({'max_tokens': cap} if cap is not None else {})}
@@ -319,7 +332,12 @@ def compile_plan(store, declaration, source_sha256, source=None):
     clashes = sorted(path for c in candidates for path in (c['output'], c['retry']['output'])
                      if str(store._path(path)).casefold() in frozen)
     require(not clashes, 'Candidate output overwrites a bound input or the protocol: ' + ', '.join(clashes))
-    contract = {'schema': 1, 'output_roots': [OUTPUT_ROOT], 'budget': {'wall_seconds': budget['wall_seconds']},
+    # A declared cap is a budget dimension; no agent or no cap stays a dimension-less campaign, which
+    # is the old behaviour and not a cap of 0 (§2.1).
+    token_cap = (agent or {}).get('max_tokens')
+    contract = {'schema': 1, 'output_roots': [OUTPUT_ROOT],
+                'budget': {'wall_seconds': budget['wall_seconds'],
+                           **({'agent_tokens': token_cap} if token_cap is not None else {})},
                 'description': 'Compass campaign: ' + goal['statement'][:400]}
     for role in ('code', 'config', 'data'):
         metadata[role + '_sha256'] = ProjectStore._role_sha({'bindings': bindings}, role) if any(

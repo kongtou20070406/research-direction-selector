@@ -107,11 +107,13 @@ def _row_digest(body):
     return digest({k: v for k, v in body.items() if k != 'row_sha256'})
 
 
-def append(store, kind, ident, value, *, guard=None):
+def append(store, kind, ident, value, *, guard=None, inside=None):
     """Append one record atomically; an identical (kind, id, content) is reused.
 
     ``guard(db, events)`` runs inside the write transaction so the caller can
     re-check the state it decided from; a changed state raises before commit.
+    ``inside(db)`` also runs in that transaction, after the guard, for the work
+    the record itself implies (the token charge a DISPOSITION carries).
     """
     require(kind in KINDS, 'Unknown Compass record kind: ' + str(kind))
     require(isinstance(ident, str) and 0 < len(ident) <= 160, 'Invalid Compass record id')
@@ -128,6 +130,8 @@ def append(store, kind, ident, value, *, guard=None):
         require(len(rows) < MAX_EVENTS, 'Compass event limit reached; start a successor campaign')
         if guard is not None:
             guard(db, [body for _, body in rows])
+        if inside is not None:
+            inside(db)
         parent = digest(rows[-1][1]) if rows else None
         # ``at`` orders this row against kernel run starts (novel-prediction checks).
         body = {'kind': PREFIX + kind, 'id': ident, 'sha256': ref['sha256'], 'record': ref,

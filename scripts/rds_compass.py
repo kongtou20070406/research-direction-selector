@@ -890,6 +890,29 @@ def _usage(stdout):
     return dict(usage) if ok else None
 
 
+def _token_charge(evidence, jump_id):
+    """The charge to run inside the DISPOSITION transaction, or None without a report (§2.1).
+
+    Tokens have one source, the agent's own usage report, and the charge lands with the
+    disposition that records it: the same transaction, so the row and its evidence can
+    never disagree. An unreported usage writes no zero charge.
+
+    The ``agent_tokens`` dimension exists only for a campaign compiled while the ledger
+    switch was on. A legacy campaign keeps its dimension-less budget, so its spend stays
+    event-derived and the reverse test holds byte for byte.
+    """
+    usage = (evidence or {}).get('usage')
+    if not usage:
+        return None
+
+    def inside(db):
+        if db.execute('SELECT 1 FROM budget WHERE resource=?', (TOKEN_RESOURCE,)).fetchone() is None:
+            return
+        charge_tokens(db, jump_id=jump_id, usage=usage)
+
+    return inside
+
+
 def fit_trend(state, compact=False, stale=None):
     """Train/test fit-trend conclusions recomputed from receipted measurements (``rds_fit_trend``).
 
@@ -1114,7 +1137,7 @@ def escape(store, state, diagnosis):
             cstore.append(store, 'DISPOSITION', jump_id, {
                 'packet_sha256': sealed['sha256'], 'jump': jump_id, 'disposer': 'AGENT', 'agent': evidence,
                 'errors': ['STALE_RESPONSE: ledger evidence changed during the response'], 'decisions': [],
-                'outcomes': []})
+                'outcomes': []}, inside=_token_charge(evidence, jump_id))
             return {'status': 'STALE_RESPONSE', 'jump': jump_id, 'adopted': [], 'disposer': 'AGENT',
                     'errors': ['STALE_RESPONSE'], 'rsi': rsi, 'outcomes': []}
         if response is not None:
@@ -1148,7 +1171,7 @@ def escape(store, state, diagnosis):
     cstore.append(store, 'DISPOSITION', jump_id, {
         'packet_sha256': sealed['sha256'], 'jump': jump_id, 'disposer': disposer, 'agent': evidence,
         'errors': errors, 'decisions': [{k: v for k, v in d.items() if k != 'hypothesis'} for d in decisions],
-        'outcomes': outcomes})
+        'outcomes': outcomes}, inside=_token_charge(evidence, jump_id))
     for hyp in adopted:
         cstore.append(store, 'HYPOTHESIS', hyp['id'], {**hyp, 'origin': 'jump:' + jump_id + ':' + hyp['origin']})
         _note_tools(store, hyp)

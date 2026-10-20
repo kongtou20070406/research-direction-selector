@@ -141,6 +141,39 @@ def number(value, name, positive=False):
     return float(value)
 
 
+TOKEN_RESOURCE = 'agent_tokens'
+
+
+def token_charge(usage):
+    """Billable tokens for one call: input plus output (``docs/c1-token-budget-design-20261020.md`` §4.3).
+
+    ``cached_input_tokens`` is already counted inside ``input_tokens``, so the default discount of
+    1.0 leaves it out; a declared ``cached_input_discount < 1`` changes this function, not callers.
+    """
+    require(isinstance(usage, dict) and {'input_tokens', 'output_tokens'} <= set(usage)
+            <= {'input_tokens', 'output_tokens', 'cached_input_tokens'},
+            'Token usage needs integer input and output counts')
+    return usage['input_tokens'] + usage['output_tokens']
+
+
+def charge_tokens(db, *, jump_id, usage, charge=None):
+    """Record one agent call's token spend inside the caller's transaction (§2.1).
+
+    Tokens have one source, the agent's own report, so ``spent`` and ``charged`` move together:
+    there is no measured/estimate split to reconcile and no second ledger. No cap check happens
+    here. A single call may legitimately overrun, and the refusal belongs before the next buy.
+    """
+    require(db.in_transaction, 'Token charging needs the transaction that records the disposition')
+    require(isinstance(jump_id, str) and jump_id, 'Token charge needs the jump it belongs to')
+    require(db.execute('SELECT 1 FROM budget WHERE resource=?', (TOKEN_RESOURCE,)).fetchone() is not None,
+            'Token ledger row missing; the contract never declared agent_tokens')
+    amount = (charge or token_charge)(usage)
+    require(type(amount) is int and amount >= 0, 'Token charge must be a non-negative integer count')
+    db.execute('UPDATE budget SET spent=spent+?, charged=charged+? WHERE resource=?',
+               (amount, amount, TOKEN_RESOURCE))
+    return amount
+
+
 def load_json(path, *, max_bytes=None, expected_sha256=None):
     def pairs(items):
         result = {}
@@ -1216,7 +1249,11 @@ class ProjectStore:
                 require(spec['argv'] != self._maintenance_context(contract)['action'].get('argv'),
                         'Bound repair command requires a maintenance declaration')
             estimates = spec.get("resource_estimates")
-            require(isinstance(estimates, dict) and set(estimates) == set(contract["budget"]), "Resource estimates must match budget dimensions")
+            # Agent tokens are charged by the call, never reserved by a run: the token cap is checked
+            # before a purchase, not by run settlement (design §2.1, §6 #8). Reserving them here would
+            # also make an overrun block the next experiment instead of the next agent call.
+            require(isinstance(estimates, dict) and set(estimates) == set(contract["budget"]) - {TOKEN_RESOURCE},
+                    "Resource estimates must match the reservable budget dimensions")
             estimates = {key: number(value, f"estimate.{key}") for key, value in estimates.items()}
             require(estimates["wall_seconds"] >= timeout, "Wall reservation must cover timeout")
             protocol_ref = spec.get("protocol")
