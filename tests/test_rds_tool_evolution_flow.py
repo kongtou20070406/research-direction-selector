@@ -29,6 +29,14 @@ _spec = importlib.util.spec_from_file_location('_tool_evolution_public', ROOT / 
 fixture = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fixture)
 
+# Start-up headroom per pilot, not a value under test: a loaded Windows runner took 10.6 s and 17 s for
+# pilots that sleep 10 ms, past their 7 s timeout. Admission charges spent pilot time plus the next
+# reservation (timeout + 0.2 s) against the pilot cap, so the cap grows with the four pilots it admits,
+# and the total budget with the cap (a pilot cap is at most 10% of the total wall allowance).
+PILOT_SECONDS = 20
+PILOT_CAP_SECONDS = 4 * PILOT_SECONDS + 20
+WALL_BUDGET_SECONDS = 10 * PILOT_CAP_SECONDS
+
 
 class ToolEvolutionFlowTests(unittest.TestCase):
     def setUp(self):
@@ -86,7 +94,7 @@ class ToolEvolutionFlowTests(unittest.TestCase):
             return db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='CAMPAIGN_STARTED'").fetchall()
 
     def initialize_slow_only(self):
-        contract = fixture.prepare(self.root)
+        contract = fixture.prepare(self.root, pilot_timeout=PILOT_SECONDS)
         self.template = deepcopy(contract['advisor_policy'])
         # At genesis the fast command is authorized but its implementation/route
         # is unavailable. The edited candidate must actually introduce it.
@@ -126,8 +134,8 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         config['pilots'] = ['pilot-verify', 'pilot-slow']
         config['models'].pop('fast')
         config['plans'] = [p for p in config['plans'] if p['id'] == 'slow']
-        config['max_pilot_wall_seconds'] = 20
-        contract['budget']['wall_seconds'] = 200
+        config['max_pilot_wall_seconds'] = PILOT_CAP_SECONDS
+        contract['budget']['wall_seconds'] = WALL_BUDGET_SECONDS
         contract['advisor_policy'] = policy
         self.genesis = deepcopy(contract)
         self.evaluator = (self.root / 'verifier.py').read_bytes()
@@ -225,7 +233,7 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         self.assertEqual(self.campaign(), campaign)
         self.assertEqual(len(revised['contract_history']), 2)
         self.assertEqual(revised['contract']['allowed_commands'], self.genesis['allowed_commands'])
-        self.assertEqual(revised['contract']['budget'], {'wall_seconds': 200})
+        self.assertEqual(revised['contract']['budget'], {'wall_seconds': WALL_BUDGET_SECONDS})
         self.assertEqual(revised['contract']['stop_policy']['wall_seconds'], 180)
         self.assertEqual(revised['contract']['advisor_policy']['context'], self.genesis['advisor_policy']['context'])
         self.assertEqual((self.root / 'verifier.py').read_bytes(), self.evaluator)
@@ -285,7 +293,7 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         costs = {r['run_id']: r['resources']['wall_seconds']['measured'] for r in snap['receipts']}
         self.assertAlmostEqual(final['feasibility']['pilot_budget']['spent_or_charged'],
                                sum(v for k, v in costs.items() if k.startswith('pilot')), places=6)
-        self.assertEqual(final['feasibility']['pilot_budget']['cap'], 20)
+        self.assertEqual(final['feasibility']['pilot_budget']['cap'], PILOT_CAP_SECONDS)
 
     def test_complete_evolution_and_independent_verification_same_ledger(self):
         self.evolve_and_verify(correct=True)
@@ -323,8 +331,8 @@ class ToolEvolutionFlowTests(unittest.TestCase):
         self.assertEqual(estimate['upper_wall_seconds'], 24.75)
         self.assertEqual(plan['status'], 'INFEASIBLE')
         self.assertIn('hard timeout', plan['reason'])
-        self.assertEqual(report['pilot_budget'], {'cap':20, 'spent_or_charged':8.25,
-                                                'reserved':0, 'remaining':11.75})
+        self.assertEqual(report['pilot_budget'], {'cap':PILOT_CAP_SECONDS, 'spent_or_charged':8.25,
+                                                'reserved':0, 'remaining':PILOT_CAP_SECONDS - 8.25})
         self.assertEqual(report['admitted_runs'], [])
         self.assertEqual(report['bounded_pilots'], [])
         self.assertGreater(plan['available_wall_seconds'], 24.75)
