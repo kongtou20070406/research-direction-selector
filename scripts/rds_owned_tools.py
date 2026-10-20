@@ -151,7 +151,7 @@ def gate_graph(graph, reports, facts):
 def consumption(store, state, facts, reports, selection, searches=()):
     """Compute real application and precise decision consumers from originals."""
     from rds_artifacts import strict_json
-    from rds_owned_advisor import _read_original
+    from rds_original_read import _read_original
     policy = state['contract']['advisor_policy']
     receipts = {r['run_id']: r for r in state['receipts']}
     bindings = {b['candidate']: b for b in policy.get('tool_bindings', [])}

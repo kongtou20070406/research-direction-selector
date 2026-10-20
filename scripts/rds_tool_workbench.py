@@ -118,7 +118,7 @@ def _hints(path, data):
 
 def _diagnostics(store, receipts):
     """Use owned receipt validation and original-artifact readers, retaining tails in CAS."""
-    from rds_owned_advisor import _read_original, _original
+    from rds_original_read import _original, _read_original
     from rds_cas import cas_bytes
     ordered = sorted(receipts, key=lambda r: (r.get('ended_at', 0), r['run_id']), reverse=True)
     selected = ordered[:MAX_RECEIPTS]
