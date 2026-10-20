@@ -27,7 +27,7 @@ s.t. 假认证率 ≤ 对照
 2. **预注册 + 相对门槛**：判定规则在跑之前写死；门槛用相对比例，不用绝对点数；判定脚本读结果文件自动判，不靠人眼。现有基线：NewtonBench 预注册 `claim_exact` Compass 0.264 vs `code_assisted` 0.938 / `vanilla` 0.958；成本 1.32M vs 85k input token/正确解。
 3. **成本必须可对账**：token 未进入 `budget` 表之前，**禁止宣称任何成本优势**。现状是 1.32M vs 85k 这个 15.5 倍差距由人在 PR 评论里手算，系统内自算不出来。
 4. **瓶颈先归因**：改预算前必须先证明瓶颈是预算。devset 证据：4/5 方程每 **4 次实验**就锁定，B 从 8 提到 32 结果**零变化**；唯一失败的 `feynman-I.6.20a`（需 π+exp+sqrt）实验数停在 14 不再增长——这是**合成器表达力边界，不是预算边界**。表达力优先于预算。
-5. **饱和即停**：定律锁定后继续买 PROBE/HOLDOUT 是纯烧钱。已观测现象：`audit-verify-cost` 上 B=12 锁定 leader 后仍买到 16/21/21，出现 `RDS(B=16/24/32)` 被 `RDS(B=12)` **自我支配**。根因是 `max_gap=2` 覆盖规则 + `holdout: 2` + 缺早停，**不是 `spend_budget`**。
+5. **饱和即停**：定律锁定后继续买探针是纯烧钱。现象：`regime-double` 上 B=12/16/24/32 → 实验数 12/16/21/21，`claim_exact` 四档都 32/32，即 `RDS(B=16/24/32)` 被 `RDS(B=12)` **自我支配**。**根因（2026-10-20 实测，推翻早先归因）**：`scripts/rds_compass.py:468` 的饱和守卫不可达——它要求「jump 之后没有新观测」，而 basin 探针本身就会产生新观测，于是第一次买点之后条件永假。三条 PROBE 出口里承担 15/21 消耗的是 `:490`（无 `reason`、调 `_boundary_probe(state)` 用硬编码默认 `min_gap=2`）；`:536` 的 `max_gap` 覆盖规则 0 次触发，`:472` 的 `NO_RIVAL_WITHIN_BOUND` 守卫 0 次触发。证据见 `docs/satstop-root-cause.md`。
 6. **引用必须可查**：外部审计/报告的每条 claim，先在 `git archive` 干净快照上 grep 钉死再写进文档。审计给的行号常偏移或指错函数。
 7. **口径改动独立复核**：任何触及统计口径的改动（阈值、容差、闸门、分类）必须带一条最小反向测试，并由独立复核子 agent 复判。防的是「为了过测试而放水」。
 
@@ -59,7 +59,7 @@ s.t. 假认证率 ≤ 对照
 | 序 | 事项 | 完成判据 |
 |---|---|---|
 | 0 | **工作区清算**：`paid_query` 补登记 `LAYERS`；11 项未提交改动分批定性（提交或回滚）；`git status` 干净 | import 测试全绿；`git status` 无残留 |
-| 1 | **饱和早停**（P0）：`_gap_wide_enough` 阈值收紧走完 | devset 15 runs 重跑：4/5 已锁定方程实验数 ≤6；B=8 与 B=32 实验数差 ≤2；`claim_exact` 12/15 不降；假认证不升。达不到即回滚 |
+| 1 | **饱和早停**（P0）：接 `:468` 那条不可达守卫（`_gap_wide_enough` 阈值收紧已实测零杠杆并回滚，不要再试） | 预注册门槛见 `benchmark/newtonbench/saturation-protocol.md`：`max(Exp@16,Exp@24,Exp@32) − Exp@12 ≤ 2`（基线 9）；devset 4/5 方程三档实验数 ≤6 且总 `claim_exact` ≥12/15；`feynman-I.6.20a` 不许从 `SEARCH_EXHAUSTED` 变假认证。达不到即回滚 |
 | 2 | **Batch A**：~~A1 关 auto-merge~~（已完成）；A2 归档 NewtonBench 负结果进 `docs/benchmarks/`；A3 测试按被测对象改名；A4 docs 分层 | A2 文档入库且 release notes 有指针；A3/A4 grep 零残留 |
 | 3 | **C1**：token 进入 `budget` 表，`report` 能自算每正确解成本 | 成本误差 0（与手算对账一致） |
 | 4 | 结构拆分（B1/B2） | 见翻转条件 |
