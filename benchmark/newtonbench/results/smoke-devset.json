@@ -1,0 +1,46 @@
+{
+ "schema": 1,
+ "budgets": [
+  8,
+  16,
+  32
+ ],
+ "campaign_root": "C:\\Users\\XU\\AppData\\Local\\Temp\\devset-run-3plu_hor",
+ "claim_exact_rule": "status == GOAL_IDENTIFIED and 0 counterexamples on full devset replay",
+ "runs": [
+  {
+   "equation": "feynman-I.12.1",
+   "B": 8,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(mu * n)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 4,
+   "seconds": 4.7
+  },
+  {
+   "equation": "feynman-I.12.1",
+   "B": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(mu * n)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 4,
+   "seconds": 5.2
+  },
+  {
+   "equation": "feynman-I.12.1",
+   "B": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(mu * n)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 4,
+   "seconds": 5.6
+  }
+ ],
+ "elapsed_seconds": 15.5
+}
