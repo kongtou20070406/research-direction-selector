@@ -33,7 +33,7 @@ GROUPS = {
               "plugin_registry unit_disk_voronoi_core",
 }
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}
-LAYERS.update(build_plugins="L4", update_lean_toolchain="L4")
+LAYERS.update(build_plugins="L4", update_lean_toolchain="L4", paid_query="L4")
 LAYERS.update(
     rds_autonomy_read="L1",
     rds_autonomy_admission="L1",
