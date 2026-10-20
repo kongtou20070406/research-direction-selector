@@ -151,7 +151,7 @@ class ReceiptBindingTests(Campaign):
 
     def test_stale_evidence_ends_the_drive_only_through_verification(self):
         # The sole observation refutes every rulebook and the budget is spent; its bytes then change.
-        store = self.law(hypotheses=[('five', '5')], budget={'wall_seconds': 900, 'experiments': 1})
+        store = self.law(hypotheses=[('five', '5')], budget={'wall_seconds': 900, 'experiments': 1, 'max_experiments': 1})
         self.buy(store, 'x0')
         compass.ingest(store)
         self.assertEqual(compass.decide(compass.fold(store))['reason'], 'BUDGET_EXHAUSTED')
@@ -475,7 +475,7 @@ class DeclarationReviewTests(Campaign):
     def test_an_arm_never_measured_is_not_an_evaluation(self):
         # The budget buys the baseline only: no improvement was evaluated.
         path = fx.improve_campaign(self.root, {'base': {'s': 10}, 'better': {'s': 12}})
-        initialize(self.root, self.declaration(path, lambda d: d['budget'].update(experiments=1)))
+        initialize(self.root, self.declaration(path, lambda d: d['budget'].update(experiments=1, max_experiments=1)))
         result = drive(self.root, publish=False)
         self.assertEqual((result['status'], exit_code(result)), ('JUDGMENT_REQUIRED', 2))
         self.assertEqual(result['workset']['handoff']['detail']['judgment_required'], ['better'])

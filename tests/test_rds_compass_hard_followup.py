@@ -9,6 +9,7 @@ outcomes unpatched. These tests pin the follow-up fixes on small surrogate world
   compass_codex arm never called the model;
 - IMPROVE judged a variant on one run when the declaration said another independent run exists.
 """
+from fractions import Fraction
 import json
 from pathlib import Path
 import sys
@@ -60,10 +61,19 @@ class CertificationTests(Campaign):
         path = fx.law_campaign(self.root, '0 if x == 13 else x + 1', range(0, 17), hypotheses=[('lin', 'x + 1')])
         initialize(self.root, path)
         result = drive(self.root, publish=False)
-        self.assertNotEqual(result['status'], 'GOAL_IDENTIFIED', result['steps'])
         state = compass.fold(cstore.store_for(self.root))
         self.assertEqual(state['hypotheses']['lin']['status'], 'REFUTED')
         self.assertIn('x13', state['observations'])
+        if result['status'] == 'GOAL_IDENTIFIED':
+            # The single-exception patch can express this law. It may be claimed only after the budget
+            # has measured every declared input, and only if it is exact at each of them.
+            coverage = result['verification']['coverage']
+            self.assertEqual(coverage['measured'], coverage['declared'], result['steps'])
+            claimed = state['hypotheses'][result['verification']['hypothesis']['id']]
+            truth = [{'id': 'x' + str(x), 'inputs': {'x': Fraction(x)},
+                      'outputs': {'y': Fraction(0 if x == 13 else x + 1)}} for x in range(0, 17)]
+            replay = model.replay(claimed, truth, {'y': (Fraction(0), Fraction(0))})
+            self.assertEqual((replay['status'], replay['counterexamples']), ('CONSISTENT', []))
 
     def test_a_claim_reports_its_coverage_and_the_declared_stopping_rule(self):
         path = fx.law_campaign(self.root, 'x*x + 1', range(-4, 5), hypotheses=[('sq', 'x*x + 1')])
@@ -149,7 +159,8 @@ class ReplicationTests(Campaign):
                 if row['id'].endswith('_r2'):
                     row.update(replicates=row['id'][:-3], cost=2)
             if budget is not None:
-                d['budget']['experiments'] = budget
+                # A hard cap is now declared explicitly; budget.experiments alone is the soft budget.
+                d['budget'].update(experiments=budget, max_experiments=budget)
         return self.edit(path, change)
 
     def test_an_arm_is_accepted_only_if_every_declared_run_passes(self):
