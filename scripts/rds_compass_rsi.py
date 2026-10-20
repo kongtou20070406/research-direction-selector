@@ -400,6 +400,9 @@ def _qualify(state, tool, values, rows, var, run_mutants):
     if killed is None:
         return None, {'reason': 'ORACLE_NON_DISCRIMINATING', 'mutants': len(mutant_list), 'invalid_mutants': invalid,
                       'law': fits[0]['text']}
+    if equivalent > len(mutant_list) // 2:
+        # Most mutants reproduced the tool's behavior: the oracle did not really discriminate it.
+        return None, {'reason': 'MUTANTS_MOSTLY_EQUIVALENT', 'mutants': len(mutant_list), 'equivalent': equivalent}
     oracle = {'kind': 'RECEIPTED_HOLDOUT', 'expected_values_from': 'ORIGINAL_RUN_RECEIPTS',
               'known_positive': {'law': fits[0]['text'], 'law_ast': fits[0]['expression'],
                                  'fitted_on': [r['id'] for r in fit_rows],
