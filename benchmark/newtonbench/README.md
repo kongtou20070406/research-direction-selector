@@ -89,3 +89,12 @@ Three recover the exact law (all exceptions at the domain tail); two certify
 changes end without a claim. The regime-split fix is therefore tail-specific,
 not general: mid-domain holdout coverage and the longer splits are the next
 repairs. Raw rows: `results/sparse-suite.json`.
+
+## Holdout coverage scan
+
+Five sparse worlds, holdout of 2, 4 and 8 evenly spaced points, cap of four
+confirmations. The mid-domain exception (x=20) is still certified at every
+holdout size: even spacing is deterministic and simply misses it. Coverage is
+therefore probability, not proof; a claim must publish the measured/declared
+coverage, and a random or evidence-distance holdout is the next repair.
+Raw rows: `results/holdout-scan.json`.
