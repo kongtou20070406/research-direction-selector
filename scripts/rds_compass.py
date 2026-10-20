@@ -440,6 +440,28 @@ def _barren(state, jump):
     return disposition is not None and not any(o.get('admitted') for o in disposition['outcomes'])
 
 
+def _eig_routed_at(state, obs_count):
+    """True if LOW_MARGINAL_EIG already fired at this evidence count."""
+    return any(d['action'] == 'ESCAPE'
+               and (d.get('basin') or {}).get('trigger') == 'LOW_MARGINAL_EIG'
+               and d.get('observations') == obs_count
+               for d in state['decisions'])
+
+
+def _median_eig(state):
+    """Median eig_per_cost of past EXPERIMENT decisions, or None if no history."""
+    values = sorted(d['eig_per_cost'] for d in state['decisions']
+                    if d['action'] == 'EXPERIMENT' and d.get('eig_per_cost') is not None)
+    if not values:
+        return None
+    n = len(values)
+    return values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2
+
+
+def _agent_live(state):
+    return bool(state['plan'].get('agent')) and agent_tokens(state)['status'] not in ('EXHAUSTED', 'USAGE_UNREPORTED')
+
+
 def decide(state):
     """Pure decision from the folded state; the caller records and executes it."""
     plan = state['plan']
@@ -502,7 +524,15 @@ def decide(state):
                     'partition_sha256': top['partition_sha256'],
                     'classes': top['classes'], 'alternatives': [r['id'] for r in ranking['ranked'][1:]],
                     'excluded': ranking['excluded'][:16], 'live': [h['id'] for h in rows]}
+        elif _agent_live(state) and not _eig_routed_at(state, len(state['observations'])):
+            return {'action': 'ESCAPE', 'basin': {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG',
+                    'ranked_total': len(ranking.get('excluded', [])), 'excluded': ranking.get('excluded', [])[:16],
+                    'top_eig_per_cost': None, 'median_eig_per_cost': _median_eig(state)}}
     observed_count = len(state['observations'])
+    if len(rows) == 1 and can_buy and not diagnosis['trigger']:
+        if _agent_live(state) and not _eig_routed_at(state, observed_count):
+            return {'action': 'ESCAPE', 'basin': {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'ranked_total': 0,
+                    'excluded': [], 'top_eig_per_cost': None, 'median_eig_per_cost': _median_eig(state)}}
     tried = any(d['action'] == 'RIVALS' and d['observations'] == observed_count for d in state['decisions'])
     if rows and can_buy and not tried and observable in tolerances:
         return {'action': 'RIVALS', 'live': [h['id'] for h in rows]}
