@@ -31,6 +31,7 @@ def main(out_path):
     state = compass.fold(cstore.store_for(root))
     out = {'status': result['status'],
            'claim': (result.get('verification') or {}).get('claim'),
+           'law': (result.get('verification') or {}).get('predict'),
            'holdout_points': state['plan'].get('holdout'),
            'holdout_decisions': [d['candidate'] for d in state['decisions'] if d['action'] == 'HOLDOUT'],
            'baseline_exact_match': '31/32 (x=31 wrong)',

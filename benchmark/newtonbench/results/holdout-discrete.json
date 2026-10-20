@@ -1,6 +1,9 @@
 {
- "status": "SEARCH_EXHAUSTED",
- "claim": null,
+ "status": "JUDGMENT_REQUIRED",
+ "claim": "CONSISTENT_BUT_UNCONFIRMED",
+ "law": {
+  "y": "ite((x < (61/2)), (1 + x), 1000)"
+ },
  "holdout_points": [
   "x30",
   "x31"

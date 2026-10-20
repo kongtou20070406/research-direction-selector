@@ -557,7 +557,9 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     tolerances = _tolerances(plan)
     observable = plan['goal']['observable']
     rows = measured(state) if rows is None else rows
-    holdout = set(plan.get('holdout') or [])
+    # At a claim check the reserved points must not shape the fit; once an escape searches for a
+    # new law they are ordinary evidence and must be visible, or the refuting point cannot be used.
+    holdout = set() if escalate else set(plan.get('holdout') or [])
     rows = [r for r in rows if observable in r['outputs'] and r['id'] not in holdout]
     if not rows or observable not in tolerances:
         return [], {'status': 'NO_MEASUREMENTS'}

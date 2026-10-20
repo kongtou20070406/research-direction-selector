@@ -896,6 +896,16 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
             'scientific_support': 'UNKNOWN'}
 
 
+def _side_fit(rows, inputs, observable, tolerances, grammar, max_nodes, max_candidates, probes):
+    """One measured value on a side is its own constant; fewer points do not fit."""
+    values = {exact(r['outputs'][observable]) for r in rows if r['outputs'].get(observable) is not None}
+    if len(rows) == 1 and len(values) == 1:
+        value = text(values.pop())
+        return {'fits': [{'expression': {'const': value}, 'text': value, 'size': 1}], 'attempted': 0}
+    return synthesize(rows, inputs, observable, tolerances, grammar=grammar, max_nodes=max_nodes,
+                      max_candidates=max_candidates, probes=probes, keep=1)
+
+
 def regime_split(observations, inputs, observable, tolerances, *, variable, grammar=None,
                  max_nodes=5, max_candidates=4000, max_splits=12, probes=()):
     """Search a two-regime premise shift: one law below a threshold, another above."""
@@ -905,18 +915,19 @@ def regime_split(observations, inputs, observable, tolerances, *, variable, gram
     if len(values) < 4:
         return {'status': 'TOO_FEW_POINTS', 'fits': [], 'attempted': 0, 'mode': 'REGIME_SPLIT',
                 'variable': variable, 'scientific_support': 'UNKNOWN'}
-    cuts = [(a + b) / 2 for a, b in zip(values, values[1:])][1:-1]
-    step = max(1, len(cuts) // max_splits)
+    cuts = [(a + b) / 2 for a, b in zip(values, values[1:])]
+    if len(cuts) > max_splits:
+        # Even coverage including the last boundary: a regime change at the domain edge must
+        # remain reachable, not be skipped by a coarse stride.
+        cuts = [cuts[round(i * (len(cuts) - 1) / (max_splits - 1))] for i in range(max_splits)]
     fits, attempted = [], 0
-    for cut in cuts[::step][:max_splits]:
+    for cut in cuts:
         left = [r for r in rows if exact(r['inputs'][variable]) < cut]
         right = [r for r in rows if exact(r['inputs'][variable]) >= cut]
         lp = [p for p in probes if exact(p[variable]) < cut]
         rp = [p for p in probes if exact(p[variable]) >= cut]
-        a = synthesize(left, inputs, observable, tolerances, grammar=grammar, max_nodes=max_nodes,
-                       max_candidates=max_candidates, probes=lp, keep=1)
-        b = synthesize(right, inputs, observable, tolerances, grammar=grammar, max_nodes=max_nodes,
-                       max_candidates=max_candidates, probes=rp, keep=1)
+        a = _side_fit(left, inputs, observable, tolerances, grammar, max_nodes, max_candidates, lp)
+        b = _side_fit(right, inputs, observable, tolerances, grammar, max_nodes, max_candidates, rp)
         attempted += a['attempted'] + b['attempted']
         if a['fits'] and b['fits']:
             node = {'op': 'ite', 'args': [{'op': 'lt', 'args': [{'var': variable}, {'const': text(cut)}]},
