@@ -55,3 +55,12 @@ measurement filtered the proposals by replay, and exactly one survived:
 The bare two-point arm failed (RMSLE 0.099); this arm reaches the correct law
 at three measured points, with the third point chosen by RDS rather than
 supplied by a human. Result: `results/llm-verify-m2.json`.
+
+## Agent-chosen point control
+
+A bare `gpt-6.1-sol` was given the same two points and one self-chosen
+measurement. On m2 hard v0 it chose (1,1,1) and recovered the law; on m6 hard
+v0 it chose (1,1.5,1) and recovered the law. On the popcount task it wrote the
+bit-count loop itself (17/17 exact). The EIG advisor is therefore not yet shown
+to beat the agent's own point choice on these tasks; the next distinction has
+to come from a larger candidate set or an interactive complex system.
