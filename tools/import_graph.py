@@ -67,6 +67,9 @@ LAYERS.update(
     rds_compass_rsi="L3",
     rds_compass_drive="L3",
     rds_compass_cli="L4",
+    # The skill A/B paid-query shim is a leaf CLI entry point with no rds_ imports; classify it
+    # beside the other L4 entry points instead of excluding scripts/ sources from the inventory.
+    paid_query="L4",
 )
 LOADERS = {"importlib.import_module", "__import__", "builtins.__import__", "runpy.run_module"}
 OPAQUE_LOADERS = {"importlib.util.spec_from_file_location", "importlib.util.module_from_spec",
