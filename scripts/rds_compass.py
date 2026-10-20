@@ -412,6 +412,11 @@ def _boundary_probe(state, min_gap=2):
     return best[1] if best else None
 
 
+def _cap(plan):
+    """The physical ceiling: a declared max_experiments, else every declared candidate once."""
+    return plan['budget'].get('max_experiments') or len(plan['candidates'])
+
+
 def _gap_wide_enough(state):
     """A gap is worth buying only when it is wider than the closest pair already measured."""
     plan = state['plan']
@@ -449,7 +454,8 @@ def decide(state):
     pending = remaining(state)
     # The declared experiments are the soft budget; max_experiments is the automatic expansion
     # ceiling. Evidence-driven probing may cross the soft budget, never the ceiling.
-    cap = plan['budget'].get('max_experiments', plan['budget']['experiments'])
+    # No default hard cap: research is not a budget game. A caller that declares one still wins.
+    cap = plan['budget'].get('max_experiments') or len(plan['candidates'])
     can_buy = bool(pending) and spent < cap and wall >= plan['experiment']['wall_seconds']
     tolerances = _tolerances(plan)
     observable = plan['goal']['observable']
@@ -477,7 +483,7 @@ def decide(state):
                         and d['seq'] > max((j['seq'] for j in state['jumps']), default=0)]
         boundary = _boundary_probe(state)
         reserve = plan['verification']['confirmations'] + 1
-        allow_gap = boundary and plan['budget'].get('max_experiments', plan['budget']['experiments']) - spent > reserve
+        allow_gap = boundary and _cap(plan) - spent > reserve
         if can_buy and (len(probes_since) < plan['escape']['probe_points'] or allow_gap):
             # An uncovered gap is evidence the regime boundary is still unknown; keep probing it
             # while the experiment budget still leaves room for the required confirmations.
@@ -519,7 +525,7 @@ def decide(state):
                     'reason': 'MINIMUM_CONFIRMATIONS' if done < plan['verification']['confirmations']
                     else 'SPEND_BUDGET_ON_REFUTATION'}
     holdout_pending = [cid for cid in plan.get('holdout') or [] if cid not in state['observations']]
-    if rows and holdout_pending and spent < plan['budget'].get('max_experiments', plan['budget']['experiments']) \
+    if rows and holdout_pending and spent < _cap(plan) \
             and wall >= plan['experiment']['wall_seconds']:
         return {'action': 'HOLDOUT', 'candidate': holdout_pending[0], 'leader': rows[0]['id']}
     max_gap = plan['verification'].get('max_gap', 0)
@@ -548,7 +554,7 @@ def next_step(state, stale):
 
 def _decide_improve(state, spent, wall):
     plan = state['plan']
-    can_buy = spent < plan['budget'].get('max_experiments', plan['budget']['experiments']) and wall >= plan['experiment']['wall_seconds']
+    can_buy = spent < _cap(plan) and wall >= plan['experiment']['wall_seconds']
     baseline = plan['profile']['baseline']
     base = state['observations'].get(baseline)
     if (base['status'] != 'MEASURED' or not base['samples']) if base else \

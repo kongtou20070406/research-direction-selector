@@ -344,7 +344,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
             'verification': verification, 'holdout': holdout,
             'budget': {'wall_seconds': budget['wall_seconds'],
                        'experiments': budget.get('experiments', len(candidates)),
-                       'max_experiments': budget.get('max_experiments', budget.get('experiments', len(candidates)))},
+                       'max_experiments': budget.get('max_experiments')},
             'experiment': {'timeout_seconds': timeout, 'wall_seconds': wall}, 'protocol': protocol_ref,
             'agent': agent, 'library': library, 'unknown': sorted(set(unknown)),
             'defaulted': sorted(set(defaulted)), 'declaration_sha256': source_sha256,
