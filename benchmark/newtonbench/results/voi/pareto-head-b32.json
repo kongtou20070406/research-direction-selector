@@ -1,0 +1,30 @@
+{
+ "world": "regime-double",
+ "budget": 32,
+ "experiments": 32,
+ "status": "GOAL_IDENTIFIED",
+ "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+ "claim_exact": 32,
+ "exact_match": 32,
+ "predict": "ite((x < 10), (1 + x), (x + x))",
+ "actions": {
+  "RIVALS": 15,
+  "CONFIRM": 14,
+  "EXPERIMENT": 1,
+  "PROBE": 15,
+  "ESCAPE": 1,
+  "HOLDOUT": 2
+ },
+ "declaration": {
+  "verification": {
+   "confirm_by_eig": true,
+   "confirmations": 2,
+   "holdout": 2,
+   "holdout_seed": 0,
+   "max_confirmations": 0,
+   "max_gap": 2,
+   "spend_budget": true
+  },
+  "candidates": 32
+ }
+}
