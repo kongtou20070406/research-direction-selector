@@ -80,3 +80,12 @@ claims `x + 1` and scores 31/32. Compass with `verification.holdout: 2` buys
 x=30 and x=31 after the fit, the x=31 measurement refutes the leader, and the
 drive ends `SEARCH_EXHAUSTED` with no claim. Result:
 `results/holdout-discrete.json`; reproduction: `holdout_discrete.py`.
+
+## Ten-task suite (sparse and regime changes)
+
+Ten 32-input worlds, six initial points, holdout of two, `max_confirmations: 4`.
+Three recover the exact law (all exceptions at the domain tail); two certify
+`x+1` on a hidden mid-domain exception (31/32 and 30/32); five longer regime
+changes end without a claim. The regime-split fix is therefore tail-specific,
+not general: mid-domain holdout coverage and the longer splits are the next
+repairs. Raw rows: `results/sparse-suite.json`.
