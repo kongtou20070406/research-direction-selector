@@ -546,11 +546,9 @@ def decide(state):
     if rows and can_buy and not tried and observable in tolerances:
         return {'action': 'RIVALS', 'live': [h['id'] for h in rows]}
     if len(rows) == 1 and can_buy and not diagnosis['trigger']:
-        if _agent_live(state) and not _eig_routed_at(state, observed_count):
-            # The lone-survivor route draws on the same jump budget as the branch above.
-            if _jumps_spent(state):
-                return {'action': 'HANDOFF', 'reason': 'SEARCH_EXHAUSTED', 'basin':
-                        {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'ranked_total': 0, 'excluded': []}}
+        # The lone-survivor route draws on the same jump budget as the branch above. Spent, it skips
+        # the agent call, not the survivor: testing it needs no jump, so it goes on to confirmation.
+        if _agent_live(state) and not _eig_routed_at(state, observed_count) and not _jumps_spent(state):
             return {'action': 'ESCAPE', 'basin': {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'ranked_total': 0,
                     'excluded': [], 'top_eig_per_cost': None, 'median_eig_per_cost': _median_eig(state)}}
     if rows and can_buy:

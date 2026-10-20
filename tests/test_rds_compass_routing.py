@@ -58,7 +58,7 @@ class EigRoutingTests(unittest.TestCase):
         self.assertEqual(result['steps'][0]['action'], 'ESCAPE')
         self.assertEqual(result['steps'][0]['trigger'], 'LOW_MARGINAL_EIG')
 
-    def test_a_spent_jump_budget_ends_eig_routing_with_a_handoff(self):
+    def test_a_spent_jump_budget_sends_the_lone_survivor_to_confirmation_not_a_jump(self):
         root = self.campaign('spent', escape={'max_jumps': 1})
         # The basin route already took the only jump.  A duplicate proposal keeps the
         # lone hypothesis alive, so only the shared budget can stop the next EIG jump.
@@ -69,9 +69,14 @@ class EigRoutingTests(unittest.TestCase):
         self.assertEqual(jumped['status'], 'NONE_ADOPTED')
         self.assertEqual(len(compass.fold(store)['jumps']), 1)
         result = drive(root, max_steps=1, publish=False)
+        # No further jump, and no claim either: the survivor is tested at an input it did not see.
+        self.assertEqual(result['steps'][0]['action'], 'CONFIRM')
+        self.assertNotEqual(result['status'], 'GOAL_IDENTIFIED')
+        self.assertEqual(len(compass.fold(store)['jumps']), 1)
+        # x + 1 is wrong off its two coincident points (x*x + 1 at 0 and 1): testing refutes it.
+        result = drive(root, publish=False)
         self.assertEqual(result['status'], 'SEARCH_EXHAUSTED')
-        self.assertEqual(result['steps'][0]['action'], 'HANDOFF')
-        self.assertEqual(result['steps'][0]['trigger'], 'LOW_MARGINAL_EIG')
+        self.assertEqual(compass.fold(store)['hypotheses']['lin']['status'], 'REFUTED')
         self.assertEqual(len(compass.fold(store)['jumps']), 1)
 
     def test_a_lone_survivor_gets_the_rival_offer_before_an_eig_jump(self):
