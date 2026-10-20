@@ -53,6 +53,9 @@ bounded retry with the original run/hash. It repeats campaign identity,
 selection, input, budget and admission checks; a completed attempt is observed,
 not relaunched. A second stale result is returned as an error. Other refusals
 are not retried, and this does not guarantee progress under continuous writes.
+A concurrent review can also land in both launch fences of an attempt already
+claimed: native admission then keeps that claim and its reservation unlaunched
+and uncharged, and the retry returns its recovery status instead of a receipt.
 
 Failed work retains its original failed receipt and charged costs. `isError=false`
 means the broker returned an operation result, not that the run or research
