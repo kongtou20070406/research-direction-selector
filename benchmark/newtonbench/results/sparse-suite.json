@@ -8,10 +8,10 @@
  },
  {
   "task": "sparse-mid",
-  "status": "GOAL_IDENTIFIED",
-  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
-  "law": "(1 + x)",
-  "exact_match": "31/32"
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32"
  },
  {
   "task": "sparse-edge",
@@ -22,10 +22,10 @@
  },
  {
   "task": "sparse-two",
-  "status": "GOAL_IDENTIFIED",
-  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
-  "law": "(1 + x)",
-  "exact_match": "30/32"
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32"
  },
  {
   "task": "sparse-small",
@@ -36,36 +36,36 @@
  },
  {
   "task": "regime-double",
-  "status": "SEARCH_EXHAUSTED",
-  "claim": null,
-  "law": null,
-  "exact_match": "0/32"
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < 10), (1 + x), (x + x))",
+  "exact_match": "32/32"
  },
  {
   "task": "regime-square",
-  "status": "SEARCH_EXHAUSTED",
-  "claim": null,
-  "law": null,
-  "exact_match": "0/32"
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < 5), (1 + 2), (x * x))",
+  "exact_match": "32/32"
  },
  {
   "task": "regime-const",
-  "status": "SEARCH_EXHAUSTED",
-  "claim": null,
-  "law": null,
-  "exact_match": "0/32"
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < (39/2)), ((2 + 2) + 1), x)",
+  "exact_match": "32/32"
  },
  {
   "task": "regime-linear",
-  "status": "SEARCH_EXHAUSTED",
-  "claim": null,
-  "law": null,
-  "exact_match": "0/32"
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < (31/2)), ((1 + x) + x), ((-1 - 2) + x))",
+  "exact_match": "32/32"
  },
  {
   "task": "regime-tail",
-  "status": "JUDGMENT_REQUIRED",
-  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
   "law": "ite((x < (59/2)), (1 + x), 7)",
   "exact_match": "32/32"
  }

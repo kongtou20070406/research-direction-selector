@@ -57,7 +57,8 @@ def main(out_path):
     for name, law in TASKS:
         root = Path(tempfile.mkdtemp()) / name
         path = fx.law_campaign(root, law, range(32), hypotheses=[('lin', 'x+1')],
-                               verification={'holdout': 2, 'confirmations': 2, 'max_confirmations': 4},
+                               verification={'holdout': 2, 'confirmations': 2},
+                               budget={'wall_seconds': 900, 'experiments': 8, 'max_experiments': 32},
                                synthesis={'max_nodes': 5, 'max_candidates': 4000},
                                escape={'max_jumps': 2, 'probe_points': 1})
         initialize(root, path)

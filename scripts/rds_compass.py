@@ -406,7 +406,10 @@ def decide(state):
     if plan['goal']['kind'] == 'IMPROVE':
         return _decide_improve(state, spent, wall)
     pending = remaining(state)
-    can_buy = bool(pending) and spent < plan['budget']['experiments'] and wall >= plan['experiment']['wall_seconds']
+    # The declared experiments are the soft budget; max_experiments is the automatic expansion
+    # ceiling. Evidence-driven probing may cross the soft budget, never the ceiling.
+    cap = plan['budget'].get('max_experiments', plan['budget']['experiments'])
+    can_buy = bool(pending) and spent < cap and wall >= plan['experiment']['wall_seconds']
     tolerances = _tolerances(plan)
     observable = plan['goal']['observable']
     if observable not in tolerances:
@@ -433,7 +436,7 @@ def decide(state):
                         and d['seq'] > max((j['seq'] for j in state['jumps']), default=0)]
         boundary = _boundary_probe(state)
         reserve = plan['verification']['confirmations'] + 1
-        allow_gap = boundary and plan['budget']['experiments'] - spent > reserve
+        allow_gap = boundary and plan['budget'].get('max_experiments', plan['budget']['experiments']) - spent > reserve
         if can_buy and (len(probes_since) < plan['escape']['probe_points'] or allow_gap):
             # An uncovered gap is evidence the regime boundary is still unknown; keep probing it
             # while the experiment budget still leaves room for the required confirmations.
@@ -474,7 +477,7 @@ def decide(state):
                     'reason': 'MINIMUM_CONFIRMATIONS' if done < plan['verification']['confirmations']
                     else 'SPEND_BUDGET_ON_REFUTATION'}
     holdout_pending = [cid for cid in plan.get('holdout') or [] if cid not in state['observations']]
-    if rows and holdout_pending and spent < plan['budget']['experiments'] \
+    if rows and holdout_pending and spent < plan['budget'].get('max_experiments', plan['budget']['experiments']) \
             and wall >= plan['experiment']['wall_seconds']:
         return {'action': 'HOLDOUT', 'candidate': holdout_pending[0], 'leader': rows[0]['id']}
     if rows:
@@ -497,7 +500,7 @@ def next_step(state, stale):
 
 def _decide_improve(state, spent, wall):
     plan = state['plan']
-    can_buy = spent < plan['budget']['experiments'] and wall >= plan['experiment']['wall_seconds']
+    can_buy = spent < plan['budget'].get('max_experiments', plan['budget']['experiments']) and wall >= plan['experiment']['wall_seconds']
     baseline = plan['profile']['baseline']
     base = state['observations'].get(baseline)
     if (base['status'] != 'MEASURED' or not base['samples']) if base else \

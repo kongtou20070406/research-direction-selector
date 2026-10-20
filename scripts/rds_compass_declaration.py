@@ -230,7 +230,11 @@ def compile_plan(store, declaration, source_sha256, source=None):
     elif inputs:
         defaulted.append('grammar')
     budget = declaration['budget']
-    _object(budget, {'wall_seconds'}, {'experiments'}, 'budget')
+    _object(budget, {'wall_seconds'}, {'experiments', 'max_experiments'}, 'budget')
+    if 'max_experiments' in budget:
+        require(type(budget['max_experiments']) is int
+                and budget['max_experiments'] >= budget.get('experiments', len(candidates)),
+                'budget.max_experiments must be an integer covering budget.experiments')
     require(_seconds(budget['wall_seconds']) and budget['wall_seconds'] >= wall,
             'Budget wall_seconds must cover one experiment')
     if 'experiments' not in budget:
@@ -338,7 +342,8 @@ def compile_plan(store, declaration, source_sha256, source=None):
             'escape': _tuned(declaration, 'escape', defaulted), 'rsi': _tuned(declaration, 'rsi', defaulted),
             'verification': verification, 'holdout': holdout,
             'budget': {'wall_seconds': budget['wall_seconds'],
-                       'experiments': budget.get('experiments', len(candidates))},
+                       'experiments': budget.get('experiments', len(candidates)),
+                       'max_experiments': budget.get('max_experiments', budget.get('experiments', len(candidates)))},
             'experiment': {'timeout_seconds': timeout, 'wall_seconds': wall}, 'protocol': protocol_ref,
             'agent': agent, 'library': library, 'unknown': sorted(set(unknown)),
             'defaulted': sorted(set(defaulted)), 'declaration_sha256': source_sha256,
