@@ -448,6 +448,19 @@ class CliTests(Campaign):
                                               {'id': 'b', 'predict': 'x * 2'}]})
         self.assertTrue(rank['ranked'])
 
+    def test_agent_tool_holdout_reads_the_ledger(self):
+        from rds_compass_cli import agent_tool
+        root = self.campaign('holdout-tool', QUAD)
+        drive(root, publish=False)
+        state = compass.fold(cstore.store_for(root))
+        hypothesis = compass.live(state)[0]['id']
+        measurement = next(iter(state['observations']))
+        result = agent_tool('holdout', {'root': str(root), 'hypothesis_id': hypothesis,
+                                        'measurement_ids': [measurement], 'observable': 'y',
+                                        'tolerances': {'y': {'abs': 0, 'rel': 0}}})
+        self.assertIn(result['status'], ('CONSISTENT', 'REFUTED', 'UNTESTED'), result)
+        self.assertTrue(result['receipts_rechecked'])
+
     def test_declaration_compiles_with_unknowns_kept_unknown(self):
         root = self.base / 'cli'
         declaration = fx.law_campaign(root, **{k: QUAD[k] for k in ('law', 'xs')}, hypotheses=QUAD['hypotheses'])

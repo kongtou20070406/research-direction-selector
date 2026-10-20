@@ -19,8 +19,8 @@ def add_parser(commands):
     tools.add_argument('--catalogue', action='store_true', help='List the base tools offered at a capability gap')
     tool = actions.add_parser('tool', help='Agent-callable primitives: synthesize, rank, replay (JSON request in/out)')
     primitives = tool.add_subparsers(dest='primitive', required=True)
-    for name in ('synthesize', 'rank', 'replay'):
-        primitives.add_parser(name, help='Read a JSON request from --request; no ledger, no model call')\
+    for name in ('synthesize', 'rank', 'replay', 'holdout'):
+        primitives.add_parser(name, help='Read a JSON request from --request; holdout reads the ledger')\
             .add_argument('--request', required=True)
     return compass
 
@@ -48,6 +48,29 @@ def agent_tool(primitive, request):
         hyp = model.compile_hypothesis({'id': 'candidate', 'predict': {observable: request['law']}},
                                        request['inputs'], [observable])
         return model.replay(hyp, _exact_rows(request['rows']), tolerances)
+    if primitive == 'holdout':
+        import rds_compass as compass
+        import rds_compass_store as cstore
+        store = cstore.store_for(request['root'])
+        state = compass.fold(store)
+        stale = compass.stale_bindings(store, state)
+        if stale:
+            return {'status': 'STALE_EVIDENCE', 'stale': stale[:8], 'scientific_support': 'UNKNOWN'}
+        hyp = state['hypotheses'].get(request['hypothesis_id'])
+        if hyp is None:
+            return {'status': 'UNKNOWN_HYPOTHESIS', 'hypothesis': request['hypothesis_id']}
+        rows = []
+        for ident in request['measurement_ids']:
+            obs = state['observations'].get(ident)
+            if obs is None or obs['status'] != 'MEASURED':
+                return {'status': 'UNKNOWN_MEASUREMENT', 'measurement': ident, 'scientific_support': 'UNKNOWN'}
+            rows.append({'id': ident, 'inputs': compass.env(state, compass.candidate(state, ident)),
+                         'outputs': {k: model.exact(v) for k, v in obs['outputs'].items()},
+                         'receipt_sha256': obs['receipt_sha256']})
+        declared = {name: model.tolerance(spec) for name, spec in state['plan']['tolerances'].items()
+                    if spec is not None}
+        return {**model.replay(hyp, rows, declared), 'ledger_head': state['head'], 'receipts_rechecked': True,
+                'scientific_support': 'UNKNOWN'}
     hyp = [model.compile_hypothesis({'id': rival['id'], 'predict': {observable: rival['predict']}},
                                     request['inputs'], [observable]) for rival in request['rivals']]
     observed = [{k: model.exact(v) for k, v in row['inputs'].items()} for row in request.get('rows', [])]
