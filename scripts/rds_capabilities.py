@@ -7,7 +7,7 @@ import os
 import sys
 import time
 
-CAPABILITIES = ('python_exact', 'sympy_exact', 'mpmath_iv', 'torch_cpu', 'rust_native')
+from rds_reference_values import CAPABILITIES
 
 
 def probe(capability):

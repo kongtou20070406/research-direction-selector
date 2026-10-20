@@ -12,6 +12,9 @@ READABLE_STATE_VERSIONS = frozenset({
     "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1", "5.9.0-rc.2", "6.0.0-rc.1",
 })
 RESOURCES = {"runtime_ms", "runs"}
+# Supported local capability names; the L4 CLI probe and L3 search share this
+# catalog so neither has to import the other's layer.
+CAPABILITIES = ('python_exact', 'sympy_exact', 'mpmath_iv', 'torch_cpu', 'rust_native')
 
 
 def canonical(value):

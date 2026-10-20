@@ -417,7 +417,7 @@ def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *
 
 
 def _json_cas(root, ref):
-    from rds_owned_advisor import MAX_REPORT_BYTES
+    from rds_output_values import MAX_REPORT_BYTES
     require(isinstance(ref, dict) and isinstance(ref.get('path'), str)
             and isinstance(ref.get('sha256'), str) and re.fullmatch('[0-9a-f]{64}', ref['sha256'])
             and type(ref.get('bytes')) is int and ref['bytes'] > 0,

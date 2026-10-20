@@ -2,6 +2,10 @@
 import json
 import os
 
+# Growth limit for a retained settlement report; L1 campaign and L3 owned
+# advisor share it without importing each other's layer.
+MAX_REPORT_BYTES = 32 * 1024 * 1024
+
 
 def _brief_move(summary, move):
     """Retain a bounded explanation while keeping the historical next_move string."""
