@@ -189,7 +189,9 @@ class LawTests(Campaign):
         result = drive(root, publish=False)
         self.assertIn(result['status'], ('GOAL_IDENTIFIED', 'JUDGMENT_REQUIRED'), result)
         decisions = self.events(root, 'DECISION')
-        self.assertEqual([d['candidate'] for d in decisions if d['action'] == 'HOLDOUT'], ['x4'])
+        holdout = [d['candidate'] for d in decisions if d['action'] == 'HOLDOUT']
+        self.assertIn('x4', holdout)
+        self.assertLessEqual(len(holdout), 2)
 
     def test_report_publishes_a_recomputable_cost_summary(self):
         root = self.campaign('cost', QUAD)

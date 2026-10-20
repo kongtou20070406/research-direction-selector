@@ -10,6 +10,7 @@ documented default is listed in ``defaulted``.
 from copy import deepcopy
 import hashlib
 import os
+import random
 import sys
 from pathlib import Path
 
@@ -35,14 +36,15 @@ DEFAULTS = {
     # spend_budget: before a claim, the unspent experiment budget buys coverage points that try to
     # refute the leader. A minimum of confirmations cannot rule out sparse exceptions on its own.
     'verification': {'confirmations': 2, 'spend_budget': True, 'confirm_by_eig': True,
-                     'max_confirmations': 0, 'holdout': 0},
+                     'max_confirmations': 0, 'holdout': 0, 'holdout_seed': 0},
 }
 FLAGS = frozenset(('enabled', 'spend_budget', 'confirm_by_eig'))
 # The synthesis bounds the model itself enforces; a plan outside them would fail only at its first jump.
 BOUNDS = {('synthesis', 'max_nodes'): (1, model.MAX_NODES),
           ('synthesis', 'max_candidates'): (1, model.MAX_SYNTH_CANDIDATES),
           ('verification', 'max_confirmations'): (0, MAX_CANDIDATES),
-          ('verification', 'holdout'): (0, MAX_CANDIDATES)}
+          ('verification', 'holdout'): (0, MAX_CANDIDATES),
+          ('verification', 'holdout_seed'): (0, 10 ** 9)}
 PROTOCOL_FIELDS = tuple(k for k in IDENTITY if not k.endswith('_sha256'))
 
 
@@ -80,6 +82,20 @@ def _tuned(declaration, key, defaulted):
             low, high = BOUNDS.get((key, name), (0, model.MAX_SYNTH_CANDIDATES))
             require(type(value) is int and low <= value <= high, f'{key}.{name} must be an integer from {low} to {high}')
     return out
+
+
+def _spread_ids(ids, count, seed=0):
+    """Even coverage of the declared order, including both ends; a nonzero seed samples instead,
+    because deterministic spacing misses an arbitrary mid-domain exception."""
+    if not count:
+        return []
+    if count >= len(ids):
+        return list(ids)
+    if seed:
+        return sorted(random.Random(seed).sample(ids, count), key=ids.index)
+    if count == 1:
+        return [ids[-1]]
+    return list(dict.fromkeys(ids[round(i * (len(ids) - 1) / (count - 1))] for i in range(count)))
 
 
 def _argv(template, candidate, output):
@@ -314,7 +330,8 @@ def compile_plan(store, declaration, source_sha256, source=None):
                 commands.append(argv)
     contract['allowed_commands'] = commands
     verification = _tuned(declaration, 'verification', defaulted)
-    holdout = [c['id'] for c in candidates][-verification['holdout']:] if verification['holdout'] else []
+    holdout = _spread_ids([c['id'] for c in candidates], verification['holdout'],
+                          verification.get('holdout_seed', 0))
     plan = {'schema': PLAN_SCHEMA, 'goal': deepcopy(goal), 'inputs': inputs, 'tolerances': tolerances,
             'observables': sorted(observables), 'candidates': candidates, 'hypotheses': hypotheses,
             'grammar': deepcopy(grammar), 'synthesis': _tuned(declaration, 'synthesis', defaulted),
