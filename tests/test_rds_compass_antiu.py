@@ -44,7 +44,8 @@ class LggTest(unittest.TestCase):
 
     def test_arity_mismatch_becomes_an_expression_hole(self):
         operator = antiu.generalize([X, A])
-        self.assertEqual(antiu.canonical(operator['template_ast']), '"$E1"')
+        # A whole-law EXPR hole is a dict node, never a bare string: consumers call node.get.
+        self.assertEqual(antiu.canonical(operator['template_ast']), '{"expr":"$E1"}')
         self.assertEqual(operator['holes'], [{'name': '$E1', 'kind': 'EXPR', 'max_nodes': 5}])
 
     def test_hole_members_are_snapshotted_not_aliased(self):
@@ -93,6 +94,23 @@ class AdmitTest(unittest.TestCase):
         operator = antiu.generalize([A, A])
         self.assertFalse(antiu._non_trivial(operator))
         self.assertFalse(antiu.admit(operator, [case(A, A_VALUES), case(A, A_VALUES)]))
+
+    def test_a_root_expression_hole_does_not_crash_the_mdl(self):
+        """Regression: a whole-law EXPR hole used to be a bare str, so variables_of hit str.get."""
+        mk = lambda text: antiu.model.normalize(antiu.model.parse(text), None, limit=64)  # noqa: E731
+        operator = antiu.generalize([mk('2*x+1'), mk('2*x-1')])
+        self.assertEqual(antiu.canonical(operator['template_ast']), '{"expr":"$E1"}')
+        self.assertEqual(antiu.model.variables_of(operator['template_ast']), set())
+        self.assertEqual(antiu._refill(operator['template_ast'], operator['laws'][1], {})['$E1'],
+                         operator['laws'][1])
+        mdl = antiu._mdl(operator)
+        self.assertIn('ratio', mdl)
+        self.assertAlmostEqual(mdl['ratio'], 0.744186, places=6)
+        # The refill must still reproduce every case exactly, and admit() must not raise.
+        self.assertEqual([antiu.instantiate(operator['template_ast'], sigma) for sigma in operator['sigmas']],
+                         operator['laws'])
+        self.assertFalse(antiu.admit(operator, [case(operator['laws'][0], A_VALUES),
+                                                case(operator['laws'][1], A_VALUES)]))
 
 
 class ContractTest(unittest.TestCase):

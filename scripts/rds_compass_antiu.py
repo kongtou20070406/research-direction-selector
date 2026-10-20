@@ -43,13 +43,17 @@ def _nary(nodes, holes):
            for node in nodes):
         return {'op': first['op'], 'args': [_nary([node['args'][i] for node in nodes], holes)
                                             for i in range(len(first['args']))]}
-    return _hole(holes, 'EXPR', max_nodes=max(model.size(node) for node in nodes))
+    # An EXPR hole is a whole subtree, not a leaf name (2.1): it stays a dict so every consumer
+    # (model.variables_of, _refill, instantiate, _node_bits) sees the same node dialect.
+    return {'expr': _hole(holes, 'EXPR', max_nodes=max(model.size(node) for node in nodes))}
 
 
 def _refill(pattern, node, sigma):
     """Bind ``pattern`` (template) to ``node`` (concrete case), collecting one sigma."""
     if isinstance(pattern, str):
         sigma[pattern] = node
+    elif 'expr' in pattern:
+        sigma[pattern['expr']] = node
     elif 'var' in pattern and pattern['var'].startswith(HOLE):
         sigma[pattern['var']] = node['var']
     elif 'const' in pattern and pattern['const'].startswith(HOLE):
@@ -75,6 +79,8 @@ def instantiate(template_ast, sigma):
     """Refill a template with one sigma; every hole must be bound."""
     if isinstance(template_ast, str):
         return sigma[template_ast]
+    if 'expr' in template_ast:
+        return sigma[template_ast['expr']]
     if 'var' in template_ast:
         name = template_ast['var']
         return {'var': sigma[name]} if name.startswith(HOLE) else {'var': name}
@@ -120,6 +126,8 @@ def _name_count(holes):
 def _node_bits(node, nvars, holes):
     if isinstance(node, str):
         return OPCODE_BITS + _gamma_bits(_zigzag(int(holes[node]['max_nodes']) + 1))
+    if 'expr' in node:
+        return OPCODE_BITS + _gamma_bits(_zigzag(int(holes[node['expr']]['max_nodes']) + 1))
     if 'var' in node:
         return OPCODE_BITS + _var_bits(nvars)
     if 'const' in node:
@@ -212,7 +220,7 @@ def _mutants(node, limit=24):
     out = []
 
     def walk(current, replace):
-        if len(out) >= limit or isinstance(current, str) or 'var' in current:
+        if len(out) >= limit or isinstance(current, str) or 'var' in current or 'expr' in current:
             return
         if 'const' in current:
             value = Fraction(current['const'])
