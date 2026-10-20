@@ -60,15 +60,22 @@ for item in request["tools"]:
         continue
     values = []
     for value in request["inputs"]:
-        # The subprocess wall-clock timeout bounds a runaway tool; per-bytecode tracing cost 6-47x
-        # and blocked vectorized inputs, so the counter lives in the parent instead.
+        steps = [0]
+        def tracer(frame, event, arg):
+            steps[0] += 1
+            if steps[0] > request["steps"]:
+                raise Budget()
+            return tracer
+        sys.settrace(tracer)
         try:
             result = function(value)
+            sys.settrace(None)
             if isinstance(result, bool) or not isinstance(result, (int, Fraction)):
                 values.append(None)
             else:
                 values.append(str(Fraction(result)))
         except BaseException:
+            sys.settrace(None)
             values.append(None)
     out[item["sha256"]] = {"values": values}
 sys.stdout.write(json.dumps(out, sort_keys=True))
