@@ -1843,9 +1843,13 @@ class ProjectStore:
             reads = self._read_services(db)
             budget = {}
             for row in reads.budget(integrity_error=ReceiptIntegrityError, digest=digest):
+                # Tokens have a single source, the agent's own report, so `spent` and `charged`
+                # move together (``charge_tokens``). Subtracting both would bill every token
+                # twice. Every other resource keeps the measured/estimate split.
+                drawn = row["spent"] + (0.0 if row["resource"] == TOKEN_RESOURCE else row["charged"])
                 budget[row["resource"]] = {"cap": row["cap"], "spent_measured": row["spent"],
                                            "charged_estimate": row["charged"], "reserved": row["reserved"],
-                                           "remaining": row["cap"] - row["spent"] - row["charged"] - row["reserved"],
+                                           "remaining": row["cap"] - drawn - row["reserved"],
                                            "unit": "seconds" if row["resource"].endswith("_seconds") else row["resource"]}
             snapshot = {"schema": 1, "contract": contract, "contract_sha256": digest(contract), "budget": budget,
                     "runs": self._runs(db),

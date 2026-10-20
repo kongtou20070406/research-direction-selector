@@ -88,12 +88,14 @@ class TokenBudget(unittest.TestCase):
         row = self.rows(store)[TOKEN_RESOURCE]
         print(f'\noverrun cap={row["cap"]} spent={row["spent"]} charged={row["charged"]}')
         self.assertEqual((row['spent'], row['cap']), (1100, 1000))
-        # ``spent`` and ``charged`` carry the same tokens (§2.1), so snapshot's
-        # cap - spent - charged - reserved subtracts them twice: -1200 for an overrun of 100.
-        # That display is risk #13 in the report; run settlement never sees the row, so nothing is refused.
+        # ``spent`` and ``charged`` carry the same tokens (§2.1 for one source), so snapshot
+        # must not subtract both: 1100 tokens against a cap of 1000 leaves -100, not -1200.
+        # Run settlement never reads the row, so nothing is refused either way.
         view = store.snapshot()['budget'][TOKEN_RESOURCE]
-        self.assertEqual(view['remaining'], view['cap'] - view['spent_measured'] - view['charged_estimate'])
+        self.assertEqual(view['remaining'], view['cap'] - view['spent_measured'])
+        self.assertEqual(view['remaining'], -100.0)
         self.assertLess(view['remaining'], 0)
+        self.assertEqual(view['charged_estimate'], view['spent_measured'])
 
     def test_an_uncapped_agent_is_refused_once_the_ledger_is_enabled(self):
         root, path = self.declaration('uncapped')
