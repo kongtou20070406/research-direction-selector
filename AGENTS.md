@@ -50,3 +50,38 @@ Compass invariants:
 - Never weaken the oracle triple, the confirmation gate, the receipt re-check or the polynomial-rival handoff to make a campaign finish.
 - A missing tolerance or threshold stays `UNKNOWN` and becomes `JUDGMENT_REQUIRED`.
 
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**This repository has a code knowledge graph. Use the `crg` MCP tools to narrow scope first, then read the source.** The graph is cheaper than scanning 148 flat modules and gives structural context (callers, dependents, test coverage) that file search cannot.
+
+The graph is an **index, not an authority**. Everything in section I still holds, and the graph never overrides it.
+
+### Verify in the source
+
+- Narrow scope with the graph, then read the source. Do not change code from graph output alone.
+- For any non-trivial change, read the implementation and the relevant tests before concluding.
+- Always verify the exact source when touching the ledger, CAS, TMS, receipts, budgets, verification or the drive loop.
+- When the graph and the source disagree, the source wins. The graph may be stale or may not model that relationship.
+- An empty graph result can mean "not indexed" or "not statically visible", not "does not exist".
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
+- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
+- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
+- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
+
+### Workflow
+
+No hooks are installed here, so the graph does **not** auto-update. Refresh it explicitly before a review:
+
+```bash
+code-review-graph build            # full rebuild
+code-review-graph update           # incremental
+```
+
+Then: `detect_changes_tool` for the diff, `get_affected_flows_tool` for impact, `query_graph_tool` with `pattern="tests_for"` for coverage. The database lives in `.code-review-graph/`, which is gitignored.
+<!-- /code-review-graph MCP tools -->
+
