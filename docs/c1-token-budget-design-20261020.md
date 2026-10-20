@@ -1,6 +1,11 @@
 # C1：token 进 budget 表的设计（2026-10-20）
 
-状态：**设计稿，未实现**。本文件不改任何 `.py`；所有行号对应当前 `HEAD 5c3666d`（`release/6.0.0-compass`）。
+状态：**设计稿，未实现，已按独立审查修订（v2）**。本文件不改任何 `.py`；所有行号对应 `HEAD f31e4c1`。
+
+修订记录：
+
+- v1 = commit `f0425c8`，行号基线 `HEAD 5c3666d`（`release/6.0.0-compass`）。
+- v2 = 按 `docs/review-c1-design.md` 的五条意见修订，同时把全文行号重锚到 `HEAD f31e4c1`。两份文档的行号都变了，所以下文每条修订都写成「引审查的条目编号 + 引被引原句」，不靠对方行号定位。逐条对照见 §8，未决项见 §9。
 
 目标：让 agent token 从「agent 自报的数字」变成「账本里的一等预算维度」，使得
 (a) 「每正确解成本超标自动降级」有可读的成本轴；
@@ -21,13 +26,15 @@
 | 解析 | `scripts/rds_compass.py:829-838` `_usage(stdout)` | 只读 stdout JSON 顶层 `usage`；`input_tokens`/`output_tokens` 必需，`cached_input_tokens` 可选；每个值须 `type(v) is int and 0 <= v < 10**12`；不合法 → `None` |
 | 失败分支 | `scripts/rds_compass.py:903-922` `_call_agent` | 超时 → `'usage': None`；进程没起来 → `{'input_tokens': 0, 'output_tokens': 0}` |
 | 落 events 表 | `scripts/rds_compass.py:1096-1099` `escape()`（STALE 分支在 `:1062-1065`） | `cstore.append(store, 'DISPOSITION', jump_id, {..., 'agent': evidence, ...})` |
-| 汇总 | `scripts/rds_compass.py:886-900` `agent_tokens(state)` | 扫全部 `dispositions` 的 `agent.usage`，`spent = Σ(input_tokens + output_tokens)` |
-| 门控 | `scripts/rds_compass.py:1041-1043` | `EXHAUSTED`/`USAGE_UNREPORTED` → 本次跳转不调 agent |
-| 展示 | `packet()` `:811-814`、`workset` `:1395`、`report` `:1529-1537` | `budget.agent_tokens{cap, spent, remaining}` / `report.cost.agent_tokens` |
+| 汇总 | `scripts/rds_compass.py:916-930` `agent_tokens(state)` | 扫全部 `dispositions` 的 `agent.usage`，`spent = Σ(input_tokens + output_tokens)` |
+| 门控 | `scripts/rds_compass.py:926-927`（status）、`:462` 与 `:1072`（`EXHAUSTED`/`USAGE_UNREPORTED` → 本次跳转不调 agent） | `_agent_live` 与 packet 分支共同门控 |
+| 展示 | `packet()` `:820`（token 段在 `:841-844`）、`workset` `:1418-1425`、`report` `:1538-1578`（`report.cost.agent_tokens` 在 `:1568`） | `budget.agent_tokens{cap, spent, remaining}` / `report.cost.agent_tokens` |
+
+注意 `packet()` 的 `remaining` 是 `tokens['cap'] - tokens['spent']`（`scripts/rds_compass.py:844`），只减 `agent_tokens()` 的 `input+output` 派生和，**不读 budget 表**。见 §2.1 的「两个数」。
 
 ### 1.2 账本现状
 
-`budget` 表（`scripts/rds_project.py:1060-1067`）：
+`budget` 表（`scripts/rds_project.py:1062`）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS budget(
@@ -41,7 +48,7 @@ CREATE TABLE IF NOT EXISTS budget(
 三件关键事实：
 
 1. **表本来就是多维度的**。行集合完全由 `contract['budget']` 决定（`rds_project.py:1088` 的 `executemany` 按 contract 的键插行）；校验只强制 `wall_seconds` 存在，其它 resource 名 ≤64 字符、值须为 number（`rds_project.py:1018-1022`）。
-2. **结算路径是通用的**。`rds_project.py:1755-1762` 按 `resources` 字典逐 resource 做 `reserved -= est; spent += est; charged += est`，`_check_start`（`rds_project.py:502-507`）统一做 `reserved + 1e-9 >= amount` 与 `spent+charged+reserved <= cap+1e-9` 检查。加一个 resource 名不需要新代码。
+2. **结算路径是通用的**。`rds_project.py:1763` 按 `resources` 字典逐 resource 做 `reserved -= est; spent += measured; charged += charged_estimate`（实测与估算互斥，见 `:1717-1718`），`_check_start`（`rds_project.py:502-507`）统一做 `reserved + 1e-9 >= amount` 与 `spent+charged+reserved <= cap+1e-9` 检查。
 3. **Compass 只往 contract 里写 `wall_seconds`**（`scripts/rds_compass_declaration.py:322`），实验 run 的 `resource_estimates` 也只有 wall（`scripts/rds_compass.py:608`）。所以 token 从来没进过 budget 表。
 
 ### 1.3 丢了什么
