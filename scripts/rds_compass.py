@@ -13,6 +13,7 @@ certifies a law; uniqueness is reported only within a stated search bound.
 from copy import deepcopy
 import hashlib
 import json
+import os
 import subprocess
 
 import rds_compass_model as model
@@ -142,6 +143,35 @@ def measured(state):
     return rows
 
 
+# --- Replay cache ---------------------------------------------------------------
+# ``ingest`` folds three or four times per call and ``drive`` folds again every
+# step, so the same (hypothesis, measured rows, tolerances) replay is recomputed
+# many times. Rows are identified by their receipt SHA256s (a receipt binds its
+# output bytes). RDS_NO_REPLAY_CACHE=1 disables the cache (A/B profiling).
+_REPLAY_CACHE = {}
+_REPLAY_CACHE_LIMIT = 4096
+_REPLAY_CACHE_DISABLED = os.environ.get('RDS_NO_REPLAY_CACHE') == '1'
+_REPLAY_CACHE_STATS = {'hit': 0, 'miss': 0}
+
+
+def _replay_cached(hypothesis, rows, tolerances):
+    """Memoized ``model.replay``; cache and caller never share a replay object."""
+    if _REPLAY_CACHE_DISABLED:
+        return model.replay(hypothesis, rows, tolerances)
+    key = (hypothesis['sha256'],
+           tuple(sorted(r['receipt_sha256'] for r in rows)),
+           digest({name: (str(tol[0]), str(tol[1])) for name, tol in tolerances.items()}))
+    if key in _REPLAY_CACHE:
+        _REPLAY_CACHE_STATS['hit'] += 1
+        return deepcopy(_REPLAY_CACHE[key])
+    result = model.replay(hypothesis, rows, tolerances)
+    _REPLAY_CACHE_STATS['miss'] += 1
+    if len(_REPLAY_CACHE) >= _REPLAY_CACHE_LIMIT:
+        del _REPLAY_CACHE[next(iter(_REPLAY_CACHE))]  # insertion-order eviction
+    _REPLAY_CACHE[key] = deepcopy(result)
+    return result
+
+
 def _derive(state):
     tolerances, rows = _tolerances(state['plan']), measured(state)
     for hyp in state['hypotheses'].values():
@@ -150,7 +180,7 @@ def _derive(state):
             hyp.update(status='RETRACTED', replay=None)
             continue
         # An observable without a declared tolerance is never adjudicated: replay counts it UNKNOWN.
-        result = model.replay(hyp, rows, {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
+        result = _replay_cached(hyp, rows, {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
         hyp.update(status=result['status'], replay=result)
     receipts = {row['id']: row['receipt_sha256'] for row in rows}
     for hyp in state['hypotheses'].values():
@@ -382,6 +412,17 @@ def _boundary_probe(state, min_gap=2):
     return best[1] if best else None
 
 
+def _gap_wide_enough(state):
+    """A gap is worth buying only when it is wider than the closest pair already measured."""
+    plan = state['plan']
+    if len(plan['inputs']) != 1:
+        return False
+    name = next(iter(plan['inputs']))
+    seen = sorted(env(state, candidate(state, ident))[name] for ident in state['observations'])
+    gaps = [right - left for left, right in zip(seen, seen[1:])]
+    return bool(gaps) and max(gaps) > min(gaps)
+
+
 def _barren(state, jump):
     """A jump that added no rival at its evidence: ask again only after new evidence."""
     if any(tool['seq'] > jump['seq'] for tool in state['proposed_tools'].values()):
@@ -467,7 +508,8 @@ def decide(state):
         cap = plan['verification'].get('max_confirmations', 0)
         bought = sum(1 for d in state['decisions'] if d['action'] == 'CONFIRM')
         confirmed = done < plan['verification']['confirmations'] and (not cap or bought < cap)
-        spending = spend and (not cap or bought < cap) and _boundary_probe(state) is not None
+        spending = spend and (not cap or bought < cap) and _boundary_probe(state) is not None \
+            and _gap_wide_enough(state)
         if confirmed or spending:
             # Falsification test: a fitted law must survive predictions it did not see. While budget
             # remains, a leader is tested at the uncovered inputs before any claim is made.
