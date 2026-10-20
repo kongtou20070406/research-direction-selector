@@ -11,6 +11,9 @@ from rds_wheel import Wheel, canonical, protocol_slice, sha
 
 
 HERE = Path(__file__).resolve().parent
+# Start-up headroom per evaluator process, not a value under test. A loaded Windows runner exceeded
+# 3 s for these one-row evaluations; the timed-out arm had no metric, so its cell was UNKNOWN.
+RESERVE_MS = 10000
 
 
 def prepare(root, *, project=None, factors=None, data=None, wall_ms=90000, direction="min"):
@@ -28,7 +31,7 @@ def prepare(root, *, project=None, factors=None, data=None, wall_ms=90000, direc
                       "data_slice_sha256": sha(trusted / "data.json"), "wall_ms": wall_ms}
 
     def template(factor, run_id):
-        return {"id": run_id, "factor": factor, "reserve_ms": 3000,
+        return {"id": run_id, "factor": factor, "reserve_ms": RESERVE_MS,
                 "argv": [sys.executable, "-B", "trusted/evaluator.py", "--data", "trusted/data.json",
                          "--factor", factor, "--output", "outputs/" + run_id + ".json"]}
 
