@@ -299,36 +299,40 @@ Ran 97 tests — OK
 
 ## 8. 最终状态
 
-**状态（收尾前，零 tracked 改动）**：B4 + B1 + B2 已提交；**B5 已执行「恢复，不删」**；**B3 已执行回滚**。到这一步 **`git status --short` 里已经没有任何 tracked 改动**——任务书那 11 项全部处置完毕（9 个 `scripts/*.py` 里 8 个进 B1/B2、`rds_compass.py` 回滚；`tools/import_graph.py` 进 B4；`smoke-devset.json` 恢复）。
+**状态（最终，已回填）**：B4 + B1 + B2 已提交；**B5 已执行「恢复，不删」**；**B3 已执行回滚**。任务书那 11 项全部处置完毕（9 个 `scripts/*.py` 里 8 个进 B1/B2、`rds_compass.py` 回滚；`tools/import_graph.py` 进 B4；`smoke-devset.json` 恢复）。
 
-剩下的只有未跟踪文件：两个 `.dsh-ops-update-*.lock`、`_lead_graph_head.json` / `_lead_graph_ws.json` 由 lead 收尾统一清除，`benchmark/newtonbench/probe_cell.py` 与 `saturation-protocol.md` 保留，本报告随交付。**下面的 `git log` / `git status` 是回滚后的快照；最终一版由 lead 清完收尾后回填。**
+lead 随后把收尾内容入库：`62559f5`（`saturation-protocol.md` + `probe_cell.py`）、`d202124`（**本报告** + `satstop-root-cause.md` + `satstop-probe-report.md`）、`eec22b1`（outline 口径更正）。下方的 `git log` / `git status` 已按最终态更新——**本报告即以 `d202124` 里的版本为基线**。
 
 ```
-$ git log --oneline -8
+$ git log --oneline -9
+eec22b1 docs(outline): correct the saturation attribution and the P0 acceptance rule
+d202124 docs: record the saturation root cause and the workspace triage evidence
+62559f5 test(compass): pre-register the saturation-stop protocol and its single-cell probe
 d89b1eb refactor(kernel): point the confirmation readers at rds_original_read
 3b48f85 refactor(kernel): sink CAPABILITIES and MAX_REPORT_BYTES into the L1 constant modules
 9963ae9 fix(import-graph): classify paid_query so the layer inventory stays total
 5e4ff46 docs: revise development outline and archive the NewtonBench negative result
 c873e9d docs: update the handoff with the finished devset table
 28741fa test(benchmark): five Feynman equations at B=8/16/32
-16698e7 docs: hand off the lead session
-e55f3e3 docs: verify the structure audit, land the devset runner and fold profile
 
-$ git status --short
-?? _lead_graph_head.json                                  ← lead 的 import_graph 输出，由 lead 收尾清
-?? _lead_graph_ws.json                                    ← 同上
-?? benchmark/newtonbench/.dsh-ops-update-3e56c816....lock ← DSH 工具残留（0 字节），由 lead 收尾清
-?? benchmark/newtonbench/probe_cell.py                    ← lead 的 `--max-gap` 诊断探针，保留
-?? benchmark/newtonbench/saturation-protocol.md           ← lead 的预注册协议，保留
-?? docs/.dsh-ops-update-8a19f1fb....lock                  ← DSH 工具残留（0 字节），由 lead 收尾清
-?? docs/ws-triage-report-20261020.md                      ← 本报告，交付物
+$ git status --short          # 本报告回填提交之后
+（空）
+
+$ git status --short          # 收尾前（lock 残留未删时）
+?? benchmark/newtonbench/.dsh-ops-update-3e56c816....lock
+?? docs/.dsh-ops-update-2eaab6d4....lock
+?? docs/.dsh-ops-update-452c2722....lock
+?? docs/.dsh-ops-update-72832a6e....lock
+?? docs/.dsh-ops-update-8a19f1fb....lock
 ```
 
-两个 lock 的完整名（`....` 为缩略）：`benchmark/newtonbench/.dsh-ops-update-3e56c8160d4d5aa746f6feab5aa7fd807de24e614f4af03ac363be9a4ae59cf5.lock` 与 `docs/.dsh-ops-update-8a19f1fba385f4ea252fd1d5508a6ab009ad7ce9e3f594765fba463fbef84af4.lock`，均为 0 字节。
+**这五个 lock 的性质：UNKNOWN，但确定不是仓库产物。** 事实：全部 0 字节，时间戳为 `18:21:59`（`docs/8a19f1fb`，与本报告首次落盘同刻）、`18:27:55`（`benchmark/newtonbench/3e56c816`）、`18:43:08` / `18:44:14` / `18:45:21`（`docs/` 下三个，与 lead 写 `satstop-*` 文档同刻）。**被证伪的推断**：曾以为是「DSH 文件工具每次写操作留一个」，但本次 §8 回填共写入 2 次（含 1 次 `EDIT_CONFLICT` 失败）**未新增任何 lock**，推断作废；真实生成条件未查明，标 UNKNOWN。
 
-`git status -sb` 首行：`## release/6.0.0-compass...origin/release/6.0.0-compass [ahead 4]`（`5e4ff46` + 本次 3 个提交，**全部未推送**）。**注意这是回滚后、收尾前的快照**：lead 清掉两个 lock 与两个 `_lead_graph_*.json` 之后，`??` 应当只剩 `probe_cell.py`、`saturation-protocol.md` 与本报告。
+不影响判断的部分：它们 0 字节、不进任何 commit、删除后不影响任何测试或导入，`git status` 也随之干净。本次收尾已把五个全部删除；更早两个（`benchmark/newtonbench/results/` 与 `tools/` 下）已在 §5 处置，`_lead_graph_head.json` / `_lead_graph_ws.json` 已由 lead 删除。
 
-B5 恢复与 B3 回滚都已执行，所以上面既没有 ` D` 也没有 ` M` —— **tracked 侧已经完全干净**，`git status` 剩下的全是未跟踪文件。
+`git status -sb` 首行：`## release/6.0.0-compass...origin/release/6.0.0-compass [ahead 7]`（`5e4ff46` + 本次 3 个提交 + lead 的 `62559f5` / `d202124` / `eec22b1`，**全部未推送**）。
+
+B5 恢复与 B3 回滚都已执行，所以 tracked 侧**除了本报告自身的这次 §8 回填之外没有任何改动**——九个改动文件的处置全部落地。
 
 未提交前基线（2026-10-20 18:16，指纹 `5f13f2f9`）：
 
