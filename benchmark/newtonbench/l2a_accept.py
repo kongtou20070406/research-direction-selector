@@ -35,6 +35,12 @@ def main():
     devset_new = load('devset-l2a.json')
     devset_old = load('devset-run.json')
 
+    # A missing result file must fail the gate, not silently skip every criterion.
+    ok &= check('pareto-l2a.json present', pareto_new is not None)
+    ok &= check('devset-l2a.json present', devset_new is not None)
+    ok &= check('baselines present',
+                pareto_old is not None and devset_old is not None)
+
     if pareto_new and pareto_old:
         old_runs = {(r['world'], r['budget']): r for r in pareto_old['runs']}
         new_runs = {(r['world'], r['budget']): r for r in pareto_new['runs']}
