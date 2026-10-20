@@ -649,6 +649,26 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
         notes['RESIDUAL_CORRECTION'] = {'status': shifted['status'], 'attempted': shifted['attempted'],
                                         'base': best['id']}
         found += [(fit, 'RESIDUAL_CORRECTION', best['id']) for fit in shifted['fits']]
+    if refuted and len(plan['inputs']) == 1 and not found:
+        # A single sparse exception should explain the main law, not erase it: patch the least
+        # refuted rulebook with one indicator term at its counterexample input.
+        best = min(refuted, key=lambda h: (len(h['replay']['counterexamples']), h['size'], h['id']))
+        if len(best['replay']['counterexamples']) == 1:
+            counter = best['replay']['counterexamples'][0]
+            name = next(iter(plan['inputs']))
+            value = next(row['inputs'][name] for row in rows if row['id'] == counter['id'])
+            patched = {'op': 'ite', 'args': [{'op': 'eq', 'args': [{'var': name}, {'const': model.text(value)}]},
+                                             {'const': counter['observed']},
+                                             model.parse(best['predict'][observable], set(names))]}
+            text = model.render(patched)
+            candidate = model.parse(text, set(names))
+            hypothesis = model.compile_hypothesis({'id': 'pulse', 'predict': {observable: text}},
+                                                  names, plan['observables'])
+            replay = model.replay(hypothesis, measured(state), {observable: tolerances[observable]})
+            if not replay['counterexamples']:
+                found.append(({'expression': candidate, 'text': text, 'size': model.size(candidate)},
+                              'PULSE_PATCH', best['id']))
+            notes['PULSE_PATCH'] = {'base': best['id'], 'accepted': not replay['counterexamples']}
     if not found and len(rows) >= 4:
         for name in plan['inputs']:
             split = model.regime_split(rows, names, observable, tolerances, variable=name, grammar=grammar,
