@@ -72,3 +72,11 @@ single survivor under the relative tolerance, so both arms need no extra
 measurement (EIG 2 points; random 30/30 trials at 2 points). The comparison is
 therefore not discriminative yet. `compare_selection.py` is committed so the
 same test can be rerun once a larger candidate pool exists.
+
+## Discrete sparse-exception probe
+
+Six points of `x + 1`; the truth differs at x=31. The bare `gpt-6.1-sol`
+claims `x + 1` and scores 31/32. Compass with `verification.holdout: 2` buys
+x=30 and x=31 after the fit, the x=31 measurement refutes the leader, and the
+drive ends `SEARCH_EXHAUSTED` with no claim. Result:
+`results/holdout-discrete.json`; reproduction: `holdout_discrete.py`.

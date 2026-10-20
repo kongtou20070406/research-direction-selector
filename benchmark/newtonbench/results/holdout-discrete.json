@@ -1,0 +1,14 @@
+{
+ "status": "SEARCH_EXHAUSTED",
+ "claim": null,
+ "holdout_points": [
+  "x30",
+  "x31"
+ ],
+ "holdout_decisions": [
+  "x30",
+  "x31"
+ ],
+ "baseline_exact_match": "31/32 (x=31 wrong)",
+ "baseline_claim": "x + 1"
+}
