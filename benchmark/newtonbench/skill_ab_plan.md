@@ -1,8 +1,9 @@
 # Skill A/B：launch-decision 上的「加载 RDS skill vs 不加载」协议
 
-状态：预注册草稿，未执行 A/B 正跑。已执行的只有两件：假 agent smoke（附录 A）和
-`exec` 兼容性探针（附录 B）。本文件放在 `benchmark/newtonbench/` 是任务指定的位置；
-任务族本身是 `benchmark/capability/` 下的 F1-launch-quota，不涉及 NewtonBench 代码。
+状态：预注册草稿，未执行 A/B 正跑。已执行的有三件：假 agent smoke（附录 A）、
+`exec` 兼容性探针（附录 B）和共享 ledger shim dry-run（附录 D）。本文件放在
+`benchmark/newtonbench/` 是任务指定的位置；任务族本身是 `benchmark/capability/`
+下的 F1-launch-quota，不涉及 NewtonBench 代码。
 
 ## 0. 这个协议要回答什么
 
@@ -246,8 +247,9 @@ python -B benchmark/capability/run.py --variant skab-v2-l20 --trials 3 \
 工作区一个都没有。按 cell 逐个 `exec` 会让 quota 每个 cell 重置，判分器也看不到
 证据。绕法只有两条，必须二选一，且在 trial 前预注册：
 
-1. **共享 ledger shim（推荐）**：新增 `scripts/paid_query.py`，两臂同字节。它自己
-   拥有 ledger/log 和 SQL 查询，不调用 `query_db.py` 的 main（否则又会落到 job 副本
+1. **共享 ledger shim（推荐）**：已新增 `scripts/paid_query.py`，两臂同字节（dry-run
+   见附录 D）。它自己拥有 ledger/log 和查询后端（dry-run 用本地 fake，真跑可切
+   `--backend sqlite`），不调用 `query_db.py` 的 main（否则又会落到 job 副本
    的路径）。它解析 `RDS_TRIAL_ROOT`，把 ledger/log 写到 `<workspace>/scripts/`，A 臂
    直接调用，B 臂用 `exec` 包住它。B 臂命令形如：
 
@@ -318,7 +320,7 @@ query log 不可读都判 unknown，不降级成 wrong。
 
 | # | 问题 | 证据 | 处理 |
 |---|---|---|---|
-| B1 | `exec` 冻结副本使 F1 runner 的 ledger/log 不进工作区 | 附录 B | §5.3 的 shim 或单 job 方案，先 dry-run |
+| B1 | `exec` 冻结副本使 F1 runner 的 ledger/log 不进工作区 | 附录 B | §5.3 的 shim 已 dry-run（附录 D）；真实 exec 仍未验 |
 | B2 | 整仓安装 skill 会把 `benchmark/capability/ground-truth` 带进 B 臂 | 仓库目录结构 | 白名单安装 + 断言无 `ground-truth` |
 | B3 | supervisor 需要抓到被杀查询的 `(arm,batch)` | 需要 `Win32_Process` 命令行 | 先 dry-run；抓不到就 UNKNOWN |
 | B4 | `codex exec` 当前不暴露 token 用量 | 现有 `run.py` 只留 stdout/stderr | token 记 UNKNOWN；成本先用 wall + credits，不估算 |
@@ -452,3 +454,53 @@ $ find <tmp-ws>/.rds/exec/cell-2-a -name credits.json -o -name query_log.jsonl
 - [ ] `run.py` 的 no-skill 3-trial 验收门出现 >=1 wrong；
 - [ ] 判分器 commit 与 `grade.py` 路径已记录；
 - [ ] 阈值、判定规则、最小样本量在 trial 前已发到评审，trial 后不改。
+
+## 附录 D：paid_query.py 共享 ledger dry-run（本任务实跑）
+
+命令：
+
+```bash
+python -B benchmark/newtonbench/skill_ab_dryrun.py
+```
+
+输出（完整）：
+
+```text
+dry-run: shared-ledger paid_query.py (fake backend, latency 0)
+arm  where        ledger_used log_lines credits_left cell       mean
+A    workspace              1         1            5 A/2        47.7
+B    exec-copy              1         1            5 B/2       42.86
+shim sha256 (same in both arms): 723f3867668ee63dda98d3159e23c552149064ba8d2927b7c685fac57a6cfe73
+B exec copy ledger/log: absent
+  PASS  A exit 0
+  PASS  B exit 0
+  PASS  A workspace ledger=1
+  PASS  B workspace ledger=1
+  PASS  A workspace log has 1 line
+  PASS  B workspace log has 1 line
+  PASS  A log cell is A/2
+  PASS  B log cell is B/2
+  PASS  A credits_remaining=5
+  PASS  B credits_remaining=5
+  PASS  A fake mean=47.7
+  PASS  B fake mean=42.86
+  PASS  B exec copy has no ledger
+  PASS  B exec copy has no log
+  PASS  B workspace ledger exists
+  PASS  B workspace log exists
+  PASS  shim bytes identical in both arms
+assertions: 17/17 PASS
+```
+
+读法：
+
+- A 臂：工作区 `ledger=1`、`log=1`；B 臂：从 `.rds/exec/cell-2-B/scripts/` 的冻结
+  副本调用同一字节的 shim，`ledger`/`log` 仍写回 `ws-b/scripts/`，job 副本没有这两个
+  文件。两臂 SHA-256 相同，证明「同字节」不是口头约定。
+- `--backend fake --latency 0` 只用于 dry-run；真实 trial 用 20/60 s 延迟和 fake 或
+  `sqlite` backend，ledger/log 的计数逻辑不变。
+- 这只证明 ledger/log 的定位和 1 次计数，不证明 RDS `exec` 回执；下一步是 §5.5 的
+  runner 扩展和 1+1 中断 dry-run。
+
+边界：dry-run 用的是 fake backend（A/2=47.7、B/2=42.86），不是 b1v1 的真实 cell
+均值；它验证的是 shim 的计数和路径，不是数据。

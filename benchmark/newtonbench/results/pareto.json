@@ -1,24 +1,129 @@
 [
  {
   "task": "sparse-tail",
-  "arm": "baseline-6pts",
+  "arm": "baseline-uniform",
   "budget": 6,
   "experiments": 6,
-  "exact_match": 31
+  "exact_match": 0
  },
  {
   "task": "sparse-mid",
-  "arm": "baseline-6pts",
+  "arm": "baseline-uniform",
   "budget": 6,
   "experiments": 6,
   "exact_match": 31
  },
  {
   "task": "regime-double",
-  "arm": "baseline-6pts",
+  "arm": "baseline-uniform",
   "budget": 6,
   "experiments": 6,
-  "exact_match": 10
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "baseline-uniform",
+  "budget": 8,
+  "experiments": 8,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "baseline-uniform",
+  "budget": 8,
+  "experiments": 8,
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "baseline-uniform",
+  "budget": 8,
+  "experiments": 8,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "baseline-uniform",
+  "budget": 12,
+  "experiments": 12,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "baseline-uniform",
+  "budget": 12,
+  "experiments": 12,
+  "exact_match": 0
+ },
+ {
+  "task": "regime-double",
+  "arm": "baseline-uniform",
+  "budget": 12,
+  "experiments": 12,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "baseline-uniform",
+  "budget": 16,
+  "experiments": 16,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "baseline-uniform",
+  "budget": 16,
+  "experiments": 16,
+  "exact_match": 31
+ },
+ {
+  "task": "regime-double",
+  "arm": "baseline-uniform",
+  "budget": 16,
+  "experiments": 16,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "baseline-uniform",
+  "budget": 24,
+  "experiments": 24,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "baseline-uniform",
+  "budget": 24,
+  "experiments": 24,
+  "exact_match": 0
+ },
+ {
+  "task": "regime-double",
+  "arm": "baseline-uniform",
+  "budget": 24,
+  "experiments": 24,
+  "exact_match": 0
+ },
+ {
+  "task": "sparse-tail",
+  "arm": "baseline-uniform",
+  "budget": 32,
+  "experiments": 32,
+  "exact_match": 1
+ },
+ {
+  "task": "sparse-mid",
+  "arm": "baseline-uniform",
+  "budget": 32,
+  "experiments": 32,
+  "exact_match": 0
+ },
+ {
+  "task": "regime-double",
+  "arm": "baseline-uniform",
+  "budget": 32,
+  "experiments": 32,
+  "exact_match": 0
  },
  {
   "task": "sparse-tail",
@@ -26,6 +131,9 @@
   "budget": 6,
   "experiments": 6,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 31,
+  "best_effort_exact": 0,
   "exact_match": 31
  },
  {
@@ -34,6 +142,9 @@
   "budget": 6,
   "experiments": 6,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 31,
+  "best_effort_exact": 0,
   "exact_match": 31
  },
  {
@@ -42,6 +153,9 @@
   "budget": 6,
   "experiments": 6,
   "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "claim_exact": 0,
+  "best_effort_exact": 0,
   "exact_match": 30
  },
  {
@@ -50,6 +164,9 @@
   "budget": 8,
   "experiments": 8,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 31,
+  "best_effort_exact": 0,
   "exact_match": 31
  },
  {
@@ -58,7 +175,10 @@
   "budget": 8,
   "experiments": 8,
   "status": "SEARCH_EXHAUSTED",
-  "exact_match": 31
+  "claim": "NOT_ESTABLISHED",
+  "claim_exact": 0,
+  "best_effort_exact": 31,
+  "exact_match": 0
  },
  {
   "task": "regime-double",
@@ -66,6 +186,9 @@
   "budget": 8,
   "experiments": 8,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 30,
+  "best_effort_exact": 0,
   "exact_match": 30
  },
  {
@@ -74,6 +197,9 @@
   "budget": 12,
   "experiments": 12,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 31,
+  "best_effort_exact": 0,
   "exact_match": 31
  },
  {
@@ -82,7 +208,10 @@
   "budget": 12,
   "experiments": 11,
   "status": "SEARCH_EXHAUSTED",
-  "exact_match": 31
+  "claim": "NOT_ESTABLISHED",
+  "claim_exact": 0,
+  "best_effort_exact": 31,
+  "exact_match": 0
  },
  {
   "task": "regime-double",
@@ -90,6 +219,9 @@
   "budget": 12,
   "experiments": 12,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 32,
+  "best_effort_exact": 0,
   "exact_match": 32
  },
  {
@@ -98,6 +230,9 @@
   "budget": 16,
   "experiments": 16,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 31,
+  "best_effort_exact": 0,
   "exact_match": 31
  },
  {
@@ -106,7 +241,10 @@
   "budget": 16,
   "experiments": 15,
   "status": "SEARCH_EXHAUSTED",
-  "exact_match": 31
+  "claim": "NOT_ESTABLISHED",
+  "claim_exact": 0,
+  "best_effort_exact": 31,
+  "exact_match": 0
  },
  {
   "task": "regime-double",
@@ -114,6 +252,9 @@
   "budget": 16,
   "experiments": 16,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 32,
+  "best_effort_exact": 0,
   "exact_match": 32
  },
  {
@@ -122,6 +263,9 @@
   "budget": 24,
   "experiments": 24,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 31,
+  "best_effort_exact": 0,
   "exact_match": 31
  },
  {
@@ -130,7 +274,10 @@
   "budget": 24,
   "experiments": 19,
   "status": "SEARCH_EXHAUSTED",
-  "exact_match": 31
+  "claim": "NOT_ESTABLISHED",
+  "claim_exact": 0,
+  "best_effort_exact": 31,
+  "exact_match": 0
  },
  {
   "task": "regime-double",
@@ -138,6 +285,9 @@
   "budget": 24,
   "experiments": 21,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 32,
+  "best_effort_exact": 0,
   "exact_match": 32
  },
  {
@@ -146,6 +296,9 @@
   "budget": 32,
   "experiments": 32,
   "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 32,
+  "best_effort_exact": 0,
   "exact_match": 32
  },
  {
@@ -154,7 +307,10 @@
   "budget": 32,
   "experiments": 19,
   "status": "SEARCH_EXHAUSTED",
-  "exact_match": 31
+  "claim": "NOT_ESTABLISHED",
+  "claim_exact": 0,
+  "best_effort_exact": 31,
+  "exact_match": 0
  },
  {
   "task": "regime-double",
@@ -162,6 +318,9 @@
   "budget": 32,
   "experiments": 21,
   "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "claim_exact": 32,
+  "best_effort_exact": 0,
   "exact_match": 32
  }
 ]
