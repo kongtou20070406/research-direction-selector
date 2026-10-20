@@ -372,6 +372,8 @@ def _boundary_probe(state):
         return None
     best = None
     for left, right in zip(seen, seen[1:]):
+        if right - left <= 2:
+            continue  # the gap is already resolved to adjacent levels
         middle = (left + right) / 2
         for item in remaining(state):
             distance = abs(env(state, item)[name] - middle)
@@ -429,9 +431,11 @@ def decide(state):
         measured_points = sum(1 for o in state['observations'].values() if o['status'] == 'MEASURED')
         probes_since = [d for d in state['decisions'] if d['action'] == 'PROBE'
                         and d['seq'] > max((j['seq'] for j in state['jumps']), default=0)]
-        if measured_points < _min_points(state) and can_buy and len(probes_since) < plan['escape']['probe_points']:
-            picks = _spread(state, 1)
-            return {'action': 'PROBE', 'candidate': _boundary_probe(state) or picks[0], 'basin': diagnosis}
+        boundary = _boundary_probe(state)
+        if can_buy and (len(probes_since) < plan['escape']['probe_points'] or boundary):
+            # An uncovered gap is evidence the regime boundary is still unknown; keep probing it
+            # even after the declared probe budget, because one probe cannot close several gaps.
+            return {'action': 'PROBE', 'candidate': boundary or _spread(state, 1)[0], 'basin': diagnosis}
         return {'action': 'ESCAPE', 'basin': diagnosis}
     if len(rows) >= 2 and can_buy:
         adjudicable = [{**h, 'predict': {k: v for k, v in h['predict'].items() if k in tolerances}} for h in rows]
