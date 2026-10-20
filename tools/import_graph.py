@@ -70,6 +70,8 @@ LAYERS.update(
     # The skill A/B paid-query shim is a leaf CLI entry point with no rds_ imports; classify it
     # beside the other L4 entry points instead of excluding scripts/ sources from the inventory.
     paid_query="L4",
+    # Offline anti-unification CLI (L1-a): imports SHARED/L1/L3 but is itself an entry point.
+    rds_compass_antiu="L4",
 )
 LOADERS = {"importlib.import_module", "__import__", "builtins.__import__", "runpy.run_module"}
 OPAQUE_LOADERS = {"importlib.util.spec_from_file_location", "importlib.util.module_from_spec",
