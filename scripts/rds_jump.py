@@ -14,7 +14,7 @@ from urllib.request import url2pathname
 
 from rds_artifacts import strict_json
 from rds_bounded_io import read_regular_bytes
-from rds_project import ProjectStore, digest, require, TERMINAL
+from rds_project import ProjectStore, digest, require, TERMINAL, TOKEN_RESOURCE
 import rds_structure as structure
 
 POLICY_PATH = 'jump-generation.json'
@@ -876,7 +876,8 @@ def load_plan(store, state):
         require(isinstance(run.get('outpaths'), list) and isinstance(stage['output'], str)
                 and stage['output'] in run['outpaths'], 'Jump output must be declared by its run')
         require(not outputs.intersection(run['outpaths']), 'Jump routes must not overwrite prior outputs')
-        require(set(run.get('resource_estimates', {})) == set(state['budget']), 'Jump route resource dimensions differ')
+        require(set(run.get('resource_estimates', {})) == set(state['budget']) - {TOKEN_RESOURCE},
+                'Jump route resource dimensions differ')
         ids.add(run['id'])
         outputs.update(run['outpaths'])
     _generator_bindings(store, state['contract'], plan)
