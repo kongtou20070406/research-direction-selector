@@ -17,7 +17,42 @@ def add_parser(commands):
     tools = actions.add_parser('tools', help='Qualified, rejected and retracted goal-bound tools, offers, catalogue')
     tools.add_argument('--propose', metavar='FILE', help='Offer a one-argument tool; it qualifies only via the oracle triple')
     tools.add_argument('--catalogue', action='store_true', help='List the base tools offered at a capability gap')
+    tool = actions.add_parser('tool', help='Agent-callable primitives: synthesize, rank, replay (JSON request in/out)')
+    primitives = tool.add_subparsers(dest='primitive', required=True)
+    for name in ('synthesize', 'rank', 'replay'):
+        primitives.add_parser(name, help='Read a JSON request from --request; no ledger, no model call')\
+            .add_argument('--request', required=True)
     return compass
+
+
+def _exact_rows(rows):
+    import rds_compass_model as model
+    return [{'id': row.get('id', str(i)),
+             'inputs': {k: model.exact(v) for k, v in row['inputs'].items()},
+             'outputs': {k: model.exact(v) for k, v in row['outputs'].items()}}
+            for i, row in enumerate(rows)]
+
+
+def agent_tool(primitive, request):
+    """The primitives an agent needs in its own loop, without a declaration or a ledger."""
+    import rds_compass_model as model
+    observable = request['observable']
+    tolerances = {name: model.tolerance(spec) for name, spec in request['tolerances'].items()}
+    if primitive == 'synthesize':
+        return model.synthesize(request['rows'], request['inputs'], observable, tolerances,
+                                grammar=request.get('grammar'),
+                                max_nodes=request.get('max_nodes', 7),
+                                max_candidates=request.get('max_candidates', 20000),
+                                probes=request.get('probes', []), keep=request.get('keep', 4))
+    if primitive == 'replay':
+        hyp = model.compile_hypothesis({'id': 'candidate', 'predict': {observable: request['law']}},
+                                       request['inputs'], [observable])
+        return model.replay(hyp, _exact_rows(request['rows']), tolerances)
+    hyp = [model.compile_hypothesis({'id': rival['id'], 'predict': {observable: rival['predict']}},
+                                    request['inputs'], [observable]) for rival in request['rivals']]
+    observed = [{k: model.exact(v) for k, v in row['inputs'].items()} for row in request.get('rows', [])]
+    return model.rank_experiments(hyp, request['candidates'], tolerances, observed=observed,
+                                  limit=request.get('limit', 8))
 
 
 def drive_options(parser):
@@ -29,6 +64,10 @@ def drive_options(parser):
 def command(args):
     import rds_compass as compass
     import rds_compass_store as cstore
+    if args.action == 'tool':
+        import json
+        with open(args.request, encoding='utf-8') as stream:
+            return agent_tool(args.primitive, json.load(stream))
     if args.action == 'init':
         from rds_compass_declaration import initialize
         result = initialize(args.root, args.declaration)

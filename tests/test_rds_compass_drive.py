@@ -434,6 +434,20 @@ class CliTests(Campaign):
                               capture_output=True, text=True, timeout=300)
         return done.returncode, json.loads(done.stdout) if done.stdout.strip() else done.stderr
 
+    def test_agent_tool_primitives_need_no_ledger(self):
+        from rds_compass_cli import agent_tool
+        request = {'inputs': ['x'], 'observable': 'y', 'tolerances': {'y': {'abs': 0, 'rel': 0}},
+                   'rows': [{'id': 'x1', 'inputs': {'x': '1'}, 'outputs': {'y': '2'}},
+                            {'id': 'x2', 'inputs': {'x': '2'}, 'outputs': {'y': '3'}}]}
+        self.assertEqual(agent_tool('replay', {**request, 'law': 'x + 1'})['status'], 'CONSISTENT')
+        synth = agent_tool('synthesize', {**request, 'grammar': {'operators': ['add']},
+                                          'max_nodes': 4, 'max_candidates': 100})
+        self.assertEqual(synth['status'], 'FIT_FOUND')
+        rank = agent_tool('rank', {**request, 'candidates': [{'id': 'x3', 'inputs': {'x': '3'}, 'cost': '1'}],
+                                   'rivals': [{'id': 'a', 'predict': 'x + 1'},
+                                              {'id': 'b', 'predict': 'x * 2'}]})
+        self.assertTrue(rank['ranked'])
+
     def test_declaration_compiles_with_unknowns_kept_unknown(self):
         root = self.base / 'cli'
         declaration = fx.law_campaign(root, **{k: QUAD[k] for k in ('law', 'xs')}, hypotheses=QUAD['hypotheses'])
