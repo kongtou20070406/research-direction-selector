@@ -922,7 +922,7 @@ def _side_fit(rows, inputs, observable, tolerances, grammar, max_nodes, max_cand
 
 
 def regime_split(observations, inputs, observable, tolerances, *, variable, grammar=None,
-                 max_nodes=5, max_candidates=4000, max_splits=12, probes=()):
+                 max_nodes=5, max_candidates=4000, max_splits=64, probes=()):
     """Search a two-regime premise shift: one law below a threshold, another above."""
     rows = sorted((r for r in observations if r['outputs'].get(observable) is not None),
                   key=lambda r: exact(r['inputs'][variable]))

@@ -580,6 +580,22 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
                                      probes=probes, keep=4)
         if escalated['fits']:
             whole = escalated
+    derived_fit = None
+    if escalate and not whole['fits'] and len(names) >= 2:
+        # A domain intermediate (two masses added, two currents multiplied) shrinks the search
+        # from the full tree to the remaining structure; try the pairwise forms before giving up.
+        derived = {}
+        for index, left in enumerate(names):
+            for right in names[index + 1:]:
+                derived[left + '_plus_' + right] = left + ' + ' + right
+                derived[left + '_times_' + right] = left + ' * ' + right
+        richer = {**grammar, 'operators': sorted(set(grammar.get('operators') or []) | set(EXTENDED_OPERATORS))}
+        derived_fit = model.synthesize(rows, names, observable, tolerances, grammar=richer,
+                                       max_nodes=bound['max_nodes'],
+                                       max_candidates=min(200000, bound['max_candidates'] * 10),
+                                       probes=probes, keep=4, derived=derived)
+        if derived_fit['fits']:
+            whole = derived_fit
     notes['WHOLE_LAW'] = {k: whole[k] for k in ('status', 'attempted') if k in whole}
     if escalated is not None:
         notes['GRAMMAR_ESCALATION'] = {k: escalated[k] for k in ('status', 'attempted') if k in escalated}
@@ -595,7 +611,7 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
         notes['RESIDUAL_CORRECTION'] = {'status': shifted['status'], 'attempted': shifted['attempted'],
                                         'base': best['id']}
         found += [(fit, 'RESIDUAL_CORRECTION', best['id']) for fit in shifted['fits']]
-    if not found and len(rows) >= 6:
+    if not found and len(rows) >= 4:
         for name in plan['inputs']:
             split = model.regime_split(rows, names, observable, tolerances, variable=name, grammar=grammar,
                                        max_nodes=min(5, bound['max_nodes']), max_candidates=3000, probes=probes)
