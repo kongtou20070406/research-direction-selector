@@ -357,6 +357,29 @@ def _confirm_candidate(state, rows, pending, tolerances):
     return _spread(state, 1)[0]
 
 
+def _boundary_probe(state):
+    """The unmeasured input closest to the midpoint of two measured neighbours.
+
+    A regime change hides between measured levels; the farthest-point probe does not close
+    that gap. Returns None when the domain has more than one input or no such gap exists.
+    """
+    plan = state['plan']
+    if len(plan['inputs']) != 1:
+        return None
+    name = next(iter(plan['inputs']))
+    seen = sorted(env(state, candidate(state, ident))[name] for ident in state['observations'])
+    if len(seen) < 2:
+        return None
+    best = None
+    for left, right in zip(seen, seen[1:]):
+        middle = (left + right) / 2
+        for item in remaining(state):
+            distance = abs(env(state, item)[name] - middle)
+            if best is None or distance < best[0]:
+                best = (distance, item['id'])
+    return best[1] if best else None
+
+
 def _barren(state, jump):
     """A jump that added no rival at its evidence: ask again only after new evidence."""
     if any(tool['seq'] > jump['seq'] for tool in state['proposed_tools'].values()):
@@ -408,7 +431,7 @@ def decide(state):
                         and d['seq'] > max((j['seq'] for j in state['jumps']), default=0)]
         if measured_points < _min_points(state) and can_buy and len(probes_since) < plan['escape']['probe_points']:
             picks = _spread(state, 1)
-            return {'action': 'PROBE', 'candidate': picks[0], 'basin': diagnosis}
+            return {'action': 'PROBE', 'candidate': _boundary_probe(state) or picks[0], 'basin': diagnosis}
         return {'action': 'ESCAPE', 'basin': diagnosis}
     if len(rows) >= 2 and can_buy:
         adjudicable = [{**h, 'predict': {k: v for k, v in h['predict'].items() if k in tolerances}} for h in rows]
