@@ -32,7 +32,7 @@ def run(out_path):
     y = y * (1 + rng.uniform(-0.01, 0.01, y.size))
     X = np.column_stack([m1, m2, r])
     started = time.time()
-    search = PySRRegressor(niterations=12, binary_operators=['+', '-', '*', '/'],
+    search = PySRRegressor(niterations=30, binary_operators=['+', '-', '*', '/'],
                            unary_operators=[], procs=0, random_state=0, verbosity=0)
     search.fit(X, y)
     elapsed = round(time.time() - started, 2)
