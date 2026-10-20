@@ -514,8 +514,10 @@ def decide(state):
         cap = plan['verification'].get('max_confirmations', 0)
         bought = sum(1 for d in state['decisions'] if d['action'] == 'CONFIRM')
         confirmed = done < plan['verification']['confirmations'] and (not cap or bought < cap)
-        spending = spend and (not cap or bought < cap) and _boundary_probe(state) is not None \
-            and _gap_wide_enough(state)
+        # Not gated on gaps: an isolated exception between measured neighbours is found only by
+        # measuring it, and a gap rule never spends on a multi-input law. A caller that wants an
+        # earlier claim declares spend_budget: false, and the claim then reports its coverage.
+        spending = spend and (not cap or bought < cap)
         if confirmed or spending:
             # Falsification test: a fitted law must survive predictions it did not see. While budget
             # remains, a leader is tested at the uncovered inputs before any claim is made.
