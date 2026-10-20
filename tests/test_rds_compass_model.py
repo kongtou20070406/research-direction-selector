@@ -184,6 +184,18 @@ class SynthesisTests(unittest.TestCase):
         self.assertIn(result['status'], ('NO_FIT', 'SEARCH_TRUNCATED'))
         self.assertEqual(result['limits'], {'max_nodes': 3, 'max_candidates': 500})
 
+    def test_derived_feature_shrinks_the_search(self):
+        observed = [{'id': 'a', 'inputs': {'x': model.exact(1), 'y': model.exact(2)},
+                     'outputs': {'z': model.exact(6)}},
+                    {'id': 'b', 'inputs': {'x': model.exact(2), 'y': model.exact(3)},
+                     'outputs': {'z': model.exact(10)}}]
+        tol = {'z': (model.exact(0), model.exact(0))}
+        result = model.synthesize(observed, ['x', 'y'], 'z', tol,
+                                  grammar={'operators': ['mul'], 'constants': ['2']},
+                                  max_nodes=4, max_candidates=1000, derived={'s': 'x + y'})
+        self.assertEqual(result['status'], 'FIT_FOUND')
+        self.assertIn('(2 * s)', [fit['text'] for fit in result['fits']])
+
 
 class PolynomialCertificateTests(unittest.TestCase):
     """#194: the router's independent checker replays a uniqueness certificate outside the synthesis bound."""

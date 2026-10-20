@@ -781,7 +781,7 @@ def _grammar(grammar, inputs):
 
 
 def synthesize(observations, inputs, observable, tolerances, *, grammar=None, max_nodes=7,
-               max_candidates=20000, probes=(), base=None, keep=4):
+               max_candidates=20000, probes=(), base=None, keep=4, derived=None):
     """Bottom-up enumeration with observational-equivalence pruning.
 
     Each candidate must reproduce every original measurement (the counterexample
@@ -799,6 +799,18 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
     points = [{k: exact(v) for k, v in row['inputs'].items()} for row in rows]
     points += [{k: exact(v) for k, v in env.items()} for env in probes]
     targets = [exact(row['outputs'][observable]) for row in rows]
+    derived = derived or {}
+    derived_values, derived_nodes = {}, {}
+    for derived_name, expression in derived.items():
+        _name(derived_name)
+        derived_nodes[derived_name] = parse(expression, set(names))
+        values = []
+        for env in points:
+            try:
+                values.append(_evaluate(derived_nodes[derived_name], env))
+            except (DomainError, Undecided):
+                values.append(None)
+        derived_values[derived_name] = tuple(values)
     if base is not None:
         offsets = []
         for env in points[:len(rows)]:
@@ -816,9 +828,11 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
 
     def vector(node):
         out = []
-        for env in points:
+        for index, env in enumerate(points):
+            extended = {**env, **{name: values[index] for name, values in derived_values.items()
+                                  if values[index] is not None}}
             try:
-                out.append(_evaluate(node, env))
+                out.append(_evaluate(node, extended))
             except (DomainError, Undecided):
                 out.append(None)
         return tuple(out)
@@ -830,7 +844,7 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
             return False
         attempted += 1
         try:
-            node = normalize(node, set(names), limit=max_nodes)
+            node = normalize(node, set(names) | set(derived), limit=max_nodes)
         except (ValueError, DomainError):
             return True
         values = vector(node)
@@ -844,6 +858,7 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
         return len(fits) < keep
 
     leaves = [{'var': v} for v in names] + [{'const': c} for c in constants]
+    leaves += [{'var': name} for name in sorted(derived)]
     leaves += [{'op': op, 'args': []} for op in operators if op in NULLARY]
     go = all(consider(leaf) for leaf in leaves)
     for total in range(2, max_nodes + 1):
