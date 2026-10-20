@@ -20,7 +20,7 @@ import rds_compass_model as model
 import rds_compass_store as cstore
 import rds_fit_trend as fit
 from rds_artifacts import strict_json
-from rds_project import canonical, digest, require
+from rds_project import TOKEN_RESOURCE, canonical, charge_tokens, digest, require
 
 WORKSET_SCHEMA = 'rds-compass-workset-v1'
 PACKET_SCHEMA = 'rds-jump-packet-v1'
@@ -441,10 +441,17 @@ def _barren(state, jump):
 
 
 def _eig_routed_at(state, obs_count):
-    """True if LOW_MARGINAL_EIG already fired at this evidence count."""
+    """True if a LOW_MARGINAL_EIG jump was actually executed at this evidence count.
+
+    The DECISION event is recorded before ``escape()`` runs, so recorded alone proves nothing: a
+    jump that crashed (or was interrupted) before appending its JUMP event would otherwise block
+    EIG routing for the rest of the campaign. A JUMP written after the decision, at the same
+    evidence count, is the execution witness ``escape()`` always emits first.
+    """
     return any(d['action'] == 'ESCAPE'
                and (d.get('basin') or {}).get('trigger') == 'LOW_MARGINAL_EIG'
                and d.get('observations') == obs_count
+               and any(j['seq'] > d['seq'] and j.get('observations') == obs_count for j in state['jumps'])
                for d in state['decisions'])
 
 
@@ -498,7 +505,7 @@ def decide(state):
     if diagnosis['trigger'] and not rows and not can_buy and len(state['observations']) < _min_points(state):
         return {'action': 'HANDOFF', 'reason': 'BUDGET_EXHAUSTED', 'basin': diagnosis}
     if diagnosis['trigger']:
-        if len(state['jumps']) >= plan['escape']['max_jumps']:
+        if _jumps_spent(state):
             return {'action': 'HANDOFF', 'reason': 'SEARCH_EXHAUSTED', 'basin': diagnosis}
         measured_points = sum(1 for o in state['observations'].values() if o['status'] == 'MEASURED')
         probes_since = [d for d in state['decisions'] if d['action'] == 'PROBE'
@@ -525,17 +532,27 @@ def decide(state):
                     'classes': top['classes'], 'alternatives': [r['id'] for r in ranking['ranked'][1:]],
                     'excluded': ranking['excluded'][:16], 'live': [h['id'] for h in rows]}
         elif _agent_live(state) and not _eig_routed_at(state, len(state['observations'])):
+            # The jump budget is shared with basin triggers: reached, it hands off, never jumps.
+            if _jumps_spent(state):
+                return {'action': 'HANDOFF', 'reason': 'SEARCH_EXHAUSTED', 'basin':
+                        {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'excluded': ranking.get('excluded', [])[:16]}}
             return {'action': 'ESCAPE', 'basin': {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG',
                     'ranked_total': len(ranking.get('excluded', [])), 'excluded': ranking.get('excluded', [])[:16],
                     'top_eig_per_cost': None, 'median_eig_per_cost': _median_eig(state)}}
     observed_count = len(state['observations'])
-    if len(rows) == 1 and can_buy and not diagnosis['trigger']:
-        if _agent_live(state) and not _eig_routed_at(state, observed_count):
-            return {'action': 'ESCAPE', 'basin': {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'ranked_total': 0,
-                    'excluded': [], 'top_eig_per_cost': None, 'median_eig_per_cost': _median_eig(state)}}
     tried = any(d['action'] == 'RIVALS' and d['observations'] == observed_count for d in state['decisions'])
+    # RIVALS gets its turn before EIG exhaustion is declared: a single surviving hypothesis may
+    # still be joined by a rival the wide search has not offered yet.
     if rows and can_buy and not tried and observable in tolerances:
         return {'action': 'RIVALS', 'live': [h['id'] for h in rows]}
+    if len(rows) == 1 and can_buy and not diagnosis['trigger']:
+        if _agent_live(state) and not _eig_routed_at(state, observed_count):
+            # The lone-survivor route draws on the same jump budget as the branch above.
+            if _jumps_spent(state):
+                return {'action': 'HANDOFF', 'reason': 'SEARCH_EXHAUSTED', 'basin':
+                        {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'ranked_total': 0, 'excluded': []}}
+            return {'action': 'ESCAPE', 'basin': {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'ranked_total': 0,
+                    'excluded': [], 'top_eig_per_cost': None, 'median_eig_per_cost': _median_eig(state)}}
     if rows and can_buy:
         leader = rows[0]
         done = confirmations(state, leader)
@@ -582,6 +599,11 @@ def next_step(state, stale):
         return step
     return {'action': 'VERIFY', 'reason': 'RECEIPTS_UNCHECKED' if stale is None else 'STALE_EVIDENCE',
             'stale': (stale or [])[:8], 'decided': step['action']}
+
+
+def _jumps_spent(state):
+    """True when the escape budget is used up: no further jump may be issued."""
+    return len(state['jumps']) >= state['plan']['escape']['max_jumps']
 
 
 def _decide_improve(state, spent, wall):
