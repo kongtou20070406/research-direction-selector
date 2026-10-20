@@ -177,6 +177,44 @@ class ContractTest(unittest.TestCase):
         self.assertIn('DISCRIMINABILITY', [failure['check'] for failure in outcome['failures']])
 
 
+class MultiInputWitnessTest(unittest.TestCase):
+    """feynman-I.14.3 regression: a witness point carries every input, not one projection.
+
+    ``collect`` used to keep only ``next(iter(plan['inputs']))`` per candidate, so a three-input
+    law replayed as ``{name: Fraction(value)}`` raised ``DomainError: Missing input`` and the
+    default runner turned every point into ``None`` -- failing a numerically correct witness.
+    """
+
+    G, H, M = {'var': 'g'}, {'var': 'h'}, {'var': 'm'}
+
+    @classmethod
+    def mul(cls, left, right):
+        return {'op': 'mul', 'args': [left, right]}
+
+    @classmethod
+    def env_case(cls, law, origin):
+        points = [('1', '1', '1', '1'), ('10', '1', '2', '20'),
+                  ('10', '10', '5', '500'), ('1', '5', '5', '25')]
+        return {'law_ast': law, 'law': '', 'origin': origin, 'record_sha256': '', 'variable': 'g',
+                'domain': {'min': 1, 'max': 10},
+                'witness': [{'input': {key: antiu.model.exact(value)
+                                       for key, value in zip(('g', 'h', 'm'), row[:3])},
+                             'value': row[3]} for row in points]}
+
+    def test_a_multi_input_witness_replays_under_the_full_environment(self):
+        laws = [self.mul(self.mul(self.G, self.M), self.G),    # m*g*g, refuted by g=1,h=5,m=5
+                self.mul(self.mul(self.H, self.M), self.G),    # m*g*h, the measured law
+                self.mul(self.mul(self.H, self.M), self.H)]    # m*h*h, refuted by g=10,h=1,m=2
+        cases = [self.env_case(law, origin) for law, origin in zip(laws, ('j01-0', 'j01-1', 'j01-2'))]
+        operator = antiu.generalize(laws)
+        self.assertEqual([hole['name'] for hole in operator['holes']], ['$V1', '$V2'])
+        outcome = antiu.contract(operator, cases)
+        self.assertEqual(outcome['checks']['witness'], [False, True, False], outcome['failures'])
+
+    def test_a_bare_point_still_binds_the_single_named_variable(self):
+        self.assertEqual(antiu._runner([self.mul(self.M, self.M)], ['2'], 'm'), [['4']])
+
+
 class SignatureTest(unittest.TestCase):
     @staticmethod
     def plan(low, high):

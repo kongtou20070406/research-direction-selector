@@ -210,6 +210,11 @@ def admit(template, support):
     return _non_trivial(template)
 
 
+def _env(point, name):
+    """A witness point is a whole input environment; a bare value binds ``name`` alone."""
+    return point if isinstance(point, dict) else {name: Fraction(point)}
+
+
 def _runner(nodes, points, name='x'):
     """Default contract runner: exact model.evaluate; an undefined point is None, never an exception."""
     out = []
@@ -217,7 +222,7 @@ def _runner(nodes, points, name='x'):
         row = []
         for point in points:
             try:
-                row.append(model.text(model.evaluate(node, {name: Fraction(point)})))
+                row.append(model.text(model.evaluate(node, _env(point, name))))
             except ValueError:  # DomainError and Undecided are ValueError subclasses.
                 row.append(None)
         out.append(row)
@@ -316,7 +321,11 @@ def domain_signature(plan):
 def collect(events, observable):
     """2.1 sources: (a) TOOL_QUALIFIED oracle law_ast, (b) jump-originated HYPOTHESIS predict ASTs."""
     plan, variable = events[0]['value'], next(iter(events[0]['value']['inputs']))
-    points = {candidate['id']: model.exact(candidate['inputs'][variable]) for candidate in plan['candidates']}
+    # A candidate carries every declared input, not just the one this bucket counts as "the" variable:
+    # a multi-input law replayed from a single projection raises DomainError("Missing input") and
+    # `_runner` would report None for every point, failing a witness that is numerically correct.
+    points = {candidate['id']: {key: model.exact(value) for key, value in candidate['inputs'].items()}
+              for candidate in plan['candidates']}
     values = {event['value']['candidate']: model.text(event['value']['outputs'][observable])
               for event in events
               if event['kind'] == cstore.PREFIX + 'OBSERVATION' and event['value'].get('status') != 'INTERRUPTED'
