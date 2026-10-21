@@ -55,26 +55,34 @@ class SeedReachTests(unittest.TestCase):
         self.assertEqual(plain, same)
 
     def test_two_spellings_of_one_law_take_one_fit_slot(self):
-        """`x + 1` and `x + 0 + 1` are one law: the second must not buy a second slot."""
-        data = rows([(0, 1), (1, 2), (2, 3), (3, 4)])
-        one = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000,
-                               seeds=['x + 1'])
-        two = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000,
-                               seeds=['x + 1', 'x + 0 + 1'])
+        """One law spelled two ways buys one slot, and the law is one the search cannot reach.
+
+        The seeds are size 9 against ``max_nodes=3``, so an empty result here means the
+        seeds were dropped rather than rediscovered by the enumerator.  Writing the law in
+        a form the search can find would make this test pass with the seed loop deleted.
+        """
+        data = rows([(0, 1), (1, 2), (2, 17), (3, 82)])
+        one = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=3, max_candidates=5000,
+                               seeds=['x*x*x*x + 1'])
+        two = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=3, max_candidates=5000,
+                               seeds=['x*x*x*x + 1', '1 + x*x*x*x'])
+        self.assertEqual([fit['text'] for fit in one['fits']], ['((((x * x) * x) * x) + 1)'])
         self.assertEqual(one['fits'], two['fits'])
 
     def test_a_seeded_law_does_not_stop_the_enumeration(self):
-        """Seeds occupy their own slots: the search must still visit the same candidates.
+        """Seeds keep their own slots and the search still runs over the same candidates.
 
         Before this guard the seeds were never deduplicated against the search, so three
-        equivalent seeds plus one enumerated repeat filled ``keep=4`` at the leaf layer
-        and ``attempted`` collapsed from 7381 to 8.
+        equivalent seeds plus one enumerated repeat filled ``keep=4`` at the leaf layer and
+        ``attempted`` collapsed from 7381 to 8.  The seeds here are again out of the
+        search's reach, so a shorter ``fits`` means the seeds were dropped.
         """
-        data = rows([(0, 1), (1, 2), (2, 3), (3, 4)])
-        plain = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000)
-        seeded = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000,
-                                  seeds=['x + 1', '(x*2+2)/2', '(x+2)-1'])
+        data = rows([(0, 1), (1, 2), (2, 17), (3, 82)])
+        plain = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=3, max_candidates=5000)
+        seeded = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=3, max_candidates=5000,
+                                  seeds=['x*x*x*x + 1', 'x*x*x*x + 2 - 1', '1 + x*x*x*x'])
         self.assertEqual(plain['attempted'], seeded['attempted'])
+        self.assertEqual(len(seeded['fits']), 2)
 
     def test_a_seed_naming_an_undeclared_input_is_refused(self):
         data = rows([(0, 1), (1, 2)])
