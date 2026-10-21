@@ -54,6 +54,28 @@ class SeedReachTests(unittest.TestCase):
         same = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=2, max_candidates=5000, seeds=())
         self.assertEqual(plain, same)
 
+    def test_two_spellings_of_one_law_take_one_fit_slot(self):
+        """`x + 1` and `x + 0 + 1` are one law: the second must not buy a second slot."""
+        data = rows([(0, 1), (1, 2), (2, 3), (3, 4)])
+        one = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000,
+                               seeds=['x + 1'])
+        two = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000,
+                               seeds=['x + 1', 'x + 0 + 1'])
+        self.assertEqual(one['fits'], two['fits'])
+
+    def test_a_seeded_law_does_not_stop_the_enumeration(self):
+        """Seeds occupy their own slots: the search must still visit the same candidates.
+
+        Before this guard the seeds were never deduplicated against the search, so three
+        equivalent seeds plus one enumerated repeat filled ``keep=4`` at the leaf layer
+        and ``attempted`` collapsed from 7381 to 8.
+        """
+        data = rows([(0, 1), (1, 2), (2, 3), (3, 4)])
+        plain = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000)
+        seeded = model.synthesize(data, ['x'], 'y', TIGHT, max_nodes=7, max_candidates=200000,
+                                  seeds=['x + 1', '(x*2+2)/2', '(x+2)-1'])
+        self.assertEqual(plain['attempted'], seeded['attempted'])
+
     def test_a_seed_naming_an_undeclared_input_is_refused(self):
         data = rows([(0, 1), (1, 2)])
         with self.assertRaises(ValueError):

@@ -990,7 +990,8 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
         seen.add(key)
         pools[size(normalized)].append((normalized, spans))
         if all(v is not None and matches(v, t, tol) for v, t in zip(values[:n], targets)):
-            fits.append(normalized)
+            if normalized not in fits:
+                fits.append(normalized)
         return len(fits) < keep
 
     def consider_seed(expression):
@@ -1006,10 +1007,15 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
         node = parse(expression, set(names))
         if size(node) > MAX_RULEBOOK_NODES:
             raise ValueError(f'source law exceeds MAX_RULEBOOK_NODES ({MAX_RULEBOOK_NODES})')
-        values = values_from(spans_of(node))
+        # The enumeration stores what ``normalize`` produced, so a seed has to be normalized
+        # before it is compared or stored. Two sources spelling the same law differently
+        # (``x + 1`` and ``x + 0 + 1``) would otherwise occupy two of the ``keep`` slots and
+        # stop the search before it starts.
+        normalized = normalize(node, set(names) | set(derived), limit=MAX_RULEBOOK_NODES)
+        values = values_from(spans_of(normalized))
         if all(v is not None and matches(v, t, tol) for v, t in zip(values[:n], targets)):
-            if node not in fits:
-                fits.append(node)
+            if normalized not in fits:
+                fits.append(normalized)
 
     for expression in seeds:
         consider_seed(expression)
