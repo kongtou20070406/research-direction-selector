@@ -76,7 +76,18 @@ u = hbar*omega**3 / (pi**2 * c**2 * (exp(hbar*omega/(k*T)) - 1))
 
 这与 `benchmark/newtonbench/results/truth-size.json` 和 `docs/benchmarks/size-ceiling-20261021.md` 的结构结论一致：默认 `max_nodes=7`，40 个真解里 10 个 size>7，天花板是枚举器的形状，不是预算。
 
-## 4. 这份账指向什么
+## 4. 修复容差不是免费的
+
+`9fcf7d6` 关掉绝对容差之后，同一个 `feynman-I.41.16` / B=8 重跑：
+
+| | 状态 | law | 耗时 |
+|---|---|---|---|
+| 修前 | `GOAL_IDENTIFIED` | `'0'` | 4.3 s |
+| 修后 | `SEARCH_EXHAUSTED` | `None` | **392.0 s** |
+
+三格加起来从 13.8 秒变成约 1176 秒，**85 倍**。这不是回退——原来那 4.3 秒买到的是一个错误的答案。但把它记进账：**正确性修复的方向是把「便宜但错」换成「贵但诚实」**，帕累托前沿上这不是免费移动。
+
+## 5. 这份账指向什么
 
 - 12 个 TIMEOUT 是**纯浪费**：它们不会成功，但每个都要烧满 900 秒墙钟。识别「合成连续撞 `SEARCH_TRUNCATED`」并提前放弃，理论上能回收 87% 的这段算力。
 - 但这属于改搜索行为，必须预注册 + 全量安全项，不能拿单格结论提交（`docs/benchmark-confirmreserve-20261021.md` 与 `docs/pareto-holdoutfirst.md` 两次都是单格绿、全量红）。
