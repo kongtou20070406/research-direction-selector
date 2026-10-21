@@ -33,7 +33,7 @@ def current(root):
     store = _store(root)
     if not store.path.exists():
         return None
-    with store._db(True) as db:
+    with store.readonly() as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
             return None
         row = _last(db)
@@ -109,7 +109,7 @@ def maintain(root, *, initial=None, locator='tool-input', source_base=None, audi
     store = _store(root)
     controlled = False
     if store.path.exists():
-        with store._db(True) as db:
+        with store.readonly() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
                 controlled = 'advisor_policy' in store._contract(db)
     if controlled:

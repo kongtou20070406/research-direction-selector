@@ -92,7 +92,7 @@ def dispositions(runs, state):
 
 
 def status(store):
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         contract = store._contract(db)
         event = current(db)

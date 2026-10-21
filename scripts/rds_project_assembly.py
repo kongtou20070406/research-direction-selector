@@ -214,7 +214,7 @@ def initialize(store, recipe_path, *, separate_reason=None):
     # Reject changes before preparing any artifact. initialize independently
     # repeats this check under its existing transaction, including concurrent init.
     if store.path.is_file():
-        with store._db(True) as db:
+        with store.readonly() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
                 row = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()
                 require(row is None or row['sha256'] == digest(contract),

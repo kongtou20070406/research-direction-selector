@@ -71,7 +71,7 @@ def discover(root, *, name=None, obligation=None, limit=8):
     store = ProjectStore(root)
     contract, bindings, state = None, [], None
     if store.path.is_file():
-        with store._db(True) as db:
+        with store.readonly() as db:
             initialized = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
             initialized = initialized and db.execute('SELECT 1 FROM contract').fetchone()
         if initialized:

@@ -111,7 +111,7 @@ def _receipt(store, state, rid):
     # Reuse canonical retained-receipt validation even for supplied snapshots.
     from rds_project import canonical
     receipt = ProjectStore._receipt({'run_id': rid, 'sha256': receipt['sha256'], 'body': canonical(receipt)})
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
         require(row is not None and ProjectStore._receipt(row) == receipt,
@@ -133,7 +133,7 @@ def _matched_baseline(store, state, contract, value):
     receipt = _receipt(store, state, rid)
     require(receipt is not None and receipt['run_status'] == 'SUCCEEDED' and receipt.get('process_started') is True,
             'Matched baseline evidence is unavailable')
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         run = store._run(db, rid)
         require(store._observe(db, run) == receipt, 'Baseline differs from its retained operation')

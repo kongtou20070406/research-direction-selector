@@ -116,7 +116,7 @@ class Outbox:
     """Bind a borrowed connection to its store; every operation needs BEGIN.
 
     Writers should use BEGIN IMMEDIATE in store._db(), including consumers.
-    Reads may use BEGIN in store._db(True). initialize() is explicit and adds
+    Reads may use BEGIN in store.readonly(). initialize() is explicit and adds
     only outbox-owned tables, an index and local outbox integrity triggers
     without mutating connection PRAGMAs.
     """

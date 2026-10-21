@@ -16,7 +16,7 @@ def preparation_costs(store, contract, *, db=None):
     if 'tool_bindings' not in contract.get('advisor_policy', {}):
         return []
     if db is None:
-        with store._db(True) as current:
+        with store.readonly() as current:
             current.execute('BEGIN')
             return preparation_costs(store, contract, db=current)
     require(db.in_transaction, 'Preparation inventory needs the owning initialization transaction')
@@ -119,7 +119,7 @@ def applicable(store, contract, facts):
     reports = [inspect(store, binding, contract=contract, action=actions[binding['candidate']],
                        facts=facts, expected_driver_sha256=driver_sha256())
                for binding in contract['advisor_policy'].get('tool_bindings', [])]
-    with store._db(True) as db:
+    with store.readonly() as db:
         costs = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_COST'").fetchall()
     charged = {row['validation']['sha256'] for event in costs
                for row in json.loads(event['body'])['validations']}

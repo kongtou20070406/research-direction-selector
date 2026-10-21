@@ -251,7 +251,7 @@ def run_compass(store, task):
 
 
 def receipts_of(store):
-    with store._db(True) as db:
+    with store.readonly() as db:
         return [{'run_id': row['run_id'], 'sha256': row['sha256']}
                 for row in db.execute('SELECT run_id, sha256 FROM receipts ORDER BY run_id')]
 

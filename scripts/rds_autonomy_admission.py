@@ -57,7 +57,7 @@ def bind_run(store, db, contract, run, *, hash_file=None):
 def prepare_binding(store, contract, run):
     if 'autonomy' not in contract.get('advisor_policy', {}):
         return None
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         require(digest(store._contract(db)) == run['effective_contract_sha256'] == digest(contract),
                 'Method revision changed during run registration')

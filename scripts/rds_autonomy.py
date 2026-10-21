@@ -273,7 +273,7 @@ def request_repair(store, report):
     from rds_owned_advisor import _state, _fingerprint
     from rds_tool_workbench import prepare
     from rds_cas import cas_bytes
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         state = _state(store, db)
         jump_cut = _jump_evidence_cut(store, db)
@@ -348,7 +348,7 @@ def process_result(store, event, receipt):
     rid = event['run_id']
     try:
         request = strict_json(blob(store.root, event['request']).decode('utf-8'))
-        with store._db(True) as db:
+        with store.readonly() as db:
             db.execute('BEGIN')
             row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
             run = store._run(db, rid)
@@ -370,8 +370,7 @@ def process_result(store, event, receipt):
     except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
         raise ModelResultIntegrityError(str(exc)) from exc
     try:
-        with store._db(True) as db:
-            prepared = next((e for e in _events(db, ('AUTONOMY_PROPOSAL_VALIDATED',)) if e['run_id'] == rid), None)
+        prepared = next((e for e in store.proposal_events(('AUTONOMY_PROPOSAL_VALIDATED',)) if e['run_id'] == rid), None)
         if prepared:
             require(prepared['receipt_sha256'] == receipt['sha256'], 'Retained proposal receipt differs')
     except (ValueError, OSError, KeyError, TypeError, UnicodeError) as exc:
@@ -515,8 +514,7 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
     require(type(prepare_only) is bool, 'drive prepare_only must be Boolean')
     require(type(until_judgment) is bool, 'drive until_judgment must be Boolean')
     from rds_owned_advisor import review, _state
-    with store._db(True) as db:
-        contract = store._contract(db)
+    contract = store.contract()
     policy = contract.get('advisor_policy')
     require(policy and (until_judgment or 'autonomy' in policy),
             'project drive requires a frozen autonomy declaration, or an owned policy with --until-judgment')
@@ -533,8 +531,7 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
     def before_claim(result):
         if until_judgment:
             attach(store, contract, result, project=False)
-            with store._db(True) as db:
-                result['handoff']['resources'] = resources(db)
+            result['handoff']['resources'] = store.read_through(resources)
             result['handoff']['resource_cut'] = 'BEFORE_CONTROLLER_CLAIM'
         return result
     from rds_steering import SteeringBlocked, status as steering_status
@@ -555,7 +552,7 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
     try:
         for _ in range(max_steps * 4 + 8):
             require(time.monotonic() - started - worker_wall < allowance, 'CONTROLLER_WALL_ALLOWANCE_EXHAUSTED')
-            with store._db(True) as db:
+            with store.readonly() as db:
                 db.execute('BEGIN')
                 state = _state(store, db)
                 pending = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='AUTONOMY_PROPOSAL_VALIDATED' ORDER BY id DESC LIMIT 1").fetchone()
@@ -564,8 +561,7 @@ def drive(store, max_steps=8, prepare_only=False, *, until_judgment=False, contr
             if running:
                 for r in running:
                     store.recover(r['id'])
-                with store._db(True) as db:
-                    refreshed = store._runs(db)
+                refreshed = store.runs()
                 if any(r['status'] == 'RUNNING' or (until_judgment and r['status'] == 'RESERVED'
                                                   and r['attempt_id'] is not None) for r in refreshed):
                     result['status'] = 'WAITING_FOR_ORIGINAL_ATTEMPT'

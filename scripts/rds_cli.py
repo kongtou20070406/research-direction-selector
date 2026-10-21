@@ -1134,8 +1134,7 @@ def _owned_project(root):
         return None
     from rds_project import ProjectStore
     store = ProjectStore(root)
-    with store._db(True) as db:
-        return store if 'advisor_policy' in store._contract(db) else None
+    return store if 'advisor_policy' in store.contract() else None
 
 
 def _has_project_contract(root):
@@ -1143,7 +1142,7 @@ def _has_project_contract(root):
     store = ProjectStore(root)
     if not store.path.is_file():
         return False
-    with store._db(True) as db:
+    with store.readonly() as db:
         table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
         return bool(table and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone())
 

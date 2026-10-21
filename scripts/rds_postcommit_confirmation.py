@@ -100,7 +100,7 @@ def _applies(contract, run):
 def prepare_binding(store, contract, run):
     if not _applies(contract, run):
         return None
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         if digest(store._contract(db)) != digest(contract):
             raise StaleAdmission('Confirmation contract changed during preparation; STALE')
@@ -180,7 +180,7 @@ def inspect(store, contract, candidate, confirmation, weights, checked):
     from rds_math import blob
     value = contract['advisor_policy']['confirmation']
     claim = validate_claim(_json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256']))
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         events = records(store, db, contract)
         require(len(events) == 1, 'Missing post-commit challenge')

@@ -528,7 +528,7 @@ def bind(root):
             if owner_pointer == pointer and _charged_quick_scope(store.root, owner, owner_pointer):
                 check_admission(owner)
                 from rds_quick_ledger import _is_unmaterialized_allowance
-                with _store(owner)._db(True) as parent_db:
+                with _store(owner).readonly() as parent_db:
                     allowance = parent_db.execute(
                         "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
                         "AND json_extract(body,'$.job_root')=?", (str(store.root),)).fetchone()
@@ -547,10 +547,9 @@ def bind(root):
         return {"status": "ALREADY_BOUND", "pointer": pointer, "ledger_root": str(store.root)}
     deadline = _refuse_active_descendants(store.root)
     ledger_sha = _bounded_bind_ledger_sha(store.path, deadline)
-    with store._db(True) as db:
-        contract = store._contract(db)
-        identity = {"schema": SCHEMA, "ledger_sha256": ledger_sha, "contract_sha256": digest(contract),
-                    "root": str(store.root)}
+    contract = store.contract()
+    identity = {"schema": SCHEMA, "ledger_sha256": ledger_sha, "contract_sha256": digest(contract),
+                "root": str(store.root)}
     require(pointer is None, _OVERWRITE)
     event_digest = digest(identity)
     recovered = False

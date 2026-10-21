@@ -301,7 +301,7 @@ def inspect_plan(store, *, goal=None):
     from rds_tms_store import current
     report = review(store, persist=False)
     result = report['shadow_plan']
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         state = _state(store, db)
     saved = current(store.root)

@@ -58,7 +58,7 @@ def records(root):
     store = _store(root)
     if not store.path.exists():
         return []
-    with store._db(True) as db:
+    with store.readonly() as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_records'").fetchone():
             return []
         rows = db.execute('SELECT sha256,body FROM research_records ORDER BY rowid LIMIT ?', (MAX_RECORDS + 1,)).fetchall()
@@ -89,7 +89,7 @@ def get(root, record_id):
     store = _store(root)
     if not store.path.exists():
         return None
-    with store._db(True) as db:
+    with store.readonly() as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_records'").fetchone():
             return None
         row = db.execute('SELECT sha256,body FROM research_records WHERE id=?', (record_id,)).fetchone()
@@ -160,7 +160,7 @@ def bind_objective(root, raw):
     previous = objective(root)
     require(previous is not None or not records(root), 'Bind the objective before native assets; use an explicit new project')
     if previous is None and _store(root).path.exists():
-        with _store(root)._db(True) as db:
+        with _store(root).readonly() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
                 row = db.execute('SELECT body FROM contract WHERE id=1').fetchone()
                 require(row is None, 'An existing operational contract cannot be retroactively objective-bound; use an explicit new project')

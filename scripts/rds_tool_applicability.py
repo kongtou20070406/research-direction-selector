@@ -143,10 +143,9 @@ def _premises(store, contract, conditions, supplied):
     if not conditions:
         return []
     # Reread program-owned observations; serialized fact dictionaries cannot mint evidence.
-    from rds_owned_advisor import _state, _collect, _facts
+    from rds_owned_advisor import _collect, _facts
     from rds_advisor_search import evaluate_condition
-    with store._db(True) as db:
-        state = _state(store, db)
+    state = store.advisor_state()
     require(state['contract'] == contract, 'Tool qualification contract is stale')
     nodes, _, coverage, _ = _collect(store, state)
     require(not coverage['errors'], 'Task premise collection is incomplete')

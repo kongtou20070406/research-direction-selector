@@ -431,7 +431,7 @@ def initialize(root, declaration_path):
     declaration = strict_json(raw.decode('utf-8-sig'))
     contract, protocol_raw, plan = compile_plan(store, declaration, hashlib.sha256(raw).hexdigest(), source)
     if store.path.is_file():
-        with store._db(True) as db:
+        with store.readonly() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
                 row = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()
                 if row is not None:

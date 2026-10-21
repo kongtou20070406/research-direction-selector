@@ -72,7 +72,7 @@ def discover(root):
             # QUICK may create an empty same-DB lock anchor for admission. It
             # has no research records; malformed/nonempty databases still fail
             # or participate in discovery instead of being silently ignored.
-            with ProjectStore(candidate)._db(True) as db:
+            with ProjectStore(candidate).readonly() as db:
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").fetchone() is None:
                     continue
         info = describe(candidate)
@@ -99,7 +99,7 @@ def describe(root, *, quick=False):
     store = ProjectStore(root)
     contract = None
     if store.path.is_file():
-        with store._db(True) as db:
+        with store.readonly() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
                     and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
                 contract = store._contract(db)
@@ -168,7 +168,7 @@ def initialize(store, contract, *, mode=None, supersedes=None, separate_reason=N
     existing = describe(store.root)['mode']
     selected = mode or (existing.lower() if existing != 'UNINITIALIZED' else 'full')
     if mode is None and store.path.is_file():
-        with store._db(True) as db:
+        with store.readonly() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
                 genesis = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()
                 if genesis and genesis['sha256'] == digest(contract):

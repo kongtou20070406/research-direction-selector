@@ -251,7 +251,7 @@ def restore_checkpoint(root, checkpoint_id, live_snapshot, *, kind):
             from rds_method_revision import contract_history, pending_revision
             store = ProjectStore(root)
             try:
-                with store._db(True) as ledger:
+                with store.readonly() as ledger:
                     ledger.execute('BEGIN')
                     lineage = contract_history(ledger)
                     ancestor = (pending_revision(ledger) is None

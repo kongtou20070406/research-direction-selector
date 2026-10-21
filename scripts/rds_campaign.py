@@ -522,7 +522,7 @@ def retained_owned_review(store):
     if scope is None or store.root == Path(scope['project_root']):
         return None
     from rds_project import TERMINAL
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         contract = store._contract(db)
         runs = store._runs(db)

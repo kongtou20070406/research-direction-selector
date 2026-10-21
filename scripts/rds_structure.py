@@ -150,7 +150,7 @@ def _read_ref(store, ref):
 
 def _events(store, db=None):
     if db is None:
-        with store._db(True) as connection:
+        with store.readonly() as connection:
             return _events(store, connection)
     rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind') LIKE 'STRUCTURE_%' ORDER BY id LIMIT 1025").fetchall()
     require(len(rows) <= 1024, 'Structure event limit reached')
@@ -406,7 +406,7 @@ def _live(store, req, allow_owned_updates=False):
         require(allow_owned_updates, 'Stale structure snapshot')
         from rds_math import blob
         seen = saved
-        with store._db(True) as db:
+        with store.readonly() as db:
             for _ in range(64):
                 require(declared(seen['dependency_map']) == declared(req['original_map'])
                         and seen['dependency_map']['goals'] == req['original_map']['goals']
@@ -815,7 +815,7 @@ def rollback(root, ident):
         revision = active.get('revision') if active else None
         def declared(spec):
             return {k: [r for r in spec[k] if not r['id'].startswith('owned:')] for k in ('nodes', 'hyperedges')}
-        with store._db(True) as db:
+        with store.readonly() as db:
             for _ in range(64):
                 if revision and revision.get('kind') == PREFIX + 'ACTIVATION' and revision.get('id') == ident:
                     break

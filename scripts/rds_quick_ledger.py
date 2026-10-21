@@ -99,7 +99,7 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
                 stored = load_json(child.root / 'rds-exec-request.json')
                 require(digest(stored) == prior['request_sha256'] and stored.get('execution_policy_owner') == request['execution_policy_owner'],
                         'Execution policy: retained child request binding differs')
-                with child._db(True) as child_db:
+                with child.readonly() as child_db:
                     runs = list(child_db.execute('SELECT id FROM runs'))
                     require(len(runs) == 1, 'Execution policy: charged child has an incomplete or ambiguous run; recover it without a new allowance')
                     run = child._run(child_db, runs[0]['id'])
@@ -196,7 +196,7 @@ def _pending_quick_choices(root, owner, requested_name=None):
     require(exec_root.is_relative_to(root), 'Exec workspace escapes root')
     from rds_checkpoints import read_checkpoint
     from rds_campaign import QUICK_JOB_KIND
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         contract_sha256 = digest(store._contract(db))
         rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' ORDER BY id").fetchall()
@@ -298,7 +298,7 @@ def _is_unmaterialized_allowance(db, workspace, request, prior):
         if child.path.exists() or child.path.is_symlink():
             # Never recreate a launched child, even if its parent marker is lost.
             # Read incomplete initialization without requiring a contract table.
-            with child._db(True) as child_db:
+            with child.readonly() as child_db:
                 tables = {r[0] for r in child_db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 for table in ('receipts', 'exposures'):
                     if table in tables:
@@ -327,7 +327,7 @@ def _prospective_completion(workspace, request, receipt, regression=None, guard_
     require(receipt.get('run_id') == workspace.name and isinstance(receipt.get('sha256'), str),
             'Prospective completion requires the original terminal receipt')
     if parent_db is None:
-        with ProjectStore(ledger)._db(True) as db:
+        with ProjectStore(ledger).readonly() as db:
             db.execute('BEGIN')
             return _prospective_completion(workspace, request, receipt, regression, guard_ref, parent_db=db)
     filename = parent_db.execute('PRAGMA database_list').fetchone()[2]
@@ -388,7 +388,7 @@ def _recover_prospective(store, contract, receipt):
         return
     regression, ref = None, None
     if request.get('guard') is not None:
-        with store._db(True) as db:
+        with store.readonly() as db:
             rows = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' LIMIT 2").fetchall()
         require(len(rows) == 1, 'Guard review is unfinished or ambiguous; inspect the retained job and allowance')
         ref = json.loads(rows[0]['body'])['report']

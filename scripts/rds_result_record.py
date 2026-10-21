@@ -231,7 +231,7 @@ def brief(root, value, version, formal=False):
         summary['application_status'] = value.get('application_status', 'UNKNOWN')
     if ledger.is_file():
         store = ProjectStore(ledger_root)
-        with store._db(True) as db:
+        with store.readonly() as db:
             summary['ledger_checkpoints'] = 0
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
                 summary['ledger_checkpoints'] = db.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0]

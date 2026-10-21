@@ -474,7 +474,7 @@ class RDSAdvisor:
         from rds_project import ProjectStore, require
         store = ProjectStore(self.root_dir)
         if store.path.is_file():
-            with store._db(True) as db:
+            with store.readonly() as db:
                 has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
                 row = db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() if has_contract else None
                 contract = store._contract(db) if row else {}

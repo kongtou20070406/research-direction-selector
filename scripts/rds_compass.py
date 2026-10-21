@@ -53,7 +53,7 @@ def _anchor(event):
 
 
 def fold(store):
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         evs = cstore.events(store, db)
         runs = cstore.runs(store, db)

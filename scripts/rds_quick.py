@@ -22,7 +22,7 @@ from rds_output_values import _brief_move, serialize_brief, compact_brief_planni
 from rds_result_record import brief
 from rds_quick_ledger import (
     _policy_route, _charge_ledger, _checkpoint_name, _validate_recorded_choice,
-    _pending_quick_choices, _publish_quick_request, _pending_partial_child,
+    _pending_quick_choices, _publish_quick_request,
     _is_unmaterialized_allowance, _prospective_completion, _complete_prospective,
     _recover_prospective,
 )
@@ -40,7 +40,7 @@ def latest_decision(root, checkpoint_id=None):
     from rds_checkpoints import restore_checkpoint
     store = ProjectStore(root)
     snapshot = store.snapshot(check_bindings=True)
-    with store._db(True) as db:
+    with store.readonly() as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
             raise ValueError('No decision context: record a scoped choice with advise --choose --record first')
         row = (db.execute('SELECT id FROM checkpoints WHERE id=?', (checkpoint_id,)).fetchone() if checkpoint_id
@@ -63,7 +63,7 @@ def _prepare_choice(root, advice, context, candidate_id, request):
     from rds_advisor_coverage import project_context
     from rds_quick_admission import PreparedQuickChoice, evidence_fence
     store = ProjectStore(root)
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         context = project_context(root, context)
         files, receipts, source_bytes = (), (), 0
@@ -281,7 +281,7 @@ def _parent_controls(root, *, db=None):
     parent = ProjectStore(root)
     if not parent.path.is_file():
         return None, None
-    with parent._db(True) as db:
+    with parent.readonly() as db:
         db.execute('BEGIN')
         return _parent_controls(root, db=db)
 
@@ -311,7 +311,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
                 root == parent.root / '.rds' / 'rsi' / 'tool-checks' / token and args.name == 'tool-check',
                 'Native preparation must use its original managed workspace')
         from rds_tools import _preparation_contract
-        with parent._db(True) as parent_db:
+        with parent.readonly() as parent_db:
             if not _preparation_contract(parent, parent_db):
                 rows = parent_db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_STARTED' "
                                          "AND json_extract(body,'$.request.token')=? LIMIT 2", (token,)).fetchall()
@@ -455,16 +455,15 @@ def execute(args, review=None, *, _native_preparation_root=None):
     execution_policy, executor_sha256 = None, None
     if owner is not None:
         parent = ProjectStore(owner)
-        with parent._db(True) as db:
-            parent_contract = parent._contract(db)
-            parent_sha = digest(parent_contract)
-            require(owner not in parent_contracts or parent_contracts[owner] == parent_sha,
-                    'Quick parent contract changed during preparation; use the original project')
-            parent_contracts[owner] = parent_sha
-            execution_policy = parent_contract.get('execution_policy')
-            if execution_policy is not None:
-                _, errors = parent._bindings(parent_contract)
-                require(not errors, '; '.join(errors))
+        parent_contract = parent.contract()
+        parent_sha = digest(parent_contract)
+        require(owner not in parent_contracts or parent_contracts[owner] == parent_sha,
+                'Quick parent contract changed during preparation; use the original project')
+        parent_contracts[owner] = parent_sha
+        execution_policy = parent_contract.get('execution_policy')
+        if execution_policy is not None:
+            _, errors = parent._bindings(parent_contract)
+            require(not errors, '; '.join(errors))
         if execution_policy is not None:
             executor_sha256 = file_sha(argv[0])
             request['execution_policy_owner'] = {'root': str(parent.root), 'contract_sha256': digest(parent_contract),
@@ -560,8 +559,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
     require(workspace.resolve().is_relative_to(root), 'Exec workspace escapes root')
     partial_child = False
     if workspace.exists() and owner is not None:
-        with ProjectStore(owner)._db(True) as parent_db:
-            partial_child = _pending_partial_child(parent_db, workspace)
+        partial_child = ProjectStore(owner).pending_partial_child(workspace)
     if workspace.exists() and not partial_child:
         from rds_project import load_json
         previous = load_json(workspace / 'rds-exec-request.json')
@@ -571,7 +569,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
                                    executor_sha256=executor_sha256, existing_only=True)
             guard_ref = None
             if guard_path is not None:
-                with ProjectStore(workspace)._db(True) as db:
+                with ProjectStore(workspace).readonly() as db:
                     event = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' ORDER BY id DESC LIMIT 1").fetchone()
                 guard_ref = json.loads(event['body'])['report'] if event is not None else None
             if result.get('receipt') is None:
@@ -587,7 +585,7 @@ def execute(args, review=None, *, _native_preparation_root=None):
         ref = None
         if guard_path is not None:
             store = ProjectStore(workspace)
-            with store._db(True) as db:
+            with store.readonly() as db:
                 event = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='QUICK_EXEC_REGRESSION_REVIEW' ORDER BY rowid DESC LIMIT 1").fetchone()
             require(event is not None, 'Guard review is unfinished; inspect the retained job and allowance')
             ref = json.loads(event['body'])['report']

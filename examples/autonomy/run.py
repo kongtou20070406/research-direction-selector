@@ -88,7 +88,7 @@ from rds_math import blob
 from rds_domain_confirmation import _json,_ref
 from rds_postcommit_confirmation import records,_candidate,samples,metric
 store=ProjectStore('.')
-with store._db(True) as db:
+with store.readonly() as db:
     db.execute('BEGIN')
     contract=store._contract(db)
     declaration=contract['advisor_policy']['confirmation']
@@ -243,7 +243,7 @@ def main():
                                               'stdout': completed.stdout, 'stderr': completed.stderr})
         if completed.returncode:
             raise SystemExit('Entry failed; inspect ' + str(root / ('entry-' + name + '.json')))
-    with ProjectStore(root)._db(True) as db:
+    with ProjectStore(root).readonly() as db:
         runs = ProjectStore._runs(db)
         receipts = [ProjectStore._receipt(r) for r in db.execute('SELECT run_id,sha256,body FROM receipts')]
     summary = {'domain': args.domain, 'provider': args.provider, 'model_ability_measured': False,

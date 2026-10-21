@@ -125,5 +125,6 @@ python -B -m unittest discover -s tests -p 'test_rds_project*.py'
 | 6 | 批 1b 能消掉六成 | 未跑 | UNKNOWN |
 | 7 | 批 2 能消掉五成 | 未跑 | UNKNOWN |
 | 8 | `begin select` 是事务性读，不是写 | `block_kind_probe.py` 修正后 17 写 / 67 读 | 成立（第一版协议算错） |
+| 9 | 没有「SQL 藏在变量里」的块 | 86 个只读块里 19 个无 `execute` 调用、66 个字面 SQL、1 个 f-string | 成立（第二次误判在这里纠正） |
 
 后续每批一行，状态只填「成立 / 误判 / UNKNOWN」。

@@ -184,7 +184,7 @@ def read_project_receipt(root_text, digest_sha):
     try:
         from rds_project import ProjectStore, ReceiptIntegrityError
         store = ProjectStore(root_text)
-        with store._db(True) as db:
+        with store.readonly() as db:
             hits = db.execute("SELECT run_id,sha256,body FROM receipts WHERE sha256=? LIMIT 2",
                               (digest_sha,)).fetchall()
         if not hits:

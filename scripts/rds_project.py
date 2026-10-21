@@ -687,6 +687,65 @@ class ProjectStore:
                 yield db
 
     @contextmanager
+    def readonly(self):
+        """Borrow a read-only connection. The public sibling of `_db(True)`.
+
+        Seventy-six call sites outside this class used to reach for `_db(True)`
+        directly. That is one dependency spread over forty-one files: any change
+        to how a read-only connection is opened had to be checked against every
+        one of them. They all funnel through here now, so `_db` is private in
+        name and in use.
+        """
+        with self._db(True) as db:
+            yield db
+
+    def read_through(self, read, *args):
+        """Hand one read-only connection to a single ledger projection.
+
+        The ports below replace call sites that borrowed `_db(True)` only to
+        hand the connection straight back to a helper. Naming the value instead
+        of the connection keeps the read and the connection that serves it on
+        the same side of the boundary.
+
+        Projections that live above this module in the import graph are passed
+        in by the caller, so naming them here would not close a cycle.
+        """
+        with self._db(True) as db:
+            return read(db, *args)
+
+    def contract(self):
+        """The effective contract; raises `UNINITIALIZED` when none exists."""
+        return self.read_through(self._contract)
+
+    def run(self, run_id):
+        """One registered run; an unknown id raises `Unknown run ID`."""
+        return self.read_through(self._run, run_id)
+
+    def runs(self):
+        """Every registered run, decoded in ledger order."""
+        return self.read_through(self._runs)
+
+    def contract_history(self):
+        """The immutable contract revisions, oldest first."""
+        from rds_contract_read import contract_history
+        return self.read_through(contract_history)
+
+    def advisor_state(self):
+        """The owned Advisor state rebuilt from events, receipts and runs."""
+        from rds_owned_advisor import _state
+        return self.read_through(lambda db: _state(self, db))
+
+    def proposal_events(self, kinds):
+        """Autonomy events of the named kinds, oldest first."""
+        from rds_autonomy_read import _events
+        return self.read_through(_events, kinds)
+
+    def pending_partial_child(self, workspace):
+        """Whether a QUICK workspace is intent only, without a publication marker."""
+        from rds_quick_ledger import _pending_partial_child
+        return self.read_through(_pending_partial_child, workspace)
+
+    @contextmanager
     def _open_db(self, readonly=False, *, settlement=None, _materialization=None):
         require(_materialization is None or not readonly and settlement is None,
                 'Fresh QUICK materialization cannot read or settle an existing ledger')

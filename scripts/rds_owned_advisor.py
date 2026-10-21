@@ -78,7 +78,7 @@ def validate_policy(store, contract):
     retained = {}
     history = []
     if store.path.is_file() and 'method_evolution' in contract:
-        with store._db(True) as db:
+        with store.readonly() as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
                 from rds_method_revision import contract_history
                 history = contract_history(db)
@@ -442,7 +442,7 @@ def review(store, persist=True):
     from rds_advisor_choice import choice
     from rds_advisor import RDSAdvisor
     from rds_advisor_search import evaluate_condition
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         state = _state(store, db)
     fingerprint = _fingerprint(state)
@@ -715,8 +715,7 @@ def prepare_admission(store, spec):
     require(report['status'] == 'REVIEWED' and report['selected_run'] == spec.get('id')
             and report.get('analysis_coverage', {}).get('full') is True
             and report['selected_manifest'] == spec, 'Owned Advisor did not select this frozen manifest; inspect project next')
-    with store._db(True) as db:
-        contract = store._contract(db)
+    contract = store.contract()
     return {'fingerprint': report['fingerprint'], 'selected_run': report['selected_run'],
             'manifest_sha256': digest(spec), 'evidence_files': report['evidence_files'],
             'decision': prepare_decision(store, report, contract),

@@ -76,13 +76,16 @@ def resolve_source(store, relative):
     """Allow revision to consume only a ledger-bound workbench candidate."""
     path = _internal(store, relative)
     identifier = Path(relative).parts[2]
-    with store._db(True) as db:
+
+    def verify(db):
         event = _event(db, identifier)
         require(event is not None, 'Workbench candidate has no prepared event')
         request = _verified_bundle(store, event)
         require(request['candidate_source'] == relative, 'Only the workbench candidate is a revision source')
         require(contract_history(db)[-1]['sha256'] == request['parent_sha256'],
                 'Workbench parent differs from effective contract')
+
+    store.read_through(verify)
     return path
 
 
@@ -188,12 +191,16 @@ def _refresh(store, request, proposal_path):
             'Workbench replacement target/source changed')
     require(isinstance(proposal['reason'], str) and 1 <= len(proposal['reason'].strip()) <= 2048,
             'Workbench reason must be bounded and nonempty')
-    with store._db(True) as db:
+    policy = proposal['policy']
+
+    def revise(db):
         contract = contract_history(db)[-1]['contract']
         from rds_method_revision import _policy_change
         revised = deepcopy(contract)
-        revised['advisor_policy'] = proposal['policy']
+        revised['advisor_policy'] = policy
         _policy_change(store, db, contract, revised)
+
+    store.read_through(revise)
     source = _internal(store, request['candidate_source'])
     require(source.stat().st_size <= MAX_BYTES, 'Workbench candidate exceeds byte limit')
     replacement[0]['sha256'] = file_sha(source)

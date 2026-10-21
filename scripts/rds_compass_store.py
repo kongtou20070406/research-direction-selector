@@ -36,7 +36,7 @@ def store_for(root):
                      'experiment and a budget, then run: python -B scripts/rds_cli.py --root '
                      f'{_shell_argument(str(store.root))} compass init --declaration <file>. Nothing was initialized or run.')
     require(store.path.is_file(), uninitialized)
-    with store._db(True) as db:
+    with store.readonly() as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         missing = [name for name in LEDGER_TABLES if name not in tables]
         contract = 'contract' in tables and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone()
@@ -84,7 +84,7 @@ def _rows(db):
 def events(store, db=None, *, load=True):
     """Verified Compass events in ledger order, each with its CAS record."""
     if db is None:
-        with store._db(True) as connection:
+        with store.readonly() as connection:
             return events(store, connection, load=load)
     out, parent = [], None
     for row_id, body in _rows(db):
@@ -144,7 +144,7 @@ def append(store, kind, ident, value, *, guard=None, inside=None):
 def head(store, db=None):
     """Digest of the last Compass row: the state identity a decision binds."""
     if db is None:
-        with store._db(True) as connection:
+        with store.readonly() as connection:
             return head(store, connection)
     rows = _rows(db)
     return digest(rows[-1][1]) if rows else None
@@ -159,7 +159,7 @@ def settlement_order(db):
 def receipts(store, db=None):
     """All original run receipts, integrity-checked by the kernel decoder."""
     if db is None:
-        with store._db(True) as connection:
+        with store.readonly() as connection:
             return receipts(store, connection)
     out = {}
     for row in db.execute('SELECT run_id, sha256, body FROM receipts ORDER BY run_id'):
@@ -169,7 +169,7 @@ def receipts(store, db=None):
 
 def runs(store, db=None):
     if db is None:
-        with store._db(True) as connection:
+        with store.readonly() as connection:
             return runs(store, connection)
     return {run['id']: run for run in ProjectStore._runs(db)}
 

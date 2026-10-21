@@ -18,8 +18,7 @@ from rds_project import digest
 def _recover(store, state, runs):
     """Finish original attempts; never start a second attempt of the same run."""
     for run_id in runs:
-        with store._db(True) as db:
-            run = store._run(db, run_id)
+        run = store.run(run_id)
         if run['status'] == 'RESERVED' and run['attempt_id'] is None:
             store.execute(run_id)  # Registered but never started: start the original reservation.
             continue

@@ -210,7 +210,7 @@ def _charge_validation(ledger, workspace, token, timeout):
     state = parent.snapshot(check_bindings=True)
     require(not state['binding_check']['errors'], 'Parent validation budget bindings changed')
     request = {'tool_validation': token}
-    with parent._db(True) as db:
+    with parent.readonly() as db:
         contract = parent._contract(db)
         require('advisor_policy' not in contract and 'stop_policy' not in contract
                 and 'maintenance_allowance' not in contract and 'execution_policy' not in contract
@@ -245,8 +245,7 @@ def validate(root, name, case_file, timeout=10, ledger=None, *, comparison=None)
     _qualification_root(root)
     store = ProjectStore(root)
     if store.path.is_file():
-        with store._db(True) as db:
-            _preparation_contract(store, db)  # Repeat atomically before launch.
+        store.read_through(lambda db: _preparation_contract(store, db))  # Repeat atomically before launch.
     name = _name(name)
     candidate = get(root, 'tool:' + name)
     require(candidate is not None, 'Extract a named tool candidate first')
