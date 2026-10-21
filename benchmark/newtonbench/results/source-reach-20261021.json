@@ -1,0 +1,488 @@
+{
+  "schema": 1,
+  "budget": 8,
+  "equations": [
+    "feynman-I.41.16",
+    "feynman-II.24.17",
+    "feynman-III.10.19",
+    "feynman-I.40.1",
+    "feynman-I.10.7",
+    "feynman-I.6.20a",
+    "feynman-I.8.14",
+    "feynman-I.18.4",
+    "feynman-I.27.6",
+    "feynman-II.34.11"
+  ],
+  "measurement": "RDS source-reach pre-registered probe (size > 7 equations, B=8); external source-generation cost is UNKNOWN",
+  "rows": [
+    {
+      "equation": "feynman-I.41.16",
+      "variant": "no-source",
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "counterexamples": null,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 0,
+        "max_abs_error": null,
+        "tolerance": null,
+        "reason": "NOT_CLAIMED"
+      },
+      "law": null,
+      "wall_seconds": 388.207
+    },
+    {
+      "equation": "feynman-I.41.16",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "0",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "omega": "739209415000000000000000/540324839",
+          "T": "1278462000/217727"
+        }
+      },
+      "law": "(((omega ** 3) * (1054571817/10000000000000000000000000000000000000000000)) / (((pi ** 2) * (299792458 ** 2)) * (exp((((1054571817/10000000000000000000000000000000000000000000) * omega) / ((1380649/100000000000000000000000000000) * T))) - 1)))",
+      "wall_seconds": 28.075
+    },
+    {
+      "equation": "feynman-II.24.17",
+      "variant": "no-source",
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "counterexamples": null,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 0,
+        "max_abs_error": null,
+        "tolerance": null,
+        "reason": "NOT_CLAIMED"
+      },
+      "law": null,
+      "wall_seconds": 415.027
+    },
+    {
+      "equation": "feynman-II.24.17",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "1/1000",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "omega": "1919301381000000000000/540324839",
+          "d": "206567/43545400"
+        }
+      },
+      "law": "sqrt((((omega ** 2) / (299792458 ** 2)) - ((pi ** 2) / (d ** 2))))",
+      "wall_seconds": 25.923
+    },
+    {
+      "equation": "feynman-III.10.19",
+      "variant": "no-source",
+      "error": "TIMEOUT",
+      "wall_seconds": 900.202
+    },
+    {
+      "equation": "feynman-III.10.19",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "1/1000",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "mom": "938093991/540324839",
+          "Bx": "773258/217727",
+          "By": "-1174762419/696322387",
+          "Bz": "1893075857/422002648"
+        }
+      },
+      "law": "(sqrt((((Bx ** 2) + (By ** 2)) + (Bz ** 2))) * mom)",
+      "wall_seconds": 113.676
+    },
+    {
+      "equation": "feynman-I.40.1",
+      "variant": "no-source",
+      "error": "TIMEOUT",
+      "wall_seconds": 900.135
+    },
+    {
+      "equation": "feynman-I.40.1",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "1/1000",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "n_0": "938093991/540324839",
+          "m": "206567/435454000000000000000000000000",
+          "x": "108851062600/696322387",
+          "T": "72042651875/211001324"
+        }
+      },
+      "law": "(exp(((((-m) * (196133/20000)) * x) / ((1380649/100000000000000000000000000000) * T))) * n_0)",
+      "wall_seconds": 166.862
+    },
+    {
+      "equation": "feynman-I.10.7",
+      "variant": "no-source",
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "counterexamples": null,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 0,
+        "max_abs_error": null,
+        "tolerance": null,
+        "reason": "NOT_CLAIMED"
+      },
+      "law": null,
+      "wall_seconds": 386.644
+    },
+    {
+      "equation": "feynman-I.10.7",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "1/1000",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "m_0": "938093991/540324839",
+          "v": "52339250000000/217727"
+        }
+      },
+      "law": "(m_0 / sqrt((1 - ((v ** 2) / (299792458 ** 2)))))",
+      "wall_seconds": 14.227
+    },
+    {
+      "equation": "feynman-I.6.20a",
+      "variant": "no-source",
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "counterexamples": null,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 0,
+        "max_abs_error": null,
+        "tolerance": null,
+        "reason": "NOT_CLAIMED"
+      },
+      "law": null,
+      "wall_seconds": 42.042
+    },
+    {
+      "equation": "feynman-I.6.20a",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "1/1000",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "theta": "-1024320789/540324839"
+        }
+      },
+      "law": "(exp(((-(theta ** 2)) / 2)) / sqrt((pi * 2)))",
+      "wall_seconds": 54.887
+    },
+    {
+      "equation": "feynman-I.8.14",
+      "variant": "no-source",
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "counterexamples": null,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 0,
+        "max_abs_error": null,
+        "tolerance": null,
+        "reason": "NOT_CLAIMED"
+      },
+      "law": null,
+      "wall_seconds": 699.26
+    },
+    {
+      "equation": "feynman-I.8.14",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "1/1000",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "x1": "298326864/540324839",
+          "y1": "407554/217727",
+          "x2": "870628271/696322387",
+          "y2": "3159083801/844005296"
+        }
+      },
+      "law": "sqrt((((x2 - x1) ** 2) + ((y2 - y1) ** 2)))",
+      "wall_seconds": 113.176
+    },
+    {
+      "equation": "feynman-I.18.4",
+      "variant": "no-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "0",
+        "tolerance_rel": "0",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "m1": "838651703/540324839",
+          "r1": "583431/217727",
+          "m2": "870628271/696322387",
+          "r2": "3014458879/844005296"
+        }
+      },
+      "law": "(((m1 * r1) + (m2 * r2)) / (m1 + m2))",
+      "wall_seconds": 397.442
+    },
+    {
+      "equation": "feynman-I.18.4",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "0",
+        "tolerance_rel": "0",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "m1": "838651703/540324839",
+          "r1": "583431/217727",
+          "m2": "870628271/696322387",
+          "r2": "3014458879/844005296"
+        }
+      },
+      "law": "(((m1 * r1) + (m2 * r2)) / (m1 + m2))",
+      "wall_seconds": 81.556
+    },
+    {
+      "equation": "feynman-I.27.6",
+      "variant": "no-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "0",
+        "tolerance_rel": "0",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "d1": "838651703/1080649678",
+          "n": "421504/217727",
+          "d2": "413525900/696322387"
+        }
+      },
+      "law": "(d2 / ((d2 / d1) + n))",
+      "wall_seconds": 15.269
+    },
+    {
+      "equation": "feynman-I.27.6",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "0",
+        "tolerance_rel": "0",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "d1": "838651703/1080649678",
+          "n": "421504/217727",
+          "d2": "413525900/696322387"
+        }
+      },
+      "law": "(1 / ((1 / d1) + (n / d2)))",
+      "wall_seconds": 17.755
+    },
+    {
+      "equation": "feynman-II.34.11",
+      "variant": "no-source",
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "counterexamples": null,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 0,
+        "max_abs_error": null,
+        "tolerance": null,
+        "reason": "NOT_CLAIMED"
+      },
+      "law": null,
+      "wall_seconds": 873.785
+    },
+    {
+      "equation": "feynman-II.34.11",
+      "variant": "truth-source",
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "counterexamples": 0,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "0",
+        "tolerance_rel": "0",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "g_factor": "639767127/540324839",
+          "q": "393604/217727",
+          "B": "827051800/696322387",
+          "m": "982694159/211001324"
+        }
+      },
+      "law": "(((g_factor * q) * B) / (2 * m))",
+      "wall_seconds": 20.838
+    }
+  ]
+}
