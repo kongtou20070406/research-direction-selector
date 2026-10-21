@@ -423,17 +423,6 @@ def _cap(plan):
     return plan['budget'].get('max_experiments') or len(plan['candidates'])
 
 
-def _gap_wide_enough(state):
-    """A gap is worth buying only when it is wider than the closest pair already measured."""
-    plan = state['plan']
-    if len(plan['inputs']) != 1:
-        return False
-    name = next(iter(plan['inputs']))
-    seen = sorted(env(state, candidate(state, ident))[name] for ident in state['observations'])
-    gaps = [right - left for left, right in zip(seen, seen[1:])]
-    return bool(gaps) and max(gaps) > min(gaps)
-
-
 def _barren(state, jump):
     """A jump that added no rival at its evidence: ask again only after new evidence."""
     if any(tool['seq'] > jump['seq'] for tool in state['proposed_tools'].values()):
