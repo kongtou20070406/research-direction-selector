@@ -170,6 +170,21 @@ def certify_arm(row, law, *, claimed, exponent):
     return row
 
 
+def cost_per_correct(rows):
+    """Experiments per solved equation, the horizontal axis of the front.
+
+    Each arm trades accuracy against experiments, and the comparison is only a
+    front when both axes come from the same rows. Null when nothing was solved.
+    """
+    exact = [r for r in rows if r.get('claim_exact')]
+    experiments = sum(r.get('experiments') or 0 for r in rows)
+    return {'correct_count': len(exact),
+            'experiments_total': experiments,
+            'experiments_per_correct': round(experiments / len(exact), 3) if exact else None,
+            'cost_per_correct_rule': 'experiments over the arm divided by the rows whose law '
+                                     'reproduced the target with 0 counterexamples'}
+
+
 def summarize(rows):
     """Top-level rate per arm; null + NO_CLAIMS when that arm claimed nothing (never 0.0)."""
     out = {}
@@ -183,7 +198,8 @@ def summarize(rows):
                     'claimed_count': len(claimed),
                     'checkable_claimed_count': len(known),
                     'false_certification_status': 'NO_CLAIMS' if not known else
-                    'ZERO_FALSE_CERTIFICATIONS' if not count else 'FALSE_CERTIFICATIONS_FOUND'}
+                    'ZERO_FALSE_CERTIFICATIONS' if not count else 'FALSE_CERTIFICATIONS_FOUND',
+                    **cost_per_correct(mine)}
     # Every cell still carries claimed / false_certification, so a whole-file rate is meaningful.
     known = [r for r in rows if r.get('claimed') and r.get('false_certification') is not None]
     count = sum(1 for r in known if r['false_certification'])
@@ -197,6 +213,7 @@ def summarize(rows):
                                          'NO_CLAIMS' if not known else
                                          'ZERO_FALSE_CERTIFICATIONS' if not count else
                                          'FALSE_CERTIFICATIONS_FOUND')
+    out.update(cost_per_correct(rows))
     return out
 
 

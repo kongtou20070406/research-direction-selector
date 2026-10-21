@@ -295,7 +295,8 @@ def certify_run(run, spec=None):
 #: Fields that cannot repeat between two runs of the same sweep, by construction.
 #: A wall-clock reading and a mkdtemp() root differ every time; an acceptance
 #: check that compares them byte for byte fails a correct seam every time.
-UNSTABLE_FIELDS = ('seconds', 'campaign_root', 'elapsed_seconds')
+UNSTABLE_FIELDS = ('seconds', 'campaign_root', 'elapsed_seconds',
+                   'seconds_total', 'seconds_per_correct')
 
 
 def comparable(document):
@@ -308,6 +309,26 @@ def comparable(document):
     kept['runs'] = [{k: v for k, v in run.items() if k not in UNSTABLE_FIELDS}
                     for run in document.get('runs', [])]
     return kept
+
+
+def cost_per_correct(runs):
+    """What one correct solution actually cost, in the two units the sweep records.
+
+    `claim_exact` is the only correctness signal a sweep has, and it is assigned
+    outside the campaign, so this ratio belongs in the result file rather than in
+    the ledger. Both ratios stay null when nothing was solved: a cheap failure is
+    not a cheap success, and dividing by a zero correct count would say it was.
+    """
+    exact = [r for r in runs if r.get('claim_exact')]
+    experiments = sum(r.get('experiments') or 0 for r in runs)
+    seconds = sum(r.get('seconds') or 0 for r in runs)
+    return {'correct_count': len(exact),
+            'experiments_total': experiments,
+            'seconds_total': round(seconds, 1),
+            'experiments_per_correct': round(experiments / len(exact), 3) if exact else None,
+            'seconds_per_correct': round(seconds / len(exact), 1) if exact else None,
+            'cost_per_correct_rule': 'totals over the whole sweep divided by the number of '
+                                     'runs whose law reproduced truth with 0 counterexamples'}
 
 
 def summarize(runs):
@@ -331,7 +352,8 @@ def summarize(runs):
             'false_certification_status': 'NO_RUNS' if not runs else
             'DEGRADED' if len(degraded) * 2 > len(runs) else
             'NO_CLAIMS' if not known else
-            'ZERO_FALSE_CERTIFICATIONS' if not false_cert else 'FALSE_CERTIFICATIONS_FOUND'}
+            'ZERO_FALSE_CERTIFICATIONS' if not false_cert else 'FALSE_CERTIFICATIONS_FOUND',
+            **cost_per_correct(runs)}
 
 
 def backfill(document):
