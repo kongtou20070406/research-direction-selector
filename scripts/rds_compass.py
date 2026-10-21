@@ -517,7 +517,8 @@ def decide(state):
         if can_buy and (len(probes_since) < plan['escape']['probe_points'] or allow_gap):
             # An uncovered gap is evidence the regime boundary is still unknown; keep probing it
             # while the experiment budget still leaves room for the required confirmations.
-            return {'action': 'PROBE', 'candidate': boundary or _spread(state, 1)[0], 'basin': diagnosis}
+            return {'action': 'PROBE', 'candidate': boundary or _spread(state, 1)[0], 'basin': diagnosis,
+                    'reason': 'BASIN_BOUNDARY_PROBE'}
         return {'action': 'ESCAPE', 'basin': diagnosis}
     if len(rows) >= 2 and can_buy:
         adjudicable = [{**h, 'predict': {k: v for k, v in h['predict'].items() if k in tolerances}} for h in rows]
@@ -538,7 +539,8 @@ def decide(state):
                 return {'action': 'HANDOFF', 'reason': 'SEARCH_EXHAUSTED', 'basin':
                         {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG', 'excluded': ranking.get('excluded', [])[:16]}}
             return {'action': 'ESCAPE', 'basin': {**diagnosis, 'trigger': 'LOW_MARGINAL_EIG',
-                    'ranked_total': len(ranking.get('excluded', [])), 'excluded': ranking.get('excluded', [])[:16],
+                    'ranked_total': ranking.get('ranked_total', 0),
+                    'excluded_total': len(ranking.get('excluded', [])), 'excluded': ranking.get('excluded', [])[:16],
                     'top_eig_per_cost': None, 'median_eig_per_cost': _median_eig(state)}}
     observed_count = len(state['observations'])
     tried = any(d['action'] == 'RIVALS' and d['observations'] == observed_count for d in state['decisions'])
