@@ -319,7 +319,13 @@ def main(out_path):
                  'status': result['status'], 'claim': claim,
                  'claim_exact': score(expr, law) if (expr and claimed) else 0,
                  'best_effort_exact': score(best_expr, law) if best_expr else 0,
-                 'exact_match': score(expr, law) if expr else 0},
+                 'exact_match': score(expr, law) if expr else 0,
+                 # A cell can hold the right law and still be graded 0, because a claim needs
+                 # `required_confirmations` measurements taken after the law entered the
+                 # rulebook.  Without these two the file says 'wrong' where the kernel said
+                 # 'right but unconfirmed', and the difference only shows up in a fresh trace.
+                 'confirmations': verification.get('novel_confirmations', 0),
+                 'required_confirmations': verification.get('required_confirmations', 0)},
                 law, claimed=claimed and bool(expr), exponent=expr))
             print(json.dumps(rows[-1]))
     # The file becomes {"schema": 2, "rows": [...], ...rate...}. It used to be a bare list;
