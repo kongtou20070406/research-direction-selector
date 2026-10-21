@@ -36,12 +36,23 @@ def frozen_ast(node):
     return node
 
 
+def private_reads(node):
+    # 2a75c78 renamed `store._db(True)` to its public forwarder `store.readonly()`. Undo that
+    # rename and nothing else, so the hashes above still pin the original bodies.
+    for call in ast.walk(node):
+        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == 'readonly' and not call.args and not call.keywords):
+            call.func.attr = '_db'
+            call.args = [ast.Constant(value=True, kind=None)]
+    return node
+
+
 class ResultRecordTests(unittest.TestCase):
     def test_exact_old_bodies_and_aliases(self):
         for name, expected in OLD_AST.items():
             function = getattr(records if name == 'brief' else values, name)
             self.assertIs(getattr(quick, name), function)
-            node = ast.parse(inspect.getsource(function)).body[0]
+            node = private_reads(ast.parse(inspect.getsource(function)).body[0])
             self.assertEqual(hashlib.sha256(json.dumps(frozen_ast(node), ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest(), expected, name)
 
     def test_full_record_is_preserved_and_summary_is_bounded(self):

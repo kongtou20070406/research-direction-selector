@@ -22,7 +22,7 @@ from rds_output_values import _brief_move, serialize_brief, compact_brief_planni
 from rds_result_record import brief
 from rds_quick_ledger import (
     _policy_route, _charge_ledger, _checkpoint_name, _validate_recorded_choice,
-    _pending_quick_choices, _publish_quick_request,
+    _pending_quick_choices, _publish_quick_request, _pending_partial_child,
     _is_unmaterialized_allowance, _prospective_completion, _complete_prospective,
     _recover_prospective,
 )
