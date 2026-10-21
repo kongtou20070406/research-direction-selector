@@ -26,7 +26,7 @@ the rule below was rewritten; none are taken on trust.
 Two more findings shaped the design rather than just the checks:
 
 - `_fits` is called from three places only — `generate_rivals`
-  (`scripts/rds_compass.py:915`), and `escape` (`:1190`, `:1196`). Short-circuiting
+  (`scripts/rds_compass.py:913`), and `escape` (`:1192`, `:1198`). Short-circuiting
   at its top would turn a rival into a copy of the surviving hypothesis, and would
   hand the same refuted hypothesis back to the escape path that just killed it.
 - The v1 reversion trigger said "the seam is one `if` at the top of `_fits`; if it
@@ -44,23 +44,47 @@ and already marks each one `origin: 'declared'`. It also already records
 enumeration is present in the code, with nothing acting on it.
 
 What is missing is that `decide` never asks where a hypothesis came from.
-`scripts/rds_compass.py:546` sends every surviving set into `RIVALS` regardless,
+`scripts/rds_compass.py:549` sends every surviving set into `RIVALS` regardless,
 so a declared hypothesis is immediately followed by an enumeration round.
 
 ## 2. The seam, stated honestly
 
-This stage touches `scripts/rds_compass.py` in **two** places, and that is the
-design, not a shortcut:
+This stage touches `scripts/rds_compass.py` in **one** place. The earlier revision
+of this section said two, and the second one was wrong. It assumed a declared
+hypothesis had to be pulled into the rival set by `generate_rivals`; the fold
+already does that, so a second wiring would carry no information and could not be
+tested for causing anything.
 
-1. `:546` — the `RIVALS` branch skips the round when every surviving hypothesis is
+The reason is in the code v1 was written against. `fold()` seeds every declared
+hypothesis into the state on each read (`scripts/rds_compass.py:72-73`):
+
+    for hyp in plan['hypotheses']:
+        state['hypotheses'][hyp['id']] = {**hyp, 'seq': 0, 'anchor': _anchor(evs[0])}
+
+and `live()` (`:192`) filters that same mapping by status. A declared hypothesis
+is therefore in the rival set from the first decision onwards; `generate_rivals`
+never had to fetch it. That function's only job is to append the rivals `_fits`
+synthesized — and whether that search runs is exactly what the one seam below
+decides. A declared hypothesis "preferred as a rival" would be a hypothesis that
+is already there, selected by nothing.
+
+So one seam:
+
+1. `:549` — the `RIVALS` branch skips the round when every surviving hypothesis is
    declared. A declared set is not missing competitors; it is a set the caller
    asserted. Enumeration still runs the moment a declared hypothesis is refuted,
-   because the assertion has then failed and the evidence is the only thing left.
-2. `:915` — `generate_rivals` prefers a declared hypothesis that has not been used
-   as a rival yet, and only falls back to `_fits` when none remain.
+   because `live()` then no longer returns it: the assertion has failed and the
+   evidence is the only thing left.
 
-`_fits` itself does not change. Nothing about `decide`'s ordering changes for
-campaigns without the block.
+`_fits` itself does not change (`generate_rivals` calls it at `:917`, `escape` at
+`:1192` and `:1198` — all as of `5cb73ff`). Nothing about `decide`'s ordering
+changes for campaigns without the block.
+
+The seam is implemented as `_all_declared(rows)` just after `live()` (the helper
+reads `origin`, which `initialize` already writes for every declared hypothesis —
+`scripts/rds_compass_declaration.py:229-236`). Inserting it there moves the branch
+to `:554` and `def generate_rivals` to `:918`; the `5cb73ff` line numbers above are
+the ones a reader of that commit sees.
 
 ## 3. Acceptance, decided before the run
 
@@ -89,12 +113,13 @@ Any of the following means stop rather than work around:
 
 - Check 1 differs on any equation in a field `comparable()` keeps.
 - A campaign with the block still ends a `RIVALS` round with all-declared
-  survivors — the `:546` branch did not take effect.
+  survivors — the `:549` branch did not take effect.
 - A campaign with the block reports a claim while a declared hypothesis has
   `tested == 0`. That is `CONSISTENT`-as-validated arriving early.
-- Making the block work requires a third file under `scripts/`. The two places in
-  §2 are the seam; a third means the origin marker is not carrying the
-  information and the design needs another look.
+- Making the block work requires an edit to `generate_rivals`. The declared
+  hypotheses are already in the rival set after every `fold`; extra wiring there
+  means the origin marker is not carrying the information and the design needs
+  another look.
 
 ## 5. What this stage deliberately does not do
 

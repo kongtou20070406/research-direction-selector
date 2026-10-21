@@ -194,6 +194,11 @@ def live(state):
                   key=lambda h: (-model.prior(h), h['id']))
 
 
+def _all_declared(rows):
+    """A declared set is not missing competitors; it is a set the caller asserted."""
+    return bool(rows) and all(h.get('origin') == 'declared' for h in rows)
+
+
 def attempts(item):
     """The declared attempt slots of one candidate: the original and one retry slot."""
     return [{k: item[k] for k in ('run_id', 'output', 'argv')}] + ([item['retry']] if 'retry' in item else [])
@@ -546,7 +551,7 @@ def decide(state):
     tried = any(d['action'] == 'RIVALS' and d['observations'] == observed_count for d in state['decisions'])
     # RIVALS gets its turn before EIG exhaustion is declared: a single surviving hypothesis may
     # still be joined by a rival the wide search has not offered yet.
-    if rows and can_buy and not tried and observable in tolerances:
+    if rows and can_buy and not tried and observable in tolerances and not _all_declared(rows):
         return {'action': 'RIVALS', 'live': [h['id'] for h in rows]}
     if len(rows) == 1 and can_buy and not diagnosis['trigger']:
         # The lone-survivor route draws on the same jump budget as the branch above. Spent, it skips

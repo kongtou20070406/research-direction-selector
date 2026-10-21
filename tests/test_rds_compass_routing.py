@@ -36,11 +36,18 @@ class EigRoutingTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def campaign(self, name, **overrides):
+    def campaign(self, name, hypotheses=HYPOTHESES, **overrides):
         root = self.base / name
-        declaration = fx.law_campaign(root, LAW, XS, hypotheses=HYPOTHESES, agent='reject', **overrides)
+        declaration = fx.law_campaign(root, LAW, XS, hypotheses=hypotheses, agent='reject', **overrides)
         self.assertEqual(initialize(root, declaration)['status'], 'INITIALIZED')
         return root
+
+    def seed(self, root, ident, expression):
+        """A survivor that arrived from outside the declaration, not ``origin='declared'``."""
+        store = cstore.store_for(root)
+        hyp = compass.model.compile_hypothesis(
+            {'id': ident, 'predict': {'y': expression}, 'origin': 'staged'}, ['x'], ['y'])
+        cstore.append(store, 'HYPOTHESIS', ident, hyp)
 
     def record(self, root, *steps):
         store = cstore.store_for(root)
@@ -80,7 +87,10 @@ class EigRoutingTests(unittest.TestCase):
         self.assertEqual(len(compass.fold(store)['jumps']), 1)
 
     def test_a_lone_survivor_gets_the_rival_offer_before_an_eig_jump(self):
-        root = self.campaign('rivals-first')
+        root = self.campaign('rivals-first', hypotheses=())
+        # Stage 2 skips the offer for a declared survivor, so the pre-existing route needs a
+        # survivor from outside the declaration: the order it pins is unchanged.
+        self.seed(root, 'lin', 'x+1')
         self.assertEqual([h['id'] for h in compass.live(compass.fold(cstore.store_for(root)))], ['lin'])
         result = drive(root, max_steps=2, publish=False)
         self.assertEqual([step['action'] for step in result['steps']], ['RIVALS', 'ESCAPE'])
