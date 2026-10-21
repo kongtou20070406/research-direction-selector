@@ -128,3 +128,59 @@ python -B -m unittest discover -s tests -p 'test_rds_project*.py'
 | 9 | 没有「SQL 藏在变量里」的块 | 86 个只读块里 19 个无 `execute` 调用、66 个字面 SQL、1 个 f-string | 成立（第二次误判在这里纠正） |
 
 后续每批一行，状态只填「成立 / 误判 / UNKNOWN」。
+
+## 10. 批 1a 的例外，和 1b 的口径修正
+
+本节追加，不改动上面已生效的条款。§2 的门槛和 §1 的主指标在 1a 跑完后被发现有两处
+与实际不符，记录如下，后续批次按本节的口径执行。
+
+### 10.1 1a 的门槛「全消」只做到 18/19
+
+19 块里消掉 18，剩 `scripts/rds_workspace.py:562` 的 `binding_writer`。它把**写**连接
+`yield` 给外部跑 `BEGIN IMMEDIATE` 和 `WORKSPACE_BOUND` 事务，不是「借连接调 helper」。
+要消掉它得把 40 行事务搬进 `ProjectStore`，那是 §7 明令禁止的「搬动时顺手重写业务逻辑」。
+裁定：该块改判 `OUT_OF_SCOPE`，1a 记 18/19 完成，门槛按「除裁定例外外全消」执行。
+
+其余 18 处为什么能消：`store.read_through(fn)` 把「借连接」和「传入」合成一步，`fn`
+拿到的是连接而不是 store，所以不存在 `store` 与 `db` 谁先谁后的歧义。这个形状对
+「块内无 SQL、只把 db 传给 helper」是通用的。
+
+### 10.2 1b 不能用块数当主指标
+
+`_db(True)` → `readonly()` 那 84 处改名让 `external` 从 103 掉到 28，看起来砍掉 73%，
+实际只读块一个没少——旧探测器只认 `_db`，改名后看不见了。补上 `readonly()` 和
+`read_through()` 之后真实数字是 85（67 reads + 17 writes + 1 delegate）。
+
+**所以块数这个主指标只能证明「块真的不在了」，不能证明「SQL 不再分散」。** 1b 要治的
+是后者：同一个「这张表存在吗」的查询抄了二十多遍。改法是模块级
+`has_table(db, name)`（`scripts/rds_project_read_services.py`），调用点每处只换一行。
+块数不变，不减块是正确的——块里仍然借连接、仍然 `execute`，只是不再自己拼 SQL。
+
+1b 的主指标改成：**`sqlite_master` 字面量数**，从 26 降到 4（三处特殊形态 + `has_table`
+实现本身）。降不到 4 就说明还有手写副本。
+
+不做全投影化：67 个只读块散在 36 个文件、读的表各不相同，做投影要 36 个具名方法，
+每个都得定返回形状和边界，收益（少几个 SQL 字面量）远小于把 36 个文件重新过一遍的
+风险。**只收「同一个查询重复多次」的部分，不收「每个查询只出现一次」的部分。**
+
+### 10.3 批 2（17 个写块）单独立项，不与 1a/1b 合并
+
+17 处全部带 `begin`（`scripts/rds_autonomy.py:462/711`、`scripts/rds_structure.py:225/261/273`、
+`scripts/rds_method_revision.py:179/274`、`scripts/rds_owned_advisor.py:430`、
+`scripts/rds_owned_tools.py:242`、`scripts/rds_project_lifecycle.py:358`、
+`scripts/rds_quick.py:752`、`scripts/rds_steering.py:127`、`scripts/rds_tms_store.py:65`、
+`scripts/rds_tool_workbench.py:238`、`scripts/rds_tools.py:170`、`scripts/rds_compass_store.py:121`），
+写的是不同表。它们不能靠投影消掉：读可以投影成「取一个值」，写必须有明确的事务语义
+（写哪张表、和哪次读取同事务、失败怎么回滚）。
+
+改法是为每一类写操作设计具名写 API，那是 feature 级改动，不是 refactor。本轮不做，
+理由是它和 §1 的目标（让 schema 变更可定位）关系较弱——写 SQL 的表名已经写在语句里，
+真正的问题是「33 处写操作里哪些必须和读同事务」，那要先有事务边界地图，而地图还没有。
+
+### 10.4 本节之后的主指标
+
+- 1a：`external delegates` 从 19 降到 1。
+- 1b：`sqlite_master` 字面量从 26 降到 4。
+- 批 2：`external writes` 从 17 降到 ≤8，且每处附具名写方法名。
+
+三个指标互不替代。任何一批宣布完成，都要单独报自己那一栏。
