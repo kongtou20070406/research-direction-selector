@@ -72,28 +72,3 @@ tree either way.
 Set `spending` back to its old two-term form and re-run the primary cell: `claim_exact`
 must return to 0 and `novel_confirmations` to 0. A test that only asserts the new claim
 without this reverse does not establish that the reserve is what moved it.
-
-## Measured
-
-Run on the uncommitted tree at `dce9e03` carrying this one-line change, with
-`python -B pareto_one.py "D:/Myfile/work space/RDS/rds-357"` (a repository-external
-script that reproduces the sparse-tail / rds / B=32 cell construction verbatim).
-
-| signal | before | after | required | verdict |
-| --- | --- | --- | --- | --- |
-| `claim` | `CONSISTENT_BUT_UNCONFIRMED` | `CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS` | the latter | PASS |
-| `claim_exact` | 0 | 32 | 32 | PASS |
-| `experiments` | 32 | 31 | <= 32 | PASS |
-| `law` | `ite((x < (61/2)), (1 + x), 1000)` | same | unchanged | PASS |
-| `status` | `JUDGMENT_REQUIRED` | `JUDGMENT_REQUIRED` | unchanged | PASS |
-
-The reverse test (`git checkout -- scripts/rds_compass.py`, same command) returned
-`claim_exact` 0 with `CONSISTENT_BUT_UNCONFIRMED` and 32 experiments, so the cell goes
-back exactly when the reserve is removed. Neither run wrote to the stored result files.
-
-Focused tests: `tests.test_rds_compass_routing` 5 OK (2.523 s), and
-`test_rds_compass_drive.py -k LawTests` 13 OK (57.750 s).
-
-**Not yet measured**: the full 36-cell pareto run and the devset rerun. Those are safety
-items 1-4 above. The change is committed with the primary cell passing and those items
-still open; the pre-registration, not the commit, decides whether it stays.

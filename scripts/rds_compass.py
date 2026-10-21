@@ -570,9 +570,7 @@ def decide(state):
         # Not gated on gaps: an isolated exception between measured neighbours is found only by
         # measuring it, and a gap rule never spends on a multi-input law. A caller that wants an
         # earlier claim declares spend_budget: false, and the claim then reports its coverage.
-        left = _cap(plan) - spent
-        reserve = 2 * plan['verification']['confirmations'] + len(plan.get('holdout') or [])
-        spending = spend and (not cap or bought < cap) and left > reserve
+        spending = spend and (not cap or bought < cap)
         if confirmed or spending:
             # Falsification test: a fitted law must survive predictions it did not see. While budget
             # remains, a leader is tested at the uncovered inputs before any claim is made.
