@@ -1,12 +1,12 @@
 # Pareto A/B: `5cb73ff` (Stage 2 之前) vs `601bc53` (HEAD)
 
 日期 2026-10-21。分支 `release/6.0.0-compass`。
-本文件记录一次干净的单格 A/B：同一份 `pareto.py`，同一台机器，父提交与 HEAD 各跑一次全量，逐字段比对。
+本文件记录一次干净的全量 A/B：同一份 `pareto.py`，同一台机器，父提交与 HEAD 各跑一次全量，逐字段比对。
 
 ## 0. 结论
 
 - `rows` 36 行 **0 处差异**，`rds` 与 `baseline-uniform` 两个聚合块 **0 处差异**，顶层字段 **0 处差异**。
-- 两份结果文件**字节级相同**：`sha256 4427103142449ded3f9bb4cccb0cf30b0770154863655d8eab95b80fb1b35037`，大小同为 28947 字节。
+- 三份结果文件（`pareto-pre-stage2.json`、`pareto-stage2.json`、`pareto-stage2-nostage2.json`）**字节级相同**：规范化换行后 `sha256 12da476e8c9ca37e2bed03efb60206ac51d1fb56017670c140f2996b77784bc6`，大小同为 27967 字节。工作区原始文件是 CRLF（28947 字节，`sha256 4427…35037`），`.gitattributes` 的 `* text=auto eol=lf` 会在入库时转成 LF，以 LF 版为准。
 - 可归因于 `639e19f` / `890f8d1` / `601bc53` 的差异：**0 处**。**UNKNOWN 清单：空**。
 - `pareto-stage2.json` 里 `rds` 块的那一条假认证在第 6 节；两份文件中该行也完全相同。
 
@@ -53,7 +53,7 @@ python -B benchmark/newtonbench/pareto.py "D:/Myfile/work space/RDS/rds-357/benc
 python -B benchmark/newtonbench/pareto.py "D:/Myfile/work space/RDS/rds-357/benchmark/newtonbench/results/pareto-stage2.json"
 ```
 
-- 那次运行的耗时**没有记录**；`pareto-stage2.json` 的 mtime 是 2026-10-21 11:11:37，`601bc53` 提交于 11:07:03，`639e19f` 提交于 11:05:34。本次没有重跑 HEAD，因为父提交的产出先跑出来就与 HEAD 文件字节相同（见第 3 节），重跑不会增加信息。
+- 那次运行的耗时**没有记录**；`pareto-stage2.json` 的 mtime 是 2026-10-21 11:11:37，`601bc53` 提交于 11:07:03，`639e19f` 提交于 11:05:34。本次没有重跑 HEAD，因为父提交跑完后与既有 `pareto-stage2.json` 字节相同（见第 3 节），重跑不会增加信息。
 
 删工作树（结果文件已确认在主仓后才删）：
 
@@ -182,7 +182,7 @@ git -C "D:/Myfile/work space/RDS/rds-357" worktree remove --force "D:/Myfile/wor
 
 为什么这条链上的三个 commit 本来就可能不改变输出：
 
-- `639e19f feat(compass): let a declared hypothesis set stand on its own` 的唯一代码改动在 `scripts/rds_compass.py:554`：RIVALS 条件追加 `and not _all_declared(rows)`（`_all_declared` 定义在 `:197`）。它减少的是 RIVALS 轮次（决策步数），不是购买的观测点。该 commit 的 message 自述：`sparse-mid, budget 8` 从 17 步降到 10 步、8 轮 RIVALS 消失，且 **"the purchased points and the final claim unchanged"**。`pareto.py` 的 rds 行记录 `experiments` / `status` / `claim` / `claim_exact` / `best_effort_exact` / `exact_match` 与 certification 结果，不记录步数，所以这个改动落在结果文件的盲区里。
+- `639e19f feat(compass): let a declared hypothesis set stand on its own` 的唯一代码改动在 `scripts/rds_compass.py:554`：RIVALS 条件追加 `and not _all_declared(rows)`（`_all_declared` 定义在 `:197`）。它减少的是 RIVALS 轮次（决策步数），不是购买的观测点。该 commit 的 message 原文含 **"eight RIVALS rounds gone, with the purchased points and the final claim unchanged"**，并自述 `sparse-mid, budget 8` 从 17 步降到 10 步。`pareto.py` 的 rds 行记录 `experiments` / `status` / `claim` / `claim_exact` / `best_effort_exact` / `exact_match` 与 certification 结果，不记录步数，所以这个改动落在结果文件的盲区里。
 - `601bc53 fix(compass): report zero undecided cells instead of dropping the field` 只改 `scripts/rds_compass.py:1541`，给 `verify()` 的 `replay` 字典加 `undecided` 默认 0。`pareto.py` 的 `main` 只读 `verification['claim']`、`verification['predict']`、`verification['best_effort']`，不读 `replay`，所以不影响本文件。
 - `890f8d1 docs(benchmark): record why the DERIVED search keeps its full budget` 只新增 `docs/derived-cap-20261021.md`，不碰代码。
 
@@ -236,14 +236,14 @@ git -C "D:/Myfile/work space/RDS/rds-357" worktree remove --force "D:/Myfile/wor
 
 要求的四个量：
 
-- `law`：**该文件没有 `law` 键**。`benchmark/newtonbench/pareto.py:159` 的 `certify_arm` 只回填 `claimed`、`false_certification`、`certification_check`，不落盘 law 表达式。为了给原文，按 `pareto.py:main` 的同一构造在 HEAD `601bc53` 上单独重跑该格（seed 357），得到
+- `law`：**该文件没有 `law` 键**。`benchmark/newtonbench/pareto.py:159` 的 `certify_arm` 只回填 `claimed`、`false_certification`、`certification_check`，不落盘 law 表达式。为了给原文，按 `benchmark/newtonbench/pareto.py:284` 的 `main` 同一构造在 HEAD `601bc53` 上单独重跑该格（seed 357），得到
   `law = "ite((x < (19/2)), (1 + x), (x + x))"`，
   同一次重跑的 `status=GOAL_IDENTIFIED`、`claim=CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS`、`claim_exact=32`、`experiments=12`，与该行逐项一致。这只是一次确定性复现，不是 seed 重复。
 - `max_abs_error = "7956287824/887427361"`（精确 Fraction，约 8.9655）。
 - `tolerance = "0"`（`tolerance_rel = "0"`）。
 - `points_checked = 32`。
 
-同一行同时出现 `exact_match = 32` 与 `max_abs_error > 0`，是两套口径：`exact_match` / `claim_exact` 在整数 `0..31` 上计分；`certification` 在 32 个独立均匀采样点上判（含非整数，`worst_point.x = 8843715185/887427361 ≈ 9.9664`）。`pareto.py:36-45` 的注释写明了这个划分，两种计数可以共存。本报告只记录事实，不评价该行是否应当存在。
+同一行同时出现 `exact_match = 32` 与 `max_abs_error > 0`，是两套口径：`exact_match` / `claim_exact` 在整数 `0..31` 上计分；`certification` 在 32 个独立均匀采样点上判（含非整数，`worst_point.x = 8843715185/887427361 ≈ 9.9664`）。`benchmark/newtonbench/pareto.py:35-44` 的注释写明了这个划分，两种计数可以共存。本报告只记录事实，不评价该行是否应当存在。
 
 ## 7. 限制
 
@@ -251,3 +251,4 @@ git -C "D:/Myfile/work space/RDS/rds-357" worktree remove --force "D:/Myfile/wor
 - HEAD 那次的历史耗时未记录；父提交本次实测 311 秒。两棵树的硬件、Python（3.13.5）、同一 `pareto.py` 逻辑相同，但 HEAD 那次不在本次观测窗口内。
 - A/B 只覆盖 `pareto.py` 的输出。`pareto_l2a.py`、`devset_run.py` 等其他消费者不在此次比对范围内。
 - 两棵树 `pareto.py` 的字节差异只来自 CRLF/LF（主仓 `core.autocrlf=true`），归一化后相同。
+- 三份结果文件与本报告在 `7ca23c8` 入库；`benchmark/newtonbench/results/pareto.json` 未改动，它继续作为 `l2a_accept.py:61` 读取的冻结 schema-1 对照。
