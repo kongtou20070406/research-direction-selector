@@ -14,6 +14,12 @@ from rds_project_read_port import ProjectReadPort
 from rds_project_values import require
 
 
+def has_table(db, name):
+    """Is a table in this ledger yet? A missing table is a normal state, not an error."""
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                      (name,)).fetchone() is not None
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectReadServices:
     """Borrow a connection without changing transaction or database settings.
@@ -36,7 +42,7 @@ class ProjectReadServices:
             cursor.close()
 
     def has_contract(self):
-        return bool(self._select("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'"))
+        return has_table(self._connection, 'contract')
 
     def contract(self):
         require(self.has_contract(), "Project contract has not been initialized")
@@ -94,7 +100,7 @@ class ProjectReadServices:
                                  (run_id, sha256)))
 
     def checkpoint_ids(self, *, maximum):
-        if not self._select("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'"):
+        if not has_table(self._connection, 'checkpoints'):
             return None
         count = self._select('SELECT count(*) AS n FROM checkpoints')[0]['n']
         require(count <= maximum, 'Owned decision history exceeds its bounded coverage')
@@ -127,12 +133,12 @@ class ProjectReadServices:
                      "AND json_extract(body,'$.sha256')=?", (run_id, sha256)))
 
     def checkpoints(self):
-        if not self._select("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'"):
+        if not has_table(self._connection, 'checkpoints'):
             return ()
         return self._select('SELECT * FROM checkpoints ORDER BY id')
 
     def dependency_snapshot(self):
-        if not self._select("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'"):
+        if not has_table(self._connection, 'dependency_snapshots'):
             return None
         rows = self._select('SELECT sha256,body FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1')
         return rows[0] if rows else None

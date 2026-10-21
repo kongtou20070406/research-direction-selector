@@ -5,6 +5,7 @@ import json
 import re
 
 from rds_project import ProjectStore, canonical, digest, number, require
+from rds_project_read_services import has_table
 
 
 def preparation_costs(store, contract, *, db=None):
@@ -36,7 +37,7 @@ def preparation_costs(store, contract, *, db=None):
             require(entry.resolve() not in directories, 'Native preparation directory alias')
             directories.add(entry.resolve())
     intents = {}
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+    if has_table(db, 'events'):
         pending = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_STARTED' LIMIT 129").fetchall()
         require(len(pending) <= 128, 'Native preparation intents exceed 128')
         for row in pending:

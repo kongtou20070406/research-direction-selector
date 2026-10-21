@@ -6,6 +6,7 @@ import sqlite3
 import time
 from pathlib import Path
 from rds_mutation import mutation
+from rds_project_read_services import has_table
 
 SCHEMA = "rds-checkpoint-v1"
 MAX_BYTES = 4_000_000
@@ -57,7 +58,7 @@ def _checkpoint_record(root, checkpoint_id, snapshot, *, kind, decision=None):
 
 def read_checkpoint(db, checkpoint_id, *, root):
     """Verify a retained row using the caller's coherent transaction."""
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+    if not has_table(db, 'checkpoints'):
         return None
     row = db.execute('SELECT sha,body FROM checkpoints WHERE id=?', (checkpoint_id,)).fetchone()
     if row is None:
@@ -95,7 +96,7 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
         raise ValueError('Checkpoint transaction belongs to a different ledger')
     if kind == 'project' and decision:
         from rds_method_revision import contract_history
-        initialized = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+        initialized = has_table(db, 'contract')
         contract = contract_history(db)[-1]['contract'] if initialized else snapshot.get('contract', {})
         note_only = (set(decision) == {'plan_draft', 'source_kind'}
                      and decision['source_kind'] == 'UNVERIFIED_PLAN_PROPOSAL')
@@ -192,7 +193,7 @@ def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
                                  'inspect the retained job and any original receipt; do not rerun')
         if _expected_dependency_snapshot_sha256 is not _DEPENDENCY_UNCHECKED:
             head = None
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+            if has_table(db, 'dependency_snapshots'):
                 head = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
             if (head['sha256'] if head is not None else None) != _expected_dependency_snapshot_sha256:
                 raise ValueError('Dependency snapshot changed before checkpoint publication; '

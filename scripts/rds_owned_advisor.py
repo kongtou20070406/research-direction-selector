@@ -18,6 +18,7 @@ import rds_admission_values as admission_values
 from rds_output_values import MAX_REPORT_BYTES
 from rds_original_read import _original, _read_original
 from rds_project_hooks import register as register_project_hooks
+from rds_project_read_services import has_table
 
 OWNED_PREFIX = 'owned:'
 ASSURANCE = 'PROGRAM_OWNED_EVIDENCE_NOT_SCIENTIFIC_PROOF'
@@ -79,7 +80,7 @@ def validate_policy(store, contract):
     history = []
     if store.path.is_file() and 'method_evolution' in contract:
         with store.readonly() as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
+            if has_table(db, 'contract'):
                 from rds_method_revision import contract_history
                 history = contract_history(db)
                 retained = {r['id']: r for r in store._runs(db)}

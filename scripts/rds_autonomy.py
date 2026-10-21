@@ -14,7 +14,7 @@ import time
 import uuid
 
 from rds_artifacts import strict_json
-from rds_project_read_services import ProjectReadServices
+from rds_project_read_services import ProjectReadServices, has_table
 from rds_autonomy_read import REQUESTED, PROCESSED, MAX_BYTES, _hash_event, _events, records
 import rds_autonomy_admission as autonomy_admission
 from rds_project import canonical, digest, file_sha, number, require, _alive
@@ -251,7 +251,7 @@ def _jump_evidence_cut(store, db):
     """Read the structure and snapshot identities under the caller's transaction."""
     from rds_structure import _events
     snapshot = None
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+    if has_table(db, 'dependency_snapshots'):
         row = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
         snapshot = row['sha256'] if row else None
     return {'structure_events_sha256': digest(_events(store, db)), 'snapshot_sha256': snapshot}

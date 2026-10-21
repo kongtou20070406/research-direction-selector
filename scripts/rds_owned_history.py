@@ -11,6 +11,7 @@ from rds_source_documents import strict_json
 from rds_checkpoints import MAX_BYTES, _checkpoint_record, append_checkpoint, read_checkpoint
 from rds_method_revision import contract_history
 from rds_project import TERMINAL, ProjectStore, canonical, digest, execution_route, file_sha, require
+from rds_project_read_services import has_table
 from rds_admission_values import MAX_RUNS
 
 MAX_CHECKPOINTS = 512
@@ -166,7 +167,7 @@ def _outstanding_slots(runs, recorded):
 
 def check_append_slots(root, db, checkpoint_id, *, owned_run_id=None):
     """Protect owned completion capacity inside any checkpoint append lock."""
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runs'").fetchone():
+    if not has_table(db, 'runs'):
         return
     marked = False
     for row in db.execute('SELECT body FROM runs'):
@@ -183,8 +184,8 @@ def check_append_slots(root, db, checkpoint_id, *, owned_run_id=None):
         runs = ProjectStore(root)._runs(db)
     finally:
         db.row_factory = previous_factory
-    recorded = {row[0] for row in db.execute('SELECT id FROM checkpoints')} if db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone() else set()
+    recorded = {row[0] for row in db.execute('SELECT id FROM checkpoints')} if has_table(
+        db, 'checkpoints') else set()
     outstanding = _outstanding_slots(runs, recorded)
     if checkpoint_id in outstanding:
         require(owned_run_id == outstanding[checkpoint_id],

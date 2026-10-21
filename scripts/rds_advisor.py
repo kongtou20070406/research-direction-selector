@@ -21,6 +21,7 @@ from rds_checkpoint_decision import (
 )
 from rds_mutation import mutation
 from rds_guard import _bounded_theory_gate
+from rds_project_read_services import has_table
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_KNOWLEDGE_ROWS = 10000
@@ -475,7 +476,7 @@ class RDSAdvisor:
         store = ProjectStore(self.root_dir)
         if store.path.is_file():
             with store.readonly() as db:
-                has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+                has_contract = has_table(db, 'contract')
                 row = db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() if has_contract else None
                 contract = store._contract(db) if row else {}
             if 'advisor_policy' in contract:
@@ -742,7 +743,7 @@ class RDSAdvisor:
         try:
             db = connect(path)
             try:
-                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+                if not has_table(db, 'checkpoints'):
                     db.close()
                     db = None
                 elif kind == "project":

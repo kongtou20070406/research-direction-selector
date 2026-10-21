@@ -14,6 +14,7 @@ import stat
 import tempfile
 import uuid
 
+from rds_project_read_services import has_table
 from rds_project_values import canonical, digest, require
 from rds_source_documents import strict_json
 from rds_bounded_io import read_regular_bytes
@@ -182,13 +183,13 @@ def detached_admission(root, db):
     require(db.in_transaction, 'Detached admission requires its parent transaction')
     require(binding(root) is None,
             'Bound campaign refuses detached QUICK jobs; use the canonical project')
-    events = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+    events = has_table(db, 'events')
     require(not events or _event(db) is None,
             'Campaign binding intent refuses detached QUICK admission')
 
 
 def _table(db, name):
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+    return has_table(db, name)
 
 
 class _Inventory:

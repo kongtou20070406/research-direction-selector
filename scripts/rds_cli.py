@@ -24,6 +24,7 @@ import uuid
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
 from rds_mutation import mutation
+from rds_project_read_services import has_table
 import rds_core as _core
 from rds_reference_values import (
     READABLE_STATE_VERSIONS, RESOURCES, canonical, require, strict_json,
@@ -1143,7 +1144,7 @@ def _has_project_contract(root):
     if not store.path.is_file():
         return False
     with store.readonly() as db:
-        table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+        table = has_table(db, 'contract')
         return bool(table and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone())
 
 

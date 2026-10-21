@@ -17,6 +17,7 @@ from pathlib import Path
 import rds_compass_model as model
 from rds_artifacts import strict_json
 from rds_project import IDENTITY, ProjectStore, canonical, digest, file_sha, require
+from rds_project_read_services import has_table
 
 SCHEMA = 'rds-compass-declaration-v1'
 PLAN_SCHEMA = 'rds-compass-plan-v1'
@@ -432,7 +433,7 @@ def initialize(root, declaration_path):
     contract, protocol_raw, plan = compile_plan(store, declaration, hashlib.sha256(raw).hexdigest(), source)
     if store.path.is_file():
         with store.readonly() as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
+            if has_table(db, 'contract'):
                 row = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()
                 if row is not None:
                     require(row['sha256'] == digest(contract),

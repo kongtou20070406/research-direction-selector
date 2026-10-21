@@ -17,6 +17,7 @@ import time
 from rds_project import ProjectStore, canonical, digest, load_json, require, _shell_argument
 from rds_mutation import mutation
 from rds_contract_read import ACTIVATED, POLICY_FIELDS, activation_transition
+from rds_project_read_services import has_table
 
 MAX_RETAINED_JOBS = 128
 MAX_RETAINED_EVENTS = 512
@@ -100,7 +101,7 @@ def describe(root, *, quick=False):
     contract = None
     if store.path.is_file():
         with store.readonly() as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone() \
+            if has_table(db, 'contract') \
                     and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone():
                 contract = store._contract(db)
     owned = contract is not None and 'advisor_policy' in contract
@@ -169,7 +170,7 @@ def initialize(store, contract, *, mode=None, supersedes=None, separate_reason=N
     selected = mode or (existing.lower() if existing != 'UNINITIALIZED' else 'full')
     if mode is None and store.path.is_file():
         with store.readonly() as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
+            if has_table(db, 'contract'):
                 genesis = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()
                 if genesis and genesis['sha256'] == digest(contract):
                     selected = 'full' if 'advisor_policy' in contract else 'quick'
