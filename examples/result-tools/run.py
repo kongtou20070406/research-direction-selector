@@ -38,9 +38,11 @@ def run(workspace, *, recipe=False, compose=False):
         if args[0] == 'rsi':
             args = (*args, '--json')
         argv = [sys.executable, '-B', str(REPO / 'scripts/rds_cli.py'), '--root', str(root), *args]
-        # A composite includes several original admission/collection passes.
-        # This host wait does not change tool timeouts or the project budget.
-        proc = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=180 if args[:2] == ('project', 'compose-tools') else 40,
+        # A composite includes several original admission/collection passes, and one
+        # advance on a loaded Windows runner took over 40 s (Python start-ups for the CLI
+        # and its child, plus a run of up to 10 s). This host wait does not change tool
+        # timeouts or the project budget.
+        proc = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=180 if args[:2] == ('project', 'compose-tools') else 120,
                               env={**os.environ, 'RDS_USAGE_DB': str(root / 'usage.sqlite3')})
         trace.append({'stage': stage, 'argv': argv, 'returncode': proc.returncode,
                       'stdout': proc.stdout, 'stderr': proc.stderr})
