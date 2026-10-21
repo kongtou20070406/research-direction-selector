@@ -83,9 +83,23 @@ def digest(value):
 
 
 def exact(value):
-    """Parse an exact rational; floats use their shortest decimal spelling."""
+    """Parse an exact rational; floats use their shortest decimal spelling.
+
+    A ``{'lo', 'hi'}`` mapping is an interval observation: it parses to the
+    ``Inexact`` midpoint of that span, so ``radius`` reaches ``decide`` and the
+    measurement's noise is never collapsed into a point value.
+    """
     if isinstance(value, bool):
         raise ValueError('Booleans are not numeric measurements')
+    if isinstance(value, dict):
+        require(set(value) == {'lo', 'hi'}, 'Interval observations need exactly lo and hi')
+        lo, hi = exact(value['lo']), exact(value['hi'])
+        require(not hasattr(lo, 'radius') and not hasattr(hi, 'radius'),
+                'Nested interval observations are not supported')
+        require(lo <= hi, 'Interval observation needs lo <= hi')
+        interval = Inexact(lo, hi)
+        _bounded(interval.radius)
+        return _bounded(interval)
     if isinstance(value, Fraction):
         result = value
     elif isinstance(value, int):
@@ -477,6 +491,8 @@ def tolerance(spec):
     spec = spec or {}
     require(isinstance(spec, dict) and set(spec) <= {'abs', 'rel'}, 'Tolerance accepts abs/rel only')
     absolute, relative = exact(spec.get('abs', 0)), exact(spec.get('rel', 0))
+    require(not hasattr(absolute, 'radius') and not hasattr(relative, 'radius'),
+            'Tolerance is a band width, not a measurement; an interval tolerance has no reading')
     require(absolute >= 0 and relative >= 0, 'Tolerance must be non-negative')
     return absolute, relative
 
