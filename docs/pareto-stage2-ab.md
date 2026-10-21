@@ -252,3 +252,22 @@ git -C "D:/Myfile/work space/RDS/rds-357" worktree remove --force "D:/Myfile/wor
 - A/B 只覆盖 `pareto.py` 的输出。`pareto_l2a.py`、`devset_run.py` 等其他消费者不在此次比对范围内。
 - 两棵树 `pareto.py` 的字节差异只来自 CRLF/LF（主仓 `core.autocrlf=true`），归一化后相同。
 - 三份结果文件与本报告在 `7ca23c8` 入库；`benchmark/newtonbench/results/pareto.json` 未改动，它继续作为 `l2a_accept.py:61` 读取的冻结 schema-1 对照。
+
+## 7. 成本口径修正（lead 追加，同一批数据，规则改了）
+
+`benchmark/newtonbench/pareto.py:173` 的 `cost_per_correct` 原来把「整数点 32/32」当成解对，包括第 6 节那行已被独立点证伪的 rds 记录。复现出的 law 是 `ite((x < 19/2), (1 + x), (x + x))`：在整数 `x` 上 `x < 9.5` 与真 law 的 `x < 10` 完全等价，所以 32 个整数点全中；但在 `x = 9.5` 处真 law 取 `1 + 9.5`，假 law 取 `2 * 9.5`。
+
+一个在独立点上被证伪的解不是解对了的方程。新规则在 `claim_exact` 之外再要求 `not false_certification`；`false_certification` 为 `None`（字段还不存在的旧文件）的行照旧计入，所以老文件报出的比例不变。
+
+同一批 rows 重算，写入 `benchmark/newtonbench/results/pareto-stage2-costfix.json`（32,412 字节）：
+
+| 字段 | 旧 | 新 |
+| --- | --- | --- |
+| `rds.correct_count` | 15 | 14 |
+| `rds.experiments_per_correct` | 19.6 | 21.0 |
+| 顶层 `correct_count` | 15 | 14 |
+| 顶层 `experiments_per_correct` | 39.2 | 42.0 |
+
+`baseline-uniform` 臂的 `correct_count` 仍是 0，只跟着 `cost_per_correct_rule` 的措辞变了。
+
+这是口径变严，不是结果变好或变坏：rds 臂的每正确解成本上升 7.1%，因为它此前报的 15 个解里有 1 个站不住。`pareto-stage2.json` 保留原样，作为 A/B 证据。

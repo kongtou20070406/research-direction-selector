@@ -115,6 +115,34 @@ class CostPerCorrectTests(unittest.TestCase):
         self.assertEqual(summary['rds']['experiments_per_correct'], 24.0)
         self.assertIsNone(summary[pareto.BASELINE_ARM]['experiments_per_correct'])
 
+    def test_a_false_certification_is_not_counted_as_a_solved_equation(self):
+        # Integer points can match while an independent point refutes the law: the
+        # whole cost axis would shrink if that row still counted as solved.
+        rows = [{'arm': 'rds', 'claim_exact': True, 'false_certification': False, 'experiments': 4},
+                {'arm': 'rds', 'claim_exact': True, 'false_certification': True, 'experiments': 6}]
+        summary = pareto.summarize(rows)
+        self.assertEqual(summary['rds']['correct_count'], 1)
+        self.assertEqual(summary['rds']['experiments_per_correct'], 10.0)
+
+    def test_a_row_from_before_the_field_existed_stays_counted(self):
+        # `false_certification is None` means the file predates the check, not that
+        # the run failed it; those rows keep the ratio the file shipped with.
+        rows = [{'arm': 'rds', 'claim_exact': True, 'experiments': 4}]
+        summary = pareto.summarize(rows)
+        self.assertEqual(summary['rds']['correct_count'], 1)
+        self.assertEqual(summary['rds']['experiments_per_correct'], 4.0)
+
+
+class CostPerCorrectExcludesFalseCertificationTests(unittest.TestCase):
+    def test_a_refuted_run_does_not_shrink_the_sweep_ratio(self):
+        rows = [run('e', 8, 'GOAL_IDENTIFIED'), run('e', 16, 'GOAL_IDENTIFIED')]
+        rows[0].update(claim_exact=True, false_certification=False, experiments=4, seconds=1.0, claimed=True)
+        rows[1].update(claim_exact=True, false_certification=True, experiments=6, seconds=2.0, claimed=True)
+        summary = runner.summarize(rows)
+        self.assertEqual(summary['correct_count'], 1)
+        self.assertEqual(summary['experiments_per_correct'], 10.0)
+        self.assertEqual(summary['seconds_per_correct'], 3.0)
+
 
 if __name__ == '__main__':
     unittest.main()

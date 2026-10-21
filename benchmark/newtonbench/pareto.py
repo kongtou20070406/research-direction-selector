@@ -175,14 +175,20 @@ def cost_per_correct(rows):
 
     Each arm trades accuracy against experiments, and the comparison is only a
     front when both axes come from the same rows. Null when nothing was solved.
+
+    A row that reproduced the target on the declaration's own points and was
+    then refuted on the independent certification points is not a solved
+    equation. Counting it would lower the cost per correct by claiming one more
+    than the arm can defend.
     """
-    exact = [r for r in rows if r.get('claim_exact')]
+    solved = [r for r in rows if r.get('claim_exact') and not r.get('false_certification')]
     experiments = sum(r.get('experiments') or 0 for r in rows)
-    return {'correct_count': len(exact),
+    return {'correct_count': len(solved),
             'experiments_total': experiments,
-            'experiments_per_correct': round(experiments / len(exact), 3) if exact else None,
+            'experiments_per_correct': round(experiments / len(solved), 3) if solved else None,
             'cost_per_correct_rule': 'experiments over the arm divided by the rows whose law '
-                                     'reproduced the target with 0 counterexamples'}
+                                     'reproduced the target with 0 counterexamples and survived '
+                                     'the independent certification points'}
 
 
 def summarize(rows):

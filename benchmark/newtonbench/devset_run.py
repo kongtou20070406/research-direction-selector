@@ -318,17 +318,23 @@ def cost_per_correct(runs):
     outside the campaign, so this ratio belongs in the result file rather than in
     the ledger. Both ratios stay null when nothing was solved: a cheap failure is
     not a cheap success, and dividing by a zero correct count would say it was.
+
+    A run that `backfill` marked as a false certification is excluded: its law
+    matched the declaration's own points but not the independent ones. Runs from
+    before that field existed carry `None` and stay counted, so an old file
+    keeps the ratio it shipped with.
     """
-    exact = [r for r in runs if r.get('claim_exact')]
+    solved = [r for r in runs if r.get('claim_exact') and not r.get('false_certification')]
     experiments = sum(r.get('experiments') or 0 for r in runs)
     seconds = sum(r.get('seconds') or 0 for r in runs)
-    return {'correct_count': len(exact),
+    return {'correct_count': len(solved),
             'experiments_total': experiments,
             'seconds_total': round(seconds, 1),
-            'experiments_per_correct': round(experiments / len(exact), 3) if exact else None,
-            'seconds_per_correct': round(seconds / len(exact), 1) if exact else None,
+            'experiments_per_correct': round(experiments / len(solved), 3) if solved else None,
+            'seconds_per_correct': round(seconds / len(solved), 1) if solved else None,
             'cost_per_correct_rule': 'totals over the whole sweep divided by the number of '
-                                     'runs whose law reproduced truth with 0 counterexamples'}
+                                     'runs whose law reproduced truth with 0 counterexamples and '
+                                     'survived the independent certification points'}
 
 
 def summarize(runs):
