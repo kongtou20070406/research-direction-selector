@@ -1,0 +1,293 @@
+[
+ {
+  "equation": "feynman-I.41.16",
+  "variant": "wrong-only",
+  "B": 8,
+  "status": "SEARCH_EXHAUSTED",
+  "claim": "NOT_ESTABLISHED",
+  "law": null,
+  "counterexamples": null,
+  "claim_exact": false,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 0,
+   "max_abs_error": null,
+   "tolerance": null,
+   "reason": "NOT_CLAIMED"
+  },
+  "seconds": 385.8
+ },
+ {
+  "equation": "feynman-I.41.16",
+  "variant": "mixed",
+  "B": 8,
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "(((omega ** 3) * (1054571817/10000000000000000000000000000000000000000000)) / (((pi ** 2) * (299792458 ** 2)) * (exp((((1054571817/10000000000000000000000000000000000000000000) * omega) / ((1380649/100000000000000000000000000000) * T))) - 1)))",
+  "counterexamples": 0,
+  "claim_exact": true,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 32,
+   "max_abs_error": "0",
+   "tolerance": "0",
+   "tolerance_rel": "1/1000",
+   "seed": 357,
+   "sampling": "uniform-in-box",
+   "independence": "excludes every declared devset row",
+   "reason": "EQUIVALENT on 32 sampled points",
+   "evaluation_failures": 0,
+   "row_clashes_redrawn": 0,
+   "worst_point": {
+    "omega": "739209415000000000000000/540324839",
+    "T": "1278462000/217727"
+   }
+  },
+  "seconds": 28.1
+ },
+ {
+  "equation": "feynman-II.24.17",
+  "variant": "wrong-only",
+  "B": 8,
+  "status": "SEARCH_EXHAUSTED",
+  "claim": "NOT_ESTABLISHED",
+  "law": null,
+  "counterexamples": null,
+  "claim_exact": false,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 0,
+   "max_abs_error": null,
+   "tolerance": null,
+   "reason": "NOT_CLAIMED"
+  },
+  "seconds": 416.4
+ },
+ {
+  "equation": "feynman-II.24.17",
+  "variant": "mixed",
+  "B": 8,
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "sqrt((((omega ** 2) / (299792458 ** 2)) - ((pi ** 2) / (d ** 2))))",
+  "counterexamples": 0,
+  "claim_exact": true,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 32,
+   "max_abs_error": "0",
+   "tolerance": "1/1000",
+   "tolerance_rel": "1/1000",
+   "seed": 357,
+   "sampling": "uniform-in-box",
+   "independence": "excludes every declared devset row",
+   "reason": "EQUIVALENT on 32 sampled points",
+   "evaluation_failures": 0,
+   "row_clashes_redrawn": 0,
+   "worst_point": {
+    "omega": "1919301381000000000000/540324839",
+    "d": "206567/43545400"
+   }
+  },
+  "seconds": 26.3
+ },
+ {
+  "equation": "feynman-I.10.7",
+  "variant": "wrong-only",
+  "B": 8,
+  "status": "SEARCH_EXHAUSTED",
+  "claim": "NOT_ESTABLISHED",
+  "law": null,
+  "counterexamples": null,
+  "claim_exact": false,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 0,
+   "max_abs_error": null,
+   "tolerance": null,
+   "reason": "NOT_CLAIMED"
+  },
+  "seconds": 388.3
+ },
+ {
+  "equation": "feynman-I.10.7",
+  "variant": "mixed",
+  "B": 8,
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "(m_0 / sqrt((1 - ((v ** 2) / (299792458 ** 2)))))",
+  "counterexamples": 0,
+  "claim_exact": true,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 32,
+   "max_abs_error": "0",
+   "tolerance": "1/1000",
+   "tolerance_rel": "1/1000",
+   "seed": 357,
+   "sampling": "uniform-in-box",
+   "independence": "excludes every declared devset row",
+   "reason": "EQUIVALENT on 32 sampled points",
+   "evaluation_failures": 0,
+   "row_clashes_redrawn": 0,
+   "worst_point": {
+    "m_0": "938093991/540324839",
+    "v": "52339250000000/217727"
+   }
+  },
+  "seconds": 14.0
+ },
+ {
+  "equation": "feynman-I.6.20a",
+  "variant": "wrong-only",
+  "B": 8,
+  "status": "SEARCH_EXHAUSTED",
+  "claim": "NOT_ESTABLISHED",
+  "law": null,
+  "counterexamples": null,
+  "claim_exact": false,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 0,
+   "max_abs_error": null,
+   "tolerance": null,
+   "reason": "NOT_CLAIMED"
+  },
+  "seconds": 43.6
+ },
+ {
+  "equation": "feynman-I.6.20a",
+  "variant": "mixed",
+  "B": 8,
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "(exp(((-(theta ** 2)) / 2)) / sqrt((pi * 2)))",
+  "counterexamples": 0,
+  "claim_exact": true,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 32,
+   "max_abs_error": "0",
+   "tolerance": "1/1000",
+   "tolerance_rel": "1/1000",
+   "seed": 357,
+   "sampling": "uniform-in-box",
+   "independence": "excludes every declared devset row",
+   "reason": "EQUIVALENT on 32 sampled points",
+   "evaluation_failures": 0,
+   "row_clashes_redrawn": 0,
+   "worst_point": {
+    "theta": "-1024320789/540324839"
+   }
+  },
+  "seconds": 57.5
+ },
+ {
+  "equation": "feynman-I.8.14",
+  "variant": "wrong-only",
+  "B": 8,
+  "status": "SEARCH_EXHAUSTED",
+  "claim": "NOT_ESTABLISHED",
+  "law": null,
+  "counterexamples": null,
+  "claim_exact": false,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 0,
+   "max_abs_error": null,
+   "tolerance": null,
+   "reason": "NOT_CLAIMED"
+  },
+  "seconds": 721.3
+ },
+ {
+  "equation": "feynman-I.8.14",
+  "variant": "mixed",
+  "B": 8,
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "sqrt((((x2 - x1) ** 2) + ((y2 - y1) ** 2)))",
+  "counterexamples": 0,
+  "claim_exact": true,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 32,
+   "max_abs_error": "0",
+   "tolerance": "1/1000",
+   "tolerance_rel": "1/1000",
+   "seed": 357,
+   "sampling": "uniform-in-box",
+   "independence": "excludes every declared devset row",
+   "reason": "EQUIVALENT on 32 sampled points",
+   "evaluation_failures": 0,
+   "row_clashes_redrawn": 0,
+   "worst_point": {
+    "x1": "298326864/540324839",
+    "y1": "407554/217727",
+    "x2": "870628271/696322387",
+    "y2": "3159083801/844005296"
+   }
+  },
+  "seconds": 121.0
+ },
+ {
+  "equation": "feynman-II.34.11",
+  "variant": "wrong-only",
+  "B": 8,
+  "status": "SEARCH_EXHAUSTED",
+  "claim": "NOT_ESTABLISHED",
+  "law": null,
+  "counterexamples": null,
+  "claim_exact": false,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 0,
+   "max_abs_error": null,
+   "tolerance": null,
+   "reason": "NOT_CLAIMED"
+  },
+  "seconds": 922.9
+ },
+ {
+  "equation": "feynman-II.34.11",
+  "variant": "mixed",
+  "B": 8,
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "(((g_factor * q) * B) / (2 * m))",
+  "counterexamples": 0,
+  "claim_exact": true,
+  "experiments": 8,
+  "false_certification": false,
+  "certification_check": {
+   "points_checked": 32,
+   "max_abs_error": "0",
+   "tolerance": "0",
+   "tolerance_rel": "0",
+   "seed": 357,
+   "sampling": "uniform-in-box",
+   "independence": "excludes every declared devset row",
+   "reason": "EQUIVALENT on 32 sampled points",
+   "evaluation_failures": 0,
+   "row_clashes_redrawn": 0,
+   "worst_point": {
+    "g_factor": "639767127/540324839",
+    "q": "393604/217727",
+    "B": "827051800/696322387",
+    "m": "982694159/211001324"
+   }
+  },
+  "seconds": 25.1
+ }
+]
