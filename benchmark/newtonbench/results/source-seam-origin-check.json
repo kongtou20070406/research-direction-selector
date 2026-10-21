@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "equation": "feynman-I.41.16",
+  "budget": 8,
+  "measurement": "RDS execution with precomputed source expressions; external generation cost is UNKNOWN",
+  "rows": [
+    {
+      "equation": "feynman-I.41.16",
+      "B": 8,
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "law": "(((omega ** 3) * (1054571817/10000000000000000000000000000000000000000000)) / (((pi ** 2) * (299792458 ** 2)) * (exp((((1054571817/10000000000000000000000000000000000000000000) * omega) / ((1380649/100000000000000000000000000000) * T))) - 1)))",
+      "counterexamples": 0,
+      "claim_exact": true,
+      "experiments": 8,
+      "claimed": true,
+      "false_certification": false,
+      "certification_check": {
+        "points_checked": 32,
+        "max_abs_error": "0",
+        "tolerance": "0",
+        "tolerance_rel": "1/1000",
+        "seed": 357,
+        "sampling": "uniform-in-box",
+        "independence": "excludes every declared devset row",
+        "reason": "EQUIVALENT on 32 sampled points",
+        "evaluation_failures": 0,
+        "row_clashes_redrawn": 0,
+        "worst_point": {
+          "omega": "739209415000000000000000/540324839",
+          "T": "1278462000/217727"
+        }
+      },
+      "hypothesis_origins": [
+        "jump:j01:SOURCE:[\"preregistered-truth\"]"
+      ],
+      "source_origins": [
+        "jump:j01:SOURCE:[\"preregistered-truth\"]"
+      ],
+      "variant": "truth-source",
+      "wall_seconds": 28.499
+    }
+  ]
+}

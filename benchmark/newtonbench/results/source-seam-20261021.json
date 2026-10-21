@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "equation": "feynman-I.41.16",
+  "budget": 8,
+  "measurement": "RDS campaign execution with precomputed source expressions; external source-generation cost is UNKNOWN",
+  "rows": [
+    {
+      "variant": "no-source",
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "law": null,
+      "false_certification": false,
+      "seconds": 398.2
+    },
+    {
+      "variant": "truth-source",
+      "source_ids": ["preregistered-truth"],
+      "status": "GOAL_IDENTIFIED",
+      "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+      "claim_exact": true,
+      "experiments": 8,
+      "law": "(((omega ** 3) * (1054571817/10000000000000000000000000000000000000000000)) / (((pi ** 2) * (299792458 ** 2)) * (exp((((1054571817/10000000000000000000000000000000000000000000) * omega) / ((1380649/100000000000000000000000000000) * T))) - 1)))",
+      "false_certification": false,
+      "independent_certification": {
+        "points_checked": 32,
+        "seed": 357,
+        "tolerance_relative": "1/1000",
+        "max_abs_error": "0"
+      },
+      "seconds": 29.5
+    },
+    {
+      "variant": "wrong-source",
+      "source_ids": ["preregistered-wrong"],
+      "status": "SEARCH_EXHAUSTED",
+      "claim": "NOT_ESTABLISHED",
+      "claim_exact": false,
+      "experiments": 8,
+      "law": null,
+      "false_certification": false,
+      "certification_reason": "NOT_CLAIMED",
+      "seconds": 399.4
+    }
+  ],
+  "provenance": "The first combined probe reused a campaign root and failed with FileExistsError; the two 0.0-second rows were discarded. Truth-source and wrong-source rows are from the corrected independent-root rerun."
+}
