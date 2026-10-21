@@ -77,13 +77,36 @@ raising the experiment budget cannot move it, and the benchmark's honest ceiling
 is `(equations with a truth tree at size <= 7 or an equivalent that small) / 40`,
 not `claim_exact / 40` at the current budget.
 
-## What would move it
+## What does not move it
 
-Raising `max_nodes` inside `GRAMMAR_ESCALATION` is the only lever in the current
-code, and it is untested: the enumeration cost grows super-linearly with the node
-bound, so the same 20000-candidate cap that covers all seven-node trees may not
-reach a twelve-node one. `D:\Myfile\work space\RDS\maxnodes-probe.md` measures that
-trade directly (four equations × `max_nodes` 7/9/12, reporting `attempted` and
-seconds per cell). Until that measurement lands, this document claims only what
-the stored results show: the bound is real, it is not a budget effect, and one of
-the ten oversized equations is reachable through an equivalent form.
+`maxnodes-probe.md` (repository-external, run at `75570aa..4fabe3d`, 12 cells plus
+4 at the hard cap) tested the only lever the current code offers. The answer is no.
+
+- **`max_nodes` 7 -> 9 -> 12 changes nothing.** Under the default operator set the
+  `attempted` count stays at 20000 for all three bounds and `distinct` is
+  byte-identical between them (5889 / 4330 / 4285). The 20000 candidates are spent
+  inside `size <= 7`, so the eighth level is never reached. Under the campaign's
+  real operator set, `feynman-I.8.14` finishes at 16933 candidates for `max_nodes=7`
+  (reproducing the `SEARCH_EXHAUSTED` in `truth-size.json`) but hits the 20000 cap
+  at 9, with `distinct` only climbing from 5620 to 7191. `I.6.20a` and
+  `II.24.17` already hit the cap at 7, so the bound has no effect on them at all.
+- **`max_candidates` at its hard ceiling is not enough either.** `max_nodes=12`
+  with `max_candidates=200000` (`MAX_SYNTH_CANDIDATES`) still reports
+  `SEARCH_TRUNCATED` with zero fits on all four, in 26-43 seconds — 12-13x the
+  baseline, linear in the cap. The enumeration of `size <= 12` is larger than the
+  largest budget the code accepts.
+
+So neither knob moves the ceiling, and the "1.0x cost" that `max_nodes` appears to
+show is an artifact of never reaching the level where the cost would appear.
+
+## Where this line ends
+
+Saving these four equations needs a smarter enumerator — derived intermediates, or
+equivalent rewrites that let a twelve-node truth be searched as an eight-node one.
+That is a rewrite, not a parameter change, and the earlier `decompose` wiring
+attempt measured 19 DERIVED cells with zero hits before it was rejected.
+
+**The line is closed unless the enumerator is rewritten.** Of the forty truths,
+thirty are at `size <= 7` and `feynman-I.27.6` is reachable through an equivalent
+that small, so the honest ceiling for this devset on this enumerator is 31/40 —
+not 40/40 at any experiment budget.
