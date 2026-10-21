@@ -1,0 +1,322 @@
+[
+ {
+  "equation": "feynman-I.10.7",
+  "law": "m_0/sqrt(1-v**2/2.99792458e8**2)",
+  "variables": 2,
+  "raw": 12,
+  "today_pool": 12,
+  "with_sub_div": 12
+ },
+ {
+  "equation": "feynman-I.12.1",
+  "law": "mu*n",
+  "variables": 2,
+  "raw": 3,
+  "today_pool": 1,
+  "with_sub_div": 1
+ },
+ {
+  "equation": "feynman-I.12.5",
+  "law": "q2*Ef",
+  "variables": 2,
+  "raw": 3,
+  "today_pool": 1,
+  "with_sub_div": 1
+ },
+ {
+  "equation": "feynman-I.14.3",
+  "law": "m*g*h",
+  "variables": 3,
+  "raw": 5,
+  "today_pool": 3,
+  "with_sub_div": 3
+ },
+ {
+  "equation": "feynman-I.14.4",
+  "law": "k_spring*x**2/2",
+  "variables": 2,
+  "raw": 7,
+  "today_pool": 7,
+  "with_sub_div": 7
+ },
+ {
+  "equation": "feynman-I.18.12",
+  "law": "r*F*sin(theta)",
+  "variables": 3,
+  "raw": 6,
+  "today_pool": 4,
+  "with_sub_div": 4
+ },
+ {
+  "equation": "feynman-I.18.4",
+  "law": "(m1*r1+m2*r2)/(m1+m2)",
+  "variables": 4,
+  "raw": 11,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-I.25.13",
+  "law": "q/C",
+  "variables": 2,
+  "raw": 3,
+  "today_pool": 3,
+  "with_sub_div": 1
+ },
+ {
+  "equation": "feynman-I.26.2",
+  "law": "sin(theta1)/sin(theta2)",
+  "variables": 2,
+  "raw": 5,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-I.27.6",
+  "law": "1/(1/d1+n/d2)",
+  "variables": 3,
+  "raw": 9,
+  "today_pool": 9,
+  "with_sub_div": 7
+ },
+ {
+  "equation": "feynman-I.39.10",
+  "law": "pr*V*3/2",
+  "variables": 2,
+  "raw": 7,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-I.40.1",
+  "law": "n_0*exp(-m*9.80665*x/(1.380649e-23*T))",
+  "variables": 4,
+  "raw": 13,
+  "today_pool": 13,
+  "with_sub_div": 13
+ },
+ {
+  "equation": "feynman-I.41.16",
+  "law": "1.054571817e-34*omega**3/(pi**2*2.99792458e8**2*(exp(1.054571817e-34*omega/(1.380649e-23*T))-1))",
+  "variables": 2,
+  "raw": 24,
+  "today_pool": 24,
+  "with_sub_div": 24
+ },
+ {
+  "equation": "feynman-I.47.23",
+  "law": "sqrt(gamma*pr/rho)",
+  "variables": 3,
+  "raw": 6,
+  "today_pool": 4,
+  "with_sub_div": 4
+ },
+ {
+  "equation": "feynman-I.6.20a",
+  "law": "exp(-theta**2/2)/sqrt(2*pi)",
+  "variables": 1,
+  "raw": 12,
+  "today_pool": 12,
+  "with_sub_div": 12
+ },
+ {
+  "equation": "feynman-I.8.14",
+  "law": "sqrt((x2-x1)**2+(y2-y1)**2)",
+  "variables": 4,
+  "raw": 12,
+  "today_pool": 12,
+  "with_sub_div": 8
+ },
+ {
+  "equation": "feynman-I.9.18",
+  "law": "m1*m2/(r**2)",
+  "variables": 3,
+  "raw": 7,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-II.10.9",
+  "law": "sigma_den/(eps0*(1+chi))",
+  "variables": 3,
+  "raw": 7,
+  "today_pool": 7,
+  "with_sub_div": 7
+ },
+ {
+  "equation": "feynman-II.2.42",
+  "law": "kappa*(t2-t1)/d",
+  "variables": 4,
+  "raw": 7,
+  "today_pool": 7,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-II.24.17",
+  "law": "sqrt(omega**2/2.99792458e8**2-pi**2/d**2)",
+  "variables": 2,
+  "raw": 16,
+  "today_pool": 16,
+  "with_sub_div": 16
+ },
+ {
+  "equation": "feynman-II.27.18",
+  "law": "eps0*Ef**2",
+  "variables": 2,
+  "raw": 5,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-II.34.11",
+  "law": "g_factor*q*B/(2*m)",
+  "variables": 4,
+  "raw": 9,
+  "today_pool": 7,
+  "with_sub_div": 7
+ },
+ {
+  "equation": "feynman-II.34.2",
+  "law": "q*v*r/2",
+  "variables": 3,
+  "raw": 7,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-II.37.1",
+  "law": "mom*(1+chi)*B",
+  "variables": 3,
+  "raw": 7,
+  "today_pool": 7,
+  "with_sub_div": 7
+ },
+ {
+  "equation": "feynman-II.38.14",
+  "law": "Y/(2*(1+sigma))",
+  "variables": 2,
+  "raw": 7,
+  "today_pool": 7,
+  "with_sub_div": 7
+ },
+ {
+  "equation": "feynman-II.38.3",
+  "law": "Y*A*x/d",
+  "variables": 4,
+  "raw": 7,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "feynman-III.10.19",
+  "law": "mom*sqrt(Bx**2+By**2+Bz**2)",
+  "variables": 4,
+  "raw": 14,
+  "today_pool": 14,
+  "with_sub_div": 14
+ },
+ {
+  "equation": "math-exp-decay",
+  "law": "exp(-n)",
+  "variables": 1,
+  "raw": 3,
+  "today_pool": 3,
+  "with_sub_div": 3
+ },
+ {
+  "equation": "math-hypotenuse",
+  "law": "sqrt(n**2+1)",
+  "variables": 1,
+  "raw": 6,
+  "today_pool": 6,
+  "with_sub_div": 6
+ },
+ {
+  "equation": "math-pronic",
+  "law": "n*(n-1)",
+  "variables": 1,
+  "raw": 5,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "math-reciprocal",
+  "law": "1/(n+1)",
+  "variables": 1,
+  "raw": 5,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "math-reciprocal-square",
+  "law": "1/n**2",
+  "variables": 1,
+  "raw": 5,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "math-sin-index",
+  "law": "sin(n)",
+  "variables": 1,
+  "raw": 2,
+  "today_pool": 2,
+  "with_sub_div": 2
+ },
+ {
+  "equation": "math-sqrt-index",
+  "law": "sqrt(n)",
+  "variables": 1,
+  "raw": 2,
+  "today_pool": 2,
+  "with_sub_div": 2
+ },
+ {
+  "equation": "math-square",
+  "law": "n**2",
+  "variables": 1,
+  "raw": 3,
+  "today_pool": 3,
+  "with_sub_div": 3
+ },
+ {
+  "equation": "math-square-distractor",
+  "law": "n**2",
+  "variables": 1,
+  "raw": 3,
+  "today_pool": 3,
+  "with_sub_div": 3
+ },
+ {
+  "equation": "math-triangular",
+  "law": "n*(n+1)/2",
+  "variables": 1,
+  "raw": 7,
+  "today_pool": 7,
+  "with_sub_div": 7
+ },
+ {
+  "equation": "srsd-hard-feynman-I.14.3",
+  "law": "m*g*h",
+  "variables": 3,
+  "raw": 5,
+  "today_pool": 3,
+  "with_sub_div": 3
+ },
+ {
+  "equation": "srsd-hard-feynman-I.9.18",
+  "law": "m1*m2/(r**2)",
+  "variables": 3,
+  "raw": 7,
+  "today_pool": 5,
+  "with_sub_div": 5
+ },
+ {
+  "equation": "srsd-hard-feynman-II.2.42",
+  "law": "kappa*(t2-t1)/d",
+  "variables": 4,
+  "raw": 7,
+  "today_pool": 7,
+  "with_sub_div": 5
+ }
+]
