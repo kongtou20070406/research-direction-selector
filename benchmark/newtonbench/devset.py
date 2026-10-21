@@ -626,6 +626,75 @@ def _gen_srsd_hard_feynman_II_2_42():
     return _exact_spec(rows, names, ['0', '1', '2'], ['sub', 'mul', 'div'],
                        'kappa * (t2 - t1) / d', 'kappa*(t2-t1)/d')
 
+# ---------------------------------------------------------------------------
+# Mathematics: sequence inversion over an index. The observable is the n-th
+# term, the only input is the index, and one experiment buys one more term.
+# The algebraic layers are exact (zero tolerance); the transcendental ones reuse
+# the 1/1000 band from L4 physics. These exist because the physics set exercises
+# neither of the two fields this kernel is aimed at: a sequence can be
+# reverse-engineered without measurement error, and a short prefix really does
+# admit several inequivalent continuations, which is the underdetermination the
+# physics set only shows by accident.
+
+_MATH_INDEX = [Fraction(n) for n in range(1, 9)]
+
+def _math_rows(values, name='n', index=_MATH_INDEX):
+    """One row per index, in index order; ``values`` maps an index to its term."""
+    return [_row(i, {name: n}, values(n)) for i, n in enumerate(index)]
+
+def _gen_math_square():
+    """L1: a(n) = n**2 -> 1, 4, 9, 16, 25, 36, 49, 64."""
+    return _exact_spec(_math_rows(lambda n: n ** 2), ['n'], ['2'], ['pow'],
+                       'pow(n, 2)', 'n**2')
+
+def _gen_math_pronic():
+    """L1: a(n) = n*(n-1), the pronic numbers 0, 2, 6, 12, 20, 30, 42, 56."""
+    return _exact_spec(_math_rows(lambda n: n * (n - 1)), ['n'], ['1'], ['mul', 'sub'],
+                       'n * (n - 1)', 'n*(n-1)')
+
+def _gen_math_triangular():
+    """L1: a(n) = n*(n+1)/2 -> 1, 3, 6, 10, 15, 21, 28, 36."""
+    return _exact_spec(_math_rows(lambda n: n * (n + 1) / 2), ['n'], ['1', '2'],
+                       ['mul', 'add', 'div'], '(n * (n + 1)) / 2', 'n*(n+1)/2')
+
+def _gen_math_reciprocal():
+    """L2: a(n) = 1/(n+1) -> 1/2, 1/3, ..., 1/9, all exact rationals."""
+    return _exact_spec(_math_rows(lambda n: 1 / (n + 1)), ['n'], ['1'], ['add', 'div'],
+                       '1 / (n + 1)', '1/(n+1)')
+
+def _gen_math_reciprocal_square():
+    """L2: a(n) = 1/n**2 -> 1, 1/4, 1/9, ..., 1/64, all exact rationals."""
+    return _exact_spec(_math_rows(lambda n: 1 / (n ** 2)), ['n'], ['1', '2'],
+                       ['div', 'pow'], '1 / pow(n, 2)', '1/n**2')
+
+def _gen_math_sqrt_index():
+    """L3: a(n) = sqrt(n). Irrational from n=2 on, so the band is 1/1000."""
+    return _float_spec(_math_rows(lambda n: math.sqrt(n)), ['n'], ['1'], ['sqrt'],
+                       'sqrt(n)', 'sqrt(n)')
+
+def _gen_math_hypotenuse():
+    """L3: a(n) = sqrt(n**2 + 1), the hypotenuse of a unit step."""
+    return _float_spec(_math_rows(lambda n: math.sqrt(n ** 2 + 1)), ['n'], ['1', '2'],
+                       ['add', 'pow', 'sqrt'], 'sqrt(pow(n, 2) + 1)', 'sqrt(n**2+1)')
+
+def _gen_math_exp_decay():
+    """L4: a(n) = exp(-n), a discrete decay whose law is not a polynomial."""
+    return _float_spec(_math_rows(lambda n: math.exp(-float(n))), ['n'], ['1'],
+                       ['neg', 'exp'], 'exp(neg(n))', 'exp(-n)')
+
+def _gen_math_sin_index():
+    """L4: a(n) = sin(n) in radians, the canonical oscillator sequence."""
+    return _float_spec(_math_rows(lambda n: math.sin(float(n))), ['n'], ['1'], ['sin'],
+                       'sin(n)', 'sin(n)')
+
+def _gen_math_square_distractor():
+    """L5: a(n) = n**2 with a distractor `q` that never enters the law."""
+    names = ['n', 'q']
+    columns = [[Fraction(1), Fraction(2), Fraction(5), Fraction(8)],
+               [Fraction(1), Fraction(2)]]
+    rows = [_row(i, c, c['n'] ** 2) for i, c in enumerate(_product(names, columns))]
+    return _exact_spec(rows, names, ['2'], ['pow'], 'pow(n, 2)', 'n**2')
+
 REGISTRY = {
     'feynman-I.6.20a': _gen_feynman_I_6_20a,
     'feynman-I.9.18': _gen_feynman_I_9_18,
@@ -662,6 +731,18 @@ REGISTRY = {
     'srsd-hard-feynman-I.9.18': _gen_srsd_hard_feynman_I_9_18,
     'srsd-hard-feynman-I.14.3': _gen_srsd_hard_feynman_I_14_3,
     'srsd-hard-feynman-II.2.42': _gen_srsd_hard_feynman_II_2_42,
+    # Mathematics: sequence inversion. L1 exact algebra, L2 exact rationals,
+    # L3 square roots, L4 transcendental, L5 distractor variable.
+    'math-square': _gen_math_square,
+    'math-pronic': _gen_math_pronic,
+    'math-triangular': _gen_math_triangular,
+    'math-reciprocal': _gen_math_reciprocal,
+    'math-reciprocal-square': _gen_math_reciprocal_square,
+    'math-sqrt-index': _gen_math_sqrt_index,
+    'math-hypotenuse': _gen_math_hypotenuse,
+    'math-exp-decay': _gen_math_exp_decay,
+    'math-sin-index': _gen_math_sin_index,
+    'math-square-distractor': _gen_math_square_distractor,
 }
 
 def list_equations():
