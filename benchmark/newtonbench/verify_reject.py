@@ -15,6 +15,11 @@ import sys
 from pathlib import Path
 
 
+# Protocol section 3: six equations, one wrong-only cell each. This is a safety gate,
+# not a coverage target, so a short table fails instead of shrinking the denominator.
+EXPECTED_CELLS = 6
+
+
 def load(path):
     return json.loads(Path(path).read_text())
 
@@ -53,6 +58,29 @@ def main(argv):
         print(f"{row.get('equation'):24s} {outcome(row):12s} {mixed_outcome(mate):14s} "
               f"{str(row.get('claim_exact')):11s} {str(row.get('false_certification')):10s} "
               f"{row.get('seconds', 0):7.1f}")
+
+    # A verdict must not be computable from a table that is missing rows. When every row
+    # lost its variant tag, `wrong` and `mixed` came back empty, `applicable` came back
+    # empty, and `len(passed) != len(applicable)` was False -- so this script printed
+    # "0 / 0 ... OVERALL: PASS" on a file that measured nothing. The denominator is the
+    # first thing to check, before any per-cell reasoning.
+    equations = [row.get('equation') for row in wrong]
+    structural = []
+    if len(wrong) != EXPECTED_CELLS:
+        structural.append(f'wrong-only cells: expected {EXPECTED_CELLS}, got {len(wrong)}')
+    if len(mixed) != EXPECTED_CELLS:
+        structural.append(f'mixed cells: expected {EXPECTED_CELLS}, got {len(mixed)}')
+    if len(set(equations)) != len(equations):
+        structural.append(f'duplicate equations in the wrong-only arm: {sorted(equations)}')
+
+    print()
+    if structural:
+        print('STRUCTURAL: the result file is not the table the protocol describes')
+        for line in structural:
+            print(f'  - {line}')
+        print()
+        print('OVERALL: FAIL (STRUCTURAL)')
+        return 1
 
     applicable = [row for row in wrong if outcome(row) != 'UNKNOWN']
     passed = [row for row in applicable if outcome(row) == 'PASS']

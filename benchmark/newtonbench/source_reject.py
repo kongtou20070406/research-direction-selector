@@ -34,7 +34,7 @@ SUBSTITUTIONS = {
     'feynman-II.34.11': ('/(2*m)', '/(2*m**2)'),
 }
 
-CARRIED = ('equation', 'B', 'status', 'claim', 'law', 'counterexamples', 'claim_exact',
+CARRIED = ('equation', 'variant', 'B', 'status', 'claim', 'law', 'counterexamples', 'claim_exact',
            'experiments', 'false_certification', 'certification_check', 'seconds', 'error')
 
 
