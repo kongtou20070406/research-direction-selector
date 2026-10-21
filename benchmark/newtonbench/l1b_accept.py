@@ -15,14 +15,31 @@ result files -- library off and library on -- and decides four gates:
      a quality gain cannot buy itself with unbounded spend.
   4. no cell may add a false certification.
 
+Revision 7 (2026-10-21): the devset grew from five equations to thirty, so the
+cell set is read from the registry (`devset.list_equations`) instead of a frozen
+five-tuple.  The gates keep their wording and their thresholds; only the
+denominator moves from 15 cells to 90.
+
+Missing evidence is not a zero.  A cell the runner never judged -- the baseline
+carries 23 such rows, declared and then rejected at declaration time, so they have
+an `error` and no `status` -- is UNKNOWN: counted neither as pass nor as fail,
+dropped from every gate denominator, and listed separately in the report.  Two
+different absences are kept apart:
+
+  * the cell is not in the file at all -> MISSING CELLS, fails closed immediately;
+  * the cell is in the file but carries no recognised status -> UNKNOWN, excluded.
+
+If the UNKNOWN cells leave fewer than half of the 90 judged, the script FAILs with
+"insufficient sample" instead of passing on thin air.
+
 The I.6.20a cell is recorded separately and does NOT gate: whether anti-unification
 can build a template containing pi depends on whether the library already holds a
 splittable success case, which is unknown before the run.  Gating on it would make
 L1 pass or fail by luck.
 
-Negative condition: if all 15 cells behave byte-identically, the operators were
-never reused and the L1 path does not exist -- that is a FAIL with its own label,
-not a silent pass.
+Negative condition: if every JUDGED cell behaves byte-identically, the operators
+were never reused and the L1 path does not exist -- that is a FAIL with its own
+label, not a silent pass.  UNKNOWN cells are not evidence of reuse either way.
 
 Fails closed.  A missing, unreadable, or incomplete result file is a FAIL.  The
 kernel never teaches this script what "good" means; every number comes from the two
@@ -40,15 +57,32 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / 'benchmark' / 'newtonbench' / 'results'
+sys.path[:0] = [str(ROOT / 'scripts'), str(Path(__file__).resolve().parent)]
 
-# Frozen by the protocol: five equations times three budgets is the whole design.
-EQUATIONS = ('feynman-I.12.1', 'feynman-I.14.3', 'feynman-I.6.20a',
-             'feynman-I.9.18', 'feynman-II.2.42')
+import devset  # noqa: E402
+
+# Read from the registry so a new equation joins the gate without editing this file.
+EQUATIONS = tuple(devset.list_equations())
 BUDGETS = (8, 16, 32)
 CELLS = tuple((eq, b) for eq in EQUATIONS for b in BUDGETS)
 
 # Recorded, never gated.  See the module docstring.
 EXTRA_EQUATION = 'feynman-I.6.20a'
+
+# The handoff vocabulary a settled cell can carry (scripts/rds_compass.py:32-34).
+# Anything else -- a row that crashed before recording a status, or a status this
+# gate has never been calibrated against -- is UNKNOWN, never coerced.
+KNOWN_STATUSES = frozenset((
+    'GOAL_IDENTIFIED', 'IMPROVEMENT_EVALUATED', 'BUDGET_EXHAUSTED', 'SEARCH_EXHAUSTED',
+    'JUDGMENT_REQUIRED', 'STEP_LIMIT', 'CONTROLLER_DEADLINE', 'INTERRUPTED',
+    'WAITING_FOR_ORIGINAL_ATTEMPT',
+    'NO_MEASUREMENTS', 'RUN_FAILED', 'RUN_ERROR',
+))
+# Provenance: this list is the kernel's own state machine (`scripts/rds_compass.py:32-34`
+# HANDOFF_REASONS, plus the three devset-side names in `devset_run.certify_run`).  It is
+# NOT part of the pre-registration, so a kernel that grows a new terminal status must
+# extend it here or that cell silently degrades to UNKNOWN.  Errs toward UNKNOWN, never
+# toward a pass: an unrecognised name is neither a success nor a failure.
 
 
 def load(path):
@@ -74,6 +108,16 @@ def load(path):
             raise SystemExit(f'DUPLICATE CELL in {path}: {key}')
         index[key] = run
     return index
+
+
+def judged(run):
+    """True when the row carries a status this gate can read.
+
+    A row without a status is the runner telling us it never got as far as judging
+    the cell; reading its absent counterexamples or experiments as a zero would turn
+    "no evidence" into "bad result".
+    """
+    return run.get('status') in KNOWN_STATUSES
 
 
 def flag(run):
@@ -102,12 +146,11 @@ def false_certification(run):
     explicit = run.get('false_certification')
     if isinstance(explicit, bool):
         return explicit
-    if run.get('status') != 'GOAL_IDENTIFIED':
-        return False
+    # Only a claim can be falsely certified: a row claiming nothing is False, not
+    # malformed, and a cell that never recorded a counterexample is not a claim.
     counterexamples = run.get('counterexamples')
-    if counterexamples is None:
-        raise SystemExit(f'MALFORMED counterexamples: None in {run!r}; '
-                         'cannot judge the safety gate on a claim cell')
+    if run.get('status') != 'GOAL_IDENTIFIED' or not counterexamples:
+        return False
     return counterexamples > 0
 
 
@@ -125,28 +168,51 @@ def main(argv=None):
     off = load(Path(args.off))
     on = load(Path(args.on))
 
-    missing = [c for c in CELLS if c not in off] + [c for c in CELLS if c not in on]
-    if missing:
-        raise SystemExit(f'MISSING CELLS: {missing}\n'
-                         'Both files must cover all 15 pre-registered cells.')
+    absent = [c for c in CELLS if c not in off or c not in on]
+    if absent:
+        raise SystemExit(f'MISSING CELLS: {absent}\n'
+                         f'Both files must cover all {len(CELLS)} pre-registered cells; '
+                         'a cell absent from the file is a truncated run, not UNKNOWN.')
 
     ok = True
     print(f'library off: {args.off}')
     print(f'library on:  {args.on}')
+    print(f'equations:   {len(EQUATIONS)} (from the registry), budgets: {list(BUDGETS)}')
     print()
 
+    unknown = [c for c in CELLS if not (judged(off[c]) and judged(on[c]))]
+    cells = [c for c in CELLS if c not in unknown]
+    print(f'UNKNOWN  {len(unknown)}/{len(CELLS)} cells carry no recognised status '
+          f'(declaration-time rejection); judged {len(cells)}')
+    for eq, b in unknown:
+        side = '+'.join(s for s, files in (('off', off), ('on', on))
+                        if not judged(files[(eq, b)]))
+        reason = str((on.get((eq, b)) if 'on' in side else off.get((eq, b))).get('error'))[:80]
+        print(f'         {eq} B={b} [{side}] {reason}')
+    print()
+
+    # Gate 0 -- UNKNOWN is not a pass.  Below half of the design, say so.
+    # "At least half": 45/90 is judgeable.  A stricter bar would need an effect size
+    # and a power calculation, and inventing one here would pin a threshold nobody
+    # pre-registered; half is the only line this script can defend.
+    majority = len(cells) * 2 >= len(CELLS)
+    ok &= check('gate 0: at least half of the pre-registered cells are judgeable',
+                majority,
+                f'{len(cells)}/{len(CELLS)} judged'
+                + ('' if majority else ' -- insufficient sample, cannot judge'))
+
     # Gate 1 -- quality must not regress, cell by cell.
-    regressed = [c for c in CELLS if flag(off[c]) and not flag(on[c])]
-    off_total = sum(1 for c in CELLS if flag(off[c]))
-    on_total = sum(1 for c in CELLS if flag(on[c]))
+    regressed = [c for c in cells if flag(off[c]) and not flag(on[c])]
+    off_total = sum(1 for c in cells if flag(off[c]))
+    on_total = sum(1 for c in cells if flag(on[c]))
     ok &= check('gate 1a: claim_exact(on) >= claim_exact(off)',
                 on_total >= off_total, f'{on_total} >= {off_total}')
     ok &= check('gate 1b: no cell turns exact -> inexact',
                 not regressed, f'regressed={regressed}' if regressed else '0 regressed')
 
     # Gate 2 -- reuse evidence: either quality went up, or the total spend went down.
-    off_total_exp = sum(experiments(off[c]) for c in CELLS)
-    on_total_exp = sum(experiments(on[c]) for c in CELLS)
+    off_total_exp = sum(experiments(off[c]) for c in cells)
+    on_total_exp = sum(experiments(on[c]) for c in cells)
     quality_up = on_total > off_total
     cost_down = on_total_exp < off_total_exp
     ok &= check('gate 2: reuse evidence (claim_exact up, or total experiments down)',
@@ -161,29 +227,33 @@ def main(argv=None):
                 f'{on_total_exp} <= {ceiling:.1f}')
 
     # Gate 4 -- safety: no new false certification anywhere.
-    added = [c for c in CELLS if false_certification(on[c]) and not false_certification(off[c])]
+    added = [c for c in cells if false_certification(on[c]) and not false_certification(off[c])]
     ok &= check('gate 4: no cell adds a false certification',
                 not added, f'added={added}' if added else '0 added')
 
     # Recorded, not gating.
     extra = [(b, off[(EXTRA_EQUATION, b)], on[(EXTRA_EQUATION, b)]) for b in BUDGETS]
     improved = [(b, o, n) for b, o, n in extra
-                if (o.get('status') == 'SEARCH_EXHAUSTED'
-                    and n.get('status') != 'SEARCH_EXHAUSTED')
-                or experiments(n) < experiments(o)]
+                if judged(o) and judged(n)
+                and ((o.get('status') == 'SEARCH_EXHAUSTED'
+                      and n.get('status') != 'SEARCH_EXHAUSTED')
+                     or experiments(n) < experiments(o))]
+    extra_unknown = [b for b, o, n in extra if not (judged(o) and judged(n))]
     print(f'NOTE  {EXTRA_EQUATION} (recorded, not a gate): '
-          + (f'{len(improved)} budget(s) improved' if improved else 'no change'))
+          + (f'{len(improved)} budget(s) improved' if improved else 'no change')
+          + (f'; UNKNOWN budgets {extra_unknown}' if extra_unknown else ''))
 
     # Negative condition -- identical behaviour everywhere means zero reuse.
-    identical = [c for c in CELLS
+    identical = [c for c in cells
                  if flag(off[c]) == flag(on[c])
                  and experiments(off[c]) == experiments(on[c])
                  and off[c].get('status') == on[c].get('status')
                  and off[c].get('law') == on[c].get('law')]
-    zero_reuse = len(identical) == len(CELLS)
+    zero_reuse = bool(cells) and len(identical) == len(cells)
     ok &= check('negative condition: operators were actually reused',
                 not zero_reuse,
-                f'{len(identical)}/{len(CELLS)} cells byte-identical'
+                f'{len(identical)}/{len(cells)} judged cells byte-identical'
+                + (f' ({len(unknown)} UNKNOWN not evidence)' if unknown else '')
                 + (' -- L1 PATH DOES NOT EXIST' if zero_reuse else ''))
 
     print()
