@@ -292,8 +292,33 @@ def certify_run(run, spec=None):
     return run
 
 
+#: Fields that cannot repeat between two runs of the same sweep, by construction.
+#: A wall-clock reading and a mkdtemp() root differ every time; an acceptance
+#: check that compares them byte for byte fails a correct seam every time.
+UNSTABLE_FIELDS = ('seconds', 'campaign_root', 'elapsed_seconds')
+
+
+def comparable(document):
+    """Strip the unrepeatable fields so two sweeps can be compared directly.
+
+    Everything else, including every per-run verdict, must still match exactly.
+    A row that crashed carries no `status`, so it survives here as itself.
+    """
+    kept = {k: v for k, v in document.items() if k not in UNSTABLE_FIELDS}
+    kept['runs'] = [{k: v for k, v in run.items() if k not in UNSTABLE_FIELDS}
+                    for run in document.get('runs', [])]
+    return kept
+
+
 def summarize(runs):
-    """Top-level rate; null + NO_CLAIMS when nothing was claimed (never 0.0)."""
+    """Top-level rate; null + NO_CLAIMS when nothing was claimed (never 0.0).
+
+    A crashed cell and an honest null are different things. `main` keeps going
+    when one cell raises, so a sweep that lost most of its cells still exits 0
+    with a verdict-shaped file. Reporting those rows as NO_CLAIMS would read
+    like "no false certifications were found"; they are reported as degraded.
+    """
+    degraded = [r for r in runs if 'error' in r and 'status' not in r]
     claimed = sum(1 for r in runs if r.get('claimed'))
     known = [r for r in runs if r.get('claimed') and r.get('false_certification') is not None]
     false_cert = sum(1 for r in known if r['false_certification'])
@@ -301,8 +326,11 @@ def summarize(runs):
             'false_certification_count': false_cert,
             'claimed_count': claimed,
             'checkable_claimed_count': len(known),
+            'degraded_count': len(degraded),
             'false_certification_rate_rule': 'false_certification_count / checkable_claimed_count',
-            'false_certification_status': 'NO_CLAIMS' if not known else
+            'false_certification_status': 'NO_RUNS' if not runs else
+            'DEGRADED' if len(degraded) * 2 > len(runs) else
+            'NO_CLAIMS' if not known else
             'ZERO_FALSE_CERTIFICATIONS' if not false_cert else 'FALSE_CERTIFICATIONS_FOUND'}
 
 

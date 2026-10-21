@@ -192,7 +192,9 @@ def summarize(rows):
     out['claimed_count'] = sum(1 for r in rows if r.get('claimed'))
     out['checkable_claimed_count'] = len(known)
     out['false_certification_rate_rule'] = 'false_certification_count / checkable_claimed_count'
-    out['false_certification_status'] = ('NO_CLAIMS' if not known else
+    # An empty sweep is not the same finding as a sweep that claimed nothing.
+    out['false_certification_status'] = ('NO_RUNS' if not rows else
+                                         'NO_CLAIMS' if not known else
                                          'ZERO_FALSE_CERTIFICATIONS' if not count else
                                          'FALSE_CERTIFICATIONS_FOUND')
     return out
