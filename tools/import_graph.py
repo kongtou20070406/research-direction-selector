@@ -64,6 +64,7 @@ LAYERS.update(
     rds_compass_store="L1",
     rds_compass_declaration="L1",
     rds_compass="L3",
+    rds_compass_report="L3",
     rds_compass_rsi="L3",
     rds_compass_drive="L3",
     # Inverse decomposition: a second synthesis strategy beside the bottom-up enumeration.
