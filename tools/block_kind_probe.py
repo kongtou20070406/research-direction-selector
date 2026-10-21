@@ -21,6 +21,11 @@ import sys
 SKIP = {'.git', '.agents', '__pycache__', '.rds', 'node_modules', '.venv'}
 VERBS = {'select', 'insert', 'update', 'delete', 'pragma', 'create', 'replace',
          'drop', 'alter', 'begin', 'commit', 'with'}
+# Every way a caller can borrow a connection or run a read against one. `_db`
+# is the raw door; `readonly` and `read_through` are the named public ones. A
+# probe that only knows `_db` reports a smaller number after a rename without
+# anything getting narrower, which is what happened once already.
+MANAGERS = {'_db': 'borrow', 'readonly': 'readonly', 'read_through': 'projection'}
 
 
 def sql_verbs(node):
@@ -82,9 +87,16 @@ def main():
                 for item in node.items:
                     expr = item.context_expr
                     if not (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute)
-                            and expr.func.attr == '_db'):
+                            and expr.func.attr in MANAGERS):
                         continue
                     who = receiver(expr)
+                    manager = MANAGERS[expr.func.attr]
+                    if manager == 'borrow':
+                        # `_db(True)` already opens a read-only connection; only
+                        # the bare form hands out a writer.
+                        first = expr.args[0] if expr.args else None
+                        if isinstance(first, ast.Constant) and first.value is True:
+                            manager = 'readonly'
                     func = owner.get(id(node))
                     if func is not None and takes_db(func):
                         kind = 'injection'
@@ -97,9 +109,11 @@ def main():
                     # block whose only verbs are select/pragma/begin is a read.
                     mutating = verbs & {'insert', 'update', 'delete', 'replace',
                                         'create', 'drop', 'alter'}
-                    if mutating:
+                    if manager == 'projection':
+                        what = 'projects'
+                    elif mutating:
                         what = 'writes'
-                    elif verbs:
+                    elif manager == 'readonly' or verbs:
                         what = 'reads'
                     else:
                         what = 'delegates'
