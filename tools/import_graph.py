@@ -68,6 +68,9 @@ LAYERS.update(
     rds_compass_drive="L3",
     # Inverse decomposition: a second synthesis strategy beside the bottom-up enumeration.
     rds_compass_decompose="L3",
+    # Dimensional type discipline over an expression tree. Pure integer-vector algebra with
+    # no kernel imports, so it sits beside the other L1 predicates; nothing consumes it yet.
+    rds_compass_dimension="L1",
     rds_compass_cli="L4",
     # The skill A/B paid-query shim is a leaf CLI entry point with no rds_ imports; classify it
     # beside the other L4 entry points instead of excluding scripts/ sources from the inventory.
