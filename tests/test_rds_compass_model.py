@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -195,6 +196,93 @@ class SynthesisTests(unittest.TestCase):
                                   max_nodes=4, max_candidates=1000, derived={'s': 'x + y'})
         self.assertEqual(result['status'], 'FIT_FOUND')
         self.assertIn('(2 * s)', [fit['text'] for fit in result['fits']])
+
+
+class CachedSpanTests(unittest.TestCase):
+    """The enumeration reuses child spans; a whole-tree re-evaluation must agree at every point."""
+
+    POINTS = [{'x': Fraction(v)} for v in (0, Fraction(1, 2), 1, 2, 3, 4, 9)]
+
+    def whole(self, node, points):
+        out = []
+        for env in points:
+            try:
+                out.append(model._enclose(node, env))
+            except (model.DomainError, model.Undecided):
+                out.append(None)
+        return out
+
+    def composed(self, node, points):
+        """The cache's view: leaves are evaluated once, every internal node grows from child spans."""
+        if 'const' in node:
+            point = Fraction(node['const'])
+            return [(point, point)] * len(points)
+        if 'var' in node or node['op'] in model.NULLARY or node['op'] in model.TERNARY:
+            return self.whole(node, points)  # Not composed by the enumeration, so not cached either.
+        held = [self.composed(arg, points) for arg in node['args']]
+        out = []
+        for index in range(len(points)):
+            values = [child[index] for child in held]
+            if any(value is None for value in values):
+                out.append(None)
+                continue
+            try:
+                out.append(model._step(node['op'], values))
+            except (model.DomainError, model.Undecided):
+                out.append(None)
+        return out
+
+    def test_cached_composition_equals_a_whole_tree_reevaluation(self):
+        # sqrt turns points Inexact; dividing by (x - 2) and a half power raise DomainError.
+        sources = ('sqrt(x) / (x - 2)', '1 / (x - 2) - sqrt(x)', '(x - 2) ** (1/2)',
+                   'sqrt(x) % 2', 'x ** (3/2) + 1 / (x - 2)')
+        for source in sources:
+            node = model.parse(source)
+            self.assertEqual(self.whole(node, self.POINTS), self.composed(node, self.POINTS), source)
+
+    def test_a_span_stays_wide_when_an_argument_is_inexact(self):
+        # An Inexact argument must keep the composition an interval; collapsing it to a point is the bug
+        # this cache could introduce, so pin the two shapes the enumeration depends on.
+        for source, value in (('1 / sqrt(x)', Fraction(1, 2)), ('sqrt(x) - x', Fraction(1, 2)),
+                              ('sqrt(x) * sqrt(x)', Fraction(1, 2)), ('(x - 2) ** (1/2)', Fraction(5))):
+            lo, hi = model._enclose(model.parse(source), {'x': value})
+            self.assertLess(lo, hi, source)
+        lo, hi = model._enclose(model.parse('sqrt(x)'), {'x': Fraction(4)})
+        self.assertEqual((lo, hi), (Fraction(2), Fraction(2)))
+
+    def test_a_rewritten_candidate_never_reuses_the_pre_rewrite_spans(self):
+        # The enumeration hands ``consider`` the spans of the node it built; once ``normalize``
+        # rewrites that node the child vectors no longer describe it. Rewrite add(x, 1) into -x and
+        # the candidate must be measured as -x: reusing x + 1 would certify the wrong law.
+        observed = [{'id': f'x{x}', 'inputs': {'x': Fraction(x)}, 'outputs': {'y': Fraction(x + 1)}}
+                    for x in (1, 2, 3)]
+        original = model.normalize
+
+        def rewrite(node, variables=None, *, limit=model.MAX_NODES):
+            if isinstance(node, dict) and node.get('op') == 'add':
+                args = node.get('args', [])
+                if {'var': 'x'} in args and {'const': '1'} in args:
+                    return {'op': 'neg', 'args': [{'var': 'x'}]}
+            return original(node, variables, limit=limit)
+
+        with mock.patch.object(model, 'normalize', rewrite):
+            result = model.synthesize(observed, ['x'], 'y', EXACT,
+                                      grammar={'operators': ['add'], 'constants': ['1']},
+                                      max_nodes=3, max_candidates=400)
+        self.assertEqual(result['status'], 'NO_FIT')
+
+    def test_synthesis_over_a_domain_hole_still_reproduces_every_measurement(self):
+        observed = [{'id': f'x{x}', 'inputs': {'x': Fraction(x)}, 'outputs': {'y': Fraction(math.isqrt(x))}}
+                    for x in (1, 4, 9)]
+        result = model.synthesize(observed, ['x'], 'y', EXACT,
+                                  grammar={'operators': ['sqrt', 'div'], 'constants': ['1']},
+                                  max_nodes=3, max_candidates=3000,
+                                  probes=[{'x': Fraction(0)}, {'x': Fraction(2)}])
+        self.assertEqual(result['status'], 'FIT_FOUND')
+        self.assertIn('sqrt(x)', [fit['text'] for fit in result['fits']])
+        law = model.compile_hypothesis({'id': 'f', 'predict': {'y': result['fits'][0]['expression']}},
+                                       ['x'], ['y'])
+        self.assertEqual(model.replay(law, observed, EXACT)['status'], 'CONSISTENT')
 
 
 class PolynomialCertificateTests(unittest.TestCase):

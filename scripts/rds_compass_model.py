@@ -365,6 +365,21 @@ def _wide(op, values):
     return Fraction(int(true)), Fraction(int(true))
 
 
+def _step(op, values):
+    """One composition: the exact point when every argument is a point, else its enclosure.
+
+    Lifted out of ``_enclose`` so the bottom-up enumeration composes a cached child span
+    with the very same semantics a whole-tree re-evaluation uses.
+    """
+    if all(lo == hi for lo, hi in values):
+        point = _apply(op, [lo for lo, _ in values])
+        if point is not None:
+            point = _bounded(point)
+            return point, point
+    lo, hi = _wide(op, values)
+    return (_bounded(lo), hi) if lo == hi else _out(lo, hi)
+
+
 def _enclose(node, env):
     """Rigorous (lo, hi) of a node's value; a point (v, v) whenever the value is exact."""
     if 'const' in node:
@@ -385,13 +400,7 @@ def _enclose(node, env):
             raise Undecided('Branch test enclosure contains zero')
         return _enclose(args[1 if lo != 0 else 2], env)
     values = [_enclose(arg, env) for arg in args]
-    if all(lo == hi for lo, hi in values):
-        point = _apply(op, [lo for lo, _ in values])
-        if point is not None:
-            point = _bounded(point)
-            return point, point
-    lo, hi = _wide(op, values)
-    return (_bounded(lo), hi) if lo == hi else _out(lo, hi)
+    return _step(op, values)
 
 
 def _evaluate(node, env):
@@ -826,35 +835,66 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
     attempted = 0
     stopped = False
 
-    def vector(node):
-        out = []
-        for index, env in enumerate(points):
-            extended = {**env, **{name: values[index] for name, values in derived_values.items()
+    # points and the derived columns never change during the search: build each extended
+    # environment once instead of rebuilding the dictionary for every candidate and point.
+    extended_points = [{**env, **{name: values[index] for name, values in derived_values.items()
                                   if values[index] is not None}}
+                       for index, env in enumerate(points)]
+
+    def spans_of(node):
+        """Per-point enclosures of a whole tree; None where the point is undefined or undecided."""
+        out = []
+        for env in extended_points:
             try:
-                out.append(_evaluate(node, extended))
+                out.append(_enclose(node, env))
             except (DomainError, Undecided):
                 out.append(None)
         return tuple(out)
 
-    def consider(node):
+    def values_from(spans):
+        return tuple(None if span is None else (span[0] if span[0] == span[1] else Inexact(*span))
+                     for span in spans)
+
+    def combine(op, child_spans):
+        """Compose cached child spans exactly as a whole-tree enclosure would at each point."""
+        out = []
+        for index in range(len(extended_points)):
+            values = [spans[index] for spans in child_spans]
+            if any(value is None for value in values):
+                out.append(None)
+                continue
+            try:
+                out.append(_step(op, values))
+            except (DomainError, Undecided):
+                out.append(None)
+        return tuple(out)
+
+    def const_spans(value):
+        point = Fraction(value)  # _enclose reads a const node as Fraction(node['const']).
+        return ((point, point),) * len(extended_points)
+
+    def consider(node, spans=None):
         nonlocal attempted, stopped
         if attempted >= max_candidates:
             stopped = True
             return False
         attempted += 1
         try:
-            node = normalize(node, set(names) | set(derived), limit=max_nodes)
+            normalized = normalize(node, set(names) | set(derived), limit=max_nodes)
         except (ValueError, DomainError):
             return True
-        values = vector(node)
+        # A rewrite (or a node with no cached spans) moves the value away from the child
+        # vectors the caller combined: only recomputed points are then trustworthy.
+        if spans is None or normalized != node:
+            spans = spans_of(normalized)
+        values = values_from(spans)
         key = tuple(None if v is None else (v.numerator, v.denominator) for v in values)
         if key in seen:
             return True  # Observationally equivalent to a smaller retained expression.
         seen.add(key)
-        pools[size(node)].append((node, values))
+        pools[size(normalized)].append((normalized, spans))
         if all(v is not None and matches(v, t, tol) for v, t in zip(values[:n], targets)):
-            fits.append(node)
+            fits.append(normalized)
         return len(fits) < keep
 
     leaves = [{'var': v} for v in names] + [{'const': c} for c in constants]
@@ -870,16 +910,17 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
             if op in NULLARY:
                 continue
             if op in UNARY:
-                for child, _ in tuple(pools[total - 1]):
-                    if not consider({'op': op, 'args': [child]}):
+                for child, child_spans in tuple(pools[total - 1]):
+                    if not consider({'op': op, 'args': [child]}, combine(op, [child_spans])):
                         go = False
                         break
                 continue
             if op == 'pow':
                 exps = [c for c in constants if Fraction(c).denominator <= MAX_ROOT and 0 < abs(Fraction(c)) <= MAX_POWER]
-                for child, _ in tuple(pools.get(total - 2, ())):
+                for child, child_spans in tuple(pools.get(total - 2, ())):
                     for e in exps:
-                        if not consider({'op': 'pow', 'args': [child, {'const': e}]}):
+                        if not consider({'op': 'pow', 'args': [child, {'const': e}]},
+                                        combine('pow', [child_spans, const_spans(e)])):
                             go = False
                             break
                     if not go:
@@ -889,9 +930,10 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
                 right_size = total - 1 - left_size
                 if op in COMMUTATIVE and left_size > right_size:
                     continue
-                for left, _ in tuple(pools[left_size]):
-                    for right, _ in tuple(pools[right_size]):
-                        if not consider({'op': op, 'args': [left, right]}):
+                for left, left_spans in tuple(pools[left_size]):
+                    for right, right_spans in tuple(pools[right_size]):
+                        if not consider({'op': op, 'args': [left, right]},
+                                        combine(op, [left_spans, right_spans])):
                             go = False
                             break
                     if not go:
