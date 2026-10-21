@@ -20,6 +20,7 @@ import rds_compass_model as model
 import rds_compass_store as cstore
 import rds_fit_trend as fit
 from rds_artifacts import strict_json
+from rds_core import object_digest
 from rds_project import TOKEN_RESOURCE, canonical, charge_tokens, digest, require
 
 WORKSET_SCHEMA = 'rds-compass-workset-v1'
@@ -689,6 +690,85 @@ def _grammar(state):
     return grammar, names
 
 
+# --- Synthesis memo ------------------------------------------------------------
+# One campaign asks the same question repeatedly: ``generate_rivals`` refits on
+# every step and ``escape`` refits before and after a qualified RSI. When the
+# whole input of a ``synthesize`` call is unchanged, the answer is unchanged, so
+# it is memoized by a digest of that input. RDS_NO_FITS_MEMO=1 bypasses the memo
+# (reverse test and profiling). Only the three searches inside ``_fits`` are
+# memoized; every other step (holdout filtering, refutations, regime split) runs
+# exactly as before.
+_FITS_MEMO = {}
+_FITS_MEMO_LIMIT = 64
+_FITS_MEMO_STATS = {'hit': 0, 'miss': 0, 'reset': 0}
+
+
+def clear_fits_memo():
+    """Drop every memoized synthesis; a fresh drive run starts from zero."""
+    _FITS_MEMO.clear()
+    _FITS_MEMO_STATS.update(hit=0, miss=0, reset=0)
+
+
+def _fits_memo_enabled():
+    return os.environ.get('RDS_NO_FITS_MEMO') != '1'
+
+
+def _fits_memo_key(rows, names, observable, tolerances, grammar, max_nodes, max_candidates, probes,
+                   escalate, tag, derived=None):
+    """Digest every input of one memoized ``synthesize`` call, in evaluation order.
+
+    ``rows`` and ``probes`` keep their order: the search enumerates points in that
+    order, so two permutations are two different calls. Values are spelled with
+    ``model.text`` so a Fraction and its float twin cannot collide. A missing
+    grammar key stays distinct from an explicit empty one, because ``{}`` means the
+    default operators while ``{'operators': []}`` means none.
+    """
+    return object_digest({
+        'schema': 'rds-compass-fits-memo-v1', 'tag': tag, 'escalate': bool(escalate),
+        'rows': [[row['id'], canonical({k: model.text(v) for k, v in row['inputs'].items()}),
+                  None if row['outputs'].get(observable) is None else model.text(row['outputs'][observable])]
+                 for row in rows],
+        'names': list(names),
+        'observable': observable,
+        'tolerances': {name: [model.text(tol[0]), model.text(tol[1])]
+                       for name, tol in sorted(tolerances.items())},
+        'variables': None if 'variables' not in grammar else list(grammar['variables']),
+        'constants': None if 'constants' not in grammar else [model.text(c) for c in grammar['constants']],
+        'operators': None if 'operators' not in grammar else list(grammar['operators']),
+        'max_nodes': max_nodes, 'max_candidates': max_candidates, 'keep': 4,
+        'probes': [canonical({k: model.text(v) for k, v in probe.items()}) for probe in probes],
+        'derived': None if derived is None else [[name, expression] for name, expression in derived.items()],
+    })
+
+
+def _fits_synthesize(*, rows, names, observable, tolerances, grammar, max_nodes, max_candidates, probes,
+                     escalate, tag, derived=None):
+    """One ``_fits`` search, memoized on the exact inputs it hands to ``model.synthesize``.
+
+    The memo and the caller never share a result: a hit returns a deep copy, since
+    callers mutate ``notes`` and the returned fits. A miss returns the value the
+    model produced, so the uncached path is byte-identical to before.
+    """
+    def run():
+        return model.synthesize(rows, names, observable, tolerances, grammar=grammar,
+                                max_nodes=max_nodes, max_candidates=max_candidates,
+                                probes=probes, keep=4, derived=derived)
+    if not _fits_memo_enabled():
+        return run()
+    key = _fits_memo_key(rows, names, observable, tolerances, grammar, max_nodes, max_candidates,
+                         probes, escalate, tag, derived)
+    if key in _FITS_MEMO:
+        _FITS_MEMO_STATS['hit'] += 1
+        return deepcopy(_FITS_MEMO[key])
+    value = run()
+    _FITS_MEMO_STATS['miss'] += 1
+    if len(_FITS_MEMO) >= _FITS_MEMO_LIMIT:
+        _FITS_MEMO.clear()  # whole-memo reset; no LRU bookkeeping for 64 entries
+        _FITS_MEMO_STATS['reset'] += 1
+    _FITS_MEMO[key] = deepcopy(value)
+    return value
+
+
 def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     """Counterexample-filtered synthesis in three modes; exhaustion is bound-relative."""
     plan = state['plan']
@@ -705,17 +785,19 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     probes = [env(state, c) for c in remaining(state)] if probes is None else probes
     bound = bound or plan['synthesis']
     found, notes = [], {}
-    whole = model.synthesize(rows, names, observable, tolerances, grammar=grammar, max_nodes=bound['max_nodes'],
-                             max_candidates=bound['max_candidates'], probes=probes, keep=4)
+    whole = _fits_synthesize(rows=rows, names=names, observable=observable, tolerances=tolerances,
+                             grammar=grammar, max_nodes=bound['max_nodes'],
+                             max_candidates=bound['max_candidates'], probes=probes,
+                             escalate=escalate, tag='WHOLE_LAW')
     escalated = None
     if escalate and not whole['fits'] and not (plan.get('grammar') or {}).get('operators'):
         # An open grammar may still be expressible in the wider dialect: escalate only after the
         # declared arithmetic bound is exhausted, so a cheap fit is never displaced.
         wider = {**grammar, 'operators': list(EXTENDED_OPERATORS)}
-        escalated = model.synthesize(rows, names, observable, tolerances, grammar=wider,
-                                     max_nodes=bound['max_nodes'],
-                                     max_candidates=min(6000, bound['max_candidates']),
-                                     probes=probes, keep=4)
+        escalated = _fits_synthesize(rows=rows, names=names, observable=observable, tolerances=tolerances,
+                                     grammar=wider, max_nodes=bound['max_nodes'],
+                                     max_candidates=min(6000, bound['max_candidates']), probes=probes,
+                                     escalate=escalate, tag='GRAMMAR_ESCALATION')
         if escalated['fits']:
             whole = escalated
     derived_fit = None
@@ -729,10 +811,10 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
                 derived[left + '_plus_' + right] = left + ' + ' + right
                 derived[left + '_times_' + right] = left + ' * ' + right
         richer = {**grammar, 'operators': sorted(set(grammar.get('operators') or []) | set(EXTENDED_OPERATORS))}
-        derived_fit = model.synthesize(rows, names, observable, tolerances, grammar=richer,
-                                       max_nodes=bound['max_nodes'],
+        derived_fit = _fits_synthesize(rows=rows, names=names, observable=observable, tolerances=tolerances,
+                                       grammar=richer, max_nodes=bound['max_nodes'],
                                        max_candidates=min(200000, bound['max_candidates'] * 10),
-                                       probes=probes, keep=4, derived=derived)
+                                       probes=probes, escalate=escalate, tag='DERIVED', derived=derived)
         if derived_fit['fits']:
             whole = derived_fit
             derived_used = derived
