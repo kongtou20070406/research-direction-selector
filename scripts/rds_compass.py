@@ -234,7 +234,7 @@ def _observation(store, plan, item, receipt, output):
     try:
         data = strict_json(raw.decode('utf-8'))
         require(isinstance(data, dict) and isinstance(data.get('outputs'), dict), 'Output needs an outputs object')
-        outputs = {k: model.text(v) for k, v in sorted(data['outputs'].items()) if k in plan['observables']}
+        outputs = {k: model.spell(v) for k, v in sorted(data['outputs'].items()) if k in plan['observables']}
         samples = {}
         if 'samples' in data:
             require(isinstance(data['samples'], dict) and len(data['samples']) <= 4096, 'Invalid samples')
@@ -725,8 +725,8 @@ def _fits_memo_key(rows, names, observable, tolerances, grammar, max_nodes, max_
     """
     return object_digest({
         'schema': 'rds-compass-fits-memo-v1', 'tag': tag, 'escalate': bool(escalate),
-        'rows': [[row['id'], canonical({k: model.text(v) for k, v in row['inputs'].items()}),
-                  None if row['outputs'].get(observable) is None else model.text(row['outputs'][observable])]
+        'rows': [[row['id'], canonical({k: model.spell(v) for k, v in row['inputs'].items()}),
+                  None if row['outputs'].get(observable) is None else model.spell(row['outputs'][observable])]
                  for row in rows],
         'names': list(names),
         'observable': observable,
@@ -946,7 +946,7 @@ def packet(state, items, trigger, notes, stale=None):
             'trigger': trigger, 'head': state['head'], 'goal': state['plan']['goal']['statement'][:512],
             'request': 'DISPOSITIONS' if items else 'PROPOSALS', 'items': items,
             'evidence': {'observations': [{'id': r['id'], 'inputs': {k: model.text(v) for k, v in r['inputs'].items()},
-                                           observable: model.text(r['outputs'][observable]) if observable in r['outputs'] else None,
+                                           observable: model.spell(r['outputs'][observable]) if observable in r['outputs'] else None,
                                            'receipt_sha256': r['receipt_sha256']} for r in rows[-24:]],
                          'refuted': [{**_compact_hyp(h), 'witness': h['replay']['counterexamples'][:1]}
                                      for h in state['hypotheses'].values() if h['status'] == 'REFUTED'][-12:]},

@@ -70,7 +70,69 @@ class Inexact(Fraction):
     __copy__ = __deepcopy__
 
     def __reduce__(self):
-        return Inexact, (self - self.radius, self + self.radius)
+        mid, radius = _envelope(self)
+        return Inexact, (mid - radius, mid + radius)
+
+    # Arithmetic carries the enclosure. Without these, ``a - b`` returns a plain Fraction and
+    # every downstream decision reads the midpoint of an interval as if it were a point value.
+    def __add__(self, other):
+        a, ra = _envelope(self)
+        b, rb = _envelope(other)
+        return _carry(a + b, ra + rb)
+
+    __radd__ = __add__
+
+    def __sub__(self, other):
+        a, ra = _envelope(self)
+        b, rb = _envelope(other)
+        return _carry(a - b, ra + rb)
+
+    def __rsub__(self, other):
+        a, ra = _envelope(other)
+        b, rb = _envelope(self)
+        return _carry(a - b, ra + rb)
+
+    def __mul__(self, other):
+        a, ra = _envelope(self)
+        b, rb = _envelope(other)
+        return _carry(a * b, abs(a) * rb + abs(b) * ra + ra * rb)  # Conservative product envelope.
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, other):
+        a, ra = _envelope(self)
+        return _quotient(a, ra, *_envelope(other))
+
+    def __rtruediv__(self, other):
+        b, rb = _envelope(self)
+        return _quotient(*_envelope(other), b, rb)
+
+
+def _envelope(value):
+    """The exact numeric value and the half-width it stands for; a plain number has no radius."""
+    return (Fraction(value.numerator, value.denominator), getattr(value, 'radius', 0)) \
+        if isinstance(value, Fraction) else (exact(value), 0)
+
+
+def _carry(mid, radius):
+    """A result keeps its enclosure; a zero radius degenerates back to a plain point value."""
+    return Inexact(mid - radius, mid + radius) if radius else Fraction(mid.numerator, mid.denominator)
+
+
+def _quotient(a, ra, b, rb):
+    """Enclosure of ``a / b``; a divisor span that contains zero has no reading at all.
+
+    The bounds come from the four corners rather than from the first-order quotient rule
+    ``(|a|*rb + |b|*ra) / (b**2 - rb**2)``: that rule is only conservative while the radii are
+    small against the values. ``a = [-2, -1]`` and ``b = [-3, -2]`` reach ``a / b = 1`` while
+    the first-order rule caps the enclosure at ``14/15``, which would decide a cell the data
+    cannot decide.
+    """
+    if abs(b) <= rb:
+        raise DomainError('Division by an enclosure that contains zero')
+    corners = [left / right for left in (a - ra, a + ra) for right in (b - rb, b + rb)]
+    mid = a / b
+    return _carry(mid, max(mid - min(corners), max(corners) - mid))
 
 
 def require(ok, message):
@@ -127,6 +189,23 @@ def text(value):
     """Stable exact spelling used in packets and ledger bodies."""
     value = exact(value)
     return str(value.numerator) if value.denominator == 1 else f'{value.numerator}/{value.denominator}'
+
+
+def spell(value):
+    """Round-trip spelling: an enclosure keeps its bounds, a point keeps its text.
+
+    ``text`` writes only the midpoint of an ``Inexact``, so a ledger written with it
+    loses the radius and ``exact`` reads the measurement back as a point value: an
+    undecided cell would silently become a decided one. ``exact({'lo', 'hi'})``
+    parses these bounds back, so the spelling closes the round trip. A degenerate
+    interval is a point and stays a point spelling, never a mapping.
+    """
+    value = exact(value)
+    radius = getattr(value, 'radius', 0)
+    if not radius:
+        return text(value)
+    mid = Fraction(value.numerator, value.denominator)
+    return {'lo': text(mid - radius), 'hi': text(mid + radius)}
 
 
 def _name(value):
@@ -404,7 +483,8 @@ def _enclose(node, env):
             raise DomainError('Missing input: ' + node['var'])
         value = env[node['var']]
         radius = getattr(value, 'radius', 0)
-        return value - radius, value + radius
+        point = Fraction(value.numerator, value.denominator)  # The bounds themselves are points.
+        return point - radius, point + radius
     op, args = node['op'], node['args']
     if op == 'pi':
         return _PI
