@@ -44,7 +44,7 @@ s.t. 假认证率 ≤ 对照
 
 | 编号 | 问题 | 处置 |
 |---|---|---|
-| S1 | `rds_compass.py` 1491 行 / 86KB 装 8 类职责，是其依赖两个 L1 模块之和的 2.4 倍 | **合并后拆**，只按两刀（B1 agent 传输+校验、B2 呈现+TMS 镜像），纯移动 + re-export |
+| S1 | `rds_compass.py` 1491 行 / 86KB 装 8 类职责，是其依赖两个 L1 模块之和的 2.4 倍 | **第一刀已落地**（`2b7296d`）：report/TMS 八个节点搬到 `scripts/rds_compass_report.py`（203 行），core 净减 190 行，纯移动 + re-export。`report`/`workset`/`handoff` 仍在 core（搬走会成环）。见 `docs/compass-report-split-20261021.md` |
 | S2 | token 不是一等预算资源，卡死帕累托前沿 | 立 issue（C1），优先级高 |
 | S3 | fold-on-every-read 无物化层 + 20000 行硬 cap | 立 issue（C2） |
 | S4 | 治理口径三方打架 + 负结果未归档 + auto-merge 开启 | **已处理**（auto-merge 于 2026-10-20 关闭） |
@@ -59,19 +59,21 @@ s.t. 假认证率 ≤ 对照
 2. 合并前若需第三次功能改动且单次触及 ≥3 类职责 → 先拆再改；
 3. 拆分验收标准：函数体 diff 为空、公共符号全可达、focused 测试绿。
 
-**为什么现在不拆**：会和开发 session 的未提交改动直接冲突，让未合并的 PR diff 再膨胀，且零科研收益。理由写在这里，避免下次重新论证。
+**为什么当时不拆**：会和开发 session 的未提交改动直接冲突，让未合并的 PR diff 再膨胀，且零科研收益。理由写在这里，避免下次重新论证。
+
+**翻转条件怎么被满足的**：条件 2「合并前若需第三次功能改动且单次触及 ≥3 类职责」。`c92be71` 之后 35 个 commit 里，区间账本、Stage 2 接缝、undecided 报告、多项式回执、source seam 五轮都动过 `rds_compass.py`，单次都跨了 fold / 判定 / 报告三类职责。第一刀按条件 3 验收：8 个节点在 `c92be71` 与 `1ffbe80` 之间逐字节相同，AST 扫描确认只依赖 `canonical`/`cstore`/`model`，搬完 `getattr(core, n) is getattr(report, n)` 全部成立，`test_rds_compass_drive.py` 31 tests OK。
 
 ## 四、优先级路线
 
 | 序 | 事项 | 状态 | 完成判据 |
 |---|---|---|---|
 | 0 | **工作区清算**：`paid_query` 补登记 `LAYERS`；11 项未提交改动分批定性 | **已完成** | `test_import_graph.py` 97 OK；`git status` 干净 |
-| 1 | **成本两轴可自动计算**：`experiments_per_correct` / `seconds_per_correct` 进结果文件 | **已完成**（`381e648`） | 用真实结果文件复算与手算对得上 |
-| 2 | **区间观测往返**（P0）：`{'lo','hi'}` 持久化后半径不许丢 | 进行中 | 六处 LOSSY 全修；`test_rds_compass_interval` 绿 |
-| 3 | **Stage 2 假设接缝**：外部生成器（PySR / LLM / CAS）的入口 | 协议 v2 已写，待接线 | `docs/stage2-hypothesis-protocol.md` 六条判据 |
-| 4 | **饱和早停**：要动的是 PROBE 的预算分配优先级 | 两条修法已回滚，杠杆面已定位 | `benchmark/newtonbench/saturation-protocol.md`：`max(Exp@16,Exp@24,Exp@32) − Exp@12 ≤ 2`（基线 9）；devset 4/5 方程三档实验数 ≤6 且总 `claim_exact` ≥12/15；`feynman-I.6.20a` 不许从 `SEARCH_EXHAUSTED` 变假认证 |
-| 5 | **表达力**：抬高 `max_nodes` 或换生成器（`I.6.20a`、size>7 的 10 个方程） | 已量化未做 | 40 个方程里 size>7 那 10 个至少攻下多数 |
-| 6 | 结构拆分（B1/B2） | 缓议 | 见翻转条件 |
+| 1 | **成本两轴可自动计算**：`experiments_per_correct` / `seconds_per_correct` 进结果文件 | **已完成**（`381e648`，分母修正 `75570aa`） | 用真实结果文件复算与手算对得上 |
+| 2 | **区间观测往返**（P0）：`{'lo','hi'}` 持久化后半径不许丢 | **已完成**（`5611a7d`） | 写 `{'lo':'7/10','hi':'11/10'}` 读回半径 `1/5`、判 `UNTESTED`；`test_rds_compass_interval*.py` 34 OK |
+| 3 | **Stage 2 假设接缝 + Stage 3 外部来源** | **已完成**（`639e19f` / `57b62fa`） | Stage 2：全量 pareto 36 格字节相同；Stage 3：correct source 救回 6/8、wrong source 全被拒 |
+| 4 | **饱和早停**：要动的是 PROBE 的预算分配优先级 | 两条修法已回滚，`_gap_wide_enough` 已删（`073af2c`） | `benchmark/newtonbench/saturation-protocol.md`：`max(Exp@16,Exp@24,Exp@32) − Exp@12 ≤ 2`（基线 9）；devset 4/5 方程三档实验数 ≤6 且总 `claim_exact` ≥12/15；`feynman-I.6.20a` 不许从 `SEARCH_EXHAUSTED` 变假认证 |
+| 5 | **表达力**：抬高 `max_nodes` 或换生成器（`I.6.20a`、size>7 的 10 个方程） | 已量化，参数旋钮被判死 | 40 个方程里 size>7 那 10 个至少攻下多数。**现有枚举器做不到**：`max_nodes` 7→9→12 时 `attempted` 恒 20000、`distinct` 一字不差。要换生成器 |
+| 6 | 结构拆分（B1/B2 + report/TMS） | **第一刀已完成**（`2b7296d`） | core 1569 行；`rds_project.py` 2081 / `rds_cli.py` 2049 未动，下一刀按 CRG community 边界走 |
 | 7 | **四代子系统收拢计划**（S8） | 只出计划 | 不动代码 |
 
 ## 五、防再犯机制（三条，必须落成可执行检查）
