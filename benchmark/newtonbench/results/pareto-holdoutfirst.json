@@ -1,0 +1,960 @@
+{
+ "schema": 2,
+ "false_certification_rule": "an arm that states a law differs from the world truth on 32 independent samples in the declared box, beyond the zero tolerance; null (UNKNOWN) when no checkable claim exists, never 0.0",
+ "rows": [
+  {
+   "task": "sparse-tail",
+   "arm": "baseline-uniform",
+   "budget": 6,
+   "experiments": 6,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "142943845930358/289984919385",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "baseline-uniform",
+   "budget": 6,
+   "experiments": 6,
+   "exact_match": 31,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "baseline-uniform",
+   "budget": 6,
+   "experiments": 6,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "9782631828478/1216662911931",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "8843715185/887427361"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "baseline-uniform",
+   "budget": 8,
+   "experiments": 8,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "69629217919459/178094312270",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "baseline-uniform",
+   "budget": 8,
+   "experiments": 8,
+   "exact_match": 31,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "baseline-uniform",
+   "budget": 8,
+   "experiments": 8,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "2708233508855/373606918981",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "8843715185/887427361"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "baseline-uniform",
+   "budget": 12,
+   "experiments": 12,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "1727615970861/6133889615",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "baseline-uniform",
+   "budget": 12,
+   "experiments": 12,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "20697709377103/147213350760",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "baseline-uniform",
+   "budget": 12,
+   "experiments": 12,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "7373441879179/1003680345291",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "8843715185/887427361"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "baseline-uniform",
+   "budget": 16,
+   "experiments": 16,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "67172277858499/315578045020",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "baseline-uniform",
+   "budget": 16,
+   "experiments": 16,
+   "exact_match": 31,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "baseline-uniform",
+   "budget": 16,
+   "experiments": 16,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "2494682682892/331010405653",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "8843715185/887427361"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "baseline-uniform",
+   "budget": 24,
+   "experiments": 24,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "22049517611033/149328485110",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "baseline-uniform",
+   "budget": 24,
+   "experiments": 24,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "259130782564819/3583883642640",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "baseline-uniform",
+   "budget": 24,
+   "experiments": 24,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "13394163885707/1879571150598",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "8843715185/887427361"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "baseline-uniform",
+   "budget": 32,
+   "experiments": 32,
+   "exact_match": 1,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "192182750199/1692107480",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "baseline-uniform",
+   "budget": 32,
+   "experiments": 32,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "745340360399/13536859840",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "25931696509/846053740"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "baseline-uniform",
+   "budget": 32,
+   "experiments": 32,
+   "exact_match": 0,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "25764209091/3549709444",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=3082710928/540324839",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "8843715185/887427361"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "rds",
+   "budget": 6,
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 28,
+   "best_effort_exact": 0,
+   "exact_match": 28,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "819238812819/844005296",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=6317087/217727",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "23922477885/844005296"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "rds",
+   "budget": 6,
+   "experiments": 6,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 31,
+   "best_effort_exact": 0,
+   "exact_match": 31,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "rds",
+   "budget": 6,
+   "experiments": 5,
+   "status": "SEARCH_EXHAUSTED",
+   "claim": "NOT_ESTABLISHED",
+   "claim_exact": 0,
+   "best_effort_exact": 23,
+   "exact_match": 0,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "rds",
+   "budget": 8,
+   "experiments": 8,
+   "status": "JUDGMENT_REQUIRED",
+   "claim": "CONSISTENT_BUT_UNCONFIRMED",
+   "claim_exact": 0,
+   "best_effort_exact": 0,
+   "exact_match": 29,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "rds",
+   "budget": 8,
+   "experiments": 8,
+   "status": "JUDGMENT_REQUIRED",
+   "claim": "CONSISTENT_BUT_UNCONFIRMED",
+   "claim_exact": 0,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "rds",
+   "budget": 8,
+   "experiments": 8,
+   "status": "JUDGMENT_REQUIRED",
+   "claim": "CONSISTENT_BUT_UNCONFIRMED",
+   "claim_exact": 0,
+   "best_effort_exact": 0,
+   "exact_match": 30,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "rds",
+   "budget": 12,
+   "experiments": 12,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 30,
+   "best_effort_exact": 0,
+   "exact_match": 30,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "211192186/217727",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=6317087/217727",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "6317087/217727"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "rds",
+   "budget": 12,
+   "experiments": 12,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "rds",
+   "budget": 12,
+   "experiments": 12,
+   "status": "JUDGMENT_REQUIRED",
+   "claim": "CONSISTENT_BUT_UNCONFIRMED",
+   "claim_exact": 0,
+   "best_effort_exact": 0,
+   "exact_match": 30,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "rds",
+   "budget": 16,
+   "experiments": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 31,
+   "best_effort_exact": 0,
+   "exact_match": 31,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "964768613553/995898937",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=25931696509/846053740",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "30134424510/995898937"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "rds",
+   "budget": 16,
+   "experiments": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "rds",
+   "budget": 16,
+   "experiments": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "rds",
+   "budget": 24,
+   "experiments": 24,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "964768613553/995898937",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=25931696509/846053740",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "30134424510/995898937"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "rds",
+   "budget": 24,
+   "experiments": 24,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "rds",
+   "budget": 24,
+   "experiments": 24,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "sparse-tail",
+   "arm": "rds",
+   "budget": 32,
+   "experiments": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": true,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "964768613553/995898937",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "DIFFERS_BEYOND_TOLERANCE on x=25931696509/846053740",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "30134424510/995898937"
+    }
+   }
+  },
+  {
+   "task": "sparse-mid",
+   "arm": "rds",
+   "budget": 32,
+   "experiments": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  },
+  {
+   "task": "regime-double",
+   "arm": "rds",
+   "budget": 32,
+   "experiments": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "claim_exact": 32,
+   "best_effort_exact": 0,
+   "exact_match": 32,
+   "claimed": true,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 32,
+    "max_abs_error": "0",
+    "tolerance": "0",
+    "tolerance_rel": "0",
+    "seed": 357,
+    "sampling": "uniform in [min(xs), max(xs)], rounded half away from zero",
+    "independence": "excludes x0..x5, the only points either arm saw",
+    "reason": "EQUIVALENT on 32 sampled points",
+    "evaluation_failures": 0,
+    "exploded_differences": 0,
+    "visible_clashes_redrawn": 0,
+    "worst_point": {
+     "x": "3082710928/540324839"
+    }
+   }
+  }
+ ],
+ "rds": {
+  "false_certification_rate": 0.38461538461538464,
+  "false_certification_count": 5,
+  "claimed_count": 13,
+  "checkable_claimed_count": 13,
+  "false_certification_status": "FALSE_CERTIFICATIONS_FOUND",
+  "correct_count": 8,
+  "experiments_total": 293,
+  "experiments_per_correct": 36.625,
+  "cost_per_correct_rule": "experiments over the arm divided by the rows whose law reproduced the target with 0 counterexamples and survived the independent certification points"
+ },
+ "baseline-uniform": {
+  "false_certification_rate": 0.8333333333333334,
+  "false_certification_count": 15,
+  "claimed_count": 18,
+  "checkable_claimed_count": 18,
+  "false_certification_status": "FALSE_CERTIFICATIONS_FOUND",
+  "correct_count": 0,
+  "experiments_total": 294,
+  "experiments_per_correct": null,
+  "cost_per_correct_rule": "experiments over the arm divided by the rows whose law reproduced the target with 0 counterexamples and survived the independent certification points"
+ },
+ "false_certification_rate": 0.6451612903225806,
+ "false_certification_count": 20,
+ "claimed_count": 31,
+ "checkable_claimed_count": 31,
+ "false_certification_rate_rule": "false_certification_count / checkable_claimed_count",
+ "false_certification_status": "FALSE_CERTIFICATIONS_FOUND",
+ "correct_count": 8,
+ "experiments_total": 587,
+ "experiments_per_correct": 73.375,
+ "cost_per_correct_rule": "experiments over the arm divided by the rows whose law reproduced the target with 0 counterexamples and survived the independent certification points"
+}
