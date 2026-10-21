@@ -1360,11 +1360,23 @@ def _polynomial_check(state, best):
     if not router.check_certificate(spec, certificate):
         return {**base, 'status': 'CERTIFICATE_REJECTED'}
     base.update(coefficients=certificate['solution'], assurance='CERTIFICATE_CHECKED')
+    tolerance = _tolerances(plan)[observable]
+    receipts = {tuple(sorted(r['inputs'].items())): r['outputs'][observable]
+                for r in measured(state) if observable in r['outputs']}
     for item in plan['candidates']:
         point = env(state, item)
         values, status = model.predict(best, point)
         interpolant = sum(c * point[names[0]] ** j for j, c in enumerate(solution))
-        if status != 'PREDICTED' or not model.agree(values[observable], interpolant, _tolerances(plan)[observable]):
+        if status != 'PREDICTED' or not model.agree(values[observable], interpolant, tolerance):
+            receipt = receipts.get(tuple(sorted(point.items())))
+            if status == 'PREDICTED' and receipt is not None:
+                # The interpolant fits only the first MAX_ROWS receipts, so it can miss an
+                # outlier that has already been measured.  When the receipt agrees with the
+                # law and not with the interpolant, the interpolation is refuted by a
+                # measurement it never saw: that is a spent hypothesis, not a rival.
+                if model.agree(receipt, values[observable], tolerance) and \
+                        not model.agree(receipt, interpolant, tolerance):
+                    continue
             return {**base, 'status': 'POLYNOMIAL_RIVAL_DISAGREES',
                     'witness': {'candidate': item['id'], 'law': model.text(values[observable]) if status == 'PREDICTED'
                                 else None, 'polynomial': model.text(interpolant)}}
