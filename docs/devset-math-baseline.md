@@ -62,8 +62,30 @@ kernel files that determine these cells —
 `scripts/rds_compass_model.py`, `scripts/rds_compass_drive.py`,
 `scripts/rds_compass_declaration.py`, `scripts/rds_compass_store.py`,
 `scripts/rds_compass.py`, `benchmark/newtonbench/devset.py`,
-`benchmark/newtonbench/devset_run.py` — are byte-identical between `839d3c8` and
-the commits on top of it; `git diff --stat 839d3c8 HEAD -- <those files>` is empty.
+`benchmark/newtonbench/devset_run.py` — were byte-identical between `839d3c8` and
+every commit on top of it at the time of the sweep.
+
+That stopped being true afterwards: `93d2377 feat(compass): let a measured value
+carry a half-width into the verdict` added `{'lo', 'hi'}` interval support to
+`exact()` (`scripts/rds_compass_model.py:85-100`), 17 inserted lines in a file these
+cells call on every measurement. So the whole 30-cell batch was run a second time
+inside a detached worktree pinned to `393c62f` (the first commit where that change
+was present), and the two sweeps were compared field by field:
+
+| comparison | result |
+|---|---|
+| cells compared | 30 / 30, same `(equation, B)` set |
+| differing fields, excluding `seconds` / `head` / `campaign_root` | **0** |
+| `status`, `claim_exact`, `experiments`, `law`, `observation_order`, `counterexamples`, `certification_check` | identical in every cell |
+| top-level aggregates (`false_certification_rate`, `claimed_count`, `checkable_claimed_count`, `false_certification_status`) | identical |
+| `head_uniform` | `true` on both (30 cells each) |
+| `elapsed_seconds` | 142.6 s at `839d3c8`, 145.4 s at `393c62f` |
+
+So the interval change moves nothing in these thirty cells, and the committed
+`results/devset-math.json` keeps the `839d3c8` sweep. The one thing that *did* move
+is wall clock, which is why the two numbers above differ at all. Had the second
+sweep disagreed in any comparable field, the failure would have been reported
+rather than averaged over.
 
 ## 3. Per-equation × budget
 
@@ -116,8 +138,11 @@ agree row for row with the already-committed
 | `math-hypotenuse` | **6** | **6** | GOAL_IDENTIFIED |
 | `math-triangular` | **7** | **7** | GOAL_IDENTIFIED |
 
-`max_nodes` is 7 (`scripts/rds_compass_declaration.py`, consumed by
-`synthesize(..., max_nodes=7, ...)` at `scripts/rds_compass_model.py:792`). Every
+`max_nodes` is 7 (`'synthesis': {'max_nodes': 7, …}` at
+`scripts/rds_compass_declaration.py:35`, consumed by
+`synthesize(..., max_nodes=7, ...)` — `scripts/rds_compass_model.py:808` at
+`393c62f`, `:792` at the `839d3c8` the sweep ran on; the 16-line interval change
+shifted the line). Every
 one of the ten laws is inside the enumerator's search space, and the two named in
 the task sit where predicted: `math-triangular` exactly **on** the ceiling at 7,
 `math-hypotenuse` one below at 6. Both solved, and neither needed a bigger budget —
