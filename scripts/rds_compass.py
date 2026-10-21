@@ -1534,7 +1534,11 @@ def verify(store, state):
                                      'note': 'PARTIAL_FIT: a refuted candidate, not a claim'}} if fallback else {}),
                  'equivalence_class': [h['id'] for h in classes[0]] if classes else [],
                  'distinct_live_classes': len(classes),
-                 'replay': {k: replay[k] for k in ('status', 'tested', 'not_applicable', 'unknown_measurements')} if replay else None,
+                 # `undecided` is absent from a replay that hit none (model.replay only sets the
+                 # key when it is non-zero), so it is read with a default: the report counts what
+                 # was left open, and "none left open" is zero, not missing.
+                 'replay': {**{k: replay[k] for k in ('status', 'tested', 'not_applicable', 'unknown_measurements')},
+                            'undecided': replay.get('undecided', 0)} if replay else None,
                  'lean': _lean(state, best, measured(state)) if best else None,
                  'polynomial': _polynomial_check(state, best) if best else None,
                  'novel_confirmations': confirmations(state, best) if best else 0,

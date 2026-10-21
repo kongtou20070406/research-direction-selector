@@ -20,6 +20,7 @@ import rds_compass as compass
 import rds_compass_model as model
 import rds_compass_store as cstore
 from rds_compass_declaration import initialize
+from rds_compass_drive import drive
 
 # The experiment under study reports an interval measurement, never a point.
 INTERVAL = '''import argparse, json, pathlib
@@ -83,6 +84,23 @@ class LedgerRoundTripTests(unittest.TestCase):
         self.assertEqual((result['tested'], result['undecided']), (0, 1))
         self.assertEqual(state['hypotheses']['zero']['status'], 'UNTESTED')
         self.assertEqual(state['hypotheses']['zero']['replay']['tested'], 0)
+
+    def test_a_decided_campaign_reports_zero_undecided(self):
+        """The key has to exist and say zero, not go missing when nothing is open.
+
+        `model.replay` returns its dict without `undecided` when the count is zero, so a
+        plain `replay[k]` comprehension drops the field exactly on the clean runs whose
+        verification record is read for the tested/undecided split.
+        """
+        root = self.base / 'point'
+        path = fx.law_campaign(root, 'x+1', [0, 1, 2], hypotheses=[('lin', 'x+1')])
+        self.assertEqual(initialize(root, path)['status'], 'INITIALIZED')
+        drive(root, max_steps=12, publish=False)
+        store = cstore.store_for(root)
+        replay = compass.verify(store, compass.fold(store))['replay']
+        self.assertIsNotNone(replay)
+        self.assertEqual(replay['undecided'], 0)
+        self.assertGreater(replay['tested'], 0)
 
 
 class FitsMemoKeyTests(unittest.TestCase):
