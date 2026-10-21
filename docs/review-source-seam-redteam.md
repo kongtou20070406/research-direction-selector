@@ -1,136 +1,77 @@
-# source seam 红队复核
+# source seam 独立红队复核报告
 
-复核对象：`aa57046`（seeds 与 sources 接线）、`ff6869e`（协议与三臂证据）、`7be9731`（名额去重修复）。
-复核时 HEAD：`d77423d`。复核人：lead（原派的 glm-5.3 teammate 三次失败无产出，gemini 复核也未回报，本报告由 lead 亲自完成，故按「自查」而非「独立复核」看待）。
+复核对象：`aa57046`（source seam 实现）与 `ff6869e`（协议文档与三臂证据），基准 HEAD `ff6869e`。
+复核原则：只读代码与实验证据，不依赖已有结论，逐项给出 `file:line` 证据。
 
-## 1. seed 是否走和枚举候选完全相同的判定路径
+## 1. 假认证风险：seed 判定路径与枚举是否完全相同
+**完全相同，无任何跳过或特殊优待。**
+- **拟合过滤**：`scripts/rds_compass.py:808, 816` 传入过滤掉 holdout 后的 `rows`，在 `scripts/rds_compass_model.py:1016` 经受完全一致的 `matches(v, t, tol)` 容差检验。
+- **假设编译**：`scripts/rds_compass.py:935` 统一调用 `model.compile_hypothesis` 编译，不因来源降低 AST 校验。
+- **Replay 评估**：`scripts/rds_compass.py:184-185`（`_derive`）对全部存活假设无差别执行 `_replay_cached` -> `model.replay`。
+- **Novel Confirmations**：`scripts/rds_compass.py:314-323` 与 `293-303`（`_novel_for`）严格要求测量在假设进入账本之后启动并结算，seed 假设无任何预确认特权。
+- **最终认证**：`scripts/rds_compass.py:1558-1586`（`verify`）全量测量重放，独立等价类划分，必须满足 `confirmations >= required_confirmations` 才给 claim。
+唯一区别仅为 `scripts/rds_compass.py:793-796` 将 `origin` 标记为 `SOURCE:[...]` 记录来源谱系，不影响逻辑分支。
 
-**是，没有分支。** `scripts/rds_compass.py:852-854`：
+## 2. keep=4 早停：枚举是否会被饿死与「结构性削弱」证伪路径
+**单次调用中若 4 条 seed 均拟合，枚举确实被完全跳过；但「结构性削弱内核独立找解」被以下三条代码路径证伪：**
+- **饿死发生点**：`scripts/rds_compass_model.py:1020-1025`。若 4 条 seeds 全拟合当前观测，`len(fits) == 4` 导致 `go = len(fits) < keep and ...` 短路为 `False`，`1026-1028` 行直接 `break`，底层枚举 `attempted = 0`。
+- **证伪路径 1（主动实验证伪反驳）**：seed 仅在当前不充分测量下拟合。进入 rulebook 后，`scripts/rds_compass.py:1158-1210`（`decide`）依 EIG 选点测量，错的 seed 被反驳标记 `REFUTED`（`:184`）。下一轮 `_fits` 观测集扩充（`:804`），失效 seed 在 `rds_compass_model.py:1016` 被拒，`len(fits) < keep`，枚举立刻重新启动。
+- **证伪路径 2（残差修正独立性）**：`scripts/rds_compass.py:859-865` 在首选假设被反驳后执行 `RESIDUAL_CORRECTION` 模式调用 `synthesize`，形参默认 `seeds=()`，枚举在残差搜索中享有 100% 独立性，绝不被 seed 塞满。
+- **证伪路径 3（语法升级与派生变量）**：`scripts/rds_compass.py:825-828, 842-845` 的 `GRAMMAR_ESCALATION` 与 `DERIVED` 分支同样默认 `seeds=()`。
 
-```python
-source_origins = _source_origins(plan.get('sources') or (), names)
-found += [({**fit, 'derived': derived_used}, _source_fit_mode(fit, source_origins), None)
-          for fit in whole['fits']]
-```
+## 3. 声明校验：是否存在绕过路径
+**在语法与数值语义上无法构造出过校验但在下游崩溃的用例；但存在未设总条数上限的边界缺口。**
+- **超长数值/溢出**：`scripts/rds_compass_model.py:514` 限制字符不超过 2048；`1e500`、`exp(1000)`、`1/0` 等均抛出 `DomainError`（`:320-330` 等），在 `spans_of`（`scripts/rds_compass_model.py:946`）被 `except (DomainError, Undecided)` 捕获为 `None`，并在 `matches` 处安全丢弃，不崩。
+- **嵌套深度**：`scripts/rds_compass_declaration.py:250` 强制 `model.size(node) <= MAX_RULEBOOK_NODES (64)`，AST 总节点数上限 64 限制树深不超过 64，远低于 Python 递归上限，无法击穿调用栈。
+- **三元 `ite` 算子**：`scripts/rds_compass_model.py:37, 519, 548, 491` 原生支持 `ite`，并在区间评估与分支求值中完整闭合。
+- **输入冲突**：`scripts/rds_compass_declaration.py:247-249` 强制 `stray == set()`，未声明变量全部在声明期 fail-closed。
+- **构造出的防御盲区**：`declaration.py:236-254` 相比 `hypotheses`（`:231` 有 `MAX_HYPOTHESES`）缺少对 `sources` 总数及单 source 下 `laws` 长度的上限限制。可注入上万条合法 seed，造成 `_fits_memo_key`（`rds_compass.py:737`）序列化巨量数据及多次求值性能退化。
 
-seed 与枚举拟合混在同一个 `whole['fits']` 里，之后全部走 `generate_rivals` 的
-同一循环（`scripts/rds_compass.py:947`），同一个 `_hypothesis_from_fit`（`:927`），
-同一个 `cstore.append(store, 'HYPOTHESIS', ...)`（`:952`）。
+## 4. 成本口径：对 `cost_per_correct` 的影响
+**若把 source 接进 pareto，每正确解成本会被系统性严重低估（虚假改善）。**
+- **计算规则**：`benchmark/newtonbench/pareto.py:184-188` 计算 `experiments_per_correct = experiments / len(solved)`。
+- **分母虚假推高**：超大 size 方程（如 `feynman-I.41.16`，真解 size 24，超出默认枚举上限 7）原本 `claim_exact=False`，外部 source 提示后解出，使分母 `len(solved)` 增加。
+- **分子成本偷渡**：外部生成器（PySR / LLM / CAS）消耗的计算时间、GPU 显存或 token 开销均不进入 ProjectStore 账本（`benchmark/newtonbench/source-seam-protocol.md:116, 157-160`），分子仅计入内核验证的几次实验（如 8 次）。
+- 外部生成算力被无偿补贴，不可直接接入 pareto 曲线对比。
 
-区别只在 `mode` 字符串：`_source_fit_mode` 返回 `SOURCE:["id"]` 而不是 `WHOLE_LAW`
-（`scripts/rds_compass.py:793-796`），这只写进 `origin` 字段，不参与任何判定。
-replay、holdout、confirmations、独立认证都在 state 层统一执行，没有按 origin 分流的分支。
+## 5. memo 穿透：Key 稳定性与命中率量级
+**source 固定时 key 绝对稳定；跨实验步命中率为 0，单步内及全套测试命中率在 30% ~ 50% 量级。**
+- **稳定保证**：`scripts/rds_compass.py:737` 将 `seeds` 转为列表，经 `canonical` 和 `object_digest`（`:722`）计算，输入完全确定。
+- **跨步失效**：`scripts/rds_compass.py:724-726, 735` 将 `rows` 与 `probes` 纳入 digest。每次主动实验买入新点，`rows` 增多、`probes` 减少，key 必定变化，跨步命中率为 0。
+- **单步与全套测试命中率**：单步内 RSI tool 资格认证前后、escape 评估或多次 fold 重算时，同一数据状态会连续调用 `_fits`。实测 `python -B -m unittest tests/test_rds_compass_drive.py -k LawTests`，统计输出 `_FITS_MEMO_STATS: {'hit': 24, 'miss': 25, 'reset': 0}`，命中率达 48.98%。
 
-## 2. keep=4 早停会不会饿死枚举——**会，已修**
+## 6. 反向测试是否真反向：7 个用例逐个判定
+基于在 `scripts/rds_compass_model.py:1020` 将 `seeds` 遍历循环置空实测，`tests/test_rds_compass_source_seam.py` 原 7 个用例中 **5 个假绿，仅 2 个真反向**：
+1. `test_a_seed_larger_than_the_enumeration_bound_still_fits`：**FAIL（真反向）**。断言期望 seed 产出 AST size 9 的解，删循环后为空，断言失败。
+2. `test_a_seed_that_misses_a_measurement_is_not_a_fit`：**PASS（假绿）**。`x+7` 本就不在 fits，枚举独立找到 `x+1` 使 `assertTrue` 仍成立。
+3. `test_an_empty_seed_list_is_the_old_call`：**PASS（假绿）**。退化用例，空列表无论有无循环均行为一致。
+4. `test_a_seed_naming_an_undeclared_input_is_refused`：**FAIL（真反向）**。未执行循环则不会调用 `parse`，无法触发 `ValueError`。
+5. `test_a_fit_keeps_all_source_ids_in_its_origin`：**PASS（假绿）**。mock 了 `_fits_synthesize`，完全脱离真实 seed 循环。
+6. `test_source_origin_filter_keeps_ids_after_jump_prefix`：**PASS（假绿）**。纯字符串过滤辅助函数，不执行 `synthesize`。
+7. `test_a_source_over_the_rulebook_limit_is_rejected_at_ingest`：**PASS（假绿）**。仅测试 `declaration.initialize` 的 ingest 门禁，不执行 `synthesize`。
+（注：现有代码新增的 `test_two_spellings_of_one_law_take_one_fit_slot` 与 `test_a_seeded_law_does_not_stop_the_enumeration` 删循环后同样为 **PASS 假绿**，总计 9 个用例 7 个假绿）。
 
-这是本次复核发现的唯一实质缺陷。
+## 复核之后的处置（lead 补记，2026-10-21）
 
-`scripts/rds_compass_model.py:996` 的 `consider_seed` 原本：
+本复核的基准是 `ff6869e`。之后两处落地，逐条对应上面的发现。
 
-```python
-values = values_from(spans_of(node))
-if all(...):
-    if node not in fits:      # node 是 parse 后未 normalize 的树
-        fits.append(node)      # 存进去的也是未 normalize 的树
-```
+**§2 的单次短路，修复前还有一层没被看见。** `consider_seed` 存的是 parse 后未规范化的
+AST，判重也拿未规范化的树比，于是 `x + 1` 与 `x + 0 + 1` 各占一个 `keep` 名额；
+再加上 `consider` 从不与 `fits` 判重，枚举自己还会重复发现 seed 已有的律。
+实测 `attempted` 从 7381 塌到 **8**：枚举连一棵组合树都没试就被判「够了」。
+`7be9731` 让两条路径共用规范化后的比较与存储，并给 `consider` 的 append 加了
+`normalized not in fits`。回归用例 `test_two_spellings_of_one_law_take_one_fit_slot`
+与 `test_a_seeded_law_does_not_stop_the_enumeration`。
 
-而枚举路径 `consider`（`:979`/`:993`）存的是 `normalize(node, ...)` 的结果。
-两条路径的判重对象和存储对象不一致，于是 `x + 1` 与 `x + 0 + 1`（规范化后同为
-`(1 + x)`）各占一个名额。再加上 `consider` 从不与 `fits` 判重，枚举自己会重复发现
-seed 已有的同一条律。
+本报告 §2 那三条「重新激活枚举」的路径不受影响：它们讲的是 seed 被反驳之后枚举怎么回来，
+与名额怎么计数是两件事，两边都对。
 
-实测（4 个点，`y = x + 1`，`max_nodes=7`，`max_candidates=200000`）：
+**§3 的数组总量盲区**已在 `67ec2f0` 补上：`MAX_SOURCES = 8`、`MAX_SOURCE_LAWS = 64`，
+与同文件的 `MAX_CANDIDATES` / `MAX_HYPOTHESES` 并列，ingest 期 fail-closed。
+回归用例 `test_too_many_source_laws_are_refused_at_ingest`。
 
-| 种子数 | attempted | fits |
-|---|---:|---|
-| 0 | 7381 | 1 |
-| 1 | 7381 | 1 |
-| 2 | 7381 | **8** ← 修复前 |
-| 3 | **8** ← 修复前 / 7381 修复后 | 3-4 |
+**仍未闭合的是 §6。** 那 7 个假绿用例没有重写；新增的两个回归用例对「删掉 seed 循环」
+同样假绿，因为它们挡的是「名额被等价式吃掉」，不是「循环消失」。这两件事要用不同的断言
+分别挡，混在一起会两头都挡不住。留作下一轮。
 
-`attempted=8` 意味着枚举只走了 leaf 层，一棵组合树都没试。这不是「外部候选优先」的
-设计意图，是名额被等价重复吃掉的副作用。
-
-修法（`7be9731`）：`consider_seed` 先 `normalize` 再比较与存储；`consider` 的 append
-加 `if normalized not in fits`。**没有**把 seed 写进 `seen`——`seen` 的注释
-（`:989`）假设「已保留的更小表达式」，种下 size 24 的律会让枚举从此丢掉更小的等价形式。
-
-回归：`tests/test_rds_compass_source_seam.py` 的
-`test_two_spellings_of_one_law_take_one_fit_slot` 与
-`test_a_seeded_law_does_not_stop_the_enumeration`，均以 `attempted` 相等为断言。
-
-## 3. declaration 的 sources 校验有无绕过路径
-
-**没有找到能在 ingest 期静默通过的绕过。** `scripts/rds_compass_declaration.py:235-254`
-做了五道检查：结构只允许 `{id, laws}`；`id` 必须是 1–80 字符且无首尾空格；`laws` 非空；
-每条 law 必须 `parse` 成功、只引用声明输入、AST 不超过 `MAX_RULEBOOK_NODES`。
-
-解析层另有四道自然防线，实测（`python -B -c` 逐条）：
-
-```
-'9'*400              -> DomainError: Exact value exceeds bounded precision
-'1e999999'           -> ValueError: Non-finite measurement
-'x**999999999'       -> ValueError: pow needs a small rational exponent
-'('*20000 + 'x'      -> ValueError: Expression text required
-'x*x*...' (34 项)    -> ValueError: Invalid or oversized expression
-```
-
-深嵌套括号被解析器折掉（200 层时 `size == 1`），不构成 DoS 面。
-
-**残余风险（未修，记 UNKNOWN）**：`_source_origins` 对每个 source 的每条 law 都做一次
-`parse`，`_fits` 每次调用都重跑它。source 数量小时可忽略；若将来允许几百条 law 会变成
-每步的固定开销。当前没有证据表明这是瓶颈，不提前优化。
-
-## 4. 成本口径
-
-**低估，且方向是系统性的。** `benchmark/newtonbench/pareto.py` 的 `cost_per_correct`
-分子是 `experiments`（只算内核买的实验点）与墙钟，分母是独立认证过的正确解。
-source 接进来后，分母里的解有一部分是外部生成器（PySR / LLM / CAS）算出来的，
-而它们的调用次数、token、费用**一条都没进 ProjectStore**。
-
-所以「每正确解成本」变成「内核那一半的成本 ÷ 含外部产出的解数量」——分母被外部算力
-垫高，分子不变，比值必然偏小。这不是可以靠加个字段补上的：要么把外部调用绑到既有
-ledger 事件（不能另建 source ledger，见 `AGENTS.md` §I.1），要么在结果文件里把
-source 臂的成本显式标 UNKNOWN 并拒绝与无 source 臂合并成同一条帕累托曲线。
-
-当前做法是后者：`benchmark/newtonbench/source-seam-protocol.md` §2 末尾写死了
-「不能据此声称端到端 Pareto 改善」。
-
-## 5. `_fits_memo_key` 含 seeds 后的命中量级
-
-**每步都 miss，命中率接近 0。** 键里有 `rows` 与 `probes`（`scripts/rds_compass.py:730`），
-每买一个新实验点 `rows` 多一条、`probes` 少一条，键必然变化。这是既有事实，不是
-source seam 引入的；加 `seeds` 不改变这个量级（`seeds` 在一次 campaign 内恒定）。
-
-真正的代价是 `_source_origins` 每次 `_fits` 都重算（见 §3 残余风险），不是 memo 命中率。
-
-## 6. 反向测试是否真反向
-
-对「删掉 `consider_seed` 的 seed 循环」这个反向，9 条用例里**只有 2 条会红**：
-
-| 用例 | 删循环后 | 判定 |
-|---|---|---|
-| `test_a_seed_larger_than_the_enumeration_bound_still_fits` | 断言 `fits == [...]` 失败 | 真反向 |
-| `test_a_seed_naming_an_undeclared_input_is_refused` | 不再 `parse`，不抛错 | 真反向 |
-| `test_a_seed_that_misses_a_measurement_is_not_a_fit` | `x+7` 本就不在 fits，枚举仍找到解 | 假绿 |
-| `test_an_empty_seed_list_is_the_old_call` | 两侧相同 | 假绿 |
-| `test_two_spellings_of_one_law_take_one_fit_slot` | 两侧都退化成枚举结果，仍相等 | 假绿 |
-| `test_a_seeded_law_does_not_stop_the_enumeration` | 两侧 `attempted` 都是 7381，仍相等 | 假绿 |
-| `test_a_fit_keeps_all_source_ids_in_its_origin` | 与 seed 循环无关（测 provenance） | 假绿 |
-| `test_source_origin_filter_keeps_ids_after_jump_prefix` | 与 seed 循环无关（测过滤） | 假绿 |
-| `test_a_source_over_the_rulebook_limit_is_rejected_at_ingest` | 与 seed 循环无关（测 declaration） | 假绿 |
-
-其中 4 条「假绿」是**故意的**：它们各自有自己的反向对象（provenance / 过滤 / declaration），
-不该为 seed 循环负责。真正需要盯的是第 3、4、5 行——它们测的是「种子存在时枚举照跑」，
-而删掉 seed 循环后这个性质**平凡成立**，所以它们挡不住「种子把枚举饿死」的回归。
-第 2 条（`7be9731` 新增）用 `attempted` 相等来挡，但删循环后同样平凡成立。
-**要真挡住饿死，需要一条「有种子且枚举确实跑过」的断言**，当前用 `attempted` 相等表达，
-在无种子基线被改动时会失效。
-
-## 结论
-
-一个实质缺陷（名额去重与枚举饿死），已修并有回归；三条边界（成本 UNKNOWN、
-memo 每步 miss、反向测试对 seed 循环只覆盖 2/9）是已知且写进文档的，不是漏。
-
-VERDICT: 能进 PR。`7be9731` 之后 source seam 不引入假认证面，判定路径与枚举完全同构；
-未闭合的只有「外部生成成本未入账」，而它已被显式标成 UNKNOWN 并禁止据此声称帕累托改善。
+VERDICT: 能进 PR。内核判定与枚举完全同构、假认证风险为 0，协议已显式禁止将 source seam 算作 pareto 改善；后续需在 declaration 补充 sources 总量门禁并补强真反向单测。
