@@ -111,6 +111,16 @@ class SourceBoundaryTests(unittest.TestCase):
         self.assertEqual(source_seam.source_origins_from_state(state),
                          ['jump:j01:SOURCE:["preregistered-truth"]'])
 
+    def test_too_many_source_laws_are_refused_at_ingest(self):
+        """A declaration is not a sweep: the total number of seeded laws is bounded."""
+        laws = ['x + %d' % index for index in range(declaration.MAX_SOURCE_LAWS + 1)]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = fx.law_campaign(root, 'x + 1', range(3),
+                                   sources=[{'id': 'flood', 'laws': laws}])
+            with self.assertRaises(ValueError):
+                declaration.initialize(root, path)
+
     def test_a_source_over_the_rulebook_limit_is_rejected_at_ingest(self):
         terms = (model.MAX_RULEBOOK_NODES + 2) // 2
         law = '+'.join(['x'] * terms)

@@ -25,6 +25,12 @@ TOKEN_LEDGER_ENV = 'RDS_COMPASS_TOKEN_LEDGER'
 MAX_BYTES = 1024 * 1024
 MAX_CANDIDATES = 64
 MAX_HYPOTHESES = 64
+# A source is a batch of laws some other tool already computed. Each law is bounded by
+# MAX_RULEBOOK_NODES, but nothing bounded how many batches or how many laws arrive, and
+# every one of them is parsed, folded into the fits memo key and evaluated on every
+# _fits call. These ceilings keep a declaration from turning one campaign into a sweep.
+MAX_SOURCES = 8
+MAX_SOURCE_LAWS = 64
 OUTPUT_ROOT = 'outputs/compass'
 PROTOCOL_PATH = 'compass-protocol.json'
 GOALS = ('IDENTIFY_LAW', 'IMPROVE')
@@ -234,6 +240,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
     require(len({h['id'] for h in hypotheses}) == len(hypotheses), 'Duplicate hypothesis ids')
     sources = []
     for value in declaration.get('sources') or []:
+        require(len(sources) < MAX_SOURCES, 'Declare at most %d sources' % MAX_SOURCES)
         require(isinstance(value, dict) and set(value) <= {'id', 'laws'}, 'A source is {id, laws} only')
         require(isinstance(value.get('id'), str) and value['id'].strip() == value['id'] and
                 0 < len(value['id']) <= 80, 'A source needs a trimmed id of 1 to 80 characters')
@@ -252,6 +259,8 @@ def compile_plan(store, declaration, source_sha256, source=None):
                     % (value['id'], model.MAX_RULEBOOK_NODES))
         sources.append({'id': value['id'], 'laws': list(laws)})
     require(len({s['id'] for s in sources}) == len(sources), 'Duplicate source ids')
+    require(sum(len(s['laws']) for s in sources) <= MAX_SOURCE_LAWS,
+            'Declare at most %d source laws in total' % MAX_SOURCE_LAWS)
     if goal['kind'] == 'IDENTIFY_LAW' and not hypotheses:
         unknown.append('hypotheses')  # The first escape synthesizes rivals from evidence.
     grammar = declaration.get('grammar')
