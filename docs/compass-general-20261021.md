@@ -138,13 +138,22 @@ to today's.
 it. Reject pre-registered: a campaign with no such block behaves identically,
 and a campaign with one never invokes `synthesize`.
 
-**Stage 3 — source plug-in.** Factor the six `synthesize` call sites behind one
-`hypothesis_source` seam, so a domain can register enumeration,
+**Stage 3 — source plug-in.** Let a campaign declare precomputed candidate laws
+it obtained elsewhere (`sources`), so a domain can register enumeration,
 decomposition, or agent proposals without touching `_fits`.
 
-Stage 3 is a refactor of a hot file and should not start until the derived-cap
-question (see `docs/diag-enum-budget.md`) is settled, because both touch
-`_fits`.
+Landed as the `sources` declaration plus `synthesize(..., seeds=())`
+(`benchmark/newtonbench/source-seam-protocol.md`, commits `aa57046`/`7be9731`).
+A seed is judged against the same measurements and tolerance as an enumerated
+candidate and never enters the enumeration pools, so it buys reach and never
+authority. That is what reaches a law the enumerator structurally cannot:
+`feynman-I.41.16` has truth AST size 24 against a default `max_nodes` of 7.
+
+The boundary is stated in the same protocol and is not decorative: the caller
+computes the laws elsewhere, so generator time and tokens never enter
+ProjectStore. A source therefore buys reach, not a measured cost improvement,
+and `cost_per_correct` stays UNKNOWN for the generation half of the loop until
+those calls are bound to existing ledger events.
 
 ## 7. What would make this fail
 
