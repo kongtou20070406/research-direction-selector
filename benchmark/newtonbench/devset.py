@@ -545,11 +545,17 @@ def _gen_feynman_I_41_16():
                  hbar * c_['omega'] ** 3
                  / (math.pi ** 2 * c ** 2 * (math.exp(hbar * c_['omega'] / (k * c_['T'])) - 1)))
             for i, c_ in enumerate(_product(names, columns))]
-    return _float_spec(rows, names, ['0', '1', '2', '3'],
+    spec = _float_spec(rows, names, ['0', '1', '2', '3'],
                        ['div', 'exp', 'mul', 'pi', 'pow', 'sub'],
                        'hbar*omega**3 / (pow(pi, 2)*pow(c, 2)*(exp(hbar*omega/(k*T)) - 1))',
                        '1.054571817e-34*omega**3/(pi**2*2.99792458e8**2*'
                        '(exp(1.054571817e-34*omega/(1.380649e-23*T))-1))')
+    # Every value here sits near 1e-8, five orders below the shared 1/1000 band, so
+    # the constant 0 used to certify and be scored exact (law="0", claim_exact=True
+    # in results/devset-run-30-fixed.json).  Nothing in the law depends on the scale
+    # of the inputs, so grade it relatively and let a wrong law be wrong.
+    spec['tolerances']['y']['abs'] = '0'
+    return spec
 
 def _gen_feynman_I_26_2():
     """Feynman I.26.2: Snell's law ratio, n1/n2 = sin(theta1) / sin(theta2).
