@@ -55,8 +55,9 @@ from rds_compass_report import (UNSETTLED, _improve_verdicts, _replicates, _rech
 | 区间往返 | `test_rds_compass_interval*.py` | 34 tests OK / 4.237s |
 | 对抗 | `test_rds_compass_adversarial.py` | 46 tests OK / 125.061s |
 | 驱动全量 | `test_rds_compass_drive.py` | **31 tests OK / 304.074s** |
+| 硬跟进 | `test_rds_compass_hard_followup.py` | **12 tests OK / 396.343s** |
 
-`dd4506e` 自带的文档记的是它在 `c92be71` 上跑的 `31 tests / 279.476s` 与 `test_rds_compass_hard_followup.py` `12 tests / 367.113s`。本次重做没跑 `test_rds_compass_hard_followup.py`，标 UNKNOWN——不过被搬的 8 个节点逐字节相同，且 drive 全量覆盖了 `publish_tms` / `_rechecked` / `stale_bindings` 的调用路径。
+`dd4506e` 自带的文档记的是它在 `c92be71` 上跑的 `31 tests / 279.476s` 与 `test_rds_compass_hard_followup.py` `12 tests / 367.113s`。本次重做把两者都在新树重跑了一遍，**没有留下 UNKNOWN**。
 
 ## Diff stat
 
