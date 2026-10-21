@@ -88,7 +88,7 @@ out.write_text(json.dumps({'outputs': {'y': text}}), encoding='utf-8')
 '''
 
 
-def campaign(name, budget, base):
+def campaign(name, budget, base, sources=()):
     """Write one campaign root; return (root, spec)."""
     spec = devset.load(name)
     variables = spec['grammar']['variables']
@@ -125,6 +125,7 @@ def campaign(name, budget, base):
                        'timeout_seconds': 20, 'wall_seconds': 25},
         'candidates': [{'id': row['id'], 'inputs': dict(row['inputs'])} for row in rows],
         'hypotheses': [],
+        'sources': [dict(source) for source in sources],
         'grammar': spec['grammar'],
         'budget': {'wall_seconds': 900, 'experiments': experiments, 'max_experiments': experiments},
     }
@@ -145,8 +146,8 @@ def counterexamples(expr, spec):
                             {observable: model.tolerance(spec['tolerances'][observable])})['counterexamples'])
 
 
-def run_one(name, budget, base):
-    root, spec = campaign(name, budget, base)
+def run_one(name, budget, base, sources=()):
+    root, spec = campaign(name, budget, base, sources)
     initialize(root, root / 'compass.json')
     result = drive(root, publish=False)
     steps = result.get('steps', [])

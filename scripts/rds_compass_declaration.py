@@ -29,7 +29,7 @@ OUTPUT_ROOT = 'outputs/compass'
 PROTOCOL_PATH = 'compass-protocol.json'
 GOALS = ('IDENTIFY_LAW', 'IMPROVE')
 FIELDS = {'schema', 'goal', 'inputs', 'observables', 'experiment', 'candidates', 'hypotheses',
-          'grammar', 'synthesis', 'escape', 'budget', 'protocol', 'agent', 'library', 'rsi',
+          'sources', 'grammar', 'synthesis', 'escape', 'budget', 'protocol', 'agent', 'library', 'rsi',
           'profile', 'description', 'verification', 'trend'}
 DEFAULTS = {
     'synthesis': {'max_nodes': 7, 'max_candidates': 20000},
@@ -232,6 +232,26 @@ def compile_plan(store, declaration, source_sha256, source=None):
         hypotheses.append(model.compile_hypothesis({**value, 'origin': 'declared'}, list(inputs), list(observables),
                                                    goal=goal.get('observable') if goal['kind'] == 'IDENTIFY_LAW' else None))
     require(len({h['id'] for h in hypotheses}) == len(hypotheses), 'Duplicate hypothesis ids')
+    sources = []
+    for value in declaration.get('sources') or []:
+        require(isinstance(value, dict) and set(value) <= {'id', 'laws'}, 'A source is {id, laws} only')
+        require(isinstance(value.get('id'), str) and value['id'].strip() == value['id'] and
+                0 < len(value['id']) <= 80, 'A source needs a trimmed id of 1 to 80 characters')
+        laws = value.get('laws')
+        require(isinstance(laws, list) and laws, 'Source %r needs a non-empty law list' % value['id'])
+        for law in laws:
+            require(isinstance(law, str) and law.strip(), 'Source %r law must be text' % value['id'])
+            # Fail at declaration, not mid-campaign: a source law the grammar cannot read would
+            # otherwise sit there until the first escape tried to fit it.
+            node = model.parse(law, set(inputs))
+            stray = model.variables_of(node) - set(inputs)
+            require(not stray, 'Source %r law names undeclared inputs: %s'
+                    % (value['id'], ', '.join(sorted(stray))))
+            require(model.size(node) <= model.MAX_RULEBOOK_NODES,
+                    'Source %r law exceeds MAX_RULEBOOK_NODES (%d)'
+                    % (value['id'], model.MAX_RULEBOOK_NODES))
+        sources.append({'id': value['id'], 'laws': list(laws)})
+    require(len({s['id'] for s in sources}) == len(sources), 'Duplicate source ids')
     if goal['kind'] == 'IDENTIFY_LAW' and not hypotheses:
         unknown.append('hypotheses')  # The first escape synthesizes rivals from evidence.
     grammar = declaration.get('grammar')
@@ -357,6 +377,7 @@ def compile_plan(store, declaration, source_sha256, source=None):
                           verification.get('holdout_seed', 0))
     plan = {'schema': PLAN_SCHEMA, 'goal': deepcopy(goal), 'inputs': inputs, 'tolerances': tolerances,
             'observables': sorted(observables), 'candidates': candidates, 'hypotheses': hypotheses,
+            'sources': sources,
             'grammar': deepcopy(grammar), 'synthesis': _tuned(declaration, 'synthesis', defaulted),
             'escape': _tuned(declaration, 'escape', defaulted), 'rsi': _tuned(declaration, 'rsi', defaulted),
             'verification': verification, 'holdout': holdout,

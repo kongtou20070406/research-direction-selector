@@ -710,7 +710,7 @@ def _fits_memo_enabled():
 
 
 def _fits_memo_key(rows, names, observable, tolerances, grammar, max_nodes, max_candidates, probes,
-                   escalate, tag, derived=None):
+                   escalate, tag, derived=None, seeds=None):
     """Digest every input of one memoized ``synthesize`` call, in evaluation order.
 
     ``rows`` and ``probes`` keep their order: the search enumerates points in that
@@ -734,11 +734,12 @@ def _fits_memo_key(rows, names, observable, tolerances, grammar, max_nodes, max_
         'max_nodes': max_nodes, 'max_candidates': max_candidates, 'keep': 4,
         'probes': [canonical({k: model.text(v) for k, v in probe.items()}) for probe in probes],
         'derived': None if derived is None else [[name, expression] for name, expression in derived.items()],
+        'seeds': list(seeds) if seeds else None,
     })
 
 
 def _fits_synthesize(*, rows, names, observable, tolerances, grammar, max_nodes, max_candidates, probes,
-                     escalate, tag, derived=None):
+                     escalate, tag, derived=None, seeds=()):
     """One ``_fits`` search, memoized on the exact inputs it hands to ``model.synthesize``.
 
     The memo and the caller never share a result: a hit returns a deep copy, since
@@ -748,11 +749,11 @@ def _fits_synthesize(*, rows, names, observable, tolerances, grammar, max_nodes,
     def run():
         return model.synthesize(rows, names, observable, tolerances, grammar=grammar,
                                 max_nodes=max_nodes, max_candidates=max_candidates,
-                                probes=probes, keep=4, derived=derived)
+                                probes=probes, keep=4, derived=derived, seeds=seeds)
     if not _fits_memo_enabled():
         return run()
     key = _fits_memo_key(rows, names, observable, tolerances, grammar, max_nodes, max_candidates,
-                         probes, escalate, tag, derived)
+                         probes, escalate, tag, derived, seeds)
     if key in _FITS_MEMO:
         _FITS_MEMO_STATS['hit'] += 1
         return deepcopy(_FITS_MEMO[key])
@@ -763,6 +764,36 @@ def _fits_synthesize(*, rows, names, observable, tolerances, grammar, max_nodes,
         _FITS_MEMO_STATS['reset'] += 1
     _FITS_MEMO[key] = deepcopy(value)
     return value
+
+
+def _source_laws(state):
+    """Every law a declared source hands in, flattened, in declaration order.
+
+    A source is data, not a process: the caller runs PySR, an LLM or a CAS elsewhere
+    and pastes the expressions in. Anything that survives the counterexample filter
+    enters the rulebook through the same door an enumerated fit does, so the source
+    buys reach, never authority.
+    """
+    out = []
+    for source in state['plan'].get('sources') or ():
+        out.extend(source.get('laws') or ())
+    return tuple(out)
+
+
+def _source_origins(sources, names):
+    """Map each rendered source law to every source ID that proposed it."""
+    origins = {}
+    for source in sources:
+        for law in source['laws']:
+            text = model.render(model.parse(law, set(names)))
+            origins.setdefault(text, []).append(source['id'])
+    return origins
+
+
+def _source_fit_mode(fit, origins):
+    """Keep proposal provenance on the ordinary hypothesis ledger event."""
+    source_ids = origins.get(fit['text'])
+    return 'SOURCE:' + canonical(source_ids) if source_ids else 'WHOLE_LAW'
 
 
 def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
@@ -781,10 +812,11 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     probes = [env(state, c) for c in remaining(state)] if probes is None else probes
     bound = bound or plan['synthesis']
     found, notes = [], {}
+    seeds = _source_laws(state)
     whole = _fits_synthesize(rows=rows, names=names, observable=observable, tolerances=tolerances,
                              grammar=grammar, max_nodes=bound['max_nodes'],
                              max_candidates=bound['max_candidates'], probes=probes,
-                             escalate=escalate, tag='WHOLE_LAW')
+                             escalate=escalate, tag='WHOLE_LAW', seeds=seeds)
     escalated = None
     if escalate and not whole['fits'] and not (plan.get('grammar') or {}).get('operators'):
         # An open grammar may still be expressible in the wider dialect: escalate only after the
@@ -817,7 +849,9 @@ def _fits(state, *, rows=None, probes=None, bound=None, escalate=False):
     notes['WHOLE_LAW'] = {k: whole[k] for k in ('status', 'attempted') if k in whole}
     if escalated is not None:
         notes['GRAMMAR_ESCALATION'] = {k: escalated[k] for k in ('status', 'attempted') if k in escalated}
-    found += [({**fit, 'derived': derived_used}, 'WHOLE_LAW', None) for fit in whole['fits']]
+    source_origins = _source_origins(plan.get('sources') or (), names)
+    found += [({**fit, 'derived': derived_used}, _source_fit_mode(fit, source_origins), None)
+              for fit in whole['fits']]
     refuted = [h for h in state['hypotheses'].values() if h['status'] == 'REFUTED' and observable in h['predict']]
     if refuted:
         best = min(refuted, key=lambda h: (sum(abs(model.exact(c['residual'])) for c in h['replay']['counterexamples']

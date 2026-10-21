@@ -886,7 +886,7 @@ def _grammar(grammar, inputs):
 
 
 def synthesize(observations, inputs, observable, tolerances, *, grammar=None, max_nodes=7,
-               max_candidates=20000, probes=(), base=None, keep=4, derived=None):
+               max_candidates=20000, probes=(), base=None, keep=4, derived=None, seeds=()):
     """Bottom-up enumeration with observational-equivalence pruning.
 
     Each candidate must reproduce every original measurement (the counterexample
@@ -993,10 +993,30 @@ def synthesize(observations, inputs, observable, tolerances, *, grammar=None, ma
             fits.append(normalized)
         return len(fits) < keep
 
+    def consider_seed(expression):
+        """A source-supplied law is judged, never enumerated.
+
+        It never enters ``pools``: the pools are the material the search combines, and
+        they are keyed by size up to ``max_nodes``.  A seed is allowed to be larger than
+        that — that is the whole reason it is supplied — so it is measured against the
+        same targets and the same tolerance as anything the search builds, and then left
+        alone.  Anything that survives here can also enter the rulebook, because
+        ``compile_hypothesis`` admits ``MAX_RULEBOOK_NODES``.
+        """
+        node = parse(expression, set(names))
+        if size(node) > MAX_RULEBOOK_NODES:
+            raise ValueError(f'source law exceeds MAX_RULEBOOK_NODES ({MAX_RULEBOOK_NODES})')
+        values = values_from(spans_of(node))
+        if all(v is not None and matches(v, t, tol) for v, t in zip(values[:n], targets)):
+            if node not in fits:
+                fits.append(node)
+
+    for expression in seeds:
+        consider_seed(expression)
     leaves = [{'var': v} for v in names] + [{'const': c} for c in constants]
     leaves += [{'var': name} for name in sorted(derived)]
     leaves += [{'op': op, 'args': []} for op in operators if op in NULLARY]
-    go = all(consider(leaf) for leaf in leaves)
+    go = len(fits) < keep and all(consider(leaf) for leaf in leaves)
     for total in range(2, max_nodes + 1):
         if not go:
             break
