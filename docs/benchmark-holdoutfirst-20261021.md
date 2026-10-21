@@ -94,6 +94,11 @@ law 也从 `ite((x < (61/2)), (1 + x), 1000)` 变成
 
 - `benchmark/newtonbench/results/pareto-holdoutfirst.json`（28445 B，36 格，与 `pareto-stage2.json` 同 schema）
 - `benchmark/newtonbench/holdout-first-protocol.md`
+- `docs/pareto-holdoutfirst.md`：执行侧逐格明细（基线 sha256 跑前跑后一致 `12da476e…`、新结果 sha256 `c55753a5…`、每条 `certification.reason` 原文、耗时 340.9 s）
 - 主格 trace：`D:\Myfile\work space\RDS\holdoutfirst-trace.json`
 - 对比脚本：`D:\Myfile\work space\RDS\cmp_holdoutfirst.py`
 - 回滚前的 patch：`D:\Myfile\work space\RDS\holdout-first.patch`
+
+**口径提醒**：安全项的数字必须拿 `pareto-stage2-costfix.json`（correct 14、epc 21.0）当分母，
+不是 `pareto-stage2.json` 的 15 / 19.6——后者是剔除假认证之前的旧口径。
+本次实测 8 / 36.625 对两者都是 FAIL，但写进任何后续文档时必须用 costfix 那一列。
