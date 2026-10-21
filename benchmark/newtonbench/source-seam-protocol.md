@@ -48,6 +48,12 @@ def consider_seed(expression):
 
 **`fits` 的顺序：seed 在前。**`keep=4` 的早停在 `consider` 里，seed 塞满 4 个之后
 枚举不再开始——外部给的候选优先于枚举候选，这是有意的（枚举救不回这些方程）。
+但「塞满」按**观测等价**算：`x + 1` 与 `x + 0 + 1` 规范化后是同一条，只占一个名额。
+修复前 seed 存的是未规范化的 AST，判重也拿未规范化的树比，两条等价写法各占一格；
+再加枚举自己不与 `fits` 判重，3 条 seed 加 1 条枚举重复就把 4 个名额填满。
+实测 `attempted` 从 7381 塌到 8：枚举连一棵树都没组合就被判「够了」。回归见
+`tests/test_rds_compass_source_seam.py` 的 `test_two_spellings_of_one_law_take_one_fit_slot`
+与 `test_a_seeded_law_does_not_stop_the_enumeration`。
 
 ### 1.2 `plan['sources']`
 
