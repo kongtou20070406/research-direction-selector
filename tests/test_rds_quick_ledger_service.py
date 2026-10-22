@@ -42,13 +42,25 @@ def frozen_ast(node):
 
 
 def private_reads(node):
-    # 2a75c78 renamed `store._db(True)` to its public forwarder `store.readonly()`. Undo that
-    # rename and nothing else, so the hashes above still pin the original bodies.
+    # 2a75c78 renamed `store._db(True)` to its public forwarder `store.readonly()`; 41eb0bc kept
+    # the original-body pins through that rename. The same mechanism now undoes the slice-1
+    # convergence of the inline INSERT events write into `ProjectStore.record_event(db, X)`: a
+    # single call expands back verbatim to the one-line `db.execute('INSERT INTO events(body)
+    # VALUES (?)', (canonical(X),))` it replaced (UPDATE line unchanged on both sides), so the
+    # hashes above keep pinning the original bodies of 65d45a5.
     for call in ast.walk(node):
         if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
                 and call.func.attr == 'readonly' and not call.args and not call.keywords):
             call.func.attr = '_db'
             call.args = [ast.Constant(value=True, kind=None)]
+        elif (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == 'record_event'
+                and isinstance(call.func.value, ast.Name) and call.func.value.id == 'ProjectStore'
+                and len(call.args) == 2 and not call.keywords):
+            call.func = ast.Attribute(value=call.args[0], attr='execute', ctx=ast.Load())
+            call.args = [ast.Constant(value='INSERT INTO events(body) VALUES (?)', kind=None),
+                         ast.Tuple(elts=[ast.Call(func=ast.Name(id='canonical', ctx=ast.Load()),
+                                                  args=[call.args[1]], keywords=[])], ctx=ast.Load())]
     return node
 
 
