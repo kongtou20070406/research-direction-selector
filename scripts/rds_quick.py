@@ -732,9 +732,9 @@ def execute(args, review=None, *, _native_preparation_root=None):
         from rds_campaign import QUICK_JOB_KIND
         for parent_db in locked_parents.values():
             if parent_db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
-                parent_db.execute('INSERT INTO events(body) VALUES (?)',
-                    (canonical({'kind': QUICK_JOB_KIND, 'job_root': str(workspace),
-                                'request_sha256': digest(request), 'materialization_state': 'MATERIALIZED'}),))
+                ProjectStore.record_event(parent_db, {'kind': QUICK_JOB_KIND, 'job_root': str(workspace),
+                                                     'request_sha256': digest(request),
+                                                     'materialization_state': 'MATERIALIZED'})
     if guard_path is not None:
         _charge_ledger(workspace, workspace, request, guard_seconds, dispatch=False)
     receipt = store.execute(args.name, background=args.background, admission_guard=admit_quick,

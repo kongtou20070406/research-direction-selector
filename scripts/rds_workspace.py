@@ -584,8 +584,8 @@ def bind(root):
             "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY rowid DESC LIMIT 1",
             (EVENT_KIND,)).fetchone()
         if recorded is None:
-            db.execute("INSERT INTO events(body) VALUES (?)", (canonical(
-                {"kind": EVENT_KIND, "assurance": ASSURANCE, "event_digest": event_digest, **identity}),))
+            store.record_event(db, {"kind": EVENT_KIND, "assurance": ASSURANCE,
+                                    "event_digest": event_digest, **identity})
         else:
             # Two identical sources: a crash between the committed event and
             # the pointer write, or a concurrent binder that won the race. Both

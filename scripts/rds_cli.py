@@ -502,7 +502,7 @@ def cmd_run(args, rds):
             }
             rds.event(db, "BASELINE_CACHED", baseline_key=baseline_key, run_id=run_id)
         receipt["sha256"] = digest(receipt)
-        db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, receipt["sha256"], canonical(receipt)))
+        RDSState.record_receipt(db, run_id, receipt["sha256"], canonical(receipt))
         live["run_status"] = status
         rds.event(db, "RUN_FINISHED", run_id=run_id, run_status=status, receipt_sha256=receipt["sha256"])
     return {"run_id": run_id, "run_status": status, "receipt_sha256": receipt["sha256"],

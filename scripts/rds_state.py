@@ -135,6 +135,17 @@ class RDSState:
         return cur.lastrowid
 
     @staticmethod
+    def record_receipt(db, run_id, sha256, body):
+        """Append one owned receipt row into the caller-owned transaction (#357).
+
+        The write block that used to spell this SQL inline stayed invisible to
+        the legacy manager-name probe; it now converges on one named write
+        method. It only executes SQL: it never opens, commits or rolls back a
+        transaction, so the caller keeps its own boundary byte for byte.
+        """
+        db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, sha256, body))
+
+    @staticmethod
     def artifact(db, raw):
         sha = digest(raw)
         db.execute("INSERT OR IGNORE INTO artifacts VALUES (?,?)", (sha, raw))

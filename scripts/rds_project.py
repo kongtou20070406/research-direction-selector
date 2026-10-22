@@ -1419,6 +1419,17 @@ class ProjectStore:
         return receipt_records.decode_receipt(row, ReceiptIntegrityError, digest)
 
     @staticmethod
+    def record_event(db, event):
+        """Append one canonical event body into the caller-owned transaction (#357).
+
+        The write blocks that used to spell this SQL inline stayed invisible to
+        the legacy manager-name probe; they now converge on one named write
+        method. It only executes SQL: it never opens, commits or rolls back a
+        transaction, so every caller keeps its own boundary byte for byte.
+        """
+        db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
+
+    @staticmethod
     def _save(db, run):
         run["run_status"] = "SUCCEEDED" if run["status"] == "COMPLETED" else run["status"]
         db.execute("UPDATE runs SET status=?,body=? WHERE id=?", (run["status"], canonical(run), run["id"]))

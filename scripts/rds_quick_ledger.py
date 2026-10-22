@@ -157,7 +157,7 @@ def _charge_ledger(root, workspace, request, seconds, route=None, source_root=No
         require(db.execute("SELECT 1 FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' AND json_extract(body,'$.job_root')=? LIMIT 1",
                            (str(workspace),)).fetchone() is None, 'External job allowance already consumed; inspect its preserved state')
         db.execute("UPDATE budget SET charged=charged+? WHERE resource='wall_seconds'", (amount,))
-        db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
+        ProjectStore.record_event(db, event)
 
 
 

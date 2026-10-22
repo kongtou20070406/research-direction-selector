@@ -789,7 +789,7 @@ def _bind(store, workspace):
                      'ledger_kind': 'project', 'genesis_sha256': lineage[0]['sha256']}
             value = {**event, 'event_sha256': digest(event)}
             _shape(value)
-            db.execute('INSERT INTO events(body) VALUES (?)', (canonical(value),))
+            store.record_event(db, value)
         else:
             require(_path(value['project_root']) == project and _path(value['workspace_root']) == workspace
                     and value['genesis_sha256'] == lineage[0]['sha256'],
