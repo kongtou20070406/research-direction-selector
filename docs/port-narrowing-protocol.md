@@ -163,7 +163,7 @@ python -B -m unittest discover -s tests -p 'test_rds_project*.py'
 每个都得定返回形状和边界，收益（少几个 SQL 字面量）远小于把 36 个文件重新过一遍的
 风险。**只收「同一个查询重复多次」的部分，不收「每个查询只出现一次」的部分。**
 
-### 10.3 批 2（17 个写块）单独立项，不与 1a/1b 合并
+### 10.3 批 2（写块，口径见下 2026-10-21 修订）单独立项，不与 1a/1b 合并
 
 17 处全部带 `begin`（`scripts/rds_autonomy.py:462/711`、`scripts/rds_structure.py:225/261/273`、
 `scripts/rds_method_revision.py:179/274`、`scripts/rds_owned_advisor.py:430`、
@@ -175,12 +175,26 @@ python -B -m unittest discover -s tests -p 'test_rds_project*.py'
 
 改法是为每一类写操作设计具名写 API，那是 feature 级改动，不是 refactor。本轮不做，
 理由是它和 §1 的目标（让 schema 变更可定位）关系较弱——写 SQL 的表名已经写在语句里，
-真正的问题是「33 处写操作里哪些必须和读同事务」，那要先有事务边界地图，而地图还没有。
+真正的问题是「写操作里哪些必须和读同事务」，那要先有事务边界地图。
+
+**2026-10-21 修订（老板批准，依据 `docs/batch2-tx-boundary-map.md`）：**
+原文的「33 处写操作」全仓无出处、不可复现，废止。可复现口径以
+`docs/batch2-tx-boundary-map.md` §2/§4 为准：DML 全量块级 30、读写耦合 21、
+光写 9；执行点级 61（37 块 + 24 裸 DML）仅作背景计数，不进分母。
+批 2 分母 = project ledger 写块 **23** = 参考探测器可见 17（§10.2 清单，17 行行号
+含漂移 430→431/242→243/358→359，见地图 §3.1）+ 探测器不可见 6（地图 §3.2：IfExp
+形态 `scripts/rds_quick_ledger.py:34`、直连 connect 2 处
+`scripts/rds_autonomy_worker.py:119`/`scripts/rds_campaign.py:777`、非白名单 manager 3 处
+`scripts/rds_workspace.py:579`/`scripts/rds_cli.py:487`/`scripts/rds_quick.py:632`）。
+独立库 7（knowledge/proofs/state/usage）与示例代码不在口径内，另立战线。
+`scripts/rds_workspace.py:562`（binding_writer）维持 §10.1 OUT_OF_SCOPE 裁定。
 
 ### 10.4 本节之后的主指标
 
 - 1a：`external delegates` 从 19 降到 1。
 - 1b：`sqlite_master` 字面量从 26 降到 4。
-- 批 2：`external writes` 从 17 降到 ≤8，且每处附具名写方法名。
+- 批 2：project ledger 写块从 **23**（17 探测器可见 + 6 形态隐身，口径见 §10.3 修订）
+  降到 ≤11，且每处附具名写方法名。探测必须同时认新旧形态（字面 `_db(True)`、
+  IfExp、变量 manager、直连 connect、非白名单 manager），否则改名式下降是假绿。
 
 三个指标互不替代。任何一批宣布完成，都要单独报自己那一栏。
