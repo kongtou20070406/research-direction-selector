@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from rds_project import digest, canonical, require
-from rds_quick import cas_json
+from rds_cas import cas_json
 
 ITEM_LIMIT = 4
 DETAIL_BYTES = 2048
@@ -143,7 +143,7 @@ def build(store, report):
               'limits': {'items_per_section': ITEM_LIMIT, 'detail_bytes': DETAIL_BYTES}}
     try:
         require(report.get('status') == 'REVIEWED', 'Owned evidence collection is not complete')
-        with store._db(True) as db:
+        with store.readonly() as db:
             db.execute('BEGIN')
             state = _state(store, db)
         require(_fingerprint(state) == report['fingerprint'], 'Owned report is stale; retry advise')
@@ -175,7 +175,7 @@ def build(store, report):
         # Detect concurrent execution or structure changes after replay. No
         # partial projection is presented as current if this cut moved.
         from rds_structure import _events
-        with store._db(True) as db:
+        with store.readonly() as db:
             db.execute('BEGIN')
             require(_fingerprint(_state(store, db)) == report['fingerprint'], 'Owned state changed; retry advise')
             require(digest(_events(store, db)) == event_sha, 'Structure evidence changed; retry advise')

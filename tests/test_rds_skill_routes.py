@@ -26,15 +26,23 @@ def leaves(parser, prefix=()):
 
 
 class SkillRouteTests(unittest.TestCase):
-    def test_advisor_activation_is_nested_under_existing_quick_condition(self):
+    def test_campaign_setup_and_quick_activation_have_independent_scopes(self):
         text = (ROOT / 'SKILL.md').read_text(encoding='utf-8')
-        condition = '        IF reusing an existing QUICK project that now needs owned Advisor:\n'
-        self.assertIn(condition, text)
-        block = text.split(condition, 1)[1].split('    BEFORE ', 1)[0]
-        self.assertIn('            PREVIEW Advisor activation', block)
-        self.assertIn('            KEEP genesis contract', block)
-        self.assertIn('            NEVER replace the frozen contract', block)
-        self.assertNotIn('        PREVIEW Advisor activation', text.replace(block, ''))
+        blocks = dict(re.findall(r'^    IF ([^\n]+):\n((?: {8}[^\n]*\n)+)', text, re.M))
+        new_campaign = blocks['a new goal-driven campaign has no discovered project']
+        activation = blocks['an existing QUICK project needs owned Advisor']
+        self.assertIn('campaign-setup.md#new-campaign-after-discovery', new_campaign)
+        self.assertIn('campaign-setup.md#enable-advisor-in-an-existing-quick-project', activation)
+        for declaration in ('DEFAULT new campaigns TO FULL', 'FREEZE actual objective',
+                            'AND their distinguishing observations', 'FULL owns collection/selection'):
+            self.assertIn(declaration, new_campaign)
+            self.assertNotIn(declaration, activation)
+        for guard in ('PREVIEW Advisor activation', 'apply only reviewed policy at the expected snapshot',
+                      'KEEP genesis contract', 'old runs/receipts/checkpoints and cumulative budget',
+                      'NEVER replace the frozen contract', 'infer extra execution authority from activation'):
+            self.assertIn(guard, activation)
+            self.assertNotIn(guard, new_campaign)
+        self.assertNotIn('PREVIEW Advisor activation', text.replace(activation, ''))
 
     def test_every_public_leaf_is_documented_and_reachable(self):
         actual = set(leaves(rds_cli.parser()))

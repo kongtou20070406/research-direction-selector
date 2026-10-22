@@ -18,6 +18,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from rds_project import ProjectStore, _Job, _WindowsPopen, canonical, digest, file_sha
 
 
+def case_sensitive_temp():
+    """Whether the temp filesystem distinguishes name case (APFS/NTFS defaults do not)."""
+    with tempfile.TemporaryDirectory() as folder:
+        (Path(folder) / 'case-probe').write_text('', encoding='utf-8')
+        return not (Path(folder) / 'CASE-PROBE').exists()
+
+
 SCRIPT = '''import json, pathlib, sys, time
 mode, output = sys.argv[1:]
 print("real project stdout", flush=True)
@@ -1155,7 +1162,7 @@ rds_project.ProjectStore(sys.argv[2]).execute('r1')
         for path in aliases:
             self.assertFalse((store.root / path).samefile(store.root / "outputs/r1.json"))
 
-    @unittest.skipUnless(os.name != "nt", "Native case-distinct output paths")
+    @unittest.skipUnless(os.name != "nt" and case_sensitive_temp(), "Needs a case-sensitive filesystem")
     def test_case_distinct_outputs_remain_independent_on_posix(self):
         argv = [sys.executable, "-B", "code.py", "ok", "outputs/R1.json"]
         store = self.new_store(commands=[argv])

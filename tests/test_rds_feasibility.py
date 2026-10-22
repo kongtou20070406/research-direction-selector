@@ -92,8 +92,10 @@ class FeasibilityTests(unittest.TestCase):
             self.store.register(slow)
         self.assertEqual(self.store.snapshot()['budget'], before['budget'])
         self.assertEqual(self.launches(), [])
-        self.assertEqual(self.cli('project', 'advance')['receipt']['run_id'], 'fast')
-        self.assertEqual(self.cli('project', 'advance')['receipt']['run_id'], 'verify')
+        for expected in ('fast', 'verify'):
+            launched = self.cli('project', 'advance')
+            self.assertIsNotNone(launched.get('receipt'), launched.get('launch'))
+            self.assertEqual(launched['receipt']['run_id'], expected)
         observed = json.loads((self.root / 'outputs/verify.json').read_text())
         self.assertEqual(observed, {'verified': True, 'observed': 4950})
         final = self.cli('project', 'next')
@@ -202,6 +204,7 @@ class FeasibilityTests(unittest.TestCase):
         next(n for n in self.contract['advisor_policy']['graph']['nodes'] if n['id']=='pilot-fast')['executable']['preconditions'] = []
         self.initialize()
         result = self.cli('project', 'advance')
+        self.assertIsNotNone(result.get('receipt'), result.get('launch'))
         self.assertEqual(result['receipt']['run_id'], 'pilot-fast')
         self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED')
         original = self.state()

@@ -73,7 +73,7 @@ def main():
     sys.path.insert(0, str(source / 'scripts'))
     from rds_artifacts import ingest_manifest
     from rds_project import ProjectStore
-    from rds_owned_advisor import _state, _collect
+    from rds_owned_advisor import _collect
     spec = importlib.util.spec_from_file_location('original_owned_fixture', source / 'tests/test_rds_owned_advisor.py')
     fixture = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fixture)
@@ -121,8 +121,7 @@ def main():
             case.execute()
         store = ProjectStore(owned)
         before = store.snapshot()
-        with store._db(True) as db:
-            state = _state(store, db)
+        state = store.advisor_state()
         imported_result = measure(lambda: ingest_manifest(imported / 'manifest.json'), args.repeats)
         owned_result = measure(lambda: _collect(store, state), args.repeats)
         public_import = cli(imported, 'artifacts', 'import', '--manifest', str(imported / 'manifest.json'))

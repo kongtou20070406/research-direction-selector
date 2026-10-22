@@ -3,6 +3,9 @@
 The existing ledger owns the challenge, attempt and receipt. This is a finite
 CPU check; it makes no hidden-data or distribution-wide generalization claim.
 """
+from dataclasses import dataclass
+from rds_admission_read import PreparedAdmission, StaleAdmission, check_files, check_locked, prepare
+from rds_contract_read import contract_history
 from copy import deepcopy
 import hashlib
 import math
@@ -10,29 +13,8 @@ import re
 import secrets
 
 from rds_artifacts import strict_json
-from rds_project import canonical, digest, require
-
-KIND = 'torch_postcommit_mlp'
-EVENT = 'DOMAIN_CHALLENGE_COMMITTED'
-
-
-def enabled(contract):
-    return contract.get('advisor_policy', {}).get('confirmation', {}).get('rules', {}).get('kind') == KIND
-
-
-def validate_claim(claim):
-    require(isinstance(claim, dict) and set(claim) == {'schema', 'kind', 'layers', 'activation',
-            'sampler', 'label', 'sample_count', 'max_mse'} and type(claim['schema']) is int and
-            claim['schema'] == 1 and claim['kind'] == KIND, 'Invalid post-commit MLP claim')
-    layers = claim['layers']
-    require(isinstance(layers, list) and len(layers) == 4 and
-            all(type(n) is int and 1 <= n <= 16 for n in layers) and layers[-1] == 1 and
-            claim['activation'] == 'tanh' and claim['sampler'] == 'sha256_uniform_v1' and
-            claim['label'] == 'cubic_mean_v1' and type(claim['sample_count']) is int and
-            1 <= claim['sample_count'] <= 256 and type(claim['max_mse']) in {int, float} and
-            0 <= claim['max_mse'] <= 1e6 and math.isfinite(claim['max_mse']),
-            'Unsupported bounded CPU MLP architecture, sampler or threshold')
-    return claim
+from rds_project_values import canonical, digest, require
+from rds_confirmation_read import KIND, EVENT, enabled, validate_claim, _candidate, records, check_run
 
 
 def samples(claim, seed):
@@ -75,69 +57,13 @@ def metric(claim, weights, data):
     return loss
 
 
-def _candidate(store, db, contract, value):
-    from rds_domain_confirmation import _output
-    rid = value['candidate_runs'][0]
-    row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (rid,)).fetchone()
-    require(row is not None, 'Post-commit challenge requires an original candidate receipt')
-    receipt = store._receipt(row)
-    run = store._run(db, rid)
-    require(store._observe(db, run) == receipt and receipt['run_status'] == 'SUCCEEDED' and
-            receipt.get('process_started') is True and receipt['bindings_before'] == receipt['bindings_after'] == contract['bindings'],
-            'Post-commit challenge requires successful settled current weights')
-    weights, artifact = _output(store, receipt, value['rules']['candidate_output'])
-    return receipt, weights, artifact
-
-
-def records(store, db, contract):
-    if not enabled(contract):
-        return []
-    from rds_domain_confirmation import _json, _ref
-    from rds_math import blob
-    from rds_method_revision import contract_history
-    value = contract['advisor_policy']['confirmation']
-    claim = validate_claim(_json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256']))
-    rows = db.execute("SELECT id,body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id", (EVENT,)).fetchall()
-    require(len(rows) <= 1, 'Duplicate post-commit challenge; reseeding is forbidden')
-    result = []
-    for row in rows:
-        event = strict_json(row['body'])
-        require(set(event) == {'kind', 'run_id', 'candidate_run_id', 'candidate_receipt_sha256', 'weights',
-                'genesis_contract_sha256', 'effective_contract_sha256', 'declaration_sha256',
-                'manifest_sha256', 'challenge', 'sha256'} and
-                event['sha256'] == digest({k:v for k,v in event.items() if k != 'sha256'}),
-                'Post-commit challenge event integrity failure')
-        receipt, _, weights = _candidate(store, db, contract, value)
-        history = contract_history(db)
-        require(event['candidate_receipt_sha256'] == receipt['sha256'] and event['weights'] == weights and
-                event['candidate_run_id'] == value['candidate_runs'][0] and event['run_id'] == value['confirmation_runs'][0] and
-                event['genesis_contract_sha256'] == history[0]['sha256'] and
-                event['effective_contract_sha256'] == digest(contract) and
-                event['declaration_sha256'] == digest(value), 'Post-commit challenge identity differs')
-        completed = db.execute("SELECT id FROM events WHERE json_extract(body,'$.kind')='ATTEMPT_FINISHED' AND "
-                               "json_extract(body,'$.run_id')=? AND json_extract(body,'$.sha256')=?",
-                               (receipt['run_id'], receipt['sha256'])).fetchall()
-        require(len(completed) == 1 and completed[0]['id'] < row['id'], 'Challenge was not committed after the candidate')
-        route = next(r['manifest'] for r in contract['advisor_policy']['routes'] if r['manifest']['id'] == event['run_id'])
-        require(event['manifest_sha256'] == digest(route), 'Challenge confirmation route differs')
-        challenge = strict_json(blob(store.root, event['challenge']).decode('utf-8'))
-        require(isinstance(challenge, dict) and set(challenge) == {'schema','seed','claim_sha256'} and
-                type(challenge['schema']) is int and challenge['schema'] == 1 and
-                challenge['claim_sha256'] == value['claim']['sha256'] and
-                isinstance(challenge['seed'], str) and re.fullmatch('[a-f0-9]{64}', challenge['seed']),
-                'Invalid original challenge declaration')
-        validate_claim(claim)
-        result.append(event)
-    return result
-
-
 def bind_run(store, db, contract, run):
     if not enabled(contract):
         return
     value = contract['advisor_policy']['confirmation']
     if run['id'] != value['confirmation_runs'][0]:
         return
-    from rds_quick import cas_bytes
+    from rds_cas import cas_bytes
     from rds_method_revision import contract_history
     previous = records(store, db, contract)
     if previous:
@@ -156,11 +82,97 @@ def bind_run(store, db, contract, run):
     run['confirmation_challenge'] = deepcopy(event['challenge'])
 
 
-def check_run(store, db, contract, run):
-    if enabled(contract) and run['id'] == contract['advisor_policy']['confirmation']['confirmation_runs'][0]:
-        events = records(store, db, contract)
-        require(len(events) == 1 and run.get('confirmation_challenge') == events[0]['challenge'] and
-                run['manifest_sha256'] == events[0]['manifest_sha256'], 'Run is missing its original post-commit challenge')
+
+@dataclass(frozen=True, slots=True)
+class PreparedConfirmation:
+    schema_version: int
+    run_id: str
+    contract_sha256: str
+    existing: bool
+    event_json: str
+    fence: PreparedAdmission
+
+
+def _applies(contract, run):
+    return enabled(contract) and run['id'] == contract['advisor_policy']['confirmation']['confirmation_runs'][0]
+
+
+def prepare_binding(store, contract, run):
+    if not _applies(contract, run):
+        return None
+    with store.readonly() as db:
+        db.execute('BEGIN')
+        if digest(store._contract(db)) != digest(contract):
+            raise StaleAdmission('Confirmation contract changed during preparation; STALE')
+        value = contract['advisor_policy']['confirmation']
+        previous = records(store, db, contract)
+        receipt, _, weights = _candidate(store, db, contract, value)
+        event = previous[0] if previous else {
+            'kind': EVENT, 'run_id': run['id'], 'candidate_run_id': receipt['run_id'],
+            'candidate_receipt_sha256': receipt['sha256'], 'weights': weights,
+            'genesis_contract_sha256': contract_history(db)[0]['sha256'],
+            'effective_contract_sha256': digest(contract), 'declaration_sha256': digest(value),
+            'manifest_sha256': run['manifest_sha256']}
+        files = []
+        for item in contract['bindings']:
+            path = store._path(item['path'])
+            files.append({'path': str(path.relative_to(store.root)),
+                          'sha256': item['sha256'], 'size': path.stat().st_size})
+        # _observe validates all retained outputs, not only the selected weights.
+        files.extend(item for item in receipt['artifacts'] if item['kind'] == 'project_output')
+        refs = [event['challenge']] if previous else []
+        if 'objective_sha256' in contract:
+            from rds_math import objective
+            goal = objective(store.root)
+            require(goal is not None, 'Confirmation original objective is missing')
+            refs.append(goal['asset'])
+        for ref in refs:
+            path = (store.root / ref['path']).resolve()
+            files.append({'path': str(path.relative_to(store.root)),
+                          'sha256': ref['sha256'], 'size': ref['bytes']})
+        return PreparedConfirmation(1, run['id'], digest(contract), bool(previous),
+                                    canonical(event), prepare(db, store.path, run['manifest'], files, None))
+
+
+def _identity(contract, run, packet):
+    require(type(packet) is PreparedConfirmation and packet.schema_version == 1,
+            'Native confirmation preparation is missing; user JSON is not admission')
+    if packet.contract_sha256 != digest(contract):
+        raise StaleAdmission('Confirmation contract changed after preparation; STALE')
+    require(packet.run_id == run['id'] and packet.fence.manifest_sha256 == run['manifest_sha256']
+            == digest(run['manifest']), 'Confirmation registration binding mismatch')
+
+
+def check_binding(store, db, contract, run, packet):
+    """Call before any registration writes, on the caller's original transaction."""
+    if not _applies(contract, run):
+        require(packet is None, 'Unexpected confirmation preparation')
+        return
+    _identity(contract, run, packet)
+    check_locked(db, store.path, store.root, run['manifest'], packet.fence)
+
+
+def bind_prepared(store, db, contract, run, packet):
+    """Publish only at the original post-admission site, after check_binding.
+
+    The caller has already rechecked the fence before its own budget/output
+    writes. Do not open another read-side policy computation in this function.
+    """
+    if not _applies(contract, run):
+        require(packet is None, 'Unexpected confirmation preparation')
+        return
+    _identity(contract, run, packet)
+    require(db.in_transaction, 'Confirmation publication needs the caller transaction')
+    check_files(store.root, packet.fence.files)
+    event = strict_json(packet.event_json)
+    if not packet.existing:
+        from rds_cas import cas_bytes
+        challenge = {'schema': 1, 'seed': secrets.token_hex(32),
+                     'claim_sha256': contract['advisor_policy']['confirmation']['claim']['sha256']}
+        event['challenge'] = cas_bytes(store.root, canonical(challenge).encode('utf-8'))
+        event['sha256'] = digest(event)
+        db.execute('INSERT INTO events(body) VALUES (?)', (canonical(event),))
+    run['confirmation_challenge'] = event['challenge']
 
 
 def inspect(store, contract, candidate, confirmation, weights, checked):
@@ -168,7 +180,7 @@ def inspect(store, contract, candidate, confirmation, weights, checked):
     from rds_math import blob
     value = contract['advisor_policy']['confirmation']
     claim = validate_claim(_json(_ref(store, contract, value['claim'], 'config'), value['claim']['sha256']))
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         events = records(store, db, contract)
         require(len(events) == 1, 'Missing post-commit challenge')

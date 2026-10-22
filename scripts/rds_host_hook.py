@@ -102,16 +102,15 @@ def validate_request(root, request):
     store = ProjectStore(root)
     if not store.path.is_file():
         _refuse("Project ledger is missing")
-    with store._db(True) as db:
-        try:
-            run = store._run(db, request["run_id"])
-        except ValueError as exc:
-            _refuse(f"Unknown admission identity: {exc}")
-        if run["attempt_id"] != request["attempt_id"]:
-            _refuse("Attempt id does not match the ledger-issued admission")
-        if run["status"] not in ("RESERVED", "RUNNING"):
-            _refuse(f"Admission is terminal (status {run['status']}); reruns are refused")
-        expected_argv = run["manifest"]["argv"]
+    try:
+        run = store.run(request["run_id"])
+    except ValueError as exc:
+        _refuse(f"Unknown admission identity: {exc}")
+    if run["attempt_id"] != request["attempt_id"]:
+        _refuse("Attempt id does not match the ledger-issued admission")
+    if run["status"] not in ("RESERVED", "RUNNING"):
+        _refuse(f"Admission is terminal (status {run['status']}); reruns are refused")
+    expected_argv = run["manifest"]["argv"]
     if request.get("argv") != expected_argv:
         _refuse("Request argv does not match the admitted manifest")
     if not isinstance(request.get("executor_sha256"), str) or \

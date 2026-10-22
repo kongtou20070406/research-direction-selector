@@ -122,7 +122,8 @@ class AutoRepairEngine:
 
     def run_self_repair(self, dry_run: bool = False) -> Dict[str, Any]:
         """Read state and receipts together without changing the state or graph."""
-        from rds_cli import RDSState, strict_json
+        from rds_state import RDSState
+        from rds_reference_values import strict_json
         rds = RDSState(self.root_dir)
         if not rds.db_path.exists():
             return {

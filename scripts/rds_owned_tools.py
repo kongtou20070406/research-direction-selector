@@ -5,6 +5,7 @@ import json
 import re
 
 from rds_project import ProjectStore, canonical, digest, number, require
+from rds_project_read_services import has_table
 
 
 def preparation_costs(store, contract, *, db=None):
@@ -16,7 +17,7 @@ def preparation_costs(store, contract, *, db=None):
     if 'tool_bindings' not in contract.get('advisor_policy', {}):
         return []
     if db is None:
-        with store._db(True) as current:
+        with store.readonly() as current:
             current.execute('BEGIN')
             return preparation_costs(store, contract, db=current)
     require(db.in_transaction, 'Preparation inventory needs the owning initialization transaction')
@@ -36,7 +37,7 @@ def preparation_costs(store, contract, *, db=None):
             require(entry.resolve() not in directories, 'Native preparation directory alias')
             directories.add(entry.resolve())
     intents = {}
-    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+    if has_table(db, 'events'):
         pending = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_STARTED' LIMIT 129").fetchall()
         require(len(pending) <= 128, 'Native preparation intents exceed 128')
         for row in pending:
@@ -119,7 +120,7 @@ def applicable(store, contract, facts):
     reports = [inspect(store, binding, contract=contract, action=actions[binding['candidate']],
                        facts=facts, expected_driver_sha256=driver_sha256())
                for binding in contract['advisor_policy'].get('tool_bindings', [])]
-    with store._db(True) as db:
+    with store.readonly() as db:
         costs = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')='TOOL_PREPARATION_COST'").fetchall()
     charged = {row['validation']['sha256'] for event in costs
                for row in json.loads(event['body'])['validations']}
@@ -151,7 +152,7 @@ def gate_graph(graph, reports, facts):
 def consumption(store, state, facts, reports, selection, searches=()):
     """Compute real application and precise decision consumers from originals."""
     from rds_artifacts import strict_json
-    from rds_owned_advisor import _read_original
+    from rds_original_read import _read_original
     policy = state['contract']['advisor_policy']
     receipts = {r['run_id']: r for r in state['receipts']}
     bindings = {b['candidate']: b for b in policy.get('tool_bindings', [])}

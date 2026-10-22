@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rds:decision-packet:v1",
+  "title": "Staged DecisionPacket v1 (data, never authority)",
+  "description": "Exactly five tagged blocks. OBSERVED means bytes were read, not that a claim is true. Runtime also validates canonical order, finite/depth/byte bounds and cross references.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "identity", "goal", "evidence", "candidates", "provenance"],
+  "properties": {
+    "schema": {"const": "rds-decision-packet-v1"},
+    "identity": {
+      "type": "object", "additionalProperties": false, "required": ["project"],
+      "properties": {"project": {"$ref": "#/$defs/declaration"}}
+    },
+    "goal": {
+      "type": "object", "additionalProperties": false, "required": ["statement"],
+      "properties": {"statement": {"$ref": "#/$defs/declaration"}}
+    },
+    "evidence": {"$ref": "#/$defs/block"},
+    "candidates": {
+      "type": "object", "maxProperties": 64,
+      "propertyNames": {"type": "string", "minLength": 1, "maxLength": 512},
+      "additionalProperties": {"$ref": "#/$defs/candidate"}
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sources", "status", "issues", "limits"],
+      "properties": {
+        "sources": {"allOf": [{"$ref": "#/$defs/field"}, {"properties": {
+          "kind": {"const": "INFERRED"},
+          "value": {"type": "object", "maxProperties": 64, "additionalProperties": {"$ref": "#/$defs/source"}}
+        }}]},
+        "status": {"allOf": [{"$ref": "#/$defs/field"}, {"properties": {
+          "kind": {"const": "INFERRED"}, "value": {"enum": ["COMPLETE", "PARTIAL"]}
+        }}]},
+        "issues": {"allOf": [{"$ref": "#/$defs/field"}, {"properties": {
+          "kind": {"const": "INFERRED"}, "value": {"type": "array", "maxItems": 256, "items": {"type": "string"}}
+        }}]},
+        "limits": {"allOf": [{"$ref": "#/$defs/field"}, {"properties": {
+          "kind": {"const": "DECLARED"}, "value": {"type": "object"}
+        }}]}
+      }
+    }
+  },
+  "$defs": {
+    "field": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "value", "sources"],
+      "properties": {
+        "kind": {"enum": ["DECLARED", "OBSERVED", "INFERRED", "UNKNOWN"]},
+        "value": {},
+        "sources": {"type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1024}}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "UNKNOWN"}}}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"kind": {"const": "OBSERVED"}}}, "then": {"properties": {"sources": {"minItems": 1}}}}
+      ]
+    },
+    "block": {
+      "type": "object", "maxProperties": 64,
+      "propertyNames": {"type": "string", "minLength": 1, "maxLength": 512},
+      "additionalProperties": {"$ref": "#/$defs/field"}
+    },
+    "declaration": {"allOf": [{"$ref": "#/$defs/field"}, {"properties": {
+      "kind": {"enum": ["DECLARED", "UNKNOWN"]}, "value": {"type": ["string", "null"]}
+    }}]},
+    "candidate": {"allOf": [{"$ref": "#/$defs/field"}, {"properties": {
+      "kind": {"const": "DECLARED"},
+      "value": {
+        "type": "object", "additionalProperties": false, "required": ["claim", "actor", "premises", "goal"],
+        "properties": {
+          "claim": {"type": "string", "minLength": 1, "maxLength": 16384},
+          "actor": {"enum": ["human", "ai", "unknown"]},
+          "premises": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string"}},
+          "goal": {"enum": [null, "statement"]}
+        }
+      }
+    }}]},
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["locator", "sha256", "bytes", "status"],
+      "properties": {
+        "locator": {"type": "string"},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "bytes": {"type": ["integer", "null"], "minimum": 0, "maximum": 1048576},
+        "status": {"enum": ["READ", "PARTIAL", "UNKNOWN"]}
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{"status":"CLAIM","law_python":null,"accepted_arm":"variant_2","rationale":"Measured all three candidates. Variant_2 improves the mean from 10 to 10.75; per-sample changes are +2, +1, 0, 0, so no sample regresses. Variant_1 fails the allowed degradation of 1 because s4 drops by 8. Revised measurements or acceptance thresholds could change this conclusion.","confidence":1}

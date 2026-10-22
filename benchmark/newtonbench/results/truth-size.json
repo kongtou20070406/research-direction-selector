@@ -1,0 +1,322 @@
+[
+ {
+  "equation": "feynman-I.10.7",
+  "law": "m_0/sqrt(1-v**2/2.99792458e8**2)",
+  "expression": "m_0 / sqrt(1 - pow(v, 2) / pow(c, 2))",
+  "size": 12,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.12.1",
+  "law": "mu*n",
+  "expression": "mu * n",
+  "size": 3,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.12.5",
+  "law": "q2*Ef",
+  "expression": "q2 * Ef",
+  "size": 3,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.14.3",
+  "law": "m*g*h",
+  "expression": "m * g * h",
+  "size": 5,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.14.4",
+  "law": "k_spring*x**2/2",
+  "expression": "k_spring * pow(x, 2) / 2",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.18.12",
+  "law": "r*F*sin(theta)",
+  "expression": "r * F * sin(theta)",
+  "size": 6,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.18.4",
+  "law": "(m1*r1+m2*r2)/(m1+m2)",
+  "expression": "(m1 * r1 + m2 * r2) / (m1 + m2)",
+  "size": 11,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.25.13",
+  "law": "q/C",
+  "expression": "q / C",
+  "size": 3,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.26.2",
+  "law": "sin(theta1)/sin(theta2)",
+  "expression": "sin(theta1) / sin(theta2)",
+  "size": 5,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.27.6",
+  "law": "1/(1/d1+n/d2)",
+  "expression": "1 / (1 / d1 + n / d2)",
+  "size": 9,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.39.10",
+  "law": "pr*V*3/2",
+  "expression": "pr * V * 3 / 2",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.40.1",
+  "law": "n_0*exp(-m*9.80665*x/(1.380649e-23*T))",
+  "expression": "n_0 * exp(-m * g * x / (k * T))",
+  "size": 13,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.41.16",
+  "law": "1.054571817e-34*omega**3/(pi**2*2.99792458e8**2*(exp(1.054571817e-34*omega/(1.380649e-23*T))-1))",
+  "expression": "hbar*omega**3 / (pow(pi, 2)*pow(c, 2)*(exp(hbar*omega/(k*T)) - 1))",
+  "size": 24,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.47.23",
+  "law": "sqrt(gamma*pr/rho)",
+  "expression": "sqrt(gamma * pr / rho)",
+  "size": 6,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.6.20a",
+  "law": "exp(-theta**2/2)/sqrt(2*pi)",
+  "expression": "exp(neg(pow(theta, 2) / 2)) / sqrt(2 * pi)",
+  "size": 12,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.8.14",
+  "law": "sqrt((x2-x1)**2+(y2-y1)**2)",
+  "expression": "sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2))",
+  "size": 12,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-I.9.18",
+  "law": "m1*m2/(r**2)",
+  "expression": "(m1 * m2) / pow(r, 2)",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.10.9",
+  "law": "sigma_den/(eps0*(1+chi))",
+  "expression": "sigma_den / (eps0 * (1 + chi))",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.2.42",
+  "law": "kappa*(t2-t1)/d",
+  "expression": "kappa * (t2 - t1) / d",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.24.17",
+  "law": "sqrt(omega**2/2.99792458e8**2-pi**2/d**2)",
+  "expression": "sqrt(pow(omega, 2) / pow(c, 2) - pow(pi, 2) / pow(d, 2))",
+  "size": 16,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.27.18",
+  "law": "eps0*Ef**2",
+  "expression": "eps0 * pow(Ef, 2)",
+  "size": 5,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.34.11",
+  "law": "g_factor*q*B/(2*m)",
+  "expression": "g_factor * q * B / (2 * m)",
+  "size": 9,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.34.2",
+  "law": "q*v*r/2",
+  "expression": "q * v * r / 2",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.37.1",
+  "law": "mom*(1+chi)*B",
+  "expression": "mom * (1 + chi) * B",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.38.14",
+  "law": "Y/(2*(1+sigma))",
+  "expression": "Y / (2 * (1 + sigma))",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-II.38.3",
+  "law": "Y*A*x/d",
+  "expression": "Y * A * x / d",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "feynman-III.10.19",
+  "law": "mom*sqrt(Bx**2+By**2+Bz**2)",
+  "expression": "mom * sqrt(pow(Bx, 2) + pow(By, 2) + pow(Bz, 2))",
+  "size": 14,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-exp-decay",
+  "law": "exp(-n)",
+  "expression": "exp(neg(n))",
+  "size": 3,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-hypotenuse",
+  "law": "sqrt(n**2+1)",
+  "expression": "sqrt(pow(n, 2) + 1)",
+  "size": 6,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-pronic",
+  "law": "n*(n-1)",
+  "expression": "n * (n - 1)",
+  "size": 5,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-reciprocal",
+  "law": "1/(n+1)",
+  "expression": "1 / (n + 1)",
+  "size": 5,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-reciprocal-square",
+  "law": "1/n**2",
+  "expression": "1 / pow(n, 2)",
+  "size": 5,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-sin-index",
+  "law": "sin(n)",
+  "expression": "sin(n)",
+  "size": 2,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-sqrt-index",
+  "law": "sqrt(n)",
+  "expression": "sqrt(n)",
+  "size": 2,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-square",
+  "law": "n**2",
+  "expression": "pow(n, 2)",
+  "size": 3,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-square-distractor",
+  "law": "n**2",
+  "expression": "pow(n, 2)",
+  "size": 3,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "math-triangular",
+  "law": "n*(n+1)/2",
+  "expression": "(n * (n + 1)) / 2",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "srsd-hard-feynman-I.14.3",
+  "law": "m*g*h",
+  "expression": "m * g * h",
+  "size": 5,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "srsd-hard-feynman-I.9.18",
+  "law": "m1*m2/(r**2)",
+  "expression": "(m1 * m2) / pow(r, 2)",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ },
+ {
+  "equation": "srsd-hard-feynman-II.2.42",
+  "law": "kappa*(t2-t1)/d",
+  "expression": "kappa * (t2 - t1) / d",
+  "size": 7,
+  "error": null,
+  "declared_max_nodes": 7
+ }
+]

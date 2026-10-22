@@ -18,6 +18,12 @@ jobs:
           python-version: '3.13'
       - run: cargo test --offline --manifest-path native/rds_accelerator/Cargo.toml
       - run: cargo build --offline --release --manifest-path native/rds_accelerator/Cargo.toml
+      - run: cargo test --offline --manifest-path native/rds_bus/Cargo.toml
+      - run: cargo build --offline --release --manifest-path native/rds_bus/Cargo.toml
+      - name: Require compiled bus and caller parity
+        env:
+          RDS_REQUIRE_BUS: '1'
+        run: python -B -m unittest discover -s tests -p 'test_rds_bus*.py' -v
       - name: Require compiled parity across declared labels
         env:
           RDS_REQUIRE_NATIVE: '1'

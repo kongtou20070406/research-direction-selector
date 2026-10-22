@@ -1,0 +1,14 @@
+{
+ "points_used": 3,
+ "steps": [
+  {
+   "point": "c1_5_3",
+   "eig_bits": 2.093069208,
+   "survivors": 1
+  }
+ ],
+ "survivors": [
+  "4.78e-02 * (current1 + current2) ** (3 / 2) / distance ** 3"
+ ],
+ "unique_correct": true
+}

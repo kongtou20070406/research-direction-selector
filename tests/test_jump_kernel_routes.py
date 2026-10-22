@@ -82,7 +82,8 @@ class KernelRouteTests(unittest.TestCase):
                 def initialize(store, contract):
                     contract = deepcopy(contract)
                     local = store.root / ('local-generator.exe' if os.name == 'nt' else 'local-generator')
-                    shutil.copy2(tool, local)
+                    # Content and mode only: macOS SIP flags on /usr/bin/true cannot be copied by a user.
+                    shutil.copy(tool, local)
                     plan = json.loads((store.root / 'jump-generation.json').read_text(encoding='utf-8'))
                     for stage in plan['stages']:
                         argv = next(a for a in contract['allowed_commands'] if a == stage['run']['argv'])

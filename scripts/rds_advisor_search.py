@@ -760,7 +760,7 @@ def _obstruction_response(record, audit=None):
     response, text = OBSTRUCTION_RESPONSES[cause]
     result = {"response": response, "cause_status": "INPUT_REPORTED", "next": text}
     if cause == "DEPENDENCY_UNAVAILABLE":
-        from rds_capabilities import CAPABILITIES
+        from rds_reference_values import CAPABILITIES
         dependency = record["dependency"]
         # Only a fixed supported name forms a command; other names stay data.
         result.update(dependency=dependency, live_check=(

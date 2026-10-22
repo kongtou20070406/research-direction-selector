@@ -13,6 +13,8 @@ import test_jump_interpreter_boundary as f
 import ast
 import subprocess
 
+NODE_SECONDS = 60
+
 
 class AmbientStartupTests(unittest.TestCase):
     def admission(self, family, options, *, legacy=False, bound=True, main='worker.opaque', refusal=None, no_main=False):
@@ -155,7 +157,14 @@ class AmbientStartupTests(unittest.TestCase):
                 with patch.dict(os.environ, {'NODE_OPTIONS':ambient, 'RDS_RUNTIME_SCRIPTS':'retained-runtime'}):
                     exec(compile(launch, str(source), 'exec'), namespace)
                     process = namespace['process']
-                    process.communicate(b'bounded local control', timeout=8)
+                    # Start-up headroom, not a value under test: a loaded Windows runner took over 8 s to
+                    # start Node. A child left running would also hold the trace and error files open.
+                    try:
+                        process.communicate(b'bounded local control', timeout=NODE_SECONDS)
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait()
                     self.assertEqual(process.returncode, 0)
                     self.assertEqual(os.environ['NODE_OPTIONS'], ambient)
                     self.assertEqual(os.environ['RDS_RUNTIME_SCRIPTS'], 'retained-runtime')

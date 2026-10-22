@@ -270,7 +270,7 @@ def main():
         entry(root, 'baseline', ['project', 'drive', '--max-steps', '1'])
         entry(root, 'prepare-model', ['project', 'drive', '--prepare-only', '--max-steps', '6'])
         store = ProjectStore(root)
-        with store._db(True) as db:
+        with store.readonly() as db:
             event = next(json.loads(row['body']) for row in db.execute('SELECT body FROM events')
                          if json.loads(row['body']).get('kind') == REQUESTED)
         from rds_math import blob
@@ -281,7 +281,7 @@ def main():
                          'data_sha256': file_sha(root / 'data.json'), 'scientific_support': 'UNKNOWN'}))
     else:
         before = ProjectStore(root).snapshot()
-        with ProjectStore(root)._db(True) as db:
+        with ProjectStore(root).readonly() as db:
             t0 = next(json.loads(row['body'])['started_at'] for row in db.execute('SELECT body FROM events')
                       if json.loads(row['body']).get('kind') == 'CAMPAIGN_STARTED')
         first = entry(root, 'approved-drive', ['project', 'drive', '--max-steps', '6'])

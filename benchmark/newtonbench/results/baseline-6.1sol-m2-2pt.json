@@ -1,0 +1,9 @@
+{
+  "model": "gpt-6.1-sol",
+  "arm": "baseline",
+  "points": 2,
+  "law": "def discovered_law(current1, current2, distance):\n    return 0.044535020551870814 * current1 * current2 / distance**2",
+  "rmsle": 0.09927873650519206,
+  "passed": false,
+  "notes": "仅使用 rows 中的两个无噪声观测拟合；采用电流对称双线性先验 y=K*current1*current2/distance**p，观测比值确定 p=2，两个点给出相同的 K。两点均为 current1+current2=5，无法唯一识别电流依赖；该公式是先验下的候选，不声称唯一恢复真值。未使用 grammar 选择公式；给定真值仅在候选冻结后用于评分。RMSLE=sqrt(mean((ln(1+y_pred)-ln(1+y_true))**2))，评估网格为 current1,current2,distance 各取整数 1..5，共125点；passed=rmsle<0.05。候选在两个观测点上的绝对残差均为0；未调用RDS工具或外部API。"
+}

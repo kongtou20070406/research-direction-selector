@@ -80,7 +80,8 @@ links and evidence locators remain valid.
 | Record | Document |
 | --- | --- |
 | Dated 5.8 release review state and unresolved criteria | [5.8 release review](5.8-release-review.md) |
-| Preview scope and evidence for each candidate | [5.9.0-rc.1](releases/5.9.0-rc.1-preview.md), [6.0.0-rc.1](releases/6.0.0-rc.1-preview.md) |
+| Preview scope and evidence for each candidate | [5.9.0-rc.1](releases/5.9.0-rc.1-preview.md), [6.0.0-rc.1](releases/6.0.0-rc.1-preview.md), [6.0.0](releases/6.0.0.md) |
+| One-declaration unattended loop: Compass Advisor, basin escape, goal-bound RSI | [Compass](compass.md), [benchmark](../benchmark/compass/README.md) |
 | Bounded 2026-10-01 design/prior-art review | [Guardrails review](guardrails-prior-art-20261001.md) |
 | Original autonomy engineering checks and their acceptance limits | [Autonomy validation](autonomy-validation.md) |
 | Scoped Advisor fixture and public-task results | [Advisor benchmark](advisor-benchmark.md), [frontier benchmark](advisor-frontier.md) |

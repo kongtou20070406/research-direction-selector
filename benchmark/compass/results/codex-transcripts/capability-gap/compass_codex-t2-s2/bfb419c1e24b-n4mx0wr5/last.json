@@ -1,0 +1,12 @@
+{
+  "decisions": [
+    {
+      "id": "j02-0",
+      "disposition": "adopt",
+      "reason": "All four receipts satisfy y = 2 * divisors_x + 1 exactly. This compact rule survives the witness that refuted x + 1, but its behavior beyond the observed inputs remains unverified.",
+      "next_step": "Measure x = 4 with divisors_x = 3, predicting y = 7, and x = 12 with divisors_x = 6, predicting y = 13. These test an unseen divisor count and equal outputs for distinct inputs sharing a divisor count.",
+      "hypothesis": null
+    }
+  ],
+  "proposals": []
+}

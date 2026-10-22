@@ -1,0 +1,47 @@
+[
+ {
+  "world": "sparse",
+  "variant": "economy",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "(1 + x)",
+  "correct": false,
+  "false_certification": true,
+  "holdout": [],
+  "experiments": 3
+ },
+ {
+  "world": "sparse",
+  "variant": "holdout1",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "correct": false,
+  "false_certification": false,
+  "holdout": [],
+  "experiments": 8
+ },
+ {
+  "world": "sparse",
+  "variant": "holdout2",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "correct": false,
+  "false_certification": false,
+  "holdout": [
+   "x14"
+  ],
+  "experiments": 8
+ },
+ {
+  "world": "sparse",
+  "variant": "holdout3",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "correct": false,
+  "false_certification": false,
+  "holdout": [
+   "x13",
+   "x14"
+  ],
+  "experiments": 8
+ }
+]

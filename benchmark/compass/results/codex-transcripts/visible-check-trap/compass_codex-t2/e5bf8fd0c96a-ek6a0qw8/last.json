@@ -1,0 +1,21 @@
+{
+  "decisions": [
+    {
+      "id": "j01-0",
+      "disposition": "adopt",
+      "reason": "The rule y = x**3 + 1 matches all three receipted measurements and survives every listed witness. Retain it as a candidate; the available evidence does not uniquely establish this law.",
+      "next_step": "Measure x = 1, where this rule predicts y = 2 and the proposed quadratic rival predicts y = -4, then refute candidates inconsistent with the receipt.",
+      "hypothesis": null
+    }
+  ],
+  "proposals": [
+    {
+      "id": "quadratic_rival",
+      "predict": {
+        "y": "1 - x * (3 * x + 2)"
+      },
+      "applies": null,
+      "statement": "This quadratic matches all three receipts and provides a lower-degree rival to the cubic, with a distinct prediction at x = 1."
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+[
+ {
+  "world": "sin",
+  "variant": "default",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "sin(x)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 5
+ },
+ {
+  "world": "sin",
+  "variant": "holdout2",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "sin(x)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 3
+ },
+ {
+  "world": "sin",
+  "variant": "cap5",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "sin(x)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 5
+ },
+ {
+  "world": "sqrt",
+  "variant": "default",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "sqrt(x)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 5
+ },
+ {
+  "world": "sqrt",
+  "variant": "holdout2",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "sqrt(x)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 3
+ },
+ {
+  "world": "sqrt",
+  "variant": "cap5",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "sqrt(x)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 5
+ },
+ {
+  "world": "large-quad",
+  "variant": "default",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "((x * x) + 1)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 12
+ },
+ {
+  "world": "large-quad",
+  "variant": "holdout2",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "((x * x) + 1)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 12
+ },
+ {
+  "world": "large-quad",
+  "variant": "cap5",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "((x * x) + 1)",
+  "correct": true,
+  "false_certification": false,
+  "experiments": 8
+ }
+]

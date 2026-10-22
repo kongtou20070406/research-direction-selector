@@ -12,11 +12,14 @@ adversarial enforcement (#120); this module enforces supported RDS APIs only.
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
 
 from rds_project import ProjectStore, canonical, digest, file_sha, require
 from rds_mutation import mutation
+from rds_sqlite import readonly_connection
+from rds_project_read_services import ProjectReadServices
 
 SCHEMA = 1
 POINTER_NAME = ".rds-workspace.json"
@@ -113,18 +116,37 @@ def _read_pointer_at(root):
     return pointer
 
 
+def _read_path(root):
+    root = Path(root).resolve()
+    require(root.is_dir(), 'Project root must exist')
+    state = root / '.rds'
+    require(state.resolve().is_relative_to(root), 'State directory escapes project root')
+    return root, state / 'project.sqlite3'
+
+
+@contextmanager
+def _read_db(root):
+    """Preserve committed identity reads even while a writer is pending."""
+    root, path = _read_path(root)
+    if not path.is_file():
+        raise FileNotFoundError('Project contract has not been initialized')
+    require(path.resolve().is_relative_to(root), 'Project database escapes root')
+    with readonly_connection(path) as db:
+        yield db
+
+
 def _initialized(root):
-    store = _store(root)
-    if not store.path.is_file():
+    _, path = _read_path(root)
+    if not path.is_file():
         return False
-    with store._db(True) as db:
+    with _read_db(root) as db:
         return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
                     and db.execute("SELECT 1 FROM contract WHERE id=1").fetchone())
 
 
 def _recorded_quick_contract(db, allowance):
     """Keep paid scope identity across verified owner contract transitions."""
-    from rds_method_revision import contract_history
+    from rds_contract_read import contract_history
     return next((entry['contract'] for entry in contract_history(db)
                  if entry['sha256'] == allowance.get('contract_sha256')), None)
 
@@ -141,7 +163,7 @@ def _matching_identity(pointer, event):
 
 def _quick_request(path):
     from rds_bounded_io import read_regular_bytes
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     raw = read_regular_bytes(path, MAX_QUICK_REQUEST_BYTES, label='QUICK identity request')
     request = strict_json(raw.decode('utf-8'))
     require(isinstance(request, dict), 'QUICK identity request must be an object')
@@ -164,8 +186,7 @@ def _charged_quick_scope(child, owner, owner_pointer):
     if not request_path.is_file() or not _initialized(child):
         return False
     request = _quick_request(request_path)
-    parent, child_store = _store(owner), _store(child)
-    with parent._db(True) as db:
+    with _read_db(owner) as db:
         db.execute('BEGIN')
         identity = db.execute(
             "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY id DESC LIMIT 1",
@@ -173,8 +194,9 @@ def _charged_quick_scope(child, owner, owner_pointer):
         event = json.loads(identity['body']) if identity else None
         max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
         anchor = owner_pointer.get('event_id')
+        from rds_path_identity import same
         require(_matching_identity(owner_pointer, event)
-                and event.get('root') == str(owner), 'Owning QUICK workspace identity does not match')
+                and same(event.get('root'), owner), 'Owning QUICK workspace identity does not match')
         require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,
                 'Owning QUICK workspace ledger was rolled back; accounting resets are refused')
         rows = db.execute(
@@ -184,8 +206,8 @@ def _charged_quick_scope(child, owner, owner_pointer):
             return False
         allowance = json.loads(rows[0]['body'])
         charged = db.execute("SELECT charged FROM budget WHERE resource='wall_seconds'").fetchone()
-        with child_store._db(True) as child_db:
-            budget = child_store._contract(child_db).get('budget')
+        with _read_db(child) as child_db:
+            budget = ProjectReadServices(child_db).contract().get('budget')
         amount = allowance.get('amount')
         return (isinstance(request, dict) and allowance.get('request_sha256') == digest(request)
                 and _recorded_quick_contract(db, allowance) is not None
@@ -260,7 +282,7 @@ def _bounded_bind_ledger_sha(path, deadline):
 def _check_descendant_tails(workspace_root, owner, db, tables, deadline):
     """Use original producer receipts, including ledgers not yet initialized."""
     from rds_campaign import MAX_BYTES, MAX_EVENTS, _preparation_finished
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     import stat
 
     if 'events' in tables:
@@ -370,7 +392,7 @@ def _refuse_active_descendants(root):
                 _check_bind_deadline(deadline)
                 if wheel_state and directory.parent.parent != root:
                     from rds_bounded_io import read_regular_bytes
-                    from rds_cli import strict_json
+                    from rds_reference_values import strict_json
                     require(stat.S_ISREG(metadata.st_mode),
                             'Descendant wheel state must be a regular file')
                     require(path.stat().st_nlink == 1,
@@ -409,7 +431,7 @@ def _refuse_active_descendants(root):
                         if os.path.normcase(entry.name) == 'state.sqlite3':
                             if 'state' not in tables:
                                 continue
-                            from rds_cli import RDSState
+                            from rds_state import RDSState
                             state = RDSState.read_state(db)
                             active = any(plan['run_status'] in {'RESERVED', 'RUNNING', 'RECOVERY_REQUIRED'}
                                          for plan in state.get('plans', {}).values())
@@ -505,8 +527,8 @@ def bind(root):
                 continue
             if owner_pointer == pointer and _charged_quick_scope(store.root, owner, owner_pointer):
                 check_admission(owner)
-                from rds_quick import _is_unmaterialized_allowance
-                with _store(owner)._db(True) as parent_db:
+                from rds_quick_ledger import _is_unmaterialized_allowance
+                with _store(owner).readonly() as parent_db:
                     allowance = parent_db.execute(
                         "SELECT body FROM events WHERE json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE' "
                         "AND json_extract(body,'$.job_root')=?", (str(store.root),)).fetchone()
@@ -525,10 +547,9 @@ def bind(root):
         return {"status": "ALREADY_BOUND", "pointer": pointer, "ledger_root": str(store.root)}
     deadline = _refuse_active_descendants(store.root)
     ledger_sha = _bounded_bind_ledger_sha(store.path, deadline)
-    with store._db(True) as db:
-        contract = store._contract(db)
-        identity = {"schema": SCHEMA, "ledger_sha256": ledger_sha, "contract_sha256": digest(contract),
-                    "root": str(store.root)}
+    contract = store.contract()
+    identity = {"schema": SCHEMA, "ledger_sha256": ledger_sha, "contract_sha256": digest(contract),
+                "root": str(store.root)}
     require(pointer is None, _OVERWRITE)
     event_digest = digest(identity)
     recovered = False
@@ -563,8 +584,8 @@ def bind(root):
             "SELECT body FROM events WHERE json_extract(body,'$.kind')=? ORDER BY rowid DESC LIMIT 1",
             (EVENT_KIND,)).fetchone()
         if recorded is None:
-            db.execute("INSERT INTO events(body) VALUES (?)", (canonical(
-                {"kind": EVENT_KIND, "assurance": ASSURANCE, "event_digest": event_digest, **identity}),))
+            store.record_event(db, {"kind": EVENT_KIND, "assurance": ASSURANCE,
+                                    "event_digest": event_digest, **identity})
         else:
             # Two identical sources: a crash between the committed event and
             # the pointer write, or a concurrent binder that won the race. Both
@@ -644,7 +665,8 @@ def check_admission(root, supersedes=None, separate_project=False):
     # A copied workspace carries both the pointer and the ledger event with it,
     # so digest equality alone admits a clone. The event also records the bound
     # root; the original ledger serves only its own directory tree.
-    require(str(store.root) == event.get("root"),
+    from rds_path_identity import same
+    require(same(store.root, event.get("root")),
             "This workspace is a copy of a bound workspace; the recorded identity names "
             f"{event.get('root')}. A bound ledger serves exactly one workspace")
     # Restoring a ledger snapshot taken after the bind rolls budget and events
@@ -653,7 +675,7 @@ def check_admission(root, supersedes=None, separate_project=False):
     # are append-only, so a rolled-back ledger's event log ends before that
     # anchor and admission is refused until the ledger catches up. The pointer
     # only ever moves forward; a refusal here never rewrites accounting.
-    with store._db(True) as db:
+    with _read_db(store.root) as db:
         max_id = db.execute("SELECT COALESCE(MAX(id),0) FROM events").fetchone()[0]
     anchor = pointer.get("event_id")
     if anchor is not None:
@@ -695,7 +717,8 @@ def _anchor_transaction(root, db):
             'Workspace ledger identity does not match; accounting resets are refused')
     require(binding_digest is None or binding_digest == event.get('event_digest'),
             'Workspace binding transaction identity does not match')
-    require(event.get('root') == str(Path(root).resolve()), 'Workspace ledger belongs to another root')
+    from rds_path_identity import same
+    require(same(event.get('root'), root), 'Workspace ledger belongs to another root')
     max_id = db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
     anchor = pointer.get('event_id')
     require(anchor is None or type(anchor) is int and 0 < anchor <= max_id,
@@ -771,7 +794,7 @@ def connect(root, database, *, _materialization=None, **kwargs):
 
 
 def _recorded_event(store):
-    with store._db(True) as db:
+    with _read_db(store.root) as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
             return None
         row = db.execute(

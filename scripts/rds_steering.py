@@ -10,6 +10,7 @@ import re
 import time
 
 from rds_project import canonical, digest, number, require, UNINITIALIZED
+from rds_project_read_services import ProjectReadServices
 
 
 EVENT = 'PROJECT_STEERING'
@@ -28,11 +29,10 @@ def _text(value, name, maximum=4096):
 
 
 def current(db):
-    row = db.execute("SELECT body FROM events WHERE json_extract(body,'$.kind')=? "
-                     "ORDER BY id DESC LIMIT 1", (EVENT,)).fetchone()
-    if row is None:
+    body = ProjectReadServices(db).latest_event(EVENT)
+    if body is None:
         return None
-    event = json.loads(row['body'])
+    event = json.loads(body)
     require(event.get('sha256') == digest({k: v for k, v in event.items() if k != 'sha256'}),
             'Steering record integrity failure')
     return event
@@ -92,7 +92,7 @@ def dispositions(runs, state):
 
 
 def status(store):
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         contract = store._contract(db)
         event = current(db)
@@ -123,7 +123,7 @@ def submit(store, request, *, user_directed=False, source=None):
                 'Invalid steering ' + key)
         require(not values or request['kind'] == 'redirect', 'Route lists require redirect')
     identity = digest({'request': request, 'source': source})
-    from rds_quick import cas_json
+    from rds_cas import cas_json
     with store._db() as db:
         db.execute('BEGIN IMMEDIATE')
         contract = store._contract(db)
@@ -257,7 +257,7 @@ def plan(store, intent=None, *, output=None, save_as=None, dialogue=False):
     if save_as is not None:
         require(snap is not None, 'Initialize the project before retaining a plan in its existing checkpoint ledger')
         from rds_checkpoints import save_checkpoint
-        from rds_quick import cas_json
+        from rds_cas import cas_json
         ref = cas_json(store.root, result)
         result['checkpoint'] = save_checkpoint(store.root, save_as, snap, kind='project',
                                                decision={'plan_draft': ref, 'source_kind': 'UNVERIFIED_PLAN_PROPOSAL'})

@@ -1,0 +1,62 @@
+[
+ {
+  "equation": "feynman-I.41.16",
+  "truth": "1.054571817e-34*omega**3/(pi**2*2.99792458e8**2*(exp(1.054571817e-34*omega/(1.380649e-23*T))-1))",
+  "wrong": "1.054571817e-34*omega**3/(pi*2.99792458e8**2*(exp(1.054571817e-34*omega/(1.380649e-23*T))-1))",
+  "refusal": null,
+  "declared_rows": 9,
+  "wrong_counterexamples": 9,
+  "truth_counterexamples": 0,
+  "verdict": "APPLICABLE"
+ },
+ {
+  "equation": "feynman-II.24.17",
+  "truth": "sqrt(omega**2/2.99792458e8**2-pi**2/d**2)",
+  "wrong": "sqrt(omega**2/2.99792458e8**2+pi**2/d**2)",
+  "refusal": null,
+  "declared_rows": 9,
+  "wrong_counterexamples": 8,
+  "truth_counterexamples": 0,
+  "verdict": "APPLICABLE"
+ },
+ {
+  "equation": "feynman-I.10.7",
+  "truth": "m_0/sqrt(1-v**2/2.99792458e8**2)",
+  "wrong": "m_0/(1-v**2/2.99792458e8**2)",
+  "refusal": null,
+  "declared_rows": 9,
+  "wrong_counterexamples": 9,
+  "truth_counterexamples": 0,
+  "verdict": "APPLICABLE"
+ },
+ {
+  "equation": "feynman-I.6.20a",
+  "truth": "exp(-theta**2/2)/sqrt(2*pi)",
+  "wrong": "exp(-theta**2/2)*sqrt(2*pi)",
+  "refusal": null,
+  "declared_rows": 25,
+  "wrong_counterexamples": 25,
+  "truth_counterexamples": 0,
+  "verdict": "APPLICABLE"
+ },
+ {
+  "equation": "feynman-I.8.14",
+  "truth": "sqrt((x2-x1)**2+(y2-y1)**2)",
+  "wrong": "sqrt((x2-x1)**2-(y2-y1)**2)",
+  "refusal": null,
+  "declared_rows": 36,
+  "wrong_counterexamples": 36,
+  "truth_counterexamples": 0,
+  "verdict": "APPLICABLE"
+ },
+ {
+  "equation": "feynman-II.34.11",
+  "truth": "g_factor*q*B/(2*m)",
+  "wrong": "g_factor*q*B/(2*m**2)",
+  "refusal": null,
+  "declared_rows": 54,
+  "wrong_counterexamples": 36,
+  "truth_counterexamples": 0,
+  "verdict": "APPLICABLE"
+ }
+]

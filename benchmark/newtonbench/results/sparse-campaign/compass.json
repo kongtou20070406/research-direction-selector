@@ -1,0 +1,255 @@
+{
+ "schema": "rds-compass-declaration-v1",
+ "goal": {
+  "kind": "IDENTIFY_LAW",
+  "statement": "Identify the law mapping x to y",
+  "observable": "y"
+ },
+ "inputs": {
+  "x": {
+   "min": 0,
+   "max": 31,
+   "integer": true
+  }
+ },
+ "observables": {
+  "y": {
+   "tolerance": {
+    "abs": 0
+   }
+  }
+ },
+ "experiment": {
+  "argv": [
+   "{python}",
+   "-B",
+   "experiment.py",
+   "--x",
+   "{x}",
+   "--output",
+   "{output}"
+  ],
+  "files": {
+   "code": [
+    "experiment.py"
+   ],
+   "data": [
+    "task.json"
+   ],
+   "evaluator": [
+    "experiment.py"
+   ]
+  },
+  "timeout_seconds": 20,
+  "wall_seconds": 25
+ },
+ "candidates": [
+  {
+   "id": "x0",
+   "inputs": {
+    "x": 0
+   }
+  },
+  {
+   "id": "x1",
+   "inputs": {
+    "x": 1
+   }
+  },
+  {
+   "id": "x2",
+   "inputs": {
+    "x": 2
+   }
+  },
+  {
+   "id": "x3",
+   "inputs": {
+    "x": 3
+   }
+  },
+  {
+   "id": "x4",
+   "inputs": {
+    "x": 4
+   }
+  },
+  {
+   "id": "x5",
+   "inputs": {
+    "x": 5
+   }
+  },
+  {
+   "id": "x6",
+   "inputs": {
+    "x": 6
+   }
+  },
+  {
+   "id": "x7",
+   "inputs": {
+    "x": 7
+   }
+  },
+  {
+   "id": "x8",
+   "inputs": {
+    "x": 8
+   }
+  },
+  {
+   "id": "x9",
+   "inputs": {
+    "x": 9
+   }
+  },
+  {
+   "id": "x10",
+   "inputs": {
+    "x": 10
+   }
+  },
+  {
+   "id": "x11",
+   "inputs": {
+    "x": 11
+   }
+  },
+  {
+   "id": "x12",
+   "inputs": {
+    "x": 12
+   }
+  },
+  {
+   "id": "x13",
+   "inputs": {
+    "x": 13
+   }
+  },
+  {
+   "id": "x14",
+   "inputs": {
+    "x": 14
+   }
+  },
+  {
+   "id": "x15",
+   "inputs": {
+    "x": 15
+   }
+  },
+  {
+   "id": "x16",
+   "inputs": {
+    "x": 16
+   }
+  },
+  {
+   "id": "x17",
+   "inputs": {
+    "x": 17
+   }
+  },
+  {
+   "id": "x18",
+   "inputs": {
+    "x": 18
+   }
+  },
+  {
+   "id": "x19",
+   "inputs": {
+    "x": 19
+   }
+  },
+  {
+   "id": "x20",
+   "inputs": {
+    "x": 20
+   }
+  },
+  {
+   "id": "x21",
+   "inputs": {
+    "x": 21
+   }
+  },
+  {
+   "id": "x22",
+   "inputs": {
+    "x": 22
+   }
+  },
+  {
+   "id": "x23",
+   "inputs": {
+    "x": 23
+   }
+  },
+  {
+   "id": "x24",
+   "inputs": {
+    "x": 24
+   }
+  },
+  {
+   "id": "x25",
+   "inputs": {
+    "x": 25
+   }
+  },
+  {
+   "id": "x26",
+   "inputs": {
+    "x": 26
+   }
+  },
+  {
+   "id": "x27",
+   "inputs": {
+    "x": 27
+   }
+  },
+  {
+   "id": "x28",
+   "inputs": {
+    "x": 28
+   }
+  },
+  {
+   "id": "x29",
+   "inputs": {
+    "x": 29
+   }
+  },
+  {
+   "id": "x30",
+   "inputs": {
+    "x": 30
+   }
+  },
+  {
+   "id": "x31",
+   "inputs": {
+    "x": 31
+   }
+  }
+ ],
+ "hypotheses": [
+  {
+   "id": "lin",
+   "predict": {
+    "y": "x+1"
+   }
+  }
+ ],
+ "budget": {
+  "wall_seconds": 900
+ },
+ "verification": {
+  "holdout": 2,
+  "confirmations": 2
+ }
+}

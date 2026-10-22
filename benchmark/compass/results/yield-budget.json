@@ -1,0 +1,35 @@
+[
+ {
+  "variant": "default",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "((x * x) + 1)",
+  "correct": true,
+  "cost": {
+   "experiments": 20,
+   "jumps": 1,
+   "agent_tokens": null
+  }
+ },
+ {
+  "variant": "cap5",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "((x * x) + 1)",
+  "correct": true,
+  "cost": {
+   "experiments": 8,
+   "jumps": 1,
+   "agent_tokens": null
+  }
+ },
+ {
+  "variant": "cap10",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "((x * x) + 1)",
+  "correct": true,
+  "cost": {
+   "experiments": 13,
+   "jumps": 1,
+   "agent_tokens": null
+  }
+ }
+]

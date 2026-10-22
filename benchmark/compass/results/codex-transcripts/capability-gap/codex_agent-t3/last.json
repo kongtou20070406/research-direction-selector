@@ -1,0 +1,1 @@
+{"status":"CLAIM","law_python":"def law(x):\n    return 2 * sum(x % d == 0 for d in range(1, x + 1)) + 1\n","accepted_arm":null,"rationale":"The law is twice the number of positive divisors of x, plus one. It exactly matches all 20 declared candidates, each measured once. A contradictory measurement or an expanded domain would require reassessment.","confidence":1.0}

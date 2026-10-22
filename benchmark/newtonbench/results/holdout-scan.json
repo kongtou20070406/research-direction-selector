@@ -1,0 +1,137 @@
+[
+ {
+  "holdout": 2,
+  "task": "sparse-tail",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 1000)",
+  "exact_match": "32/32",
+  "measurements": 7
+ },
+ {
+  "holdout": 2,
+  "task": "sparse-mid",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "(1 + x)",
+  "exact_match": "31/32",
+  "measurements": 7
+ },
+ {
+  "holdout": 2,
+  "task": "sparse-edge",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32",
+  "measurements": 5
+ },
+ {
+  "holdout": 2,
+  "task": "sparse-two",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32",
+  "measurements": 7
+ },
+ {
+  "holdout": 2,
+  "task": "sparse-small",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 2)",
+  "exact_match": "32/32",
+  "measurements": 7
+ },
+ {
+  "holdout": 4,
+  "task": "sparse-tail",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 1000)",
+  "exact_match": "32/32",
+  "measurements": 9
+ },
+ {
+  "holdout": 4,
+  "task": "sparse-mid",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "(1 + x)",
+  "exact_match": "31/32",
+  "measurements": 9
+ },
+ {
+  "holdout": 4,
+  "task": "sparse-edge",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32",
+  "measurements": 5
+ },
+ {
+  "holdout": 4,
+  "task": "sparse-two",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32",
+  "measurements": 7
+ },
+ {
+  "holdout": 4,
+  "task": "sparse-small",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 2)",
+  "exact_match": "32/32",
+  "measurements": 9
+ },
+ {
+  "holdout": 8,
+  "task": "sparse-tail",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 1000)",
+  "exact_match": "32/32",
+  "measurements": 13
+ },
+ {
+  "holdout": 8,
+  "task": "sparse-mid",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "(1 + x)",
+  "exact_match": "31/32",
+  "measurements": 13
+ },
+ {
+  "holdout": 8,
+  "task": "sparse-edge",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32",
+  "measurements": 5
+ },
+ {
+  "holdout": 8,
+  "task": "sparse-two",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32",
+  "measurements": 7
+ },
+ {
+  "holdout": 8,
+  "task": "sparse-small",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 2)",
+  "exact_match": "32/32",
+  "measurements": 13
+ }
+]

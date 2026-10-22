@@ -14,7 +14,8 @@ import stat
 import tempfile
 import uuid
 
-from rds_project import canonical, digest, require
+from rds_project_read_services import has_table
+from rds_project_values import canonical, digest, require
 from rds_source_documents import strict_json
 from rds_bounded_io import read_regular_bytes
 
@@ -57,8 +58,9 @@ def _shape(value):
     for name in ('workspace_root', 'project_root'):
         require(isinstance(value[name], str) and 0 < len(value[name]) <= 4096,
                 'Invalid campaign binding path')
-        require(os.path.normcase(str(_path(value[name]))) == os.path.normcase(value[name]),
-                'Campaign binding paths must be canonical')
+        _path(value[name])
+        from rds_path_identity import canonical_spelling
+        require(canonical_spelling(value[name]), 'Campaign binding paths must be canonical')
     workspace, project = _path(value['workspace_root']), _path(value['project_root'])
     require(workspace.is_dir() and project.is_dir() and project.is_relative_to(workspace),
             'Campaign workspace/project is missing or outside its workspace')
@@ -118,7 +120,7 @@ def _open_database(project, *, write=False):
 
 
 def _lineage(db):
-    from rds_method_revision import contract_history
+    from rds_contract_read import contract_history
     try:
         return contract_history(db)
     except sqlite3.Error as exc:
@@ -181,13 +183,13 @@ def detached_admission(root, db):
     require(db.in_transaction, 'Detached admission requires its parent transaction')
     require(binding(root) is None,
             'Bound campaign refuses detached QUICK jobs; use the canonical project')
-    events = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+    events = has_table(db, 'events')
     require(not events or _event(db) is None,
             'Campaign binding intent refuses detached QUICK admission')
 
 
 def _table(db, name):
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+    return has_table(db, name)
 
 
 class _Inventory:
@@ -388,7 +390,7 @@ def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *
     if request.get('research_context') is None:
         return
     from rds_project import ProjectStore, TERMINAL
-    from rds_quick import _prospective_completion
+    from rds_quick_ledger import _prospective_completion
     context = request['research_context']
     require(isinstance(context, dict) and isinstance(context.get('ledger'), str),
             'Prospective campaign parent ledger is invalid')
@@ -416,7 +418,7 @@ def _prospective_quiescent(root, db, request, regression=None, guard_ref=None, *
 
 
 def _json_cas(root, ref):
-    from rds_owned_advisor import MAX_REPORT_BYTES
+    from rds_output_values import MAX_REPORT_BYTES
     require(isinstance(ref, dict) and isinstance(ref.get('path'), str)
             and isinstance(ref.get('sha256'), str) and re.fullmatch('[0-9a-f]{64}', ref['sha256'])
             and type(ref.get('bytes')) is int and ref['bytes'] > 0,
@@ -452,7 +454,7 @@ def _native_tails_quiescent(root, db, contract, runs, receipts):
     store = ProjectStore(root)
     policy = contract.get('advisor_policy', {})
     if policy.get('autonomy'):
-        from rds_autonomy import records, REQUESTED, PROCESSED
+        from rds_autonomy_read import records, REQUESTED, PROCESSED
         events = records(store, db, contract)
         require({event['run_id'] for event in events if event['kind'] == REQUESTED}
                 == {event['run_id'] for event in events if event['kind'] == PROCESSED},
@@ -521,7 +523,7 @@ def retained_owned_review(store):
     if scope is None or store.root == Path(scope['project_root']):
         return None
     from rds_project import TERMINAL
-    with store._db(True) as db:
+    with store.readonly() as db:
         db.execute('BEGIN')
         contract = store._contract(db)
         runs = store._runs(db)
@@ -656,7 +658,7 @@ def _ledger_quiescent(root, db, inventory, *, workspace, allow_pending_revision=
 
 
 def _reference_quiescent(root):
-    from rds_cli import RDSState
+    from rds_state import RDSState
     path = root / '.rds' / 'state.sqlite3'
     db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=10)
     try:
@@ -787,7 +789,7 @@ def _bind(store, workspace):
                      'ledger_kind': 'project', 'genesis_sha256': lineage[0]['sha256']}
             value = {**event, 'event_sha256': digest(event)}
             _shape(value)
-            db.execute('INSERT INTO events(body) VALUES (?)', (canonical(value),))
+            store.record_event(db, value)
         else:
             require(_path(value['project_root']) == project and _path(value['workspace_root']) == workspace
                     and value['genesis_sha256'] == lineage[0]['sha256'],

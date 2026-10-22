@@ -293,7 +293,7 @@ def verify(spec, *, allow_fallback=True):
             return result
         certificate = _certificate(spec, source, checked)
         return {"status": "PASS", "assurance": "LEAN_KERNEL_CHECKED",
-                "backend": BACKEND, "semantics": SEMANTICS, "certificate": certificate,
+                "backend": BACKEND, "semantics": certificate["semantics"], "certificate": certificate,
                 "artifact": {"source": source, **checked},
                 "reason": "Generated closed rational theorem was checked with no axioms"}
     except (ValueError, TypeError, OSError, ZeroDivisionError, OverflowError, RecursionError, UnicodeError) as exc:

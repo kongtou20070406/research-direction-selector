@@ -151,5 +151,30 @@ class JumpGenerationTests(unittest.TestCase):
         self.assertEqual(store.snapshot()['runs'], [])
 
 
+    def test_a_token_budget_dimension_does_not_reject_a_jump_route(self):
+        # A campaign that declares `agent.max_tokens` carries an `agent_tokens`
+        # dimension the jump routes never estimate: they are subprocess commands,
+        # not agent calls. The dimension check must ignore exactly that one.
+        root, store = example.build(self.root)
+        state = store.snapshot()
+        state['budget'] = {**state['budget'],
+                           'agent_tokens': {'cap': 1000.0, 'spent': 0.0,
+                                            'charged': 0.0, 'reserved': 0.0}}
+        with patch.object(ProjectStore, 'snapshot', return_value=state):
+            plan = rds_jump.load_plan(store, state)
+        self.assertTrue(plan['stages'])
+
+    def test_a_stranger_budget_dimension_still_rejects_the_route(self):
+        root, store = example.build(self.root)
+        state = store.snapshot()
+        state['budget'] = {**state['budget'],
+                           'unbudgeted_resource': {'cap': 1.0, 'spent': 0.0,
+                                                   'charged': 0.0, 'reserved': 0.0}}
+        with patch.object(ProjectStore, 'snapshot', return_value=state):
+            with self.assertRaises(ValueError) as caught:
+                rds_jump.load_plan(store, state)
+        self.assertIn('resource dimensions differ', str(caught.exception))
+
+
 if __name__ == '__main__':
     unittest.main()

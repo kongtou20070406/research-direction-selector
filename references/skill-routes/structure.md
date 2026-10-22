@@ -17,6 +17,8 @@ section and its needed guide; reuse unchanged resources already read.
         BIND discriminator: frozen conditions, original verifier field, disjoint typed rival predicates
         AFTER feedback: bind exact trigger ID/hash/observation; UNKNOWN calls for evidence
         USE measured failure to revise a premise, candidate or next experiment; do not rename a refuted claim
+        KEEP human rejection as a scoped choice and reason; only a checked witness is a counterexample
+        REASSESS on changed evidence/goal/conditions; do not permanently prune a family from a human veto
         RUN structure propose --proposal <reply.json>; THEN structure drive --steps 1
         KEEP definition/admission/independent observation/goal verification separate
         USE existing method revision FOR new code/routes; preserve goal/evaluator

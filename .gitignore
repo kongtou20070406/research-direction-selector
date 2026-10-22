@@ -14,3 +14,5 @@ obq-*.mjs
 dist/
 formal/.lake/
 native/**/target/
+.dsh-ops-update-*.lock
+.code-review-graph/

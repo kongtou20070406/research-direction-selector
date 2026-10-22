@@ -26,6 +26,10 @@ class BaselineLineageCLITests(unittest.TestCase):
             example = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(example)
             contract = example.build(root, 'algorithms')
+            for route in contract['advisor_policy']['routes']:
+                # Startup headroom only: the example's 5-second processes have
+                # timed out on loaded Windows runners. Estimates keep its +2 s.
+                route['manifest'].update(timeout_seconds=10, resource_estimates={'wall_seconds': 12})
             nodes = contract['advisor_policy']['graph']['nodes']
             node = lambda rid: next(n for n in nodes if n['id'] == rid)
             baseline = node('baseline')
@@ -40,7 +44,7 @@ class BaselineLineageCLITests(unittest.TestCase):
             def cli(*args):
                 # The controller allowance excludes worker time. Wait for the
                 # original frozen campaign window, without changing any native
-                # budget, worker timeout, step limit, or recovery assertion.
+                # budget, step limit, or recovery assertion.
                 timeout = contract['stop_policy']['wall_seconds'] if args[:2] == ('project', 'drive') else 50
                 try:
                     p = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/rds_cli.py'), '--root', str(root), *args],

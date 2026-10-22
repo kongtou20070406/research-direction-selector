@@ -1,0 +1,1 @@
+{"status":"CLAIM","law_python":"def law(x):\n    return x**3 + 1\n","accepted_arm":null,"rationale":"Measured all eight declared candidates exactly once. For x = -3,-2,-1,0,1,2,3,4, observed y = -26,-7,0,1,2,9,28,65, respectively. Every value equals x**3 + 1. This exhausts the declared domain; a contradictory measurement would change the claim.","confidence":1.0}

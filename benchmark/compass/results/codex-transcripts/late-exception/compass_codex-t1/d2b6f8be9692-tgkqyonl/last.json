@@ -1,0 +1,12 @@
+{
+  "decisions": [
+    {
+      "id": "j05-0",
+      "disposition": "adopt",
+      "reason": "The rule fits all seven receipts and accounts for the quadratic's failures at x=8 and x=9. Adopt it provisionally: the receipts bracket a transition between x=6 and x=8 but do not establish the exact cutoff.",
+      "next_step": "Measure x=7 first: this rule predicts 0, while a cutoff at x=8 predicts 50. Then measure x=3, x=5, and x=10, where this rule predicts 10, 26, and 0, to test both regimes.",
+      "hypothesis": null
+    }
+  ],
+  "proposals": []
+}
