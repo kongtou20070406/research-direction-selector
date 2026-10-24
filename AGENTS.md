@@ -30,5 +30,8 @@ architecture. This file keeps only what changes agent behaviour turn to turn.
 
 ## Where things are
 
-Full contract `docs/development-contract.md` · Compass `docs/compass.md` ·
+Contract `docs/development-contract.md` · Compass `docs/compass.md` ·
+**DL priors `docs/neural-frontier-INDEX.md`** - one page, organised by symptom
+(S1-S10), each with the first action and the ids to pull. Read it before
+designing a DL run; detail by id via `python -B tools/frontier_search.py A4`.
 local rules `scripts/AGENTS.md` · `tests/AGENTS.md` · `benchmark/AGENTS.md`
