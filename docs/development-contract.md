@@ -245,3 +245,77 @@ next      : <the single next action, or "stop; needs maintainer decision">
 ```
 
 `unknown: none` is a claim, not a default. If a check did not run, say so here.
+
+---
+
+## VII. CI gate
+
+`tools/validate_plan.py` never hard-fails by itself. `--strict` is what turns it
+into a gate, and exactly one caller passes `--strict`:
+`.github/workflows/change-gate.yml`, on every `pull_request`. It is a separate
+workflow file, not a job inside `test.yml`, so the native/lean/test matrices
+cannot be slowed down by it and a broken gate cannot mask them.
+
+### What fails, and where
+
+| risk | step | fails when | local equivalent |
+| --- | --- | --- | --- |
+| R0 / R1 | `risk` | the PR description has no non-empty `## Evidence` section, so no `--evidence` pointer is passed and `missing` is non-empty | `--strict` with no `--evidence` |
+| R2 | `risk` | a changed `scripts/*.py` has no test importing it (`NO_TEST_MAPPED` in `notes`) | same command; the entry appears in `notes` |
+| R3 | `risk` | never; it still runs and passes | same |
+| any | `graph` | `upward_edges > 18`, `cycles > 4`, or `unclassified > 0` | compare the counts by hand |
+
+An empty diff is not a failure: `overall` stays R3 and `verdict` stays `ready`,
+so a PR that touches nothing does not get blocked.
+
+The base is `git merge-base origin/<base_ref> HEAD`, not the base branch tip.
+Two-dot `git diff origin/<base_ref>` also counts commits that landed on the base
+branch after the PR forked and reports them as deletions in this PR.
+
+The `## Evidence` section must hold at least 12 non-space characters. A heading
+with nothing under it is rejected, so a placeholder cannot satisfy the gate.
+
+Reductions always pass and should be claimed in the handoff ledger. A PR that
+drops an upward edge or a cycle is a win, not a gate failure:
+`modules`, `edges` and `mutual_pairs` are reported in the job summary but never
+gated, because a new classified module legitimately moves `modules` and `edges`.
+
+### Local rehearsal
+
+Two commands, same as the workflow. Drop `--strict` while iterating, keep it when
+you want the exact CI verdict:
+
+```bash
+base="$(git merge-base origin/release/6.0.0-compass HEAD)"
+python -B tools/validate_plan.py --base "$base"                    # advice only
+python -B tools/validate_plan.py --base "$base" --strict; echo $?   # the gate
+
+python -B tools/import_graph.py > .import-graph.json
+python -c "import json;d=json.load(open('.import-graph.json'));print(d['counts'],len(d['cycles']),len(d['unclassified_edges']))"
+```
+
+`18` in the baseline is `counts.upward_edges`: de-duplicated `(source, target)`
+pairs, not `len(d['upward'])` (22 import sites). Compare the field the gate
+compares, or the comparison is meaningless.
+
+`--evidence PR:Evidence` is the pointer CI uses when the PR description has the
+section; locally, pass a real path instead:
+`python -B tools/validate_plan.py --base "$base" --strict --evidence docs/evidence/<file>.md`.
+
+### Why local is soft and CI is hard
+
+A local run is a rehearsal, not a merge decision. If it hard-failed, every
+intermediate run of an R0/R1 edit would abort, and the predictable response is
+to stop calling the tool or to add a bypass flag, which is the same as deleting
+the check. The soft default keeps the advice visible while the work is still
+moving, which is exactly when it can still be acted on.
+
+CI runs once, at the merge point, where the cost of skipping a check is the
+check's entire value. That is also the only place where `--evidence` can be
+supplied honestly: the pointer is the PR description, which a reviewer reads and
+which becomes part of the merged record. A local run cannot supply it, because
+the evidence does not exist yet while the edit is being written.
+
+The asymmetry is deliberate: local optimizes for iteration speed, CI optimizes
+for not merging an unbacked R0/R1 change. Both are written down here so the
+difference is a contract, not an accident.
