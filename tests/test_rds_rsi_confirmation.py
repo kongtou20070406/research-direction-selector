@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 from rds_meta import apply_rule, rollback_rule
 from rds_rsi import commit_casepack, evaluate_candidate
+from rds_rsi_confirmation import input_fingerprint
 from test_rds_rsi import fixture
 
 
@@ -168,6 +169,21 @@ class ConfirmationExposureTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertIn("confirmation_exposure", report)
         self.assertTrue((project / ".rds/rsi/confirmation/exposures.json").is_file())
+
+    def test_input_fingerprint_ignores_names_partitions_and_expected_grades(self):
+        """The module's own claim: renaming a case or re-splitting it does not
+        refresh the same input, so only engine, context and templates count."""
+        base = {"context": {"alpha": 1}, "templates": ["t0"]}
+        canonical = input_fingerprint(dict(base, name="a", partition="dev", expected_grade=1))
+        renamed = input_fingerprint(dict(base, name="b", partition="test", expected_grade=0))
+        self.assertEqual(canonical, renamed,
+                         "case name, partition and expected grade must not refresh an input")
+        self.assertEqual(canonical, input_fingerprint(dict(base, engine="search")),
+                         "an absent engine is the search engine")
+        self.assertNotEqual(canonical, input_fingerprint({"context": {"alpha": 2}, "templates": ["t0"]}),
+                            "a different context is a different input")
+        self.assertNotEqual(canonical, input_fingerprint({"context": {"alpha": 1}, "templates": ["t1"]}),
+                            "different templates are a different input")
 
 
 if __name__ == "__main__":

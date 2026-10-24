@@ -204,10 +204,10 @@ jobs:
 
           # Pinned in docs/development-contract.md, section IV "Baseline".
           # upward_edges counts de-duplicated (source, target) pairs, not raw import
-          # sites, so it must be read from counts and compared with 18, never with
+          # sites, so it must be read from counts and compared with 17, never with
           # len(graph["upward"]).
-          BASE = {"modules": 177, "edges": 663, "upward_edges": 18,
-                  "cycles": 4, "mutual_pairs": 40, "unclassified": 0}
+          BASE = {"modules": 177, "edges": 664, "upward_edges": 17,
+                  "cycles": 3, "mutual_pairs": 39, "unclassified": 0}
           HARD = ("upward_edges", "cycles", "unclassified")
 
           graph = json.load(open(sys.argv[1], encoding="utf-8"))
