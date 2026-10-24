@@ -161,16 +161,64 @@ own diff will usually produce a plausible review, and that review is not
 independent evidence. Independence has to come from a different layer (the
 planner, the graph, CI, or another model that did not write the change).
 
-### Baseline (measured 2026-10-24, `release/6.0.0-compass` @ `d6b60d6`)
+### Baseline (measured 2026-10-24, `release/6.0.0-compass` @ `d6b60d6`; debt retired in `e2089af`)
 
 ```
-modules 177 | edges 663 | upward 18 | cycles 4 | mutual_pairs 40 | unclassified 0
+modules 177 | edges 664 | upward 17 | cycles 3 | mutual_pairs 39 | unclassified 0
 ```
 
-Rule 3 is enforced against **these numbers**, not against zero. The 18 upward
-edges and 4 cycles are existing debt: a change may not add to them, and the
-weekly cleanup batch (rule 7) should retire them one at a time. A change that
+Rule 3 is enforced against **these numbers**, not against zero. The remaining
+17 upward edges and 3 cycles are existing debt: a change may not add to them,
+and the weekly cleanup batch (rule 7) retires them one at a time. A change that
 reduces them is a win and should say so in the handoff ledger.
+
+`e2089af` retired one edge and one cycle (`upward 18 -> 17`, `cycles 4 -> 3`,
+`mutual_pairs 40 -> 39`). It moved the publication primitives
+(`atomic_bytes` / `load_object` / `graph_lock` / `adoption_lock` /
+`workspace_publication`) from `rds_meta` (L3) to `rds_workspace` (L1), and the
+shared value and rule-schema contract (`require` / `json_digest` / `identity` /
+`validate_rule`) to `rds_core` (SHARED). `modules` is unchanged; `edges` moved
+`663 -> 664` because the new leaf imports are one-directional.
+
+The CI gate hard-codes the same `BASE` map in
+`.github/workflows/change-gate.yml`; it must be re-synced to `17 / 3 / 39`
+before the tighter numbers are enforced there.
+
+#### Retained upward edges — KNOWN_DEBT
+
+Every remaining edge was read in place; each one either imports a real business
+decision (not a helper) or would need a duplicate definition to remove. The
+test applied to all 17: can the imported symbol move to a lower layer without
+(a) creating a new upward edge such as `SHARED -> L1`, (b) duplicating the
+implementation, or (c) widening a verifier? None passed.
+
+| # | upward edge | site | why it stays |
+| ---: | --- | --- | --- |
+| 1 | `rds_autonomy` L3 -> `rds_autonomy_worker` L4 | `scripts/rds_autonomy.py:71` | Needs the worker's response-file naming (`output_paths`) to prove a repair route owns its `outpaths`. The only L1 candidates (`rds_outbox`, `rds_run_records`) own notification envelopes and pure run-record decoding; inserting the contract there would split one naming rule across two modules. |
+| 2 | `rds_campaign` L1 -> `rds_owned_advisor` L3 | `scripts/rds_campaign.py:464` | Campaign settlement rebuilds owned-Advisor state and reads `OWNED_PREFIX` to match original attempt/completion identities. Business cross-check, not a helper import. |
+| 3 | `rds_campaign` L1 -> `rds_hypergraph` L2 | `scripts/rds_campaign.py:499` | Validates a dependency snapshot read back from the ledger. `_validate` is bound to `DEFAULT_LIMITS`/`HARD_LIMITS` in the hypergraph module, so a move drags the whole limit table with it. |
+| 4 | `rds_discrimination` L2 -> `rds_advisor_search` L3 | `scripts/rds_discrimination.py:13` | Needs `evaluate_condition`, the three-valued fact evaluator. It cannot sit in `SHARED` because it reaches `rds_artifacts.ArtifactFact` (L1) through `_evidence_status`, which would create a `SHARED -> L1` edge. |
+| 5 | `rds_method_revision` L1 -> `rds_autonomy` L3 | `scripts/rds_method_revision.py:69` | Refuses a revision while a live controller holds a budget reservation; `controller_reservation` reads autonomy drive events and the caller PID. Real controller state. |
+| 6 | `rds_method_revision` L1 -> `rds_owned_advisor` L3 | `scripts/rds_method_revision.py:106` | `validate_policy` is a 130-line policy admission check that itself calls the autonomy and domain-confirmation validators. Moving it moves the policy decision, not a utility. |
+| 7 | `rds_project` L1 -> `rds_owned_advisor` L3 | `scripts/rds_project.py:438,480,735,1116` | Four of the five sites are `lifecycle_provider('advisor')` provider callbacks; the fifth is `advisor_state()` rebuilding owned state. The hook indirection is the intended seam (`rds_project_hooks`), and the scanner still records the registered provider. |
+| 8 | `rds_project` L1 -> `rds_advisor_search` L3 | `scripts/rds_project.py:593` | Maintenance runs are gated on the Advisor's dependency review and goal-contribution verdict. Business decision. |
+| 9 | `rds_project_hooks` L1 -> `rds_owned_advisor` L3 | `scripts/rds_project_hooks.py:18` | The lazy import *is* the cycle break: the hook module exists so providers load on demand. Replacing it with a static import would make the graph worse, and removing it would break `provider('advisor')` for callers that never call `register`. |
+| 10 | `rds_project_lifecycle` L1 -> `rds_owned_advisor` L3 | `scripts/rds_project_lifecycle.py:353` | Same `validate_policy` admission check as #6. |
+| 11 | `rds_steering` L1 -> `rds_dialogue` L4 | `scripts/rds_steering.py:254` | Optional presentation-layer dialogue rendering behind `if dialogue:`. Removable only by adding a builder parameter and threading it through every `plan(...)` call site; deferred as a separate change rather than bundled here. |
+| 12 | `rds_theory_progression` L1 -> `rds_operators` L3 | `scripts/rds_theory_progression.py:161,386` | Runs `BoundedFiniteModelOperator` to check a Cayley property. This is the verification computation itself, not a borrowed helper. |
+| 13 | `rds_tms_store` L1 -> `rds_hypergraph` L2 | `scripts/rds_tms_store.py:10` | Borrows four symbols; two (`review_hypergraph`, `audit_sources`) are the integrity review. Moving only `ASSURANCE` and `_validate` would leave the edge in place. |
+| 14 | `rds_tool_applicability` L1 -> `rds_owned_advisor` L3 | `scripts/rds_tool_applicability.py:146` | Task premises must be evaluated over owned evidence, so it calls the Advisor collectors `_collect`/`_facts`. Private cross-layer borrow: real debt, but extracting a read-only evidence service is a larger design change. |
+| 15 | `rds_tool_applicability` L1 -> `rds_advisor_search` L3 | `scripts/rds_tool_applicability.py:147` | Same `evaluate_condition` as #4. |
+| 16 | `rds_tool_calls` L1 -> `rds_owned_advisor` L3 | `scripts/rds_tool_calls.py:166` | Tool composition asks the owned Advisor for `review`. Business decision. |
+| 17 | `rds_tools` L1 -> `rds_quick` L4 | `scripts/rds_tools.py:21` | Tool execution runs through the QUICK execution channel (`execute`). This is the widest layer gap in the list; sinking it means restructuring QUICK, not moving a function. |
+
+#### Retained cycles — KNOWN_DEBT
+
+| cycle | modules | why it stays |
+| --- | --- | --- |
+| 49 modules | `rds_advisor` -> ... -> `rds_workspace` -> `rds_advisor` | Built from the L1 ledger modules calling L3 Advisor/autonomy review while the L3 modules call back into L1 reads. `docs/architecture.md` documents these callback pairs one by one. Breaking it means moving Advisor policy into L1. |
+| 4 modules | `rds_affine_toolchain` -> `rds_builtin_verifiers` -> `rds_theory_progression` -> `rds_verify` | All four are L1; the cycle is verifier registration among certificate backends, not a downward violation. Splitting it needs a registration indirection that does not exist yet. |
+| 2 modules | `rds_compass` <-> `rds_compass_rsi` | Genuine two-way business coupling: `compass` calls `extract`/`escalate`/`propose`/`retract_unbound`, and `rds_compass_rsi` calls back into `compass` state and builders. Merging them would grow one module past 900 lines; splitting needs a third module for the shared campaign state. |
 
 Reproduce with:
 
@@ -263,7 +311,7 @@ cannot be slowed down by it and a broken gate cannot mask them.
 | R0 / R1 | `risk` | the PR description has no non-empty `## Evidence` section, so no `--evidence` pointer is passed and `missing` is non-empty | `--strict` with no `--evidence` |
 | R2 | `risk` | a changed `scripts/*.py` has no test importing it (`NO_TEST_MAPPED` in `notes`) | same command; the entry appears in `notes` |
 | R3 | `risk` | never; it still runs and passes | same |
-| any | `graph` | `upward_edges > 18`, `cycles > 4`, or `unclassified > 0` | compare the counts by hand |
+| any | `graph` | `upward_edges > 17`, `cycles > 3`, or `unclassified > 0` | compare the counts by hand |
 
 An empty diff is not a failure: `overall` stays R3 and `verdict` stays `ready`,
 so a PR that touches nothing does not get blocked.
@@ -294,8 +342,8 @@ python -B tools/import_graph.py > .import-graph.json
 python -c "import json;d=json.load(open('.import-graph.json'));print(d['counts'],len(d['cycles']),len(d['unclassified_edges']))"
 ```
 
-`18` in the baseline is `counts.upward_edges`: de-duplicated `(source, target)`
-pairs, not `len(d['upward'])` (22 import sites). Compare the field the gate
+`17` in the baseline is `counts.upward_edges`: de-duplicated `(source, target)`
+pairs, not `len(d['upward'])` (21 import sites). Compare the field the gate
 compares, or the comparison is meaningless.
 
 `--evidence PR:Evidence` is the pointer CI uses when the PR description has the
