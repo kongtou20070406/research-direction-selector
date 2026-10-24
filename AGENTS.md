@@ -1,87 +1,34 @@
-# Operational Contract for Agentic Work in `research-direction-selector` (RDS)
+# RDS agent contract
 
-You are operating inside `kongtou20070406/research-direction-selector`, an evidence-driven academic autoresearch kernel. Your job is disciplined, minimum-diff systems engineering that preserves epistemic and cryptographic integrity.
+@docs/development-contract.md
 
-## I. Architectural Invariants (Non-Negotiable)
-1. **Single Authoritative Ledger**: Reuse `ProjectStore` events, Content-Addressed Storage (`CAS`), and the Truth Maintenance System (`TMS` persistent AND/OR dependencies, immutable revisions, retractions, conflict checks, and `--saved-dependencies`). NEVER introduce a second ledger, parallel state machine, alternate scheduler, or sidecar database.
-2. **Task Truth != Scientific Support**: Completing a command or receiving `verified=true` from a candidate tool (`INPUT_REPORTED`) is NOT scientific confirmation. Scientific status (`SUPPORT`, `REFUTED`, `UNKNOWN`, `NEEDS_EVIDENCE`, `RESOLVE_PREMISE`) is determined exclusively by replaying original measured outputs through the frozen independent verifier.
-3. **Fail-Closed Epistemics & Budgets**:
-   - Unknown goals, thresholds, rival predictions, commands, or budgets stay explicitly `UNKNOWN`. Never guess, interpolate, or invent fallback defaults.
-   - Missing, tampered, stale, or timed-out execution receipts (`r['receipt']`, stdout/stderr SHA256 identities, declared output byte bindings) must fail closed and record negative/unknown evidence. Never silently re-buy or re-run a failed/uncertain paid step.
-   - Never widen pilot caps (e.g., 10s pilot cap / 7.2s reservation), campaign caps (100s), conditional forecast hard timeouts (20s), or outer drive timeouts (50s) to make a failing test pass.
+RDS is an evidence-driven academic autoresearch kernel (Python 3.11+, library + CLI,
+no server). The imported contract is authoritative for invariants and the Compass
+architecture. This file keeps only what changes agent behaviour turn to turn.
 
-## II. Execution Discipline for `GPT-6.1 Sol` (Anti-Bloat & Anti-Drift Rules)
-1. **Forensic Trace Before Any Edit**:
-   - Do not design new abstractions while reading the problem.
-   - First locate the exact existing functions, callers, and CLI entry points in `scripts/` and `tests/`. State the root cause or insertion point in <= 5 bullet lines citing `file:line` before touching code.
-2. **Strict File & LOC Budget**:
-   - Edit ONLY the files explicitly named in the task scope. If an unlisted file appears broken, log `OUT_OF_SCOPE_DISCOVERY: <file:line> - <1 sentence>` and leave it untouched.
-   - Keep every change at or under **250 net LOC** (bug, CI or feature slice). Split larger work into independently verified slices.
-   - Do NOT write defensive guard-clause towers for impossible internal states. Prefer a single fail-closed assertion that preserves the full return object (`r`) for diagnostics.
-3. **Concurrency, Subprocess & Path Safety**:
-   - Do not introduce threads, async worker pools, or custom file locks/concurrency primitives. Ledger writes already serialize through SQLite `BEGIN IMMEDIATE`; Compass records add a head guard, not a lock.
-   - On `subprocess.run(..., timeout=...)`, always catch `TimeoutExpired` only to record partial `stdout`/`stderr`, current phase/attempt identity, and charged cost into the existing ledger before re-raising or returning a structured failure receipt.
-   - On Windows/cross-platform path checks, compare `Path(...).resolve()` identities rather than raw lexical strings while preserving explicit `--root` containment checks.
-4. **Test-Fest Prohibition**:
-   - During implementation, run ONLY the 1–2 focused test modules directly covering your change (e.g., `python -B -m unittest discover -s tests -p 'test_rds_compass_drive.py'`). Tests import sibling fixtures, so use `discover -s tests`.
-   - Never run the full suite redundantly; the release owner runs it once per candidate.
-   - Never write unit tests for documentation, `AGENTS.md`, or unchanged helper functions.
-   - If an environment/harness flake occurs, retry at most **ONCE**. Never loop on failing tests by weakening assertions or increasing timeouts.
-5. **No Diagnosis-Only Stopping**:
-   - Do not stop after summarizing what should be changed. Execute the code edit, run the focused CLI/test verification, and output the final 6-line execution ledger.
+## Commands
 
-## III. Compass Architecture Map (6.0.0)
-Read [docs/compass.md](docs/compass.md) before touching these modules.
-- `scripts/rds_compass_model.py` (SHARED): exact Fraction AST dialect, EIG over rival partitions (UNDEFINED is its own class; `EQUIVALENT_PARTITION` is never bought twice), observational equivalence, counterexample-filtered synthesis, per-sample profiles.
-- `scripts/rds_compass_store.py` (L1): `COMPASS_*` rows in the existing `events` table, each a CAS-bound record in a parent-digest hash chain. State is folded from rows plus original receipts on every read.
-- `scripts/rds_compass_declaration.py` (L1): declaration to kernel contract, protocol and plan. Unknowns stay `UNKNOWN`; controller defaults are listed in `defaulted`; each candidate has one declared retry slot for interrupted attempts.
-- `scripts/rds_compass.py` (L3): ingest, basin, `decide` (pure), jump packet and agent stdin dispositions, verification (exact replay, Lean/closed-rational, `rds_math_router` polynomial certificate), working set, TMS mirror, report.
-- `scripts/rds_compass_rsi.py` (L3): goal-bound tools.
-  - Every tool passes the `extract_function` allowlist.
-  - Qualification uses a receipted holdout oracle triple: known positive, discriminating mutant, boundary/counterexample witness.
-  - Tools are never self-certified.
-  - The library is create-only, and provenance is re-verified on reuse.
-  - Tools are retracted when a later receipt contradicts their qualifying law.
-- `scripts/rds_compass_drive.py` (L3): the unattended loop. SIGTERM/SIGINT settle through `rds_interrupt`: the kernel records the in-flight attempt `INTERRUPTED` and re-raises.
+- focused test: `python -B -m unittest discover -s tests -p 'test_<module>.py'`
+- plan check:   `python -B tools/validate_plan.py --base <ref>`
+- layers:       `python -B tools/import_graph.py > .import-graph.json`
+- graph:        `code-review-graph update` (no hooks; never auto-updated)
 
-Compass invariants:
-- Measurements are `INPUT_REPORTED`; replay is `CONSISTENT`/`REFUTED`/`UNTESTED`; `scientific_support` is always `UNKNOWN`.
-- Never store a derived status as truth; recompute it.
-- Never weaken the oracle triple, the confirmation gate, the receipt re-check or the polynomial-rival handoff to make a campaign finish.
-- A missing tolerance or threshold stays `UNKNOWN` and becomes `JUDGMENT_REQUIRED`.
+## Hard limits
 
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+- <= 250 net behaviour LOC and <= 8 behaviour files per change. Over -> split.
+- One ledger only. No second scheduler, sidecar db, threads, or custom locks.
+- Never widen a cap, skip a receipt re-check, or weaken a verifier to make
+  something pass.
+- Never report `INPUT_REPORTED` as `SUPPORT`/`REFUTED`.
 
-**This repository has a code knowledge graph. Use the `crg` MCP tools to narrow scope first, then read the source.** The graph is cheaper than scanning 148 flat modules and gives structural context (callers, dependents, test coverage) that file search cannot.
+## Stop rules
 
-The graph is an **index, not an authority**. Everything in section I still holds, and the graph never overrides it.
+- Same command failing the same way twice -> stop, record `UNKNOWN`, report.
+- A model reviewing its own diff is context, not a verifier.
+- Do not touch: secrets / `.env`, release tags, `main`, force-push.
+- Commits stay local unless the maintainer asks to push.
 
-### Verify in the source
+## Where things are
 
-- Narrow scope with the graph, then read the source. Do not change code from graph output alone.
-- For any non-trivial change, read the implementation and the relevant tests before concluding.
-- Always verify the exact source when touching the ledger, CAS, TMS, receipts, budgets, verification or the drive loop.
-- When the graph and the source disagree, the source wins. The graph may be stale or may not model that relationship.
-- An empty graph result can mean "not indexed" or "not statically visible", not "does not exist".
-
-### When to use graph tools FIRST
-
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
-- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
-- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
-- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
-
-### Workflow
-
-No hooks are installed here, so the graph does **not** auto-update. Refresh it explicitly before a review:
-
-```bash
-code-review-graph build            # full rebuild
-code-review-graph update           # incremental
-```
-
-Then: `detect_changes_tool` for the diff, `get_affected_flows_tool` for impact, `query_graph_tool` with `pattern="tests_for"` for coverage. The database lives in `.code-review-graph/`, which is gitignored.
-<!-- /code-review-graph MCP tools -->
-
+Full contract `docs/development-contract.md` · Compass `docs/compass.md` ·
+local rules `scripts/AGENTS.md` · `tests/AGENTS.md` · `benchmark/AGENTS.md`
