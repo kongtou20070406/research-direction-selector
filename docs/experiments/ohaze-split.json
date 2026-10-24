@@ -1,0 +1,1071 @@
+{
+ "schema": 1,
+ "source": "D:\\Myfile\\data\\ohaze",
+ "note": "Held-out blocks (test-A, test-B) are listed here for the grader only.",
+ "counts": {
+  "train": 32,
+  "dev": 8,
+  "test-A": 5,
+  "test-B": 5
+ },
+ "pairs": {
+  "train": [
+   {
+    "id": "outdoor-01",
+    "gt": {
+     "path": "train/GT/01_outdoor_GT.jpg",
+     "bytes": 7252962,
+     "size": [
+      2966,
+      3202
+     ],
+     "sha256": "f137a359f991f059c69d9f4a403757e5507930c4c7bcdd7139a256f4bb5cc379"
+    },
+    "hazy": {
+     "path": "train/hazy/01_outdoor_hazy.jpg",
+     "bytes": 5242469,
+     "size": [
+      2966,
+      3202
+     ],
+     "sha256": "44cac5c0a7c2054e4119b4737493ac4fcd787b6e38384991236046c138b65837"
+    }
+   },
+   {
+    "id": "outdoor-02",
+    "gt": {
+     "path": "train/GT/02_outdoor_GT.jpg",
+     "bytes": 5904385,
+     "size": [
+      2596,
+      3242
+     ],
+     "sha256": "681e67aa595a118f14dbbcbee1ae7e15cb7187c419ac171b736db7c430c741af"
+    },
+    "hazy": {
+     "path": "train/hazy/02_outdoor_hazy.jpg",
+     "bytes": 4558530,
+     "size": [
+      2596,
+      3242
+     ],
+     "sha256": "e9fda4d784d13f8e2cba9d535afbc9e860ced1ab0896bf793127a6619fef6169"
+    }
+   },
+   {
+    "id": "outdoor-03",
+    "gt": {
+     "path": "train/GT/03_outdoor_GT.JPG",
+     "bytes": 6029312,
+     "size": [
+      5456,
+      3632
+     ],
+     "sha256": "a51491be55a203447fba4de3a57e13fa5231d6d6fb75cf53a54d106ea04a818f"
+    },
+    "hazy": {
+     "path": "train/hazy/03_outdoor_hazy.JPG",
+     "bytes": 4980736,
+     "size": [
+      5456,
+      3632
+     ],
+     "sha256": "abeb8a0f3543c6d2ae81e9f74bf97890e7cd9bca247cf90347c2f484afcd5992"
+    }
+   },
+   {
+    "id": "outdoor-04",
+    "gt": {
+     "path": "train/GT/04_outdoor_GT.jpg",
+     "bytes": 4797961,
+     "size": [
+      2876,
+      3472
+     ],
+     "sha256": "ec70bf1aa8b01dc3f4cbd31feff5ee61c534ec76b1ac26a64b9368436a9acfdf"
+    },
+    "hazy": {
+     "path": "train/hazy/04_outdoor_hazy.jpg",
+     "bytes": 4298905,
+     "size": [
+      2876,
+      3472
+     ],
+     "sha256": "19bc6576599acc60ec02b7d99bec8f3fbbb2e4ab3fa9907ab1291565cd8227a1"
+    }
+   },
+   {
+    "id": "outdoor-05",
+    "gt": {
+     "path": "train/GT/05_outdoor_GT.jpg",
+     "bytes": 10429547,
+     "size": [
+      4599,
+      3632
+     ],
+     "sha256": "6b30c596c294014b38a2de973c2cf5d4a60967484ecbe19d511d4367fc77c0b3"
+    },
+    "hazy": {
+     "path": "train/hazy/05_outdoor_hazy.jpg",
+     "bytes": 7000597,
+     "size": [
+      4599,
+      3632
+     ],
+     "sha256": "a7654882a57dccd5e617aba783167368dd878877736f6005f2d6c533c2064d4c"
+    }
+   },
+   {
+    "id": "outdoor-06",
+    "gt": {
+     "path": "train/GT/06_outdoor_GT.jpg",
+     "bytes": 6825584,
+     "size": [
+      3326,
+      3102
+     ],
+     "sha256": "8a3964ac5d59dc557ab591d5349bc68ebf75754c41c559ea3de76a9035c14615"
+    },
+    "hazy": {
+     "path": "train/hazy/06_outdoor_hazy.jpg",
+     "bytes": 4988627,
+     "size": [
+      3326,
+      3102
+     ],
+     "sha256": "b76949368ae8646f1dd9b32ab327ad577b27fb66761db80891cffcff1b48f4b3"
+    }
+   },
+   {
+    "id": "outdoor-07",
+    "gt": {
+     "path": "train/GT/07_outdoor_GT.jpg",
+     "bytes": 8014440,
+     "size": [
+      4766,
+      3117
+     ],
+     "sha256": "8cc62616b4e68c96567cd11658ffff61540de2edccb8fddf618f078f8e9b75b1"
+    },
+    "hazy": {
+     "path": "train/hazy/07_outdoor_hazy.jpg",
+     "bytes": 7401164,
+     "size": [
+      4766,
+      3117
+     ],
+     "sha256": "c06b474963eedc1a98c6ec2ef0b8dc467057ab19bd35fb461c667ef62d613c4f"
+    }
+   },
+   {
+    "id": "outdoor-08",
+    "gt": {
+     "path": "train/GT/08_outdoor_GT.jpg",
+     "bytes": 6794859,
+     "size": [
+      2776,
+      3112
+     ],
+     "sha256": "504d81f9e751c0d1ab94e6d62c2ca96b106bbb8da86b36a5940eae072f843f99"
+    },
+    "hazy": {
+     "path": "train/hazy/08_outdoor_hazy.jpg",
+     "bytes": 4056341,
+     "size": [
+      2776,
+      3112
+     ],
+     "sha256": "07824f8c24eb2ec3287098aba2666bccd9a04e2657b58321227f229f0c4d187c"
+    }
+   },
+   {
+    "id": "outdoor-09",
+    "gt": {
+     "path": "train/GT/09_outdoor_GT.jpg",
+     "bytes": 5567668,
+     "size": [
+      3006,
+      2422
+     ],
+     "sha256": "30c01a1507a62b2d4225538990a427dfd71e41f7bb349985c09bbb7cb7b6042e"
+    },
+    "hazy": {
+     "path": "train/hazy/09_outdoor_hazy.jpg",
+     "bytes": 3151865,
+     "size": [
+      3006,
+      2422
+     ],
+     "sha256": "199a6ad695a650c4af8c63b21476301f92ebb2d0b75b82f5c1a67f5dab5d425a"
+    }
+   },
+   {
+    "id": "outdoor-10",
+    "gt": {
+     "path": "train/GT/10_outdoor_GT.jpg",
+     "bytes": 4395787,
+     "size": [
+      2526,
+      2502
+     ],
+     "sha256": "86824c328439e7c3580695b4dbb44e278bbbc54f72afed9d0223cf1f398f6510"
+    },
+    "hazy": {
+     "path": "train/hazy/10_outdoor_hazy.jpg",
+     "bytes": 3224506,
+     "size": [
+      2526,
+      2502
+     ],
+     "sha256": "de6705d017857af6d9406d6c592c297908b298a81aca7cbd28e11ebf96cae951"
+    }
+   },
+   {
+    "id": "outdoor-11",
+    "gt": {
+     "path": "train/GT/11_outdoor_GT.jpg",
+     "bytes": 7857152,
+     "size": [
+      3775,
+      2651
+     ],
+     "sha256": "bb71679611216e5d808694c4ac6056cdb8bd12527afad652e4e5e5945b47e2d7"
+    },
+    "hazy": {
+     "path": "train/hazy/11_outdoor_hazy.jpg",
+     "bytes": 5136780,
+     "size": [
+      3775,
+      2651
+     ],
+     "sha256": "7ab5f792fa9b75fce2d21aab5b7a893ad97d1da84a2d4cdb02cc16ab18dd1943"
+    }
+   },
+   {
+    "id": "outdoor-12",
+    "gt": {
+     "path": "train/GT/12_outdoor_GT.jpg",
+     "bytes": 8313515,
+     "size": [
+      3597,
+      3146
+     ],
+     "sha256": "ddb1d5199a75c934eae21b2dad51789af9c877cb4057bff64983a3bccf6117b2"
+    },
+    "hazy": {
+     "path": "train/hazy/12_outdoor_hazy.jpg",
+     "bytes": 5917549,
+     "size": [
+      3597,
+      3146
+     ],
+     "sha256": "004f995e95398d7dbba1ff5b97369c0dbf1a3449f88f27ca4c02cd115f5671c7"
+    }
+   },
+   {
+    "id": "outdoor-13",
+    "gt": {
+     "path": "train/GT/13_outdoor_GT.jpg",
+     "bytes": 7043017,
+     "size": [
+      3324,
+      3251
+     ],
+     "sha256": "cc4ad90b78f865812d684b876ba87888df1160d8a300d85674e11312a1c4eca9"
+    },
+    "hazy": {
+     "path": "train/hazy/13_outdoor_hazy.jpg",
+     "bytes": 5075333,
+     "size": [
+      3324,
+      3251
+     ],
+     "sha256": "625a1d9ac7f4b5e27f13113c9082f0da798c69dc58de1cbc2830bd63530ddf47"
+    }
+   },
+   {
+    "id": "outdoor-14",
+    "gt": {
+     "path": "train/GT/14_outdoor_GT.jpg",
+     "bytes": 10319402,
+     "size": [
+      4495,
+      3533
+     ],
+     "sha256": "876be78fca59ec77c87d034aa29946aa460e2c00dcd2b6df91abce17fc79a845"
+    },
+    "hazy": {
+     "path": "train/hazy/14_outdoor_hazy.jpg",
+     "bytes": 6920365,
+     "size": [
+      4495,
+      3533
+     ],
+     "sha256": "b9c38acf0ec029e16ce452a4522fa5757602b1e68643387a7631a2e9c10534f8"
+    }
+   },
+   {
+    "id": "outdoor-15",
+    "gt": {
+     "path": "train/GT/15_outdoor_GT.jpg",
+     "bytes": 7795940,
+     "size": [
+      4162,
+      2941
+     ],
+     "sha256": "5ec1e3d7507feb0f5af80140c01975227bff030f88afe032f04139be0cfb663a"
+    },
+    "hazy": {
+     "path": "train/hazy/15_outdoor_hazy.jpg",
+     "bytes": 4728133,
+     "size": [
+      4162,
+      2941
+     ],
+     "sha256": "e6fdc0e35ebe5cb3342c8c5c26603b5f916497853d1daa97567722b79b6f2f98"
+    }
+   },
+   {
+    "id": "outdoor-16",
+    "gt": {
+     "path": "train/GT/16_outdoor_GT.jpg",
+     "bytes": 8967068,
+     "size": [
+      3988,
+      3360
+     ],
+     "sha256": "4bf7b8766067654f87520b7f6bff29217a1c1dc374ff2d1df9f6eaf96a3b1626"
+    },
+    "hazy": {
+     "path": "train/hazy/16_outdoor_hazy.jpg",
+     "bytes": 5397440,
+     "size": [
+      3988,
+      3360
+     ],
+     "sha256": "6047f837926426da3aba82238d4e8515f3bc0e7b1ec8cfdd74082226cbb6fc14"
+    }
+   },
+   {
+    "id": "outdoor-17",
+    "gt": {
+     "path": "train/GT/17_outdoor_GT.jpg",
+     "bytes": 7749135,
+     "size": [
+      3573,
+      3066
+     ],
+     "sha256": "f7cbd21c2e89aa971a3b42ecb2fd45bdef9d075c7b83e859f9d6b91ebf827e98"
+    },
+    "hazy": {
+     "path": "train/hazy/17_outdoor_hazy.jpg",
+     "bytes": 4525391,
+     "size": [
+      3573,
+      3066
+     ],
+     "sha256": "95866bf864d72711e46d2b7cd50ef2380d2e79662941bb78fe710024ce77050b"
+    }
+   },
+   {
+    "id": "outdoor-18",
+    "gt": {
+     "path": "train/GT/18_outdoor_GT.jpg",
+     "bytes": 4957339,
+     "size": [
+      3436,
+      2382
+     ],
+     "sha256": "7adc13c431fed49ef069732944525894e0fe3aabd9aa6932772d79798de83ec0"
+    },
+    "hazy": {
+     "path": "train/hazy/18_outdoor_hazy.jpg",
+     "bytes": 4425916,
+     "size": [
+      3436,
+      2382
+     ],
+     "sha256": "91f86cb36d58a601fce03def3b0dfc23c1c3aa03c1a875bf2ccddd737208b0b7"
+    }
+   },
+   {
+    "id": "outdoor-19",
+    "gt": {
+     "path": "train/GT/19_outdoor_GT.jpg",
+     "bytes": 11386915,
+     "size": [
+      4616,
+      3552
+     ],
+     "sha256": "2f5f56617e325b4f94d3803c38dfd62c12dbc1ee39195677723f3105d12af888"
+    },
+    "hazy": {
+     "path": "train/hazy/19_outdoor_hazy.jpg",
+     "bytes": 8965240,
+     "size": [
+      4616,
+      3552
+     ],
+     "sha256": "78b5bd64fa1b8dc041e325773402d80ebe54fc05fed5831478c01e3576c36f08"
+    }
+   },
+   {
+    "id": "outdoor-20",
+    "gt": {
+     "path": "train/GT/20_outdoor_GT.jpg",
+     "bytes": 10296849,
+     "size": [
+      3897,
+      3533
+     ],
+     "sha256": "082d2dc3cc683b7bf32f1eb5aaebfe5ffcb9eecc25ddeffd17a5564ca2e49ad7"
+    },
+    "hazy": {
+     "path": "train/hazy/20_outdoor_hazy.jpg",
+     "bytes": 6067108,
+     "size": [
+      3897,
+      3533
+     ],
+     "sha256": "27359dd6afdf0d505ba4e390bd9ff0bd1cedde45cc345423b554e62d8fb1e63d"
+    }
+   },
+   {
+    "id": "outdoor-21",
+    "gt": {
+     "path": "train/GT/21_outdoor_GT.JPG",
+     "bytes": 6750208,
+     "size": [
+      5456,
+      3632
+     ],
+     "sha256": "9d42dd4eb74647f3d370421fb351df53f6a7d07eb72b56eabae1e9b3e7d5e913"
+    },
+    "hazy": {
+     "path": "train/hazy/21_outdoor_hazy.JPG",
+     "bytes": 4096000,
+     "size": [
+      5456,
+      3632
+     ],
+     "sha256": "a16286665fb08de32699ffbc7d6da3bd4b024db2a35a83c746fb4d84d065e478"
+    }
+   },
+   {
+    "id": "outdoor-22",
+    "gt": {
+     "path": "train/GT/22_outdoor_GT.jpg",
+     "bytes": 11550598,
+     "size": [
+      5416,
+      3592
+     ],
+     "sha256": "7f27ca1163f068d597b875c8f0b9be3fbe069532bb861eaf0ad4a0342a4e7856"
+    },
+    "hazy": {
+     "path": "train/hazy/22_outdoor_hazy.jpg",
+     "bytes": 10089630,
+     "size": [
+      5416,
+      3592
+     ],
+     "sha256": "d58cf37a3796ddff48645548122431888fce487a9326931d77750d798e65780d"
+    }
+   },
+   {
+    "id": "outdoor-23",
+    "gt": {
+     "path": "train/GT/23_outdoor_GT.jpg",
+     "bytes": 8527730,
+     "size": [
+      3125,
+      3571
+     ],
+     "sha256": "5d8a6d6bf247beecd5e00df16ca5f1b46c5face070cbc105382ee74c8f895923"
+    },
+    "hazy": {
+     "path": "train/hazy/23_outdoor_hazy.jpg",
+     "bytes": 7025165,
+     "size": [
+      3125,
+      3571
+     ],
+     "sha256": "54037c80d0310f245bd7624240eee2ef7d4bd45b311f26b80f12e18077bad821"
+    }
+   },
+   {
+    "id": "outdoor-24",
+    "gt": {
+     "path": "train/GT/24_outdoor_GT.jpg",
+     "bytes": 6430565,
+     "size": [
+      3626,
+      2742
+     ],
+     "sha256": "d18ea7b4ebed77fe4b9b13f562aa0c4049046c109618ef2a5399e3699a80fef2"
+    },
+    "hazy": {
+     "path": "train/hazy/24_outdoor_hazy.jpg",
+     "bytes": 5214017,
+     "size": [
+      3626,
+      2742
+     ],
+     "sha256": "152d029fae3de2a6879c067b36ab3f049de63ec27c5324f9804fdfc888f1a1e3"
+    }
+   },
+   {
+    "id": "outdoor-25",
+    "gt": {
+     "path": "train/GT/25_outdoor_GT.jpg",
+     "bytes": 8462007,
+     "size": [
+      4206,
+      3212
+     ],
+     "sha256": "d6e372357293149a4be957fdafc9ba696644ea5d204c41f769fc04971b129358"
+    },
+    "hazy": {
+     "path": "train/hazy/25_outdoor_hazy.jpg",
+     "bytes": 6274116,
+     "size": [
+      4206,
+      3212
+     ],
+     "sha256": "df2bf04b618eb58bd57392355f15a7a2048605386ad3c5653879cc70f3bd1473"
+    }
+   },
+   {
+    "id": "outdoor-26",
+    "gt": {
+     "path": "train/GT/26_outdoor_GT.jpg",
+     "bytes": 7803918,
+     "size": [
+      3756,
+      2862
+     ],
+     "sha256": "957d5222a4ff88872d0884679f0732bfb4a8a3f2ea9a800adca35e3ca2f169cb"
+    },
+    "hazy": {
+     "path": "train/hazy/26_outdoor_hazy.jpg",
+     "bytes": 4405889,
+     "size": [
+      3756,
+      2862
+     ],
+     "sha256": "03f0ae6be8219b40bfa9dd02826d7bf62d64fe3f144ef5a440e5a5889fa716e9"
+    }
+   },
+   {
+    "id": "outdoor-27",
+    "gt": {
+     "path": "train/GT/27_outdoor_GT.jpg",
+     "bytes": 3706012,
+     "size": [
+      2556,
+      2202
+     ],
+     "sha256": "d83633471bf0620a06c8116ecc4b1d7b181f5a77feb84cd7bc2e7796d1c5c250"
+    },
+    "hazy": {
+     "path": "train/hazy/27_outdoor_hazy.jpg",
+     "bytes": 2595388,
+     "size": [
+      2556,
+      2202
+     ],
+     "sha256": "e19089fd7759838a4ce09e4bebbea9858873ff6c0009bd859714f7a8ac26f482"
+    }
+   },
+   {
+    "id": "outdoor-28",
+    "gt": {
+     "path": "train/GT/28_outdoor_GT.jpg",
+     "bytes": 4468886,
+     "size": [
+      3346,
+      2032
+     ],
+     "sha256": "df85f6fd4366cecf22e33959dadfd907875cbb1e379ab5034411410ca9889b27"
+    },
+    "hazy": {
+     "path": "train/hazy/28_outdoor_hazy.jpg",
+     "bytes": 3058478,
+     "size": [
+      3346,
+      2032
+     ],
+     "sha256": "748555a5e9765691071235ed2757f3ef15dc37ddbfcc86fa637b0d12564d2708"
+    }
+   },
+   {
+    "id": "outdoor-29",
+    "gt": {
+     "path": "train/GT/29_outdoor_GT.jpg",
+     "bytes": 4567189,
+     "size": [
+      2406,
+      2552
+     ],
+     "sha256": "9e5926b92921c63abbdb356351f5f14b57d19b9853f4d2a33c4cd40eaf3acf95"
+    },
+    "hazy": {
+     "path": "train/hazy/29_outdoor_hazy.jpg",
+     "bytes": 2662891,
+     "size": [
+      2406,
+      2552
+     ],
+     "sha256": "7f5618e26f962efe911ca79c51ff48c98c2fd1e6a10dfbf404fc37b874cae515"
+    }
+   },
+   {
+    "id": "outdoor-30",
+    "gt": {
+     "path": "train/GT/30_outdoor_GT.jpg",
+     "bytes": 5023434,
+     "size": [
+      2226,
+      3102
+     ],
+     "sha256": "b639bcc990d886ac8315b3d221c29179642337072f20dbe3d2cf5baf11cb5a98"
+    },
+    "hazy": {
+     "path": "train/hazy/30_outdoor_hazy.jpg",
+     "bytes": 3708509,
+     "size": [
+      2226,
+      3102
+     ],
+     "sha256": "dfc97503703d659155bd0d521cacf092539b07d7effb7af4a0f0be00b90a46de"
+    }
+   },
+   {
+    "id": "outdoor-31",
+    "gt": {
+     "path": "train/GT/31_outdoor_GT.jpg",
+     "bytes": 5394566,
+     "size": [
+      2756,
+      2902
+     ],
+     "sha256": "39f2f3cb9047974c994a5d595897de55d9e03211948d2479e1d439e0f93996bc"
+    },
+    "hazy": {
+     "path": "train/hazy/31_outdoor_hazy.jpg",
+     "bytes": 4188794,
+     "size": [
+      2756,
+      2902
+     ],
+     "sha256": "abf60f5d46629d9637e031f1c720eae0b528e5b362ffcb35522b30f7012405e4"
+    }
+   },
+   {
+    "id": "outdoor-32",
+    "gt": {
+     "path": "train/GT/32_outdoor_GT.jpg",
+     "bytes": 9099536,
+     "size": [
+      3840,
+      3533
+     ],
+     "sha256": "d93f75007309afb6894889d1cd5b6eae974e5f6a68b4234d3fc00401f6385645"
+    },
+    "hazy": {
+     "path": "train/hazy/32_outdoor_hazy.jpg",
+     "bytes": 7132627,
+     "size": [
+      3840,
+      3533
+     ],
+     "sha256": "64166bce1ae629342983253e560db61b5c50151482a48a93b6429cd040437a12"
+    }
+   }
+  ],
+  "dev": [
+   {
+    "id": "outdoor-33",
+    "gt": {
+     "path": "train/GT/33_outdoor_GT.jpg",
+     "bytes": 9787651,
+     "size": [
+      4556,
+      3452
+     ],
+     "sha256": "3dfe07349a9dd10996a3d74b2f016642e241e8b4e2723423b7c8960c5e87b003"
+    },
+    "hazy": {
+     "path": "train/hazy/33_outdoor_hazy.jpg",
+     "bytes": 7456543,
+     "size": [
+      4556,
+      3452
+     ],
+     "sha256": "7ce9718bf9284ea7148d6807c002872bb748d189075f0fff51f441ccb92cd295"
+    }
+   },
+   {
+    "id": "outdoor-34",
+    "gt": {
+     "path": "train/GT/34_outdoor_GT.jpg",
+     "bytes": 13867013,
+     "size": [
+      5436,
+      3612
+     ],
+     "sha256": "fe4c751fdf4d188bb99301af5c9bf348de0cb1d6b42bdcebd84857bde97c1a5f"
+    },
+    "hazy": {
+     "path": "train/hazy/34_outdoor_hazy.jpg",
+     "bytes": 10302396,
+     "size": [
+      5436,
+      3612
+     ],
+     "sha256": "e0341dc39b8c670d214847b7df81dbed356dbb9c6078aa33d3175332a227283e"
+    }
+   },
+   {
+    "id": "outdoor-35",
+    "gt": {
+     "path": "train/GT/35_outdoor_GT.jpg",
+     "bytes": 1315924,
+     "size": [
+      1286,
+      947
+     ],
+     "sha256": "884b0c1610f43b76a972e127a5c9954ad4bc851dc231cd59022db0fa77feb547"
+    },
+    "hazy": {
+     "path": "train/hazy/35_outdoor_hazy.jpg",
+     "bytes": 964034,
+     "size": [
+      1286,
+      947
+     ],
+     "sha256": "8a5eb1961698ffdddd4ab7987bde118a4bc46daba1af996d3fadd9e703f81cf7"
+    }
+   },
+   {
+    "id": "outdoor-36",
+    "gt": {
+     "path": "train/GT/36_outdoor_GT.jpg",
+     "bytes": 8781441,
+     "size": [
+      3574,
+      3533
+     ],
+     "sha256": "30a08d30e346fbf2ced699c975ba5b67b02426b41be4f8d2fa67320d4b464088"
+    },
+    "hazy": {
+     "path": "train/hazy/36_outdoor_hazy.jpg",
+     "bytes": 6608498,
+     "size": [
+      3574,
+      3533
+     ],
+     "sha256": "665da931995fbc350822c1fa847fa3dc9bf492823c44bf8abcd169786e48d8a2"
+    }
+   },
+   {
+    "id": "outdoor-37",
+    "gt": {
+     "path": "train/GT/37_outdoor_GT.jpg",
+     "bytes": 8465874,
+     "size": [
+      3102,
+      3533
+     ],
+     "sha256": "ad1d10a2c64e4715e8b5a9151d65b3a941fb7b16812ed550ebf67ca1a10dc31d"
+    },
+    "hazy": {
+     "path": "train/hazy/37_outdoor_hazy.jpg",
+     "bytes": 5712695,
+     "size": [
+      3102,
+      3533
+     ],
+     "sha256": "9702aced1f490d8a6c06d2120ea487ac2e8b0a29d982dbdc8837b282e0c33218"
+    }
+   },
+   {
+    "id": "outdoor-38",
+    "gt": {
+     "path": "train/GT/38_outdoor_GT.jpg",
+     "bytes": 6734311,
+     "size": [
+      3670,
+      2679
+     ],
+     "sha256": "e2d116612033862db3bcf2e9dc055b60a5a618f8fc0b07961ee199c4464076ca"
+    },
+    "hazy": {
+     "path": "train/hazy/38_outdoor_hazy.jpg",
+     "bytes": 4904851,
+     "size": [
+      3670,
+      2679
+     ],
+     "sha256": "e9d0a24f8dc39fc633bf8db60cf2e776fbf0e6555c2c5dc310c2f17f2cc66a26"
+    }
+   },
+   {
+    "id": "outdoor-39",
+    "gt": {
+     "path": "train/GT/39_outdoor_GT.jpg",
+     "bytes": 7636758,
+     "size": [
+      3916,
+      2842
+     ],
+     "sha256": "c676f11c06157041e5e2927009b2036dcbf260e0ae29770db5994b0687784902"
+    },
+    "hazy": {
+     "path": "train/hazy/39_outdoor_hazy.jpg",
+     "bytes": 5719047,
+     "size": [
+      3916,
+      2842
+     ],
+     "sha256": "17e9fe4cd9ac5e8817984b843da48cd13a3a8837d9349a890ffff6bb7fe0864b"
+    }
+   },
+   {
+    "id": "outdoor-40",
+    "gt": {
+     "path": "train/GT/40_outdoor_GT.jpg",
+     "bytes": 7268644,
+     "size": [
+      3506,
+      3362
+     ],
+     "sha256": "06c5d1d7f9f2330a8a97e7e766d68ee6d4ff0ade5dfb659be016784c030ad703"
+    },
+    "hazy": {
+     "path": "train/hazy/40_outdoor_hazy.jpg",
+     "bytes": 5449903,
+     "size": [
+      3506,
+      3362
+     ],
+     "sha256": "4c015af8b8cb4eaa5b3ee510137eca72e3f1f89c2b39c7175703e09045e0e05f"
+    }
+   }
+  ],
+  "test-A": [
+   {
+    "id": "outdoor-41",
+    "gt": {
+     "path": "test/GT/41_outdoor_GT.jpg",
+     "bytes": 4007922,
+     "size": [
+      2426,
+      2942
+     ],
+     "sha256": "38f132824c5f451bf81a03f3b5231c2700d2fcc2fc0a6153a260c7509e1d33a2"
+    },
+    "hazy": {
+     "path": "test/hazy/41_outdoor_hazy.jpg",
+     "bytes": 3430258,
+     "size": [
+      2426,
+      2942
+     ],
+     "sha256": "b34462547def19a5a62343cbd09bd9b35954b9bf2d2e7cd6f55a28c47658b86e"
+    }
+   },
+   {
+    "id": "outdoor-42",
+    "gt": {
+     "path": "test/GT/42_outdoor_GT.jpg",
+     "bytes": 9765035,
+     "size": [
+      4056,
+      3412
+     ],
+     "sha256": "1c671465665b9a80078cdcecb46f9f85f21699270a637d2851aff819fdfa09a9"
+    },
+    "hazy": {
+     "path": "test/hazy/42_outdoor_hazy.jpg",
+     "bytes": 6848526,
+     "size": [
+      4056,
+      3412
+     ],
+     "sha256": "c55421611b132fe01667f49600f69557d75065f48dacee78b87ae09361fff688"
+    }
+   },
+   {
+    "id": "outdoor-43",
+    "gt": {
+     "path": "test/GT/43_outdoor_GT.jpg",
+     "bytes": 10127639,
+     "size": [
+      4846,
+      3352
+     ],
+     "sha256": "369468793daf2286e13883591727740e8bf45864b760053161c59dde8f41ebe6"
+    },
+    "hazy": {
+     "path": "test/hazy/43_outdoor_hazy.jpg",
+     "bytes": 8568703,
+     "size": [
+      4846,
+      3352
+     ],
+     "sha256": "c6ff71aabb9f0da727733d1878350fd9775dc587b7a102aeb02c8dc65e6beac9"
+    }
+   },
+   {
+    "id": "outdoor-44",
+    "gt": {
+     "path": "test/GT/44_outdoor_GT.jpg",
+     "bytes": 6080333,
+     "size": [
+      2636,
+      3482
+     ],
+     "sha256": "2ca672e24edb4a38b5dd6b65fee418f11a36002250037d196e13aa3a4f16b74d"
+    },
+    "hazy": {
+     "path": "test/hazy/44_outdoor_hazy.jpg",
+     "bytes": 4847574,
+     "size": [
+      2636,
+      3482
+     ],
+     "sha256": "993c8e7dbfe6eac14505f6adccf4774c3accc61adb5e0b6a43d8466f912903bc"
+    }
+   },
+   {
+    "id": "outdoor-45",
+    "gt": {
+     "path": "test/GT/45_outdoor_GT.jpg",
+     "bytes": 6337971,
+     "size": [
+      3696,
+      2602
+     ],
+     "sha256": "f75e66806f5bbbc8fb3f2aa2932a159adfa2c708867c1bbd5d03c247c7421304"
+    },
+    "hazy": {
+     "path": "test/hazy/45_outdoor_hazy.jpg",
+     "bytes": 4479279,
+     "size": [
+      3696,
+      2602
+     ],
+     "sha256": "c5d87ee0b302ea9e06597609e2a3120549909ebfe1458bc6d62e93d94f9d263b"
+    }
+   }
+  ],
+  "test-B": [
+   {
+    "id": "indoor-31",
+    "gt": {
+     "path": "test/512/31_indoor_GT.jpg",
+     "bytes": 28279,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "7ba2b9d874c38e913a0c41bff49466946240f4cb967b512b3845ce618acae7b3"
+    },
+    "hazy": {
+     "path": "test/512/31_indoor_hazy.jpg",
+     "bytes": 19473,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "a13b234ab1078f827e0eb08fc61c83bbdab1533e045faca949b8537fe6cee016"
+    }
+   },
+   {
+    "id": "indoor-32",
+    "gt": {
+     "path": "test/512/32_indoor_GT.jpg",
+     "bytes": 26572,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "7631d0dae3ee5df80c22746519e37b2320b9ff9dbd728111099fdca147ed1c81"
+    },
+    "hazy": {
+     "path": "test/512/32_indoor_hazy.jpg",
+     "bytes": 13716,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "4048a729757f9834b2d03f10fe7f7adb127dd6cea078dfc8963629ac1fad1cb6"
+    }
+   },
+   {
+    "id": "indoor-33",
+    "gt": {
+     "path": "test/512/33_indoor_GT.jpg",
+     "bytes": 34453,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "2411af930b73a7e747523ca25f0c40ad69285b5cbcebddce504c27086d11dcce"
+    },
+    "hazy": {
+     "path": "test/512/33_indoor_hazy.jpg",
+     "bytes": 17335,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "db0614e23d701b2e54eb55609fd3929102143a5260ac4c2042912f25ace0c83e"
+    }
+   },
+   {
+    "id": "indoor-34",
+    "gt": {
+     "path": "test/512/34_indoor_GT.jpg",
+     "bytes": 29280,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "4a0c029973e5a430598a37468e393b4189de2d97c81b2cab592af3c4b360520e"
+    },
+    "hazy": {
+     "path": "test/512/34_indoor_hazy.jpg",
+     "bytes": 15728,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "958e6bc784a49087290f923f468759803eb64c32320de73542870800133d5da9"
+    }
+   },
+   {
+    "id": "indoor-35",
+    "gt": {
+     "path": "test/512/35_indoor_GT.jpg",
+     "bytes": 33430,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "094411e218c9d4863ef5b7b0a7b0693ea1e078fc09a48a61de3963ae7c27fe2a"
+    },
+    "hazy": {
+     "path": "test/512/35_indoor_hazy.jpg",
+     "bytes": 16366,
+     "size": [
+      512,
+      512
+     ],
+     "sha256": "31c911bd6eaea41d989c0391952036044a17885b674663902dcacfd1fbe69ebf"
+    }
+   }
+  ]
+ }
+}
