@@ -12,7 +12,9 @@ adversarial enforcement (#120); this module enforces supported RDS APIs only.
 import json
 import os
 import sqlite3
+import tempfile
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
 from time import monotonic
 
@@ -842,3 +844,79 @@ def check_canonical_continuation(root):
     """
     check_admission(root)
     return True
+
+
+# --- publication primitives ------------------------------------------------
+# These gate a write on the bound workspace and hold the cross-process adoption
+# lock. They live here (L1) rather than in the RSI layer because every ledger
+# publication needs them and L1 already owns the workspace admission check.
+
+@contextmanager
+def workspace_publication(path):
+    """Guard writes that land inside a bound `.rds` workspace; pass others through."""
+    path = Path(path).absolute()
+    metadata = next((parent for parent in (path, *path.parents)
+                     if os.path.normcase(parent.name) == '.rds'), None)
+    if metadata is None:
+        yield
+    else:
+        with mutation():
+            check_admission(metadata.parent)
+            yield
+
+
+def atomic_bytes(path, content):
+    with workspace_publication(path):
+        publish_bytes(path, content)
+
+
+def publish_bytes(path, content):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".rds-", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+def load_object(value, name):
+    """Load a bounded JSON object from a path or accept an already-parsed dict."""
+    if isinstance(value, (str, Path)):
+        raw = Path(value).read_bytes()
+        require(len(raw) <= 2 * 1024 * 1024, f"{name} exceeds 2 MiB")
+        value = json.loads(raw.decode("utf-8-sig"),
+                           parse_constant=lambda v: (_ for _ in ()).throw(ValueError(f"Nonfinite {name}")))
+    require(isinstance(value, dict), f"{name} must be an object or JSON path")
+    require(len(json.dumps(value, allow_nan=False).encode("utf-8")) <= 2 * 1024 * 1024,
+            f"{name} exceeds 2 MiB")
+    return deepcopy(value)
+
+
+@contextmanager
+def graph_lock(directory):
+    # Only publication holds the workspace gate; CPU replay stays outside it.
+    with workspace_publication(directory), adoption_lock(directory):
+        yield
+
+
+@contextmanager
+def adoption_lock(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    lock = directory / "adoption.lock"
+    try:
+        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise ValueError("Another adoption/rollback holds the RSI lock; inspect an abandoned lock before retrying") from exc
+    try:
+        os.write(descriptor, str(os.getpid()).encode("ascii"))
+        yield
+    finally:
+        os.close(descriptor)
+        lock.unlink()

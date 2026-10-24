@@ -6,8 +6,8 @@ from pathlib import Path
 import time
 
 from rds_advisor_search import search_directions
+from rds_core import json_digest as digest, validate_rule
 from rds_experiments import compose_experiments
-from rds_meta import digest, validate_rule
 
 VERSION = "rds-rsi-replay-2"
 LIMITS = {"max_cases": 64, "max_candidates": 64, "max_depth": 32,
