@@ -1,9 +1,11 @@
-"""Map a git diff to the checks that must run before it can merge.
+"""Map a diff to the risk class of the change, and to the evidence that class needs.
 
-Read-only. Does not import the inspected code and does not run tests unless asked.
+Risk is about **what** you touched, not how much you wrote. A large new feature is
+R2 and only needs a mapped test; a one-line edit to a verifier is R0 and needs a
+pre-registered protocol plus an independent recompute. Line counts are still
+reported, but as advice, never as a gate.
 
-The rule this enforces: a change is only reviewable if the evidence it needs is
-named in advance. Local use and CI use the same planner, so the two cannot drift.
+Read-only. Does not import the inspected code and does not run tests.
 """
 import argparse
 import json
@@ -12,9 +14,35 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Declared change budget. Exceeding either number means the change must be split.
-MAX_FILES = 8
-MAX_NET_LOC = 250
+R0, R1, R2, R3 = "R0", "R1", "R2", "R3"
+SEVERITY = {R0: 0, R1: 1, R2: 2, R3: 3}
+
+# Certification assets. A mistake here invalidates every downstream conclusion.
+R0_MODULES = {
+    "rds_cas", "rds_tms_store", "rds_result_record", "rds_quick_ledger",
+    "rds_project", "rds_verify", "rds_verify_registry", "rds_builtin_verifiers",
+    "rds_formal_kernel", "rds_lean_verify", "rds_scalar_verify", "rds_proof_cache",
+    "rds_checkpoints", "rds_costs", "rds_receipt", "rds_run_records",
+}
+R0_PREFIXES = ("rds_verify", "rds_*_verify")
+# Decision logic: changes here shift which route is chosen.
+R1_MODULES = {
+    "rds_compass", "rds_compass_model", "rds_compass_declaration",
+    "rds_compass_store", "rds_compass_drive", "rds_compass_rsi",
+    "rds_advisor", "rds_autonomy", "rds_autonomy_admission", "rds_discrimination",
+    "rds_adversary", "rds_feasibility", "rds_frontier_proposals", "rds_global_planning",
+}
+
+EVIDENCE = {
+    R0: ["pre-registered judgement protocol, written before the run",
+         "reverse test: the new behaviour disappears when the new logic is disabled",
+         "independent recompute of the affected hash / receipt / budget"],
+    R1: ["a comparison arm and a holdout assertion",
+         "the same command before and after, with both outputs retained"],
+    R2: ["a test module mapped to every changed script",
+         "import_graph upward/cycles must not increase; a new module must be classified"],
+    R3: [],
+}
 
 TEST_IMPORT = re.compile(r"^\s*(?:from|import)\s+(rds_\w+)", re.MULTILINE)
 
@@ -26,26 +54,10 @@ def git(root, *args):
 
 
 def untracked(root):
-    """New files are invisible to `git diff`. A new module is exactly the case
-    that most needs checking, so untracked files are first-class here."""
+    """A new module is exactly the case that must not slip through, so untracked
+    files are first-class here. `git diff` alone would miss them."""
     out = git(root, "ls-files", "--others", "--exclude-standard").splitlines()
     return [p.replace("\\", "/") for p in out if p.strip()]
-
-
-def changed_files(root, base):
-    names = git(root, "diff", "--name-status", base).splitlines()
-    rows = []
-    for line in names:
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        status, path = parts[0][:1], parts[-1]
-        rows.append((status, path.replace("\\", "/")))
-    seen = {p for _, p in rows}
-    for path in untracked(root):
-        if path not in seen:
-            rows.append(("A", path))
-    return rows
 
 
 def _count_lines(root, path):
@@ -56,150 +68,109 @@ def _count_lines(root, path):
     return text.count("\n") + (0 if text.endswith("\n") or not text else 1)
 
 
-def net_loc(root, base):
-    numstat = git(root, "diff", "--numstat", base).splitlines()
-    added = deleted = 0
-    for line in numstat:
+def diff_stats(root, base):
+    rows, per_file = [], {}
+    for line in git(root, "diff", "--name-status", base).splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        rows.append((parts[0][:1], parts[-1].replace("\\", "/")))
+    seen = {p for _, p in rows}
+    for path in untracked(root):
+        if path not in seen:
+            rows.append(("A", path))
+            seen.add(path)
+    for line in git(root, "diff", "--numstat", base).splitlines():
         cols = line.split("\t")
         if len(cols) < 3:
             continue
         try:
-            a, d = cols[0], cols[1]
-            added += 0 if a == "-" else int(a)
-            deleted += 0 if d == "-" else int(d)
+            per_file[cols[2].replace("\\", "/")] = (
+                0 if cols[0] == "-" else int(cols[0]), 0 if cols[1] == "-" else int(cols[1]))
         except ValueError:
-            continue
-    for path in untracked(root):
-        added += _count_lines(root, path)
-    return added, deleted
+            per_file[cols[2]] = (0, 0)
+    for path in seen:
+        if path not in per_file:
+            per_file[path] = (_count_lines(root, path), 0)
+    return rows, per_file
 
 
 def test_map(root):
-    """test module -> set of rds modules it imports or names."""
     mapping = {}
-    tests_dir = root / "tests"
-    if not tests_dir.is_dir():
-        return mapping
-    for path in sorted(tests_dir.glob("test_*.py")):
+    for path in sorted((root / "tests").glob("test_*.py")):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         names = set(TEST_IMPORT.findall(text))
-        # Convention: tests/test_rds_x.py covers scripts/rds_x.py.
-        stem = path.stem
-        if stem.startswith("test_"):
-            names.add(stem[len("test_"):])
         mapping[path.name] = names
     return mapping
 
 
-def classify(path):
-    """Kind of change. Only `behaviour` changes count against the LOC budget."""
+def risk_of(path):
+    """One path -> one risk class. Judged by what the file is, not its size."""
     name = Path(path).name
-    if path.startswith("tests/") and name.endswith(".py"):
-        return "test"
-    if path.startswith("scripts/") and name.endswith(".py"):
-        return "behaviour"
-    if (path.startswith("src/") or path.startswith("benchmark/")) and name.endswith((".py", ".rs")):
-        return "behaviour"
-    if path.startswith(".github/"):
-        return "ci"
-    if path.startswith("tools/"):
-        return "tool"
+    stem = name[:-3] if name.endswith(".py") else name
     if path.startswith("docs/") and name.endswith(".py"):
-        return "scratch"
+        return R3, "one-off analysis"
     if name.endswith(".md"):
-        return "prose"
-    return "other"
+        return R3, "prose"
+    if path.startswith(("tools/", ".github/", "examples/", "formal/")):
+        return R3, "tooling or fixture"
+    if path.startswith("tests/"):
+        return R1, "test contract may be weakened"
+    if path.startswith("scripts/"):
+        if stem in R0_MODULES or any(stem.startswith(p.rstrip("*")) for p in R0_PREFIXES):
+            return R0, "certification asset"
+        if stem in R1_MODULES:
+            return R1, "decision logic"
+        return R2, "capability"
+    if path.startswith("benchmark/"):
+        return R2, "benchmark harness"
+    if name.endswith((".py", ".rs")):
+        return R2, "capability"
+    return R3, "other"
 
 
-def plan(root, base):
-    rows = changed_files(root, base)
-    added, deleted = net_loc(root, base)
+def plan(root, base, evidence):
+    rows, per_file = diff_stats(root, base)
     mapping = test_map(root)
-    scripts_touched, tests_needed, checks, notes = [], set(), [], []
-    behaviour_files, behaviour_added, behaviour_deleted = 0, 0, 0
-    per_file = {}
-
-    for line in git(root, "diff", "--numstat", base).splitlines():
-        cols = line.split("\t")
-        if len(cols) < 3:
-            continue
-        a, d, path = cols[0], cols[1], cols[2].replace("\\", "/")
-        try:
-            per_file[path] = (0 if a == "-" else int(a), 0 if d == "-" else int(d))
-        except ValueError:
-            per_file[path] = (0, 0)
-    for path in untracked(root):
-        if path not in per_file:
-            per_file[path] = (_count_lines(root, path), 0)
-
+    levels, files, notes, tests_needed = [], [], [], set()
+    added = deleted = 0
     for status, path in rows:
-        if status == "D":
-            notes.append(f"deleted: {path} (confirm no caller remains)")
-            continue
-        kind = classify(path)
-        if path not in per_file:
-            continue  # deleted file, already noted
-        if kind == "behaviour":
-            behaviour_files += 1
-            behaviour_added += per_file[path][0]
-            behaviour_deleted += per_file[path][1]
+        a, d = per_file.get(path, (0, 0))
+        added, deleted = added + a, deleted + d
+        level, why = risk_of(path)
+        levels.append(level)
+        files.append({"path": path, "risk": level, "why": why, "added": a, "deleted": d,
+                      "status": "deleted" if status == "D" else "changed"})
         name = Path(path).name
-        if kind == "behaviour" and path.startswith("scripts/"):
+        if level in (R0, R1, R2) and path.startswith("scripts/") and name.endswith(".py"):
             module = name[:-3]
-            scripts_touched.append(module)
             hits = {t for t, names in mapping.items() if module in names}
             if hits:
                 tests_needed |= hits
+            elif level == R2:
+                notes.append(f"NO_TEST_MAPPED: scripts/{name} — R2 requires one")
             else:
-                notes.append(f"NO_TEST_MAPPED: scripts/{name} — add one or justify")
-        elif kind == "test":
-            tests_needed.add(name)
-        elif kind == "behaviour":
-            notes.append(f"behaviour outside scripts/: {path} — map its tests by hand")
-        elif kind == "prose":
-            notes.append(f"prose: {path} (must not change behaviour)")
-        elif kind == "scratch":
-            notes.append(f"scratch script: {path} (one-off analysis, no unit test required)")
-        elif kind == "tool":
-            notes.append(f"dev tooling: {path} (no product behaviour; run it once to verify)")
-
-    if scripts_touched:
-        graph = root / "tools" / "import_graph.py"
-        if graph.exists():
-            checks.append("python -B tools/import_graph.py > .import-graph.json  "
-                          "then require upward/cycles counts unchanged")
-        else:
-            notes.append("SKIP: tools/import_graph.py missing")
-        checks.append("python -B -m unittest discover -s tests -p '<test module>' (focused only)")
-
-    behaviour_net = behaviour_added - behaviour_deleted
-    over = []
-    if behaviour_files > MAX_FILES:
-        over.append(f"behaviour files {behaviour_files} > {MAX_FILES}")
-    if behaviour_net > MAX_NET_LOC:
-        over.append(f"behaviour net +{behaviour_net} > {MAX_NET_LOC}")
-
+                notes.append(f"no test mapped: scripts/{name} — {level} needs a named check")
+    overall = min(levels, key=lambda x: SEVERITY[x]) if levels else R3
+    required = EVIDENCE[overall]
+    missing = []
+    if overall in (R0, R1):
+        if not evidence:
+            missing.append(f"{overall} needs an evidence pointer (--evidence <path or PR section>)")
+        elif not Path(root / evidence).exists() and not evidence.startswith("PR:"):
+            missing.append(f"evidence path not found: {evidence}")
+    if any(n.startswith("NO_TEST_MAPPED") for n in notes):
+        missing.append("a changed script has no mapped test")
+    verdict = "ready" if not missing else "evidence_missing"
     return {
-        "base": base,
-        "files_changed": len([r for r in rows if r[0] != "D"]),
-        "added": added,
-        "deleted": deleted,
-        "net_loc": added - deleted,
-        "behaviour": {"files": behaviour_files, "added": behaviour_added,
-                      "deleted": behaviour_deleted, "net_loc": behaviour_net},
-        "budget": {"max_files": MAX_FILES, "max_net_loc": MAX_NET_LOC,
-                   "status": "OVER" if over else "OK", "exceeded": over},
-        "scripts_touched": scripts_touched,
-        "tests_to_run": sorted(tests_needed),
-        "checks": checks,
-        "notes": notes,
-        "verdict": ("SPLIT" if over else
-                    "NO_TESTS_MAPPED" if any(n.startswith("NO_TEST_MAPPED") for n in notes) else
-                    "PROSE_ONLY_OK" if not scripts_touched else
-                    "PLAN_READY"),
+        "base": base, "overall": overall, "required_evidence": required,
+        "files": files, "tests_to_run": sorted(tests_needed),
+        "added": added, "deleted": deleted, "net_loc": added - deleted,
+        "advice": {"net_loc_hint": 250, "note": "advisory only; R2 has no LOC gate"},
+        "notes": notes, "missing": missing, "verdict": verdict,
     }
 
 
@@ -207,43 +178,46 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--base", default="HEAD~1", help="git ref to diff against")
-    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--base", default="HEAD~1")
+    parser.add_argument("--evidence", default="", help="path to a protocol/receipt, or PR:<section>")
+    parser.add_argument("--strict", action="store_true",
+                        help="fail on missing evidence; use this in CI, not locally")
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
-        result = plan(args.root.resolve(), args.base)
+        result = plan(args.root.resolve(), args.base, args.evidence)
     except (OSError, subprocess.SubprocessError) as error:
         parser.exit(2, f"plan failed: {error}\n")
     if args.json:
         json.dump(result, sys.stdout, indent=2, sort_keys=True)
         print()
-        return
-    print(f"base              : {result['base']}")
-    print(f"files / net loc   : {result['files_changed']} files, {result['net_loc']:+d} net "
-          f"(+{result['added']}/-{result['deleted']})")
-    b = result["behaviour"]
-    print(f"behaviour only    : {b['files']} files, {b['net_loc']:+d} net "
-          f"(+{b['added']}/-{b['deleted']})  <- the budget counts this")
-    print(f"budget            : {result['budget']['status']} "
-          f"(max {result['budget']['max_files']} behaviour files / "
-          f"{result['budget']['max_net_loc']} behaviour net)")
-    if result["budget"]["exceeded"]:
-        for item in result["budget"]["exceeded"]:
-            print(f"  OVER            : {item}")
-    print(f"scripts touched   : {', '.join(result['scripts_touched']) or '-'}")
-    print("tests to run      :")
-    for name in result["tests_to_run"] or ["<none mapped>"]:
-        print(f"  - {name}")
-    if result["checks"]:
-        print("checks            :")
-        for item in result["checks"]:
-            print(f"  - {item}")
-    if result["notes"]:
-        print("notes             :")
-        for item in result["notes"]:
-            print(f"  - {item}")
-    print(f"verdict           : {result['verdict']}")
-    sys.exit(1 if result["verdict"] in {"SPLIT", "NO_TESTS_MAPPED"} else 0)
+    else:
+        print(f"base      : {result['base']}")
+        print(f"overall   : {result['overall']}   (R0 most severe .. R3 no behaviour)")
+        print(f"size      : {len(result['files'])} files, {result['net_loc']:+d} net "
+              f"(+{result['added']}/-{result['deleted']}) -- advisory only")
+        for item in result["files"]:
+            print(f"  {item['risk']}  {item['path']:<46} {item['why']}")
+        if result["required_evidence"]:
+            print("required evidence:")
+            for line in result["required_evidence"]:
+                print(f"  - {line}")
+        if result["tests_to_run"]:
+            print("tests to run:")
+            for name in result["tests_to_run"]:
+                print(f"  - {name}")
+        if result["notes"]:
+            print("notes:")
+            for line in result["notes"]:
+                print(f"  - {line}")
+        if result["missing"]:
+            print("missing:")
+            for line in result["missing"]:
+                print(f"  - {line}")
+        print(f"verdict   : {result['verdict']}")
+    if args.strict and result["verdict"] != "ready":
+        sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

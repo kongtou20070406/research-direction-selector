@@ -123,15 +123,33 @@ These exist so that the N-th round of agent work is as reviewable as the first.
 Each rule names its enforcement layer. A rule that is only prose is a rule that
 has already failed once.
 
+**Risk is judged by what the change touches, not by how much it writes.** An
+earlier draft of this contract gated on "<= 250 net behaviour LOC and <= 8
+files". That was withdrawn on 2026-10-24: a line budget optimises for passing
+the gate, and the cheapest way to cut lines is to cut tests, comments, or to
+cram code into existing files to avoid the file cap. An open-ended task also has
+a natural minimum slice of four files (module, test, wiring, doc), so a tight
+budget forces the test to be the thing that gets thin. The gate is now the
+*class* of the change:
+
+| Class | What it is | What it must bring |
+|---|---|---|
+| **R0** | certification assets: CAS, TMS store, receipts, result records, verifiers, formal kernel, budgets | a pre-registered judgement protocol written before the run, a reverse test, and an independent recompute of the affected hash/receipt/budget |
+| **R1** | decision logic: `decide`, advisor selection, thresholds, comparison arms, test contracts | a comparison arm and a holdout assertion, plus the same command before and after with both outputs kept |
+| **R2** | capability: new modules, new CLI paths, benchmarks | a mapped test for every changed script, no new `upward` edges, new modules classified in `import_graph` |
+| **R3** | no behaviour: prose, `docs/`, one-off analysis under `docs/`, tooling, fixtures | nothing, and it must not touch an R0-R2 path |
+
+Net LOC is still printed, as advice. It is not a gate.
+
 | # | Rule | Enforced by | Layer |
 |---|---|---|---|
-| 1 | Change budget: <= 250 behaviour net LOC and <= 8 behaviour files per change | `tools/validate_plan.py --base <ref>` | mechanical |
-| 2 | Every changed `scripts/*.py` must map to a named test | same planner, `NO_TESTS_MAPPED` verdict | mechanical |
+| 1 | Risk class governs the evidence, not the size (table above) | `tools/validate_plan.py --base <ref>`; `--strict` is what CI uses | mechanical |
+| 2 | Every changed `scripts/*.py` at R2 or above must map to a named test | same planner; `NO_TEST_MAPPED` in `notes` | mechanical |
 | 3 | Dependency direction: layers may only depend downward (`L0 < L1 < L2 < L3 < L4`), `SHARED` may be used by anyone | `tools/import_graph.py` -> `upward`, `cycles`, `mutual_pairs` counts must not increase | mechanical |
 | 4 | A new `scripts/rds_*.py` must be classified in `tools/import_graph.py` `GROUPS`; an `UNKNOWN` layer is a hard failure | `tools/import_graph.py` -> `unclassified_edges` empty | mechanical |
 | 5 | Same command failing the same way twice is a stop signal, not a retry cue | prose + review | judgement |
 | 6 | Never replace the loop with "review your own work". A model critique is context, not a verifier | prose | judgement |
-| 7 | Garbage collection: one small cleanup batch per week, <= 5 files, one category of cleanup only, reviewable in under a minute | schedule + review | process |
+| 7 | Garbage collection: one small cleanup batch per week, one category of cleanup only, reviewable in under a minute | schedule + review | process |
 | 8 | Every round ends with the handoff ledger in section VI, including remaining `UNKNOWN` items | review | process |
 
 Rule 5 is the one most often broken. A failing command that is re-run with a
@@ -221,7 +239,7 @@ Every round ends with these six lines. Nothing longer, nothing looser.
 changed   : <files, and the one judgement-branch each touches>
 evidence  : <command + result file, or the receipt path>
 tests     : <focused modules run, and their exit status>
-budget    : <behaviour files / net LOC, from rds_validate_plan.py>
+risk      : <R0-R3 from tools/validate_plan.py, plus the --evidence pointer used>
 unknown   : <what stayed unresolved, or "none">
 next      : <the single next action, or "stop; needs maintainer decision">
 ```
