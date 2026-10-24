@@ -63,9 +63,9 @@ def main():
     for (scene, idx), pair in sorted(index.items()):
         if "GT" not in pair or "hazy" not in pair:
             continue
-        if 1 <= idx <= 32:
+        if 1 <= idx <= 35:
             bucket = "train"
-        elif 33 <= idx <= 40:
+        elif 36 <= idx <= 40:
             bucket = "dev"
         elif 41 <= idx <= 45:
             bucket = "test-A"

@@ -3,8 +3,8 @@
  "source": "D:\\Myfile\\data\\ohaze",
  "note": "Held-out blocks (test-A, test-B) are listed here for the grader only.",
  "counts": {
-  "train": 32,
-  "dev": 8,
+  "train": 35,
+  "dev": 5,
   "test-A": 5,
   "test-B": 5
  },
@@ -681,9 +681,7 @@
      ],
      "sha256": "64166bce1ae629342983253e560db61b5c50151482a48a93b6429cd040437a12"
     }
-   }
-  ],
-  "dev": [
+   },
    {
     "id": "outdoor-33",
     "gt": {
@@ -746,7 +744,9 @@
      ],
      "sha256": "8a5eb1961698ffdddd4ab7987bde118a4bc46daba1af996d3fadd9e703f81cf7"
     }
-   },
+   }
+  ],
+  "dev": [
    {
     "id": "outdoor-36",
     "gt": {
