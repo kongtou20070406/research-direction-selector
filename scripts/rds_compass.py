@@ -143,6 +143,57 @@ def measured(state):
     return rows
 
 
+def _replay_command(hyp, rows, tolerances):
+    """Replay a black-box command hypothesis: run the command, compare by tolerance.
+
+    The command receives one JSON line on stdin: ``{"inputs": {...}, "id": ...}``
+    and must answer one JSON line on stdout: ``{"outputs": {...}}``. The answer is
+    the prediction, compared cell-exact against the receipted outputs with the
+    same ``decide`` band the parsed path uses. A failure, timeout, non-zero exit,
+    or malformed answer never manufactures a refutation: that cell stays UNKNOWN
+    (fail-closed), exactly like a missing measurement. ``scientific_support``
+    stays UNKNOWN; this verdict is receipt-consistency, never certification.
+    """
+    counterexamples, tested, unknown, undecided = [], 0, 0, 0
+    command = hyp['command']
+    for row in rows:
+        try:
+            done = subprocess.run(command['argv'], input=json.dumps(
+                {'id': row['id'], 'inputs': {k: str(v) for k, v in row['inputs'].items()}}),
+                capture_output=True, timeout=60, text=True)
+            answer = json.loads(done.stdout.strip().splitlines()[-1]) if done.returncode == 0 else None
+        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
+            answer = None
+        predicted = (answer or {}).get('outputs') or {}
+        for name in hyp['predict']:
+            observed = row['outputs'].get(name)
+            if observed is None or name not in tolerances:
+                unknown += 1
+                continue
+            raw = predicted.get(name)
+            try:
+                value = model.exact(raw) if raw is not None else None
+            except (ValueError, TypeError):
+                value = None
+            if value is None:
+                unknown += 1
+                continue
+            verdict = model.decide(value, observed, tolerances[name])
+            if verdict is None:
+                undecided += 1
+                continue
+            tested += 1
+            if not verdict:
+                counterexamples.append({'id': row['id'], 'observable': name,
+                                        'predicted': model.text(value),
+                                        'observed': model.text(observed),
+                                        'residual': model.text(observed - value)})
+    status = 'REFUTED' if counterexamples else 'CONSISTENT' if tested else 'UNTESTED'
+    result = {'status': status, 'counterexamples': counterexamples, 'tested': tested,
+              'not_applicable': 0, 'unknown_measurements': unknown, 'scientific_support': 'UNKNOWN'}
+    return {**result, 'undecided': undecided} if undecided else result
+
+
 # --- Replay cache ---------------------------------------------------------------
 # ``ingest`` folds three or four times per call and ``drive`` folds again every
 # step, so the same (hypothesis, measured rows, tolerances) replay is recomputed
@@ -180,7 +231,10 @@ def _derive(state):
             hyp.update(status='RETRACTED', replay=None)
             continue
         # An observable without a declared tolerance is never adjudicated: replay counts it UNKNOWN.
-        result = _replay_cached(hyp, rows, {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
+        if hyp.get('command_hypothesis'):
+            result = _replay_command(hyp, rows, {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
+        else:
+            result = _replay_cached(hyp, rows, {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
         hyp.update(status=result['status'], replay=result)
     receipts = {row['id']: row['receipt_sha256'] for row in rows}
     for hyp in state['hypotheses'].values():
@@ -1190,7 +1244,10 @@ def _admit(state, hyp, extra):
     if _taken(state, hyp, extra):
         return {'admitted': False, 'reason': 'ID_TAKEN'}
     tolerances = _tolerances(state['plan'])
-    result = model.replay(hyp, measured(state), {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
+    if hyp.get('command_hypothesis'):
+        result = _replay_command(hyp, measured(state), {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
+    else:
+        result = model.replay(hyp, measured(state), {k: tolerances[k] for k in hyp['predict'] if k in tolerances})
     if result['status'] == 'REFUTED':
         return {'admitted': False, 'reason': 'REFUTED_BY_RECORD', 'witness': result['counterexamples'][:1]}
     novelty = _novel(state, hyp, _points(state), tolerances, extra)

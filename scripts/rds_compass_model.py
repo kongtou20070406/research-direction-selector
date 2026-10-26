@@ -609,9 +609,15 @@ def compile_hypothesis(value, inputs, observables, *, goal=None):
     """Freeze one rival rulebook; identity covers only its executable content.
 
     ``goal`` names the observable an IDENTIFY_LAW rulebook must predict.
+
+    A hypothesis can be a black-box command: ``{'command': {'argv': [...],
+    'io': {'inputs': ..., 'outputs': ...}, 'code_sha256': ...}}``. Identity is the
+    SHA256 of that executable payload, not an AST. ``parse`` is never called for
+    such a hypothesis; ``predict`` raises if one is given an AST-shaped hypothesis
+    without parseable rules.
     """
     require(isinstance(value, dict) and {'id', 'predict'} <= set(value)
-            and set(value) <= {'id', 'statement', 'predict', 'applies', 'premises', 'origin', 'parent'},
+            and set(value) <= {'id', 'statement', 'predict', 'applies', 'premises', 'origin', 'parent', 'command'},
             'Hypothesis requires id and predict')
     ident = value['id']
     require(isinstance(ident, str) and 0 < len(ident) <= 80 and ident.replace('-', '_').replace(':', '_').replace('.', '_').isidentifier(),
@@ -620,14 +626,34 @@ def compile_hypothesis(value, inputs, observables, *, goal=None):
     require(isinstance(predict, dict) and predict and set(predict) <= set(observables),
             'Hypothesis must predict declared observables only')
     require(goal is None or goal in predict, f'Hypothesis must predict the goal observable {goal}')
-    rules = {name: parse(predict[name], set(inputs)) for name in sorted(predict)}
-    applies = value.get('applies')
-    applies = parse(applies, set(inputs)) if applies is not None else None
     premises = value.get('premises', [])
     require(isinstance(premises, list) and len(premises) <= 16
             and all(isinstance(p, str) and 0 < len(p) <= 512 for p in premises), 'Invalid premises')
-    statement = value.get('statement') or ' ; '.join(f'{k} = {render(v)}' for k, v in rules.items())
+    statement = value.get('statement') or ' ; '.join(f'{k} = ...' for k in sorted(predict))
     require(isinstance(statement, str) and len(statement) <= 2048, 'Invalid statement')
+
+    command = value.get('command')
+    if command is not None:
+        require(isinstance(command, dict) and {'argv', 'io'} <= set(command)
+                and set(command) <= {'argv', 'io', 'code_sha256'}, 'Invalid command hypothesis')
+        require(isinstance(command['argv'], list) and all(isinstance(a, str) for a in command['argv']),
+                'Command argv must be a list of strings')
+        require(isinstance(command['io'], dict) and set(command['io']) <= {'inputs', 'outputs'},
+                'Command io must be inputs/outputs')
+        require('code_sha256' not in command or isinstance(command['code_sha256'], str),
+                'code_sha256 must be a string digest')
+        executable = {'predict': sorted(predict), 'applies': None,
+                      'command': {'argv': list(command['argv']), 'io': dict(command['io']),
+                                  'code_sha256': command.get('code_sha256')}}
+        return {'id': ident, 'statement': statement, 'predict': {k: None for k in sorted(predict)},
+                'applies': None, 'premises': list(premises), 'origin': value.get('origin', 'declared'),
+                'parent': value.get('parent'), 'command': executable['command'],
+                'sha256': digest(executable), 'size': 0, 'command_hypothesis': True}
+
+    rules = {name: parse(predict[name], set(inputs)) for name in sorted(predict)}
+    applies = value.get('applies')
+    applies = parse(applies, set(inputs)) if applies is not None else None
+    statement = value.get('statement') or ' ; '.join(f'{k} = {render(v)}' for k, v in rules.items())
     executable = {'predict': rules, 'applies': applies}
     return {'id': ident, 'statement': statement, 'predict': rules, 'applies': applies,
             'premises': list(premises), 'origin': value.get('origin', 'declared'),
@@ -636,7 +662,13 @@ def compile_hypothesis(value, inputs, observables, *, goal=None):
 
 
 def predict(hypothesis, env):
-    """Return {observable: Fraction|None}; None marks NOT_APPLICABLE/UNDEFINED/UNDECIDED."""
+    """Return {observable: Fraction|None}; None marks NOT_APPLICABLE/UNDEFINED/UNDECIDED.
+
+    A command hypothesis has no parseable rules. ``predict`` cannot run it; that
+    happens in replay through the kernel's executor. Here it returns UNDECIDED so
+    no cell is counted and no refutation is manufactured."""
+    if hypothesis.get('command_hypothesis'):
+        return {name: None for name in hypothesis['predict']}, 'UNDECIDED'
     try:
         if hypothesis['applies'] is not None:
             guard = evaluate(hypothesis['applies'], env)
