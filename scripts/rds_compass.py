@@ -428,6 +428,44 @@ def _spread(state, count):
     return [c.pop('_id') for c in chosen]
 
 
+def _refine_candidates(state, pending):
+    """Proposed grid-refinement points inside the declared input domain.
+
+    F2: the experiment table is no longer only what the caller declared. For a
+    single bounded integer/real input, the midpoint of every smallest gap between
+    declared levels is offered as a fresh candidate (at most twice the pending
+    count, at most 16). A proposed point whose input equals an existing candidate
+    is never offered twice; duplicates collapse by canonical input, not by id.
+    The declaration bounds the world; it does not fix the ruler.
+    """
+    plan = state['plan']
+    if len(plan['inputs']) != 1:
+        return []
+    name = next(iter(plan['inputs']))
+    declared = sorted({model.exact(c['inputs'][name]) for c in plan['candidates']})
+    if len(declared) < 2:
+        return []
+    gaps = sorted(b - a for a, b in zip(declared, declared[1:]))
+    smallest = gaps[0]
+    if smallest <= 0:
+        return []
+    taken = {canonical({name: model.text(v)}) for v in declared}
+    out = []
+    for a, b in zip(declared, declared[1:]):
+        if b - a > smallest:
+            continue
+        mid = (a + b) / 2
+        key = canonical({name: model.text(mid)})
+        if key in taken:
+            continue
+        taken.add(key)
+        out.append({'id': f'refine-{len(out)}', 'inputs': {name: model.text(mid)},
+                    'cost': 1, 'proposed': True})
+        if len(out) >= min(2 * len(pending), 16):
+            break
+    return out
+
+
 def _confirm_candidate(state, rows, pending, tolerances):
     """The confirmation point with the highest EIG, or the farthest spread point when none separates.
 
@@ -438,11 +476,18 @@ def _confirm_candidate(state, rows, pending, tolerances):
     if state['plan']['verification'].get('confirm_by_eig', True):
         adjudicable = [{**h, 'predict': {k: v for k, v in h['predict'].items() if k in tolerances}} for h in rows]
         seen = [env(state, candidate(state, i)) for i in state['observations']]
+        pool = [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']} for c in pending]
+        proposed = [{**r, 'inputs': {k: model.exact(v) for k, v in r['inputs'].items()}} for r in _refine_candidates(state, pending)]
         ranking = model.rank_experiments(
-            adjudicable, [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']} for c in pending],
+            adjudicable, pool + proposed,
             tolerances, observed=seen, weights=_weights(rows), limit=1)
         if ranking['ranked']:
-            return ranking['ranked'][0]['id']
+            # A proposed refinement point informs the ranking but is not yet a
+            # purchasable candidate: only a declared id is returned. (F2)
+            declared = {c['id'] for c in pending}
+            for row in ranking['ranked']:
+                if row['id'] in declared:
+                    return row['id']
     return _spread(state, 1)[0]
 
 
@@ -570,12 +615,19 @@ def decide(state):
     if len(rows) >= 2 and can_buy:
         adjudicable = [{**h, 'predict': {k: v for k, v in h['predict'].items() if k in tolerances}} for h in rows]
         seen = [env(state, candidate(state, i)) for i in state['observations']]
-        ranking = model.rank_experiments(adjudicable, [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']}
-                                                       for c in pending], tolerances, observed=seen,
+        pool = [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']} for c in pending]
+        proposed = [{**r, 'inputs': {k: model.exact(v) for k, v in r['inputs'].items()}} for r in _refine_candidates(state, pending)]
+        ranking = model.rank_experiments(adjudicable, pool + proposed, tolerances, observed=seen,
                                          weights=_weights(rows), limit=3)
         if ranking['ranked']:
-            top = ranking['ranked'][0]
-            return {'action': 'EXPERIMENT', 'candidate': top['id'], 'leader': rows[0]['id'],
+            # A proposed refinement point informs the ranking but is not yet a
+            # purchasable candidate: only a declared id may be bought. (F2)
+            declared = {c['id'] for c in pending}
+            top = next((r for r in ranking['ranked'] if r['id'] in declared), None)
+            if top is None:
+                ranking['ranked'] = []
+            else:
+                return {'action': 'EXPERIMENT', 'candidate': top['id'], 'leader': rows[0]['id'],
                     'eig_bits': top['eig_bits'], 'eig_per_cost': top['eig_per_cost'],
                     'partition_sha256': top['partition_sha256'],
                     'classes': top['classes'], 'alternatives': [r['id'] for r in ranking['ranked'][1:]],
@@ -1458,15 +1510,12 @@ def _polynomial_check(state, best):
         values, status = model.predict(best, point)
         interpolant = sum(c * point[names[0]] ** j for j, c in enumerate(solution))
         if status != 'PREDICTED' or not model.agree(values[observable], interpolant, tolerance):
-            receipt = receipts.get(tuple(sorted(point.items())))
-            if status == 'PREDICTED' and receipt is not None:
-                # The interpolant fits only the first MAX_ROWS receipts, so it can miss an
-                # outlier that has already been measured.  When the receipt agrees with the
-                # law and not with the interpolant, the interpolation is refuted by a
-                # measurement it never saw: that is a spent hypothesis, not a rival.
-                if model.agree(receipt, values[observable], tolerance) and \
-                        not model.agree(receipt, interpolant, tolerance):
-                    continue
+            # F3: the certificate never yields to the receipts it was fitted on. A
+            # disagreement between the law and the unique interpolant is reported,
+            # never waved through because a receipt sides with the law -- that is
+            # exactly the memorised-exception shape (pulse/regime templates) this
+            # certificate exists to catch. Fitted on the same receipts, it can
+            # disagree only off them; that is a rival, not noise.
             return {**base, 'status': 'POLYNOMIAL_RIVAL_DISAGREES',
                     'witness': {'candidate': item['id'], 'law': model.text(values[observable]) if status == 'PREDICTED'
                                 else None, 'polynomial': model.text(interpolant)}}
