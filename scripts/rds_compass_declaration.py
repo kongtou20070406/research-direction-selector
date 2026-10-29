@@ -34,7 +34,7 @@ MAX_SOURCES = 8
 MAX_SOURCE_LAWS = 64
 OUTPUT_ROOT = 'outputs/compass'
 PROTOCOL_PATH = 'compass-protocol.json'
-GOALS = ('IDENTIFY_LAW', 'IMPROVE')
+GOALS = ('IDENTIFY_LAW', 'IMPROVE', 'OPEN')
 FIELDS = {'schema', 'goal', 'inputs', 'observables', 'experiment', 'candidates', 'hypotheses',
           'sources', 'grammar', 'synthesis', 'escape', 'budget', 'protocol', 'agent', 'library', 'rsi',
           'profile', 'description', 'verification', 'trend'}
@@ -132,17 +132,20 @@ def _argv(template, candidate, output):
 
 def compile_plan(store, declaration, source_sha256, source=None):
     """Return (contract, protocol bytes, plan) without writing anything."""
-    _object(declaration, {'schema', 'goal', 'observables', 'experiment', 'candidates', 'budget'},
-            FIELDS - {'schema', 'goal', 'observables', 'experiment', 'candidates', 'budget'}, 'Compass declaration')
-    require(declaration['schema'] == SCHEMA, 'Compass declaration schema must be ' + SCHEMA)
-    unknown, defaulted = [], []
-    goal = declaration['goal']
+    require(isinstance(declaration, dict) and declaration.get('schema') == SCHEMA,
+            'Compass declaration schema must be ' + SCHEMA)
+    goal = declaration.get('goal')
     _object(goal, {'kind', 'statement'}, {'observable', 'success'}, 'goal')
     require(goal['kind'] in GOALS, 'Goal kind must be one of ' + ', '.join(GOALS))
     require(isinstance(goal['statement'], str) and 8 <= len(goal['statement'].strip()) <= 2048,
             'Goal needs a substantive statement')
+    unknown, defaulted = [], []
     if 'success' not in goal:
         unknown.append('goal.success')
+    if goal['kind'] == 'OPEN':
+        return _compile_open(store, declaration, goal, unknown, source_sha256, source)
+    _object(declaration, {'schema', 'goal', 'observables', 'experiment', 'candidates', 'budget'},
+            FIELDS - {'schema', 'goal', 'observables', 'experiment', 'candidates', 'budget'}, 'Compass declaration')
     observables = declaration['observables']
     require(isinstance(observables, dict) and 1 <= len(observables) <= 8, 'Declare 1..8 observables')
     tolerances = {}
@@ -420,6 +423,84 @@ def compile_plan(store, declaration, source_sha256, source=None):
     return contract, protocol_raw, plan
 
 
+
+
+def _compile_open(store, declaration, goal, unknown, source_sha256, source):
+    """A thin open-task plan: one metric, one stop rule, no grammar and no candidate table.
+
+    Tools stay outside the kernel. The plan records only what the next card needs.
+    A missing tolerance or stop rule stays listed; it is not filled with a default.
+    """
+    forbidden = {'inputs', 'hypotheses', 'sources', 'grammar', 'synthesis', 'escape', 'rsi', 'candidates'}
+    present = forbidden & set(declaration)
+    require(not present, 'OPEN declares no discovery machinery: ' + ', '.join(sorted(present)))
+    observables = declaration['observables']
+    require(isinstance(observables, dict) and len(observables) == 1, 'OPEN declares exactly one observable')
+    name, spec = next(iter(observables.items()))
+    model._name(name)
+    _object(spec, set(), {'tolerance', 'higher_is_better'}, 'observable ' + name)
+    require(isinstance(spec.get('higher_is_better', True), bool),
+            f'observables.{name}.higher_is_better must be true or false')
+    if 'tolerance' not in spec:
+        unknown.append(f'observables.{name}.tolerance')
+        tolerance = None
+    else:
+        absolute, relative = model.tolerance(spec['tolerance'])
+        tolerance = {'abs': model.text(absolute), 'rel': model.text(relative)}
+    require(goal.get('observable') == name, 'OPEN names its one declared observable')
+    stop = declaration.get('stop')
+    if stop is None:
+        unknown.append('stop')
+        stop_rule = None
+    else:
+        _object(stop, {'rule'}, set(), 'stop')
+        require(isinstance(stop['rule'], str) and 8 <= len(stop['rule'].strip()) <= 512,
+                'stop.rule needs a substantive sentence')
+        stop_rule = stop['rule'].strip()
+    caps = declaration.get('caps', {})
+    _object(caps, set(), {'max_trials', 'max_agent_calls'}, 'caps')
+    for key, high in (('max_trials', 64), ('max_agent_calls', 32)):
+        if key in caps:
+            require(type(caps[key]) is int and 1 <= caps[key] <= high, f'caps.{key} must be an integer from 1 to {high}')
+        else:
+            unknown.append('caps.' + key)
+    budget = declaration['budget']
+    _object(budget, {'wall_seconds'}, set(), 'budget')
+    require(_seconds(budget['wall_seconds']) and budget['wall_seconds'] > 0, 'Budget wall_seconds must be positive')
+    protocol = declaration.get('protocol', {})
+    require(isinstance(protocol, dict) and set(protocol) <= set(PROTOCOL_FIELDS) | {'path'},
+            'Protocol declares identity fields only')
+    metadata = {}
+    for field in PROTOCOL_FIELDS:
+        if field in protocol:
+            metadata[field] = deepcopy(protocol[field])
+        else:
+            metadata[field] = 'UNKNOWN'
+            unknown.append('protocol.' + field)
+    protocol_path = protocol.get('path', PROTOCOL_PATH)
+    metadata['compass_declaration_sha256'] = source_sha256
+    # An open card binds no code, config or data. The empty-set digest is the identity.
+    for role in ('code', 'config', 'data'):
+        metadata.setdefault(role + '_sha256', ProjectStore._role_sha({'bindings': []}, role))
+    protocol_raw = (canonical(metadata) + '\n').encode('utf-8')
+    protocol_ref = {'path': protocol_path, 'sha256': hashlib.sha256(protocol_raw).hexdigest()}
+    contract = {'schema': 1, 'output_roots': [OUTPUT_ROOT],
+                'budget': {'wall_seconds': budget['wall_seconds']},
+                'bindings': [{'role': 'protocol', **protocol_ref}],
+                'allowed_commands': [],
+                'description': 'Open research card: ' + goal['statement'][:400]}
+    plan = {'schema': PLAN_SCHEMA, 'goal': deepcopy(goal), 'inputs': {},
+            'tolerances': {name: tolerance}, 'observables': [name], 'candidates': [], 'hypotheses': [],
+            'sources': [], 'grammar': None, 'synthesis': None, 'escape': None, 'rsi': None,
+            'verification': {}, 'holdout': [],
+            'budget': {'wall_seconds': budget['wall_seconds'], 'experiments': 0, 'max_experiments': None},
+            'experiment': {'timeout_seconds': 0, 'wall_seconds': 0}, 'protocol': protocol_ref,
+            'agent': None, 'library': None, 'stop': stop_rule,
+            'caps': {k: caps[k] for k in ('max_trials', 'max_agent_calls') if k in caps},
+            'unknown': sorted(set(unknown)), 'defaulted': [], 'declaration_sha256': source_sha256,
+            'higher_is_better': {name: spec['higher_is_better']} if 'higher_is_better' in spec else {},
+            'contract_sha256': digest(contract)}
+    return contract, protocol_raw, plan
 def initialize(root, declaration_path):
     """Freeze the protocol and contract, then append the COMPASS_DECLARED plan."""
     import rds_compass_store as cstore

@@ -1,6 +1,6 @@
 """``compass`` CLI: one declaration in, one unattended auditable loop out."""
 
-ACTIONS = ('init', 'drive', 'status', 'decide', 'report', 'tools')
+ACTIONS = ('init', 'drive', 'status', 'decide', 'report', 'record', 'tools')
 DONE = {'GOAL_IDENTIFIED', 'IMPROVEMENT_EVALUATED', 'INITIALIZED', 'ALREADY_INITIALIZED'}
 
 
@@ -14,6 +14,8 @@ def add_parser(commands):
     actions.add_parser('status', help='Hash-bound compact working set and the next decision')
     actions.add_parser('decide', help='Print the next decision without executing it')
     actions.add_parser('report', help='Auditable report recomputed from ledger records and receipts')
+    record = actions.add_parser('record', help='Record one open-task fact without running a tool or calling a model')
+    record.add_argument('--note', required=True, help='JSON file: a trial or a conflict')
     tools = actions.add_parser('tools', help='Qualified, rejected and retracted goal-bound tools, offers, catalogue')
     tools.add_argument('--propose', metavar='FILE', help='Offer a one-argument tool; it qualifies only via the oracle triple')
     tools.add_argument('--catalogue', action='store_true', help='List the base tools offered at a capability gap')
@@ -109,6 +111,10 @@ def command(args):
         import rds_compass_rsi as rsi
         with open(args.propose, encoding='utf-8') as stream:
             return {**rsi.propose(store, stream.read(), 'USER_PROPOSED'), 'scientific_support': 'UNKNOWN'}
+    if args.action == 'record':
+        import json
+        with open(args.note, encoding='utf-8') as stream:
+            return compass.record_note(store, json.load(stream))
     if args.action in ('status', 'decide'):
         state = compass.fold(store)
         stale = compass.stale_bindings(store, state)

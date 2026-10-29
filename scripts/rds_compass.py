@@ -105,6 +105,10 @@ def fold(store):
             state['interruptions'].append(value)
         elif kind == 'REPORT':
             state['reports'].append(value)
+        elif kind == 'NOTE':
+            state.setdefault('notes', []).append({**value, 'seq': event['seq']})
+    if plan['goal']['kind'] == 'OPEN':
+        return state
     _derive(state)
     return state
 
@@ -1603,9 +1607,100 @@ def verify(store, state):
     return value
 
 
+
+
+OPEN_CARD_SCHEMA = 'rds-open-card-v1'
+OPEN_CARD_BYTES = 4096
+
+
+def open_card(state):
+    """The only view an open-task model sees: one question, a few facts, no ledger.
+
+    The card pulls the model by naming one question before any outside tool.
+    Recording never runs a command and never calls a model. A missing tolerance
+    or stop rule stops the card; it is not filled in.
+    """
+    plan = state['plan']
+    require(plan['goal']['kind'] == 'OPEN', 'open_card is only for an OPEN declaration')
+    metric = plan['observables'][0]
+    notes = list(state.get('notes', []))
+    tried = [{'id': n['id'], 'metric': n.get('metric'), 'receipt_sha256': n.get('receipt_sha256'),
+              'route': n.get('route'), 'failed': bool(n.get('failed'))}
+             for n in notes if n.get('kind') == 'trial']
+    conflicts = [n for n in notes if n.get('kind') == 'conflict']
+    missing = [item for item in plan['unknown'] if item.startswith('observables.') or item == 'stop']
+    caps = plan.get('caps') or {}
+    if missing:
+        nxt, question = 'STOP', 'Name the missing rule before another trial: ' + ', '.join(missing[:4])
+    elif 'max_trials' in caps and len(tried) >= caps['max_trials']:
+        nxt, question = 'STOP', 'The declared trial cap is spent.'
+    elif len(tried) >= 2 and tried[-1]['route'] == tried[-2]['route'] and tried[-1].get('failed') and tried[-2].get('failed'):
+        nxt, question = 'STOP', 'The same command failed twice. Change it or stop.'
+    elif conflicts:
+        nxt, question = 'ANSWER', conflicts[-1].get('question') or 'Which of the two conflicting records should the next trial trust?'
+    elif not tried:
+        nxt, question = 'ANSWER', 'What one observation would change the next action, and which outside tool produces it?'
+    else:
+        nxt, question = 'RECORD', 'Record the latest outside result before choosing another tool.'
+    body = {'schema': OPEN_CARD_SCHEMA, 'head': state['head'], 'goal': plan['goal']['statement'][:512],
+            'criterion_sha256': plan['declaration_sha256'], 'metric': metric,
+            'tolerance': plan['tolerances'].get(metric), 'stop': plan.get('stop'),
+            'tried': tried[-5:], 'conflict': conflicts[-1] if conflicts else None,
+            'question': question[:512], 'unknown': plan['unknown'][:8], 'next': nxt,
+            'caps': {'max_trials': caps.get('max_trials'), 'max_agent_calls': caps.get('max_agent_calls'),
+                     'status': 'DECLARED' if caps else 'CAP_UNKNOWN'},
+            'scientific_support': 'UNKNOWN'}
+    raw = canonical(body).encode('utf-8')
+    while len(raw) > OPEN_CARD_BYTES and body['tried']:
+        body['tried'] = body['tried'][1:]
+        body['trimmed'] = True
+        raw = canonical(body).encode('utf-8')
+    if len(raw) > OPEN_CARD_BYTES:
+        body.update(next='STOP', question='The card cannot name the goal inside 4096 bytes.', trimmed=True)
+    return body
+
+
+def record_note(store, payload):
+    """Append one key fact. This records; it does not run a tool or call a model."""
+    require(isinstance(payload, dict) and payload.get('kind') in ('trial', 'conflict'),
+            'A note is a trial or a conflict')
+    state = fold(store)
+    require(state['plan']['goal']['kind'] == 'OPEN', 'record is only for an OPEN declaration')
+    card = open_card(state)
+    require(card['next'] != 'STOP', 'The card is stopped: ' + card['question'])
+    ident = payload.get('id')
+    require(isinstance(ident, str) and 0 < len(ident) <= 60 and ident.replace('-', '_').replace(':', '_').isidentifier(),
+            'Note id must be a short identifier')
+    require(all(n['id'] != ident for n in state.get('notes', [])), 'Note id already recorded')
+    metric = state['plan']['observables'][0]
+    if payload['kind'] == 'trial':
+        route = payload.get('route')
+        require(isinstance(route, str) and 8 <= len(route) <= 256, 'A trial names its command route')
+        receipt = payload.get('receipt_sha256')
+        require(isinstance(receipt, str) and len(receipt) == 64 and all(c in '0123456789abcdef' for c in receipt),
+                'A trial names a 64-character receipt hash')
+        value = payload.get('metric')
+        require(value is None or isinstance(value, (int, float, str)) and not isinstance(value, bool),
+                'A trial metric is a number or text, or absent when the run failed')
+        note = {'kind': 'trial', 'id': ident, 'metric_name': metric, 'metric': None if value is None else str(value),
+                'route': route, 'receipt_sha256': receipt, 'failed': bool(payload.get('failed', False)),
+                'provenance': 'INPUT_REPORTED', 'scientific_support': 'UNKNOWN'}
+        same = [n for n in state.get('notes', []) if n.get('kind') == 'trial' and n.get('route') == route]
+        action = 'REUSE' if same else 'RECORDED'
+    else:
+        question = payload.get('question')
+        require(isinstance(question, str) and 8 <= len(question.strip()) <= 512, 'A conflict names its question')
+        note = {'kind': 'conflict', 'id': ident, 'question': question.strip(),
+                'provenance': 'INPUT_REPORTED', 'scientific_support': 'UNKNOWN'}
+        action = 'RECORDED'
+    cstore.append(store, 'NOTE', ident, note)
+    return {'status': action, 'id': ident, 'card': open_card(fold(store)), 'execution_started': False,
+            'scientific_support': 'UNKNOWN'}
 def workset(state, reason=None, detail=None, stale=None):
     """Compact, hash-bound continuation state: enough for a fresh agent to resume."""
     plan = state['plan']
+    if plan['goal']['kind'] == 'OPEN':
+        return open_card(state)
     rows = live(state)
     decision = next_step(state, stale) if reason is None else None
     body = {'schema': WORKSET_SCHEMA, 'head': state['head'], 'goal': plan['goal'],

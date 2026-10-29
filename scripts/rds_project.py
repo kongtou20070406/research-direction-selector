@@ -1076,7 +1076,11 @@ class ProjectStore:
             require(paths[path] == b["sha256"], "Initial binding mismatch")
             binding_roles.add((path, b["role"]))
             roles.add(b["role"])
-        require(ROLES <= roles, "code/config/data/evaluator/protocol bindings required")
+        # An open card records facts and runs nothing, so it binds only its protocol.
+        # Every contract that names a command still binds all five roles.
+        record_only = contract.get('allowed_commands') == []
+        require(record_only or ROLES <= roles, "code/config/data/evaluator/protocol bindings required")
+        require(not record_only or roles == {'protocol'}, "A record-only contract binds its protocol and nothing else")
         from rds_method_revision import validate_envelope
         validate_envelope(self, contract)
         # A protocol file freezes with the contract, so a conflict here would reject every run that names it.
@@ -1095,7 +1099,7 @@ class ProjectStore:
         if 'maintenance_allowance' in contract:
             self._maintenance_context(contract)
         commands = contract.get("allowed_commands")
-        require(isinstance(commands, list) and commands, "Allowed argv commands required")
+        require(isinstance(commands, list) and (commands or record_only), "Allowed argv commands required")
         for argv in commands:
             self._command(argv)
         roots = contract.get("output_roots")
