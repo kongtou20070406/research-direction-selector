@@ -482,16 +482,22 @@ def _confirm_candidate(state, rows, pending, tolerances):
         seen = [env(state, candidate(state, i)) for i in state['observations']]
         pool = [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']} for c in pending]
         proposed = [{**r, 'inputs': {k: model.exact(v) for k, v in r['inputs'].items()}} for r in _refine_candidates(state, pending)]
+        # Proposed points are not purchasable. They break a tie between declared
+        # candidates; they must not occupy the only returned rank. (F2)
         ranking = model.rank_experiments(
-            adjudicable, pool + proposed,
-            tolerances, observed=seen, weights=_weights(rows), limit=1)
-        if ranking['ranked']:
-            # A proposed refinement point informs the ranking but is not yet a
-            # purchasable candidate: only a declared id is returned. (F2)
+            adjudicable, pool, tolerances, observed=seen, weights=_weights(rows), limit=1)
+        if proposed and ranking['ranked']:
+            tied = model.rank_experiments(
+                adjudicable, pool + proposed, tolerances, observed=seen,
+                weights=_weights(rows), limit=len(pool) + len(proposed))
+            leader = ranking['ranked'][0]
             declared = {c['id'] for c in pending}
-            for row in ranking['ranked']:
-                if row['id'] in declared:
-                    return row['id']
+            rivals = [row for row in tied['ranked']
+                      if row['eig_per_cost'] == leader['eig_per_cost'] and row['id'] in declared]
+            if rivals:
+                return rivals[0]['id']
+        if ranking['ranked']:
+            return ranking['ranked'][0]['id']
     return _spread(state, 1)[0]
 
 
@@ -575,6 +581,9 @@ def decide(state):
         return {'action': 'RECOVER', 'runs': sorted(active)}
     spent = sum(1 for rid in state['runs'] if rid.startswith('compass-'))
     wall = state['budget'].get('wall_seconds', {}).get('remaining', 0)
+    if plan['goal']['kind'] == 'OPEN':
+        card = open_card(state)
+        return {'action': card['next'], 'reason': card['question'], 'execution_started': False}
     if plan['goal']['kind'] == 'IMPROVE':
         return _decide_improve(state, spent, wall)
     pending = remaining(state)
@@ -621,17 +630,23 @@ def decide(state):
         seen = [env(state, candidate(state, i)) for i in state['observations']]
         pool = [{'id': c['id'], 'inputs': env(state, c), 'cost': c['cost']} for c in pending]
         proposed = [{**r, 'inputs': {k: model.exact(v) for k, v in r['inputs'].items()}} for r in _refine_candidates(state, pending)]
-        ranking = model.rank_experiments(adjudicable, pool + proposed, tolerances, observed=seen,
+        ranking = model.rank_experiments(adjudicable, pool, tolerances, observed=seen,
                                          weights=_weights(rows), limit=3)
         if ranking['ranked']:
-            # A proposed refinement point informs the ranking but is not yet a
-            # purchasable candidate: only a declared id may be bought. (F2)
-            declared = {c['id'] for c in pending}
-            top = next((r for r in ranking['ranked'] if r['id'] in declared), None)
-            if top is None:
-                ranking['ranked'] = []
-            else:
-                return {'action': 'EXPERIMENT', 'candidate': top['id'], 'leader': rows[0]['id'],
+            # Proposed points are not purchasable. They only reorder declared
+            # candidates that tie on gain. (F2)
+            if proposed:
+                tied = model.rank_experiments(
+                    adjudicable, pool + proposed, tolerances, observed=seen,
+                    weights=_weights(rows), limit=len(pool) + len(proposed))
+                leader = ranking['ranked'][0]['eig_per_cost']
+                declared = {c['id'] for c in pending}
+                rivals = [row for row in tied['ranked']
+                          if row['eig_per_cost'] == leader and row['id'] in declared]
+                if rivals:
+                    ranking = {**ranking, 'ranked': rivals[:3]}
+            top = ranking['ranked'][0]
+            return {'action': 'EXPERIMENT', 'candidate': top['id'], 'leader': rows[0]['id'],
                     'eig_bits': top['eig_bits'], 'eig_per_cost': top['eig_per_cost'],
                     'partition_sha256': top['partition_sha256'],
                     'classes': top['classes'], 'alternatives': [r['id'] for r in ranking['ranked'][1:]],

@@ -820,7 +820,8 @@ def _coverage(candidates, observed):
         span[name] = (max(values) - min(values)) or Fraction(1)
     out = {}
     for ident, point in points.items():
-        distances = [sum(abs(point[n] - o[n]) / span[n] for n in names if n in o) for o in observed]
+        distances = [sum(abs(point[n] - o[n]) / span[n] for n in names if n in point and n in o)
+                     for o in observed]
         out[ident] = min(distances) if distances else Fraction(0)
     return out
 

@@ -81,6 +81,25 @@ class OpenCardTests(unittest.TestCase):
         self.assertEqual(second['card']['next'], 'STOP')
         self.assertIn('failed twice', second['card']['question'])
 
+    def test_a_long_goal_stays_inside_the_card(self):
+        self.declare({'goal': {'kind': 'OPEN', 'statement': 'S' * 600, 'observable': 'score'}})
+        card = compass.open_card(compass.fold(cstore.store_for(self.root)))
+        self.assertLessEqual(len(json.dumps(card, ensure_ascii=False).encode('utf-8')), 4096)
+        self.assertEqual(len(card['goal']), 512)
+        self.assertEqual(card['next'], 'ANSWER')
+
+    def test_status_twice_starts_no_process(self):
+        self.declare()
+        store = cstore.store_for(self.root)
+        first = compass.workset(compass.fold(store))
+        second = compass.workset(compass.fold(store))
+        self.assertEqual(first['head'], second['head'])
+        self.assertEqual(first['next'], 'ANSWER')
+        self.assertEqual(compass.decide(compass.fold(store))['action'], 'ANSWER')
+        self.assertFalse(compass.decide(compass.fold(store))['execution_started'])
+        with store.readonly() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM runs').fetchone()[0], 0)
+
 
 if __name__ == '__main__':
     unittest.main()
