@@ -1,0 +1,21 @@
+{
+ "criterion_sha256": "756ba82bc9bca12b832ebce312853e9231e11840cf5777f26915d929250fd955",
+ "dev": {
+  "all": 22,
+  "all_vs_majority": "ALL_FEATURES",
+  "majority": 7,
+  "n": 22,
+  "sepal": 16,
+  "sepal_vs_majority": "SEPAL",
+  "verdict": "ALL_FEATURES"
+ },
+ "model_identity": "none",
+ "scientific_support": "UNKNOWN",
+ "test_once": {
+  "agrees_with_dev": true,
+  "all": 22,
+  "n": 23,
+  "sepal": 15
+ },
+ "token_usage": null
+}
