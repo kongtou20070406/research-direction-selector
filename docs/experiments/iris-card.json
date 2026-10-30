@@ -1,0 +1,40 @@
+{
+  "schema": "rds-open-card-v1",
+  "head": "7f089d2f72402b61be3b58c34d8816aa0bfb85338cb5a78e7ba81ea2b9ad92ca",
+  "goal": "On the frozen iris split, compare four-feature logistic regression with the sepal-only model by dev correct counts. A gap below 2 samples is indistinguishable.",
+  "criterion_sha256": "00adbc806db1f29b8aa2d743999f3243c028134feb5093828d561039a3dd043a",
+  "metric": "dev_gap",
+  "tolerance": {
+    "abs": "0",
+    "rel": "0"
+  },
+  "stop": "Stop after two byte-identical runs. Do not change the split or penalty.",
+  "tried": [
+    {
+      "id": "iris-1",
+      "metric": "6",
+      "receipt_sha256": "e5b34de7003db3ed0e22dad037b15eb4a2c54776cb43dec41306fdb08dfbd2d4",
+      "route": "python -B docs/experiments/iris_probe.py",
+      "failed": false
+    }
+  ],
+  "conflict": null,
+  "question": "Record the latest outside result before choosing another tool.",
+  "unknown": [
+    "goal.success",
+    "protocol.checkpoint",
+    "protocol.data_split",
+    "protocol.init",
+    "protocol.numeric_protocol",
+    "protocol.sample_work",
+    "protocol.schedule",
+    "protocol.seed"
+  ],
+  "next": "RECORD",
+  "caps": {
+    "max_trials": 2,
+    "max_agent_calls": 1,
+    "status": "DECLARED"
+  },
+  "scientific_support": "UNKNOWN"
+}
