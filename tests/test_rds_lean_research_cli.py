@@ -1,13 +1,18 @@
+import contextlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from rds_lean_obligation import ProofObligation
+import rds_lean_research as lean_research
 
 
 class LeanResearchEntryTests(unittest.TestCase):
@@ -104,6 +109,38 @@ class LeanResearchEntryTests(unittest.TestCase):
         self.assertIn('Demo.lean', run.stdout)
         self.assertNotIn('LEAN_KERNEL_CHECKED', run.stdout)
         self.assertEqual({p.name: p.read_bytes() for p in self.root.iterdir()}, before)
+
+
+class LeanResearchRequestTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='rds-lean-request-')
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / 'request.json'
+
+    def test_non_finite_constants_are_rejected(self):
+        for constant in ('NaN', 'Infinity', '-Infinity'):
+            with self.subTest(constant=constant):
+                self.path.write_text('{"kind": "CONJECTURE", "weight": %s}' % constant, encoding='utf-8')
+                with self.assertRaises(ValueError):
+                    lean_research._read_json(self.path)
+
+    def test_request_file_is_bounded_before_parsing(self):
+        self.path.write_text('{"kind": "CONJECTURE"}', encoding='utf-8')
+        size = self.path.stat().st_size
+        with patch.object(lean_research, 'MAX_BYTES', size):
+            self.assertEqual(lean_research._read_json(self.path), {'kind': 'CONJECTURE'})
+        with patch.object(lean_research, 'MAX_BYTES', size - 1):
+            with self.assertRaisesRegex(ValueError, 'exceeds byte limit'):
+                lean_research._read_json(self.path)
+
+    def test_only_pass_or_conjecture_exits_zero(self):
+        self.path.write_text('{"kind": "CONJECTURE"}', encoding='utf-8')
+        for status, code in (('PASS', 0), ('CONJECTURE', 0), ('PROOF_REQUIRED', 2), (None, 2)):
+            app = SimpleNamespace(review_lean_obligation=lambda request, audit, status=status: {'status': status})
+            with self.subTest(status=status), patch.object(lean_research, 'create_app', return_value=app), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(lean_research.main(['--root', self.temp.name, 'review',
+                                                     '--obligation', str(self.path)]), code)
 
 
 if __name__ == '__main__':

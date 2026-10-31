@@ -44,7 +44,9 @@ EVIDENCE = {
     R3: [],
 }
 
-TEST_IMPORT = re.compile(r"^\s*(?:from|import)\s+(rds_\w+)", re.MULTILINE)
+# Any module name: a changed script outside the rds_ prefix (scripts/paid_query.py) needs
+# a mapped test too, and an rds_-only pattern could never find one.
+TEST_IMPORT = re.compile(r"^\s*(?:from|import)\s+(\w+)", re.MULTILINE)
 
 
 def git(root, *args):
