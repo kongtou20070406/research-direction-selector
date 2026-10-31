@@ -37,7 +37,10 @@ Global `--version` reports the installed version; `--help` lists the installed c
 
 | Command | Purpose | Inputs and prerequisites | Guide |
 | --- | --- | --- | --- |
-| `note`, `nudge`, `map` | Record research facts, review reminders and export an offline map | Project root; answers require a later observation | [Research notes](research-notes.md) |
+| `note` | Record a research fact | Project root and note details | [Research notes](research-notes.md) |
+| `nudge answer` | Answer a reminder | Reminder key and later observation reference | [Research notes](research-notes.md) |
+| `nudge dismiss` | Dismiss a reminder | Reminder key and reason | [Research notes](research-notes.md) |
+| `map` | Export an offline research map | Project root and output path | [Research notes](research-notes.md) |
 | `advise` | Review evidence and propose a next decision | Policy-bound projects use the frozen policy and owned graph, without caller context/graph/choice overrides; legacy modes below accept sourced inputs | [Owned Advisor](program-owned-advisor.md), [Agent entry](agent-entry.md), [Advisor design](advisor-graph-design.md) |
 | `artifacts import` | Import original records with field-level provenance | `--manifest` binding source files, hashes, identities and selectors; observations do not certify mechanisms | [Evidence import](development-loop.md) |
 | `hypergraph` | Maintain and inspect bounded AND/OR dependencies | Initial `--input`, saved map, or bounded `--update`/`--declare`; retract/refute flags, `--trace-cone`, `--audit-files`, `--audit-receipts` are available | [TMS](truth-maintenance.md), [Evidence binding](hypergraph-evidence.md) |

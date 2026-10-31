@@ -303,17 +303,6 @@ def respond(payload, host):
     """
     if host not in {"claude", "codex", "omp"} or not isinstance(payload, dict):
         return None
-    cwd = payload.get('cwd')
-    if isinstance(cwd, str) and cwd and not cwd.startswith(('\\\\', '//')):
-        root = Path(cwd)
-        database = root / '.rds' / 'project.sqlite3'
-        if root.is_absolute() and database.is_file():
-            try:
-                with closing(_sqlite_connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=1.0)) as db:
-                    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
-                        return None
-            except (OSError, sqlite3.Error):
-                return None
     event = payload.get("hook_event_name")
     if event == "SessionStart":
         # Claude Code and Codex only. OMP has no verified operator-visible

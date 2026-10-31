@@ -55,14 +55,14 @@ Rules:
 
 | Rule | Fires when | Asks |
 |---|---|---|
-| `expect_mismatch` | An `observe` with the same metric as an earlier `expect` differs by more than its tolerance | Which premise does this deviation shake? |
+| `expect_mismatch` | An `observe` differs by more than the tolerance of the latest preceding `expect` for the same metric; missing value or tolerance remains unknown | Which premise does this deviation shake? |
 | `repeat_route` | At least `repeat` consecutive attempts on the same route fail; the key uses the first attempt in that failure run. Success or another route starts a new run | What have these attempts all kept fixed? |
 | `unbound_claim` | A `claim` has no `ref` to an `observe` or `attempt` | Which measurement could refute it? |
-| `proxy_metric` | A goal names a metric and the last `proxy` observes used a different one | Is this optimum still optimal on the goal metric? |
-| `scale_gap` | A goal names a scale and an `observe` has a different scale | Does the ranking hold at the goal scale? |
+| `proxy_metric` | After the latest goal naming a metric, at least `proxy` consecutive observes use a different metric; the key uses the first observe in the current run | Is this optimum still optimal on the goal metric? |
+| `scale_gap` | An `observe` after the latest goal naming a scale has a different scale | Does the ranking hold at the goal scale? |
 | `flat_reading` | The last `flat` observes on one metric stay within the tolerance of their matching `expect`; overlapping flat windows share the first observation's key | What can this reading still distinguish? |
 | `aggregate` | An `observe` has `aggregate` true | What did the aggregation cancel? |
-| `endpoint_unchecked` | A goal exists, at least `endpoint` observes are recorded and none has `endpoint` true | What does the system finally output? |
+| `endpoint_unchecked` | After the latest goal, at least `endpoint` observes are recorded and none has `endpoint` true | What does the system finally output? |
 | `unsourced_constraint` | A `constraint` has a `source` other than `user` or `doc` | Who required it, and what happens without it? |
 | `missing_goal` | At least three attempts exist and no goal is recorded; lowest priority | What are the goal and expected result? |
 

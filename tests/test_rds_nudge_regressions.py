@@ -109,7 +109,7 @@ class Regressions(unittest.TestCase):
         with closing(sqlite3.connect(dbpath)) as db, db:
             db.execute('CREATE TABLE foreign_data (x)')
         self.assertEqual(self.run_hook().stdout, '')
-        self.assertEqual(self.run_hook(command='python "{}" status'.format(ROOT / 'scripts/rds_cli.py')).stdout, '')
+        self.assertIn('RDS | status', self.run_hook(command='python "{}" status'.format(ROOT / 'scripts/rds_cli.py')).stdout)
         with self.assertRaises(ValueError):
             rds_notes.append(self.root, 'claim', 'x')
         with closing(sqlite3.connect(dbpath)) as db:
@@ -120,7 +120,7 @@ class Regressions(unittest.TestCase):
         dbpath.parent.mkdir()
         sqlite3.connect(dbpath).close()
         self.assertEqual(self.run_hook().stdout, '')
-        self.assertEqual(self.run_hook(command='python "{}" status'.format(ROOT / 'scripts/rds_cli.py')).stdout, '')
+        self.assertIn('RDS | status', self.run_hook(command='python "{}" status'.format(ROOT / 'scripts/rds_cli.py')).stdout)
         with closing(sqlite3.connect(dbpath)) as db:
             self.assertEqual(db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(), [])
 
