@@ -66,6 +66,11 @@ ON applicable research request:
             RETAIN registered-tool read-only receipt checks; public new qualification is refused
         NOTE: binding guards RDS entry points, not arbitrary host code or the whole operating system
         NEVER use a child directory or exec TO bypass an existing parent project
+        RECORD the goal with note goal and the expected measurement with note expect before a run
+        RECORD the measured result with note observe after the run
+        ON a reminder: record a later observation and use nudge answer <key> --ref <note-id>,
+            or use nudge dismiss <key> --reason <reason> when it does not apply
+
 
     INPUT := user request + current project evidence + authorized resources
     INFER goal, acceptance, evidence, budget FROM INPUT; NEVER invent them

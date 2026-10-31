@@ -12,6 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import build_plugins
+import rds_conversation_hook
 
 
 class PluginPackageTests(unittest.TestCase):
@@ -113,7 +114,62 @@ class PluginPackageTests(unittest.TestCase):
         self.assertEqual(manifest["name"], build_plugins.NAME)
         self.assertTrue((plugin / manifest["skills"] / build_plugins.NAME / "SKILL.md").is_file())
         hooks = json.loads((plugin / manifest["hooks"]).read_text(encoding="utf-8"))
-        self.assertEqual(set(hooks["hooks"]), {"SessionStart", "PreToolUse", "PostToolUse"})
+        self.assertEqual(set(hooks["hooks"]), {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse"})
+        self.assertIsNone(rds_conversation_hook.respond({'hook_event_name': 'UserPromptSubmit'}, 'codex'))
+
+    def test_omp_reminder_events(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('node unavailable')
+        code = r'''
+import assert from 'node:assert/strict';
+import {createRdsStatusExtension} from './integrations/omp/rds-status.mjs';
+const handlers = new Map(), calls = [];
+const ctx = {cwd: process.cwd(), hasUI: false};
+createRdsStatusExtension({runHelper: async p => {
+  calls.push(p); return {additionalContext: 'reminder'};
+}})({on: (name, fn) => handlers.set(name, fn)});
+const event = {toolName:'bash', toolCallId:'a', input:{command:'python -m train --private'},
+  content:[{type:'text',text:'private output'}], details:{exitCode:2}, isError:true};
+const [first, duplicate] = await Promise.all([handlers.get('tool_result')(event, ctx), handlers.get('tool_result')(event, ctx)]);
+assert.deepEqual(first, {additionalContext:'reminder'}); assert.equal(duplicate, undefined);
+assert.equal(calls.length, 1); assert.equal(calls[0].tool_response.exitCode, 2);
+assert.equal(calls[0].tool_response.isError, true); assert.ok(!JSON.stringify(calls).includes('private output'));
+assert.equal(await handlers.get('tool_result')({...event, toolName:'read', toolCallId:'b'}, ctx), undefined);
+const prompt = await handlers.get('before_agent_start')({prompt:'private prompt'}, ctx);
+assert.deepEqual(prompt.message, {customType:'rds-reminder', content:'reminder', display:false});
+assert.ok(!JSON.stringify(calls).includes('private prompt'));
+'''
+        result = subprocess.run([node, '--input-type=module', '-e', code], cwd=ROOT,
+                                capture_output=True, text=True, encoding='utf-8', timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_omp_real_helper_records_concurrent_results_once(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('node unavailable')
+        import rds_notes
+        with tempfile.TemporaryDirectory() as project:
+            rds_notes.append(project, 'constraint', 'initial', source='user')
+            code = r'''
+import assert from 'node:assert/strict';
+import {createHelperRunner, createRdsStatusExtension} from './integrations/omp/rds-status.mjs';
+const handlers = new Map(), cwd = process.env.RDS_TEST_PROJECT;
+createRdsStatusExtension({runHelper:createHelperRunner({helperPath:process.env.RDS_TEST_HELPER})})
+  ({on:(name, fn) => handlers.set(name, fn)});
+const event = id => ({toolName:'bash',toolCallId:id,input:{command:'python -m train --private'},isError:false});
+const results = await Promise.all(['a','b','c','c'].map(id => handlers.get('tool_result')(event(id), {cwd})));
+assert.ok(results.some(r => r?.additionalContext?.includes('goal')));
+'''
+            env = {**os.environ, 'RDS_PYTHON': sys.executable, 'RDS_TEST_PROJECT': project,
+                   'RDS_TEST_HELPER': str(ROOT / 'scripts' / 'rds_conversation_hook.py')}
+            result = subprocess.run([node, '--input-type=module', '-e', code], cwd=ROOT, env=env,
+                                    capture_output=True, text=True, encoding='utf-8', timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            notes = rds_notes.read(project)
+            self.assertEqual([(n['route'], n['outcome']) for n in notes if n['type'] == 'attempt'],
+                             [('train', 'ok')] * 3)
+            self.assertEqual(len([n for n in notes if n['type'] == 'shown']), 1)
 
     def test_untracked_private_content_does_not_enter_export(self):
         source = self.workspace / "minimal source"

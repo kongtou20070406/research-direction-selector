@@ -40,6 +40,42 @@ class Regressions(unittest.TestCase):
         attempts = [n for n in rds_notes.read(self.root) if n['type'] == 'attempt']
         self.assertEqual([n['outcome'] for n in attempts], ['fail'] * 3)
 
+    def test_repeat_route_run_key_and_answer(self):
+        rds_notes.append(self.root, 'goal', 'goal')
+        keys = []
+        for i in range(10):
+            rds_notes.append(self.root, 'attempt', str(i), route='train.py', outcome='fail')
+            keys.extend(n['key'] for n in rds_nudge.evaluate(rds_notes.read(self.root)) if n['rule'] == 'repeat_route')
+        self.assertEqual(len(set(keys)), 1)
+        first = keys[0]
+        observation = rds_notes.append(self.root, 'observe', 'measured')
+        rds_nudge.answer(self.root, first, observation['id'])
+        rds_notes.append(self.root, 'attempt', 'again', route='train.py', outcome='fail')
+        reminder = next(n for n in rds_nudge.evaluate(rds_notes.read(self.root)) if n['rule'] == 'repeat_route')
+        self.assertEqual((reminder['key'], reminder['status']), (first, 'ANSWERED'))
+        rds_notes.append(self.root, 'attempt', 'success', route='train.py', outcome='ok')
+        for i in range(3):
+            rds_notes.append(self.root, 'attempt', str(i), route='train.py', outcome='fail')
+        reminder = next(n for n in rds_nudge.evaluate(rds_notes.read(self.root)) if n['rule'] == 'repeat_route')
+        self.assertNotEqual(reminder['key'], first)
+        self.assertEqual(reminder['status'], 'OPEN')
+        rds_notes.append(self.root, 'attempt', 'other', route='other.py', outcome='fail')
+        for i in range(3):
+            rds_notes.append(self.root, 'attempt', str(i), route='train.py', outcome='fail')
+        self.assertNotIn(reminder['key'], [n['key'] for n in rds_nudge.evaluate(rds_notes.read(self.root)) if n['rule'] == 'repeat_route'])
+
+    def test_flat_reading_run_key(self):
+        rds_notes.append(self.root, 'expect', 'stable', metric='loss', value=1, tolerance=0.1)
+        keys = []
+        for i in range(6):
+            rds_notes.append(self.root, 'observe', str(i), metric='loss', value=1)
+            keys.extend(n['key'] for n in rds_nudge.evaluate(rds_notes.read(self.root)) if n['rule'] == 'flat_reading')
+        self.assertEqual(len(set(keys)), 1)
+        for value in (2, 2, 2):
+            rds_notes.append(self.root, 'observe', 'changed', metric='loss', value=value)
+        new_key = next(n['key'] for n in rds_nudge.evaluate(rds_notes.read(self.root)) if n['rule'] == 'flat_reading')
+        self.assertNotEqual(new_key, keys[0])
+
     def test_packaged_runpy_hook_with_claude_failure_payload(self):
         rds_notes.append(self.root, 'goal', 'goal')
         plugin = self.root / 'plugin'
@@ -135,12 +171,41 @@ class Regressions(unittest.TestCase):
     def test_interpreter_options_and_script_names(self):
         for command, name in [('python -O -X utf8 -W ignore -B -u dir/a.py', 'a.py'),
                               ('powershell -File dir/a.ps1', 'a.ps1'), ('pwsh -File dir/b.ps1', 'b.ps1'),
-                              ('bash dir/a.sh', 'a.sh'), ('node dir/a.js', 'a.js')]:
+                              ('bash dir/a.sh', 'a.sh'), ('node dir/a.js', 'a.js'),
+                              ('python -m package.module --secret abc', 'package.module'),
+                              ('python -X utf8 -m module x', 'module'), ('pytest -q tests', 'pytest'),
+                              ('uv run python -m train x', 'train'), ('poetry run pytest -q', 'pytest'),
+                              ('uv run custom --secret x', 'uv'), ('npm test -- secret', 'npm test'),
+                              ('pnpm test -- secret', 'pnpm test')]:
             with self.subTest(command=command):
                 payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'hook_event_name': 'PostToolUseFailure'}
                 self.assertEqual(hook._attempt(payload), (name, 'fail'))
-        for command in ('python -m module', 'python -c code', 'python -X utf8 -m module'):
+        for command in ('python -c code', 'python -m', 'npm install secret', 'poetry install'):
             self.assertIsNone(hook._attempt({'tool_name': 'Bash', 'tool_input': {'command': command}, 'hook_event_name': 'PostToolUseFailure'}))
+
+    def test_missing_goal_threshold_priority_and_closure(self):
+        for i in range(2):
+            rds_notes.append(self.root, 'attempt', str(i), route=str(i), outcome='ok')
+        self.assertIsNone(rds_nudge.next_for_host(rds_notes.read(self.root)))
+        rds_notes.append(self.root, 'attempt', 'third', route='third', outcome='ok')
+        reminder = rds_nudge.next_for_host(rds_notes.read(self.root))
+        self.assertEqual(reminder['rule'], 'missing_goal')
+        rds_notes.append(self.root, 'claim', 'unbound')
+        self.assertEqual(rds_nudge.next_for_host(rds_notes.read(self.root))['rule'], 'unbound_claim')
+        rds_notes.append(self.root, 'goal', 'measured goal')
+        self.assertNotIn('missing_goal', [n['rule'] for n in rds_nudge.evaluate(rds_notes.read(self.root))])
+
+    def test_omp_and_codex_reminder_output(self):
+        for _ in range(3):
+            rds_notes.append(self.root, 'attempt', 'trial', route='trial', outcome='ok')
+        payload = {'cwd': str(self.root), 'hook_event_name': 'UserPromptSubmit'}
+        result = hook.respond(payload, 'omp')
+        self.assertIn('goal', result['additionalContext'])
+        self.assertIsNone(hook.respond(payload, 'codex'))
+        for i in range(5):
+            rds_notes.append(self.root, 'attempt', str(i), route=str(i), outcome='ok')
+        result = hook.respond(payload, 'codex')
+        self.assertIn('goal', result['hookSpecificOutput']['additionalContext'])
 
 
 if __name__ == '__main__':

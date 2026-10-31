@@ -53,15 +53,14 @@ def _evaluate(notes):
                     mismatches.append((positions[rows[index]['id']], positions[n['id']], rows[index], n))
     for _, _, expect, obs in sorted(mismatches, key=lambda item: item[:2]):
         add('expect_mismatch', obs, [expect, obs], 'Which premise does this deviation shake, and what measurement would test it?')
-    routes = defaultdict(list)
-    for attempt in attempts:
-        if attempt.get('route'):
-            routes[attempt['route']].append(attempt)
-    last_attempt = attempts[-1] if attempts else None
-    for route, rows in routes.items():
-        recent = rows[-THRESHOLDS['repeat']:]
-        if len(recent) == THRESHOLDS['repeat'] and all(n.get('outcome') == 'fail' for n in recent) and last_attempt.get('route') == route and attempts[-len(recent):] == recent:
-            add('repeat_route', recent[0], recent, 'What have these attempts kept fixed, and what measurement changes it?')
+    if attempts and attempts[-1].get('route') and attempts[-1].get('outcome') == 'fail':
+        route = attempts[-1]['route']
+        start = len(attempts) - 1
+        while start and attempts[start - 1].get('route') == route and attempts[start - 1].get('outcome') == 'fail':
+            start -= 1
+        run = attempts[start:]
+        if len(run) >= THRESHOLDS['repeat']:
+            add('repeat_route', run[0], run[:THRESHOLDS['repeat']], 'What have these attempts kept fixed, and what measurement changes it?')
     for n in notes:
         if n['type'] == 'claim' and not any(by_id.get(ref, {}).get('type') in ('observe', 'attempt') for ref in n.get('ref', [])):
             add('unbound_claim', n, [n], 'Which measurement could refute this claim?')
@@ -98,7 +97,17 @@ def _evaluate(notes):
         if expect.get('tolerance') is None or any(n.get('value') is None for n in recent):
             unknown.append({'rule': 'flat_reading', 'anchor': recent[0]['id'], 'reason': 'missing value or tolerance'})
         elif max(n['value'] for n in recent) - min(n['value'] for n in recent) <= expect['tolerance']:
-            add('flat_reading', recent[0], [expect, *recent], 'What measurement can this reading still distinguish?')
+            first = len(metric_observes[metric]) - THRESHOLDS['flat']
+            expect_positions = [positions[n['id']] for n in rows]
+            while first:
+                window = metric_observes[metric][first - 1:first - 1 + THRESHOLDS['flat']]
+                prior = bisect_left(expect_positions, positions[window[0]['id']])
+                if not prior or rows[prior - 1].get('tolerance') is None or any(n.get('value') is None for n in window):
+                    break
+                if max(n['value'] for n in window) - min(n['value'] for n in window) > rows[prior - 1]['tolerance']:
+                    break
+                first -= 1
+            add('flat_reading', metric_observes[metric][first], [expect, *recent], 'What measurement can this reading still distinguish?')
     for n in observes:
         if n.get('aggregate'):
             add('aggregate', n, [n], 'What did the aggregation cancel, and what measurement reveals it?')
@@ -107,6 +116,8 @@ def _evaluate(notes):
     for n in notes:
         if n['type'] == 'constraint' and n.get('source') not in ('user', 'doc'):
             add('unsourced_constraint', n, [n], 'Who required it, and what measurement changes without it?')
+    if not goals and len(attempts) >= 3:
+        add('missing_goal', attempts[0], attempts[:3], 'What is the goal and expected result? Record them with note goal and note expect.')
     closures = {n.get('key'): n['type'] for n in notes if n['type'] in ('answer', 'dismiss')}
     for candidate in candidates:
         closure = closures.get(candidate['key'])

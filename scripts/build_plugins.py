@@ -59,8 +59,7 @@ def hook_config(host):
                  f"sys.path.insert(0,os.path.dirname(p)); sys.argv=[p,'--host','{host}']; runpy.run_path(p,run_name='__main__')")
     handler = {"type": "command", "command": f'python -B -c "{bootstrap}"', "timeout": 3}
     events = {"SessionStart": [{"hooks": [handler]}]}
-    if host == "claude":
-        events["UserPromptSubmit"] = [{"hooks": [handler]}]
+    events["UserPromptSubmit"] = [{"hooks": [handler]}]
     for event in ["PreToolUse", "PostToolUse"] + (["PostToolUseFailure"] if host == "claude" else []):
         events[event] = [{"matcher": r"^(Bash|bash|PowerShell|exec_command|functions\.exec_command|shell_command)$", "hooks": [handler]}]
     return {"hooks": events}

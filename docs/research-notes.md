@@ -32,8 +32,8 @@ python -B scripts/rds_cli.py --root <project> map --output research-map.html
   `outcome` is `ok`, `fail` or `unknown`; `ref` is a list of note ids; `value` and `tolerance` are numbers.
   An unknown type or field, or text over 2000 characters, raises `ValueError`.
   `answer` requires `key` and `ref`, `dismiss` requires `key` and `reason`.
-- `read(root) -> list[dict]` in ledger order, each with `id` `n<row id>`. It returns `[]` when no ledger
-  exists and never creates anything.
+- `read(root, limit=None) -> list[dict]` in ledger order, each with `id` `n<row id>`. It returns `[]` when no ledger
+  exists and never creates anything. Automatic hook delivery reads at most the latest 2000 notes.
 
 `scripts/rds_nudge.py` (L3). Pure over notes, except `answer` and `dismiss`.
 - `THRESHOLDS = {'repeat': 3, 'flat': 3, 'proxy': 2, 'endpoint': 3, 'reshow_after': 5}`, listed as defaults.
@@ -56,23 +56,20 @@ Rules:
 | Rule | Fires when | Asks |
 |---|---|---|
 | `expect_mismatch` | An `observe` with the same metric as an earlier `expect` differs by more than its tolerance | Which premise does this deviation shake? |
-| `repeat_route` | The last `repeat` attempts on one route all failed, with no attempt on another route after the first | What have these attempts all kept fixed? |
+| `repeat_route` | At least `repeat` consecutive attempts on the same route fail; the key uses the first attempt in that failure run. Success or another route starts a new run | What have these attempts all kept fixed? |
 | `unbound_claim` | A `claim` has no `ref` to an `observe` or `attempt` | Which measurement could refute it? |
 | `proxy_metric` | A goal names a metric and the last `proxy` observes used a different one | Is this optimum still optimal on the goal metric? |
 | `scale_gap` | A goal names a scale and an `observe` has a different scale | Does the ranking hold at the goal scale? |
-| `flat_reading` | The last `flat` observes on one metric stay within the tolerance of their matching `expect` | What can this reading still distinguish? |
+| `flat_reading` | The last `flat` observes on one metric stay within the tolerance of their matching `expect`; overlapping flat windows share the first observation's key | What can this reading still distinguish? |
 | `aggregate` | An `observe` has `aggregate` true | What did the aggregation cancel? |
 | `endpoint_unchecked` | A goal exists, at least `endpoint` observes are recorded and none has `endpoint` true | What does the system finally output? |
 | `unsourced_constraint` | A `constraint` has a `source` other than `user` or `doc` | Who required it, and what happens without it? |
+| `missing_goal` | At least three attempts exist and no goal is recorded; lowest priority | What are the goal and expected result? |
 
 `scripts/rds_conversation_hook.py`. Automatic delivery.
-- On `PostToolUse` and `UserPromptSubmit`, if `cwd/.rds` holds a ledger, it adds one reminder through
-  `hookSpecificOutput.additionalContext` and records a `shown` note with its key.
-- On `PostToolUse` of a shell command that runs a script file, it records an `attempt` with `auto` true,
-  `route` set to the script's file name, and `outcome` from the exit code. Only the file name is stored,
-  never the arguments or the command line.
-- It never creates `.rds`, stays silent on any error, and stays within the existing 3-second timeout.
-- `UserPromptSubmit` is registered for Claude only unless Codex support is verified.
+- Claude Code uses `PostToolUse`, `PostToolUseFailure` and `UserPromptSubmit`; Codex uses `PostToolUse` and `UserPromptSubmit`. OMP delivers on shell results and before agent start. The host receives additional context and a `shown` note records the key.
+- Recognised experiment commands include script files, Python modules, pytest, uv/poetry run and npm/pnpm test. Automatic `attempt` notes store a route name and outcome, never arguments or command output.
+- The hook never creates `.rds`, stays silent on errors, and uses a three-second timeout. Codex hooks require user trust in `/hooks`; real Codex delivery remains unverified.
 
 `scripts/rds_research_map.py` (L4).
 - `graph(notes, nudges) -> {'nodes', 'edges'}`. An edge is either `ref` (declared by a note) or `route`

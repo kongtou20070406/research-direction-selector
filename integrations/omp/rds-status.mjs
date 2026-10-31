@@ -15,8 +15,8 @@ function statusText(value) {
 
 /** Bounded, non-shell subprocess; failures are advisory and never escape to OMP. */
 export function createHelperRunner({ helperPath = HELPER, python = process.env.RDS_PYTHON || "python",
-  spawnProcess = spawn, timeoutMs = 1500 } = {}) {
-  const timeout = Number.isFinite(timeoutMs) ? Math.max(1, Math.min(timeoutMs, 2000)) : 1500;
+  spawnProcess = spawn, timeoutMs = 3000 } = {}) {
+  const timeout = Number.isFinite(timeoutMs) ? Math.max(1, Math.min(timeoutMs, 3000)) : 3000;
   return async (payload) => {
     let input;
     try { input = JSON.stringify(payload); } catch { return undefined; }
@@ -50,7 +50,7 @@ export function createHelperRunner({ helperPath = HELPER, python = process.env.R
           if (code !== 0) return finish();
           try {
             const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-            finish(statusText(value) ? value : undefined);
+            finish(statusText(value) || typeof value?.additionalContext === "string" && value.additionalContext.length <= MAX_OUTPUT ? value : undefined);
           } catch { finish(); }
         });
         child.stdin.end(input, "utf8");
@@ -59,12 +59,12 @@ export function createHelperRunner({ helperPath = HELPER, python = process.env.R
   };
 }
 
-function inputFor(event, ctx) {
+function inputFor(event, ctx, allShell = false) {
   if (event?.toolName !== "bash" || typeof event.toolCallId !== "string"
     || !event.toolCallId || event.toolCallId.length > 256) return undefined;
   const args = event.args;
   if (!args || typeof args.command !== "string" || args.command.length > 16384
-    || !args.command.toLowerCase().includes("rds_cli.py")) return undefined;
+    || !allShell && !args.command.toLowerCase().includes("rds_cli.py")) return undefined;
   if (args.cwd !== undefined && args.workdir !== undefined && args.cwd !== args.workdir) return undefined;
   let cwd = args.cwd ?? args.workdir ?? ctx?.cwd;
   if (typeof cwd !== "string" || !cwd || cwd.length > 4096) return undefined;
@@ -80,7 +80,7 @@ function inputFor(event, ctx) {
 function resultFor(event) {
   const response = {};
   // OMP carries tool metadata in result.details; content/stdout are never read.
-  for (const source of [event.result, event.result?.details]) {
+  for (const source of [event.result, event.result?.details, event.details]) {
     if (!source || typeof source !== "object") continue;
     for (const key of ["exitCode", "exit_code"]) {
       if (Number.isInteger(source[key])) {
@@ -102,6 +102,13 @@ export function createRdsStatusExtension({ runHelper = createHelperRunner() } = 
   return function rdsStatus(pi) {
     const calls = new Map();
     let epoch = 0, sequence = 0, completion = 0, lastFinished, lastContext;
+    const seen = new Set();
+    let queue = Promise.resolve();
+    const schedule = (work) => {
+      const result = queue.then(work, work);
+      queue = result.catch(() => {});
+      return result.catch(() => undefined);
+    };
     const set = (ctx, text) => {
       if (!ctx || ctx.hasUI === false) return;
       try { ctx.ui?.setStatus("rds", text); } catch { /* A footer cannot fail a tool. */ }
@@ -116,6 +123,7 @@ export function createRdsStatusExtension({ runHelper = createHelperRunner() } = 
     const reset = (_event, ctx) => {
       epoch++;
       calls.clear();
+      seen.clear();
       lastFinished = undefined;
       if (lastContext !== ctx) set(lastContext, undefined);
       lastContext = ctx;
@@ -145,13 +153,37 @@ export function createRdsStatusExtension({ runHelper = createHelperRunner() } = 
       const recognized = await call.pre;
       if (call.epoch !== epoch || calls.get(event.toolCallId) !== call) return;
       const status = recognized ? await invoke({ ...call.input, hook_event_name: "PostToolUse",
-        tool_response: resultFor(event) }) : undefined;
+        tool_response: resultFor(event), rds_status_only: true }) : undefined;
       if (call.epoch !== epoch || calls.get(event.toolCallId) !== call) return;
       calls.delete(event.toolCallId);
       if (recognized && (!lastFinished || call.completion > lastFinished.order)) {
         lastFinished = { order: call.completion, text: status };
       }
       render(ctx);
+    });
+    pi.on("tool_result", (event, ctx) => {
+      const input = inputFor({ ...event, args: event.input }, ctx, true);
+      if (!input || seen.has(event.toolCallId)) return;
+      seen.add(event.toolCallId);
+      const current = epoch;
+      return schedule(async () => {
+        if (current !== epoch) return;
+        const response = resultFor(event);
+        if (event.isError === false && response.exitCode === undefined && response.exit_code === undefined) response.exitCode = 0;
+        const output = await runHelper({ ...input, hook_event_name: "PostToolUse", tool_response: response });
+        if (current === epoch && typeof output?.additionalContext === "string" && output.additionalContext.trim())
+          return { additionalContext: output.additionalContext };
+      });
+    });
+    pi.on("before_agent_start", (_event, ctx) => {
+      if (typeof ctx?.cwd !== "string" || !isAbsolute(ctx.cwd)) return;
+      const current = epoch;
+      return schedule(async () => {
+        if (current !== epoch) return;
+        const output = await runHelper({ cwd: ctx.cwd, hook_event_name: "UserPromptSubmit" });
+        if (current === epoch && typeof output?.additionalContext === "string" && output.additionalContext.trim())
+          return { message: { customType: "rds-reminder", content: output.additionalContext, display: false } };
+      });
     });
     for (const event of ["session_start", "session_switch", "session_shutdown", "agent_end"]) pi.on(event, reset);
   };

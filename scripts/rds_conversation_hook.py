@@ -182,10 +182,26 @@ def _attempt(payload):
     executable = args[0].replace("\\", "/").rsplit("/", 1)[-1]
     if re.fullmatch(r"(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?", executable, re.I):
         index = _python_script_index(args)
-        if index >= len(args) or args[index].startswith("-"):
+        if index >= len(args):
             return None
-        script = args[index]
-        if not script.lower().endswith((".py", ".pyw")):
+        if args[index] == '-m':
+            if index + 1 >= len(args) or not re.fullmatch(r'[A-Za-z_][\w.]*(?<!\.)', args[index + 1]):
+                return None
+            script = args[index + 1]
+        else:
+            script = args[index]
+            if script.startswith('-') or not script.lower().endswith(('.py', '.pyw')):
+                return None
+    elif re.fullmatch(r'(?:pytest|uv|poetry|npm|pnpm)(?:\.exe)?', executable, re.I):
+        name = executable.lower().removesuffix('.exe')
+        if name == 'pytest':
+            script = name
+        elif len(args) >= 3 and args[1] == 'run' and name in {'uv', 'poetry'}:
+            nested = dict(payload, tool_input={'argv': args[2:]})
+            return _attempt(nested) or (name, {'returned': 'ok', 'nonzero exit': 'fail', 'error': 'fail'}.get(_result_status(payload), 'unknown'))
+        elif len(args) >= 2 and args[1] == 'test' and name in {'npm', 'pnpm'}:
+            script = name + ' test'
+        else:
             return None
     elif re.fullmatch(r'(?:powershell|pwsh)(?:\.exe)?', executable, re.I):
         if len(args) < 3 or args[1].lower() != '-file':
@@ -251,6 +267,8 @@ def _reminder(payload):
 
 
 def _with_reminder(payload, host, output):
+    if payload.get('rds_status_only') is True:
+        return output
     if payload.get("hook_event_name") not in {"PostToolUse", "PostToolUseFailure", "UserPromptSubmit"}:
         return output
     try:
@@ -266,6 +284,8 @@ def _with_reminder(payload, host, output):
     if not text:
         return output
     if output is None:
+        if host == 'omp':
+            return {'additionalContext': text}
         return {"hookSpecificOutput": {"hookEventName": payload["hook_event_name"], "additionalContext": text}}
     if host == "omp":
         output["additionalContext"] += "\n" + text
