@@ -1540,6 +1540,27 @@ def parser():
     for child in workspace_actions.choices.values():
         child.add_argument("--json", action="store_true")
 
+    note = commands.add_parser('note', help='Record a research fact')
+    note.add_argument('note_type', choices=('goal', 'expect', 'observe', 'attempt', 'claim', 'constraint'))
+    note.add_argument('text')
+    for name in ('route', 'outcome', 'metric', 'scale', 'source'):
+        note.add_argument('--' + name)
+    for name in ('value', 'tolerance'):
+        note.add_argument('--' + name, type=float)
+    note.add_argument('--ref', action='append')
+    note.add_argument('--aggregate', action='store_true', default=None)
+    note.add_argument('--endpoint', action='store_true', default=None)
+    nudge = commands.add_parser('nudge', help='Inspect or close research reminders')
+    nudge_actions = nudge.add_subparsers(dest='action')
+    answer = nudge_actions.add_parser('answer')
+    answer.add_argument('key')
+    answer.add_argument('--ref', required=True, action='append')
+    dismiss = nudge_actions.add_parser('dismiss')
+    dismiss.add_argument('key')
+    dismiss.add_argument('--reason', required=True)
+    research_map = commands.add_parser('map', help='Export an offline research map')
+    research_map.add_argument('--output', required=True)
+
     checkpoints = commands.add_parser("checkpoint", help="Record decisions and recover against live project state")
     cp_actions = checkpoints.add_subparsers(dest="action", required=True)
     for action in ("save", "restore"):
@@ -1873,6 +1894,30 @@ def _main():
                 result = bind_workspace(args.root)
             else:
                 result = workspace_coverage(args.root)
+        elif args.command == 'note':
+            import rds_notes
+            fields = {name: getattr(args, name) for name in ('route', 'outcome', 'metric', 'value', 'tolerance', 'scale', 'ref', 'aggregate', 'endpoint', 'source') if getattr(args, name) is not None}
+            result = rds_notes.append(args.root, args.note_type, args.text, **fields)
+        elif args.command == 'nudge':
+            import rds_notes, rds_nudge
+            if args.action == 'answer':
+                result = rds_nudge.answer(args.root, args.key, args.ref)
+            elif args.action == 'dismiss':
+                result = rds_nudge.dismiss(args.root, args.key, args.reason)
+            else:
+                result = rds_nudge.status(rds_notes.read(args.root))
+        elif args.command == 'map':
+            import rds_notes, rds_nudge, rds_research_map
+            from rds_hypergraph_view import write_html_atomic
+            output = Path(args.output)
+            resolved = output.resolve()
+            require(not resolved.is_relative_to((Path(args.root) / '.rds').resolve()), 'Map output cannot be inside .rds')
+            if output.is_file():
+                with output.open('rb') as stream:
+                    require(stream.read(16) != b'SQLite format 3\x00', 'Map output cannot overwrite a SQLite database')
+            notes = rds_notes.read(args.root)
+            write_html_atomic(output, rds_research_map.render(notes, rds_nudge.evaluate(notes)))
+            result = {'output': str(output)}
         elif args.command == "checkpoint":
             result = cmd_checkpoint(args, rds)
         elif args.command == "artifacts":

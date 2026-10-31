@@ -35,6 +35,9 @@ GROUPS = {
 LAYERS = {"rds_" + name: layer for layer, names in GROUPS.items() for name in names.split()}
 LAYERS.update(build_plugins="L4", update_lean_toolchain="L4")
 LAYERS.update(
+    rds_notes="L1",
+    rds_nudge="L3",
+    rds_research_map="L4",
     rds_autonomy_read="L1",
     rds_autonomy_admission="L1",
     rds_lean_catalog="L1",

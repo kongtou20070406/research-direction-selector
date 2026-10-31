@@ -221,6 +221,7 @@ only the detail needed for the current decision.
 
 | Trigger | Command | Detail |
 | --- | --- | --- |
+| Record research facts and review reminders | `note`, `nudge`, `nudge answer\|dismiss`, `map --output <html>` | [Research notes](docs/research-notes.md) |
 | First plain-language request | Follow [quick start](docs/quickstart.md): copyable prompts, first project, `[RDS-REJECT]` recovery | [Project runner](examples/project-runner/README.md) |
 | First inspectable plan | `project plan [--intent <intent.json>] [--save-as <checkpoint-id>]` | [Plan procedure](references/skill-routes/planning-steering.md#retained-context-plan) |
 | Every experiment or continuation | `project discover`; reuse returned `project_root` and register runs there | [Project lifecycle](docs/project-lifecycle.md) |
