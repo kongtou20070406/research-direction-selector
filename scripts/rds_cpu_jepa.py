@@ -531,6 +531,10 @@ class LatentCodeDiffJEPA:
         self.W_P, self.b_P = self._init_transition_predictor(transition_weights)
         self.W_score = self._init_score_head()
         self.W_cost = self._init_cost_head()
+        self.W_score_action = [0.0] * ACTION_DIM
+        self.W_cost_action = [0.0] * ACTION_DIM
+        self.b_score, self.b_cost = 0.5, 1.0
+        self._linear_transition = False
 
     @staticmethod
     def _init_state_encoder(weights=None):
@@ -675,7 +679,9 @@ class LatentCodeDiffJEPA:
         """P(z_before, u) -> z_hat_after in R^16."""
         zu = list(z_before) + list(u)
         delta_raw = _mat_vec_mul(self.W_P, zu)
-        delta_z = [math.tanh(delta_raw[i] + self.b_P[i]) for i in range(LATENT_DIM)]
+        delta_z = [delta_raw[i] + self.b_P[i] for i in range(LATENT_DIM)]
+        if not self._linear_transition:
+            delta_z = [math.tanh(value) for value in delta_z]
         z_hat_after = [z_before[i] + delta_z[i] for i in range(LATENT_DIM)]
         return z_hat_after
 
@@ -695,14 +701,14 @@ class LatentCodeDiffJEPA:
 
         # Readout score & cost
         sig = diff["obligation_signals"]
-        raw_score = 0.50 + _dot(self.W_score, z_hat_after)
+        raw_score = self.b_score + _dot(self.W_score, z_hat_after) + _dot(self.W_score_action, u)
         if sig["control_modified"]:
             raw_score -= 0.40
         if sig["signature_changed"]:
             raw_score -= 0.20
         score = round(max(0.0, min(1.0, raw_score)), 6)
 
-        raw_cost = 1.0 + _dot(self.W_cost, z_hat_after)
+        raw_cost = self.b_cost + _dot(self.W_cost, z_hat_after) + _dot(self.W_cost_action, u)
         cost = round(max(0.01, raw_cost), 4)
 
         # Epistemic uncertainty detection: base + latent error + structural indicators
@@ -751,7 +757,6 @@ class LatentCodeDiffJEPA:
         """Fit transition operator and readout heads on empirical transition records."""
         ZU = []
         DeltaZ = []
-        ZHat = []
         Targets = []
 
         for raw in records:
@@ -760,15 +765,17 @@ class LatentCodeDiffJEPA:
                 continue
             _code_only(r["parameters"])
             z_b, _ = self.encode_state(r["before_state"], r["base_code"])
-            u, _ = self.encode_action(r["base_code"], r["candidate_code"])
-            z_a, _ = self.encode_state(r["after_state"] or r["before_state"], r["candidate_code"])
+            u, diff = self.encode_action(r["base_code"], r["candidate_code"])
+            # Structural target is available before execution; outcomes are labels only.
+            z_a, _ = self.encode_state(r["before_state"], r["candidate_code"])
 
             zu = list(z_b) + list(u)
             delta = [z_a[i] - z_b[i] for i in range(LATENT_DIM)]
             ZU.append(zu)
             DeltaZ.append(delta)
-            ZHat.append(z_a)
-            Targets.append([r["outcome_score"], r["cost"]])
+            sig = diff["obligation_signals"]
+            penalty = 0.4 * sig["control_modified"] + 0.2 * sig["signature_changed"]
+            Targets.append([r["outcome_score"] + penalty, r["cost"]])
 
         if not ZU:
             return self
@@ -777,11 +784,18 @@ class LatentCodeDiffJEPA:
         # (len(ZU) x 32) -> W_P (16 x 32)
         W_P_sol = _ridge_fit(ZU, DeltaZ, l2_reg=l2_reg)
         self.W_P = _transpose(W_P_sol)
+        self.b_P = [0.0] * LATENT_DIM
+        self._linear_transition = True
 
-        # Fit readout heads: Targets ~ ZHat
+        # Train on the same predicted latents used at inference, with an intercept.
+        # Keep action conditioning: numeric-only edits can have identical structural targets.
+        ZHat = [self.predict_latent(zu[:LATENT_DIM], zu[LATENT_DIM:]) + zu[LATENT_DIM:] + [1.0] for zu in ZU]
         W_readout = _ridge_fit(ZHat, Targets, l2_reg=l2_reg)
-        self.W_score = [row[0] for row in W_readout]
-        self.W_cost = [row[1] for row in W_readout]
+        self.W_score = [row[0] for row in W_readout[:LATENT_DIM]]
+        self.W_cost = [row[1] for row in W_readout[:LATENT_DIM]]
+        self.W_score_action = [row[0] for row in W_readout[LATENT_DIM:-1]]
+        self.W_cost_action = [row[1] for row in W_readout[LATENT_DIM:-1]]
+        self.b_score, self.b_cost = W_readout[-1]
         return self
 
 
