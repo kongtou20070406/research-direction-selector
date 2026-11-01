@@ -4,7 +4,7 @@ Change: `docs/research-notes.md`. No claim that reminders improve research is ma
 `scientific_support` stays UNKNOWN.
 
 Why this shape
-- A replay pilot (`replay-pilot-result-2026-10-31.md`, on `feat/jumpbench`) found general text prompts gave no
+- A replay pilot (result kept outside this release; it draws on private sessions) found general text prompts gave no
   useful gain: bare 8%, RDS skill text 14%, expectation prompt 14%, always-doubt 14%.
 - A bounded literature scan found no direct comparison of state-triggered and periodic reflection. Nearest
   support: Kulkarni & Simon 1990 (surprise against recorded expectation), Huang et al. 2024 (self-correction
@@ -24,4 +24,8 @@ Checks, all rerun by the maintainer's orchestrator, not reported by the worker
 Not established
 - Whether a reminder changes what an agent does. In one uncontrolled real run the agent chose to stop rerunning,
   and it did not close the reminder. That is one anecdote with no sham arm.
-- Codex: `UserPromptSubmit` is not registered and real delivery was not tried.
+- Codex: hooks are registered, but real delivery was not verified.
+
+Later result
+- A preregistered jumpbench comparison missed its rule: `docs/jumpbench/nudge-result-2026-11-01.md`. Its counts
+  above predate later fixes; the current numbers are in `docs/releases/6.2.0.md`.

@@ -118,7 +118,7 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 闭环为 **研究目标 → 假说与候选路线 → Advisor 审阅或选择 → 受约束执行 → 证据 → 继续、修订问题或停止**。已授权修订沿用同一研究状态与资源核算；新提案不会重置已花费预算，也不能自行验证自身。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
-最新已发布稳定版为 [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0)。本 checkout 的版本标识为 `6.0.0`（尚待发布，见 [6.0.0 说明](docs/releases/6.0.0.md)）。6.0.0 新增 **Compass**：一份声明编译为内核合约，`project drive --compass` 无人值守地完成 EIG 选实验 → 盆地逃逸（探测、溯因跳跃、目标绑定 RSI）→ 精确 / Lean / 证书验证 → 哈希绑定报告；测量保持 `INPUT_REPORTED`，`scientific_support` 保持 `UNKNOWN`。见 [Compass](docs/compass.md)、[多陷阱基准](benchmark/compass/README.md)，科研能力主张的验证方案见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
+最新已发布稳定版为 [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0)。本 checkout 的版本标识为 `6.2.0`（尚待发布，见 [6.0.0 说明](docs/releases/6.0.0.md)）。6.0.0 新增 **Compass**：一份声明编译为内核合约，`project drive --compass` 无人值守地完成 EIG 选实验 → 盆地逃逸（探测、溯因跳跃、目标绑定 RSI）→ 精确 / Lean / 证书验证 → 哈希绑定报告；测量保持 `INPUT_REPORTED`，`scientific_support` 保持 `UNKNOWN`。见 [Compass](docs/compass.md)、[多陷阱基准](benchmark/compass/README.md)，科研能力主张的验证方案见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
 ---
 

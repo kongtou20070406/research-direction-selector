@@ -31,7 +31,7 @@ from rds_reference_values import (
 )
 from rds_state import RDSState
 
-VERSION = "6.0.0"
+VERSION = "6.2.0"
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",
                "final_run_authorized", "matched_recipe", "matched_compute"}
 
