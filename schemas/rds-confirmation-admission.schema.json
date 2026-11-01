@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rds-confirmation-admission.schema.json",
+  "title": "Prepared confirmation audit representation, not an executable request",
+  "description": "Read-only audit of native prepared data. No user JSON decoder or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "contract_sha256", "existing", "event_json", "fence"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 80},
+    "contract_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "existing": {"type": "boolean"},
+    "event_json": {"type": "string", "minLength": 1},
+    "fence": {"$ref": "rds-admission-read.schema.json"}
+  }
+}

@@ -1,0 +1,16 @@
+{
+ "contaminated": false,
+ "hits": [],
+ "usage": {
+  "input_tokens": 30466,
+  "cached_input_tokens": 14592,
+  "cache_write_input_tokens": 0,
+  "output_tokens": 741,
+  "reasoning_output_tokens": 516
+ },
+ "commands": 1,
+ "events_sha256": "9435d21449156e2e6a7ebbef23220d4814f101a51bd0cf6fe55320ccb6e474ea",
+ "exit_code": 0,
+ "wall_seconds": 27.4,
+ "packet_sha256": "bfb419c1e24b0fb10fa9cb5799495ed7dc7c9ebf86cbd465363d7ee58ecc599b"
+}

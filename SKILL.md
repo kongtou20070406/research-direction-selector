@@ -2,13 +2,20 @@
 name: research-direction-selector
 description: Collaborate with researchers through proactive discussion and choose or audit theoretical or empirical next steps using scoped evidence, budgets and authorized execution. Supports proof obligations, experiment comparisons, native research records and read-only hypergraph pages with readable explanations; domain-specific solvers and scientific evidence are still required.
 metadata:
-  version: v6.0.0-rc.1
-  engine: rds-cli-v6.0
+  version: v6.2.0
+  engine: rds-cli-v6.2
 ---
 
 # Research Direction Selector
 
 Agent pseudocode; not an executable language or a new kernel contract.
+
+The ordinary interaction is a research conversation: question -> discriminating
+test -> interpretation of actual results -> next action. Explain why the next
+test can change the decision, then continue within the granted scope. Use
+connected prose by default, not status cards, numbered menus, hashes or CLI
+dumps. Show plots and original evidence links when useful; do not require the
+researcher to operate the CLI. Fixed tasks need no invented rival experiment.
 
 Pass the intended `--root` for usage logging; explicit `RDS_USAGE_DB` is authoritative.
 Automatic fallback uses `<project_root>/.rds/usage/cli-usage.sqlite3` when default
@@ -17,6 +24,15 @@ For degraded logging or configuration, read [usage logging](docs/cli-usage.md).
 
 ```text
 DISCOVER: name + description
+ON an open research task (the ordinary route):
+    READ docs/open-task.md
+    READ ONLY the current compass status card
+    ANSWER its question in plain language before any tool or MCP call
+    USE outside tools freely after that answer
+    RECORD one trial or conflict with compass record; do not paste the ledger
+    STOP when the card says STOP
+    DO NOT load the discovery loop below unless the declaration is IDENTIFY_LAW or IMPROVE
+
 ON applicable research request:
     LOAD this SKILL.md
     skill_dir := directory containing this file
@@ -50,6 +66,11 @@ ON applicable research request:
             RETAIN registered-tool read-only receipt checks; public new qualification is refused
         NOTE: binding guards RDS entry points, not arbitrary host code or the whole operating system
         NEVER use a child directory or exec TO bypass an existing parent project
+        RECORD the goal with note goal and the expected measurement with note expect before a run
+        RECORD the measured result with note observe after the run
+        ON a reminder: record a later observation and use nudge answer <key> --ref <note-id>,
+            or use nudge dismiss <key> --reason <reason> when it does not apply
+
 
     INPUT := user request + current project evidence + authorized resources
     INFER goal, acceptance, evidence, budget FROM INPUT; NEVER invent them
@@ -65,8 +86,19 @@ ON applicable research request:
         DO NOT require a CLI call, unchanged status recap, question or confirmation each conversation turn
         EXPLORE host-generated explanations as unverified proposals, distinct from frozen action declarations
         DISTINGUISH user questions from instructions; discussion or silence grants no new authority
+        INTERPRET actual negative, failed and conflicting results with their scope and uncertainty
+        NEVER invent observations, receipts, performance or scientific benefit to complete the story
+        KEEP a human rejection scoped to its actual reason; no checked witness means no counterexample
+        REVISIT rejected routes only when relevant evidence, goal or conditions change
         AFTER current-user steering: explain its actual receipt and continuation consequences in ordinary language
         KEEP this conversation in the host; the CLI supplies records, not an autonomous conversation service
+    ON natural-language continuation:
+        RESOLVE the intended project, goal and original attempt from current evidence
+        INHERIT only existing write scope, method, budget and assurance; "continue" grants no new authority
+        IF ambiguous or paused: READ references/skill-routes/planning-steering.md#natural-language-continuation
+        NEVER silently clear pause, withdrawal or preference with project steer kind=resume
+        RECONCILE unresolved original work before dispatch; recover collection without repeating completed work
+        CONTINUE admitted work; explain and ask only for material uninferable goal/method/resource changes
     ON a new task, fresh Agent, or changed direction:
         FORM the first inspectable plan BEFORE loading unrelated representations
         WHEN retained decision context is needed, use the planning section of
@@ -97,16 +129,17 @@ ON applicable research request:
         CHECK CLI <command path> --help (or the documented helper's --help)
         USE only the capability needed for this task; DO NOT run the whole catalog
 
-    IF a new goal-driven campaign has no discovered project OR an existing QUICK project needs owned Advisor:
-        READ references/skill-routes/campaign-setup.md for the matching setup operation
+    IF a new goal-driven campaign has no discovered project:
+        READ references/skill-routes/campaign-setup.md#new-campaign-after-discovery
         DEFAULT new campaigns TO FULL with explicit advisor_policy or recipe; QUICK is deliberately limited
         FREEZE actual objective, permitted routes, result readers and budget; retain serious alternatives
             AND their distinguishing observations in advisor_policy; a prose plan is not a recipe
         FULL owns collection/selection; optional autonomy, confirmation and tools need their own declarations
-        IF reusing an existing QUICK project that now needs owned Advisor:
-            PREVIEW Advisor activation and apply only reviewed policy at the expected snapshot
-            KEEP genesis contract, old runs/receipts/checkpoints and cumulative budget in the same ledger
-            NEVER replace the frozen contract or infer extra execution authority from activation
+    IF an existing QUICK project needs owned Advisor:
+        READ references/skill-routes/campaign-setup.md#enable-advisor-in-an-existing-quick-project
+        PREVIEW Advisor activation and apply only reviewed policy at the expected snapshot
+        KEEP genesis contract, old runs/receipts/checkpoints and cumulative budget in the same ledger
+        NEVER replace the frozen contract or infer extra execution authority from activation
     BEFORE any direction selection in FULL or QUICK:
         REQUIRE analysis_coverage.full FOR all declared active direction graphs and current saved TMS
         READ coverage hashes/counts/reasons; incomplete computation blocks selection
@@ -193,6 +226,7 @@ only the detail needed for the current decision.
 
 | Trigger | Command | Detail |
 | --- | --- | --- |
+| Record research facts and review reminders | `note`, `nudge`, `nudge answer\|dismiss`, `map --output <html>` | [Research notes](docs/research-notes.md) |
 | First plain-language request | Follow [quick start](docs/quickstart.md): copyable prompts, first project, `[RDS-REJECT]` recovery | [Project runner](examples/project-runner/README.md) |
 | First inspectable plan | `project plan [--intent <intent.json>] [--save-as <checkpoint-id>]` | [Plan procedure](references/skill-routes/planning-steering.md#retained-context-plan) |
 | Every experiment or continuation | `project discover`; reuse returned `project_root` and register runs there | [Project lifecycle](docs/project-lifecycle.md) |
@@ -208,7 +242,7 @@ only the detail needed for the current decision.
 | Audit evidence | `artifacts import --manifest <manifest.json>` | [Agent entry](docs/agent-entry.md) |
 | Show/open hypergraph or explain a node | `python -B "<skill_dir>/scripts/rds_hypergraph_view.py" --root <user-project> --output <html>`; `--export-agent-input` and `--readable-json <file>` for agent explanations | [Display procedure](references/skill-routes/display.md) |
 | Explore a blocked problem model | `structure request --limit 3`, `structure propose --proposal <reply.json>`, `structure drive --steps 1` | [Structure procedure](references/skill-routes/structure.md) |
-| Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md) |
+| Check mathematical claim | `formal verify --spec <spec.json>`; select a supported tactic when needed | [Formal framework](references/formal_framework.md); missing native tools: [Lean setup](references/skill-routes/lean-setup.md) |
 | Reuse/register local tool | `rsi extract --source <file> --entry <function> --name <id>`; `rsi validate --name <id> --cases <cases.json>`; `rsi register --name <id>` | [Native research](docs/native-research.md) |
 | Read repeated JSON/metric/failure results | Extract a selected `scripts/rds_result_tools.py` function, qualify exact inputs and use the original owned result consumer | [Finite result tools](docs/result-tools.md) |
 | Wrap frozen job | `exec --name <id> --timeout 30 -- <command...>` | [Command wrapper](docs/agent-entry.md#wrap-a-command) |
@@ -233,6 +267,7 @@ returned != sufficient comparison != proof != scientific acceptance
 
 ## Conditional resources
 
+- Human-facing research loop, available routes and planned long-job events: [experiment assistant](docs/experiment-assistant.md)
 - Program-owned collection, route selection, recovery and CPU example: [owned Advisor](docs/program-owned-advisor.md)
 - All public CLI commands, Advisor modes and supported helper entries: [command map](docs/command-map.md)
 - Goal links, method limits, theory/experiment acceptance: [agent entry](docs/agent-entry.md)

@@ -37,6 +37,10 @@ Global `--version` reports the installed version; `--help` lists the installed c
 
 | Command | Purpose | Inputs and prerequisites | Guide |
 | --- | --- | --- | --- |
+| `note` | Record a research fact | Project root and note details | [Research notes](research-notes.md) |
+| `nudge answer` | Answer a reminder | Reminder key and later observation reference | [Research notes](research-notes.md) |
+| `nudge dismiss` | Dismiss a reminder | Reminder key and reason | [Research notes](research-notes.md) |
+| `map` | Export an offline research map | Project root and output path | [Research notes](research-notes.md) |
 | `advise` | Review evidence and propose a next decision | Policy-bound projects use the frozen policy and owned graph, without caller context/graph/choice overrides; legacy modes below accept sourced inputs | [Owned Advisor](program-owned-advisor.md), [Agent entry](agent-entry.md), [Advisor design](advisor-graph-design.md) |
 | `artifacts import` | Import original records with field-level provenance | `--manifest` binding source files, hashes, identities and selectors; observations do not certify mechanisms | [Evidence import](development-loop.md) |
 | `hypergraph` | Maintain and inspect bounded AND/OR dependencies | Initial `--input`, saved map, or bounded `--update`/`--declare`; retract/refute flags, `--trace-cone`, `--audit-files`, `--audit-receipts` are available | [TMS](truth-maintenance.md), [Evidence binding](hypergraph-evidence.md) |
@@ -75,6 +79,26 @@ Global `--version` reports the installed version; `--help` lists the installed c
 | `project control-check` | Check whether a completed control is reusable | `--candidate` receipt and `--current` expected operation/protocol; source and output identity must match | [Control reuse](../examples/project-runner/README.md) |
 | `workspace bind` | Bind this workspace once to its canonical project ledger | Initialized project ledger; idempotent recovery; concurrent binders agree on one identity | [Project runner](development-loop.md) |
 | `workspace coverage` | Report binding coverage and identity match | `UNBOUND` keeps legacy behavior; `MISMATCH` exits 2 and refuses accounting resets | [Project runner](development-loop.md) |
+
+## Compass campaigns (6.0.0)
+
+One declaration compiles into a frozen kernel contract and an unattended loop. Every fact is a hash-chained `COMPASS_*` record over original kernel receipts; `scientific_support` is always `UNKNOWN`. See [Compass](compass.md).
+
+| Command | Behavior | Prerequisite | Guide |
+| --- | --- | --- | --- |
+| `compass init` | Compile `--declaration` into the kernel contract, frozen protocol and Compass plan; undeclared fields stay `UNKNOWN` and controller defaults are listed in `defaulted` | Empty or uninitialized project root; declared experiment argv and files | [Compass declaration](compass.md#declaration) |
+| `compass drive` | Run Advisor decisions, experiments, probes, jumps, RSI and verification until a goal claim, `JUDGMENT_REQUIRED`, `SEARCH_EXHAUSTED`, `STEP_LIMIT`, `CONTROLLER_DEADLINE` or `INTERRUPTED` | Compiled Compass project; optional `--max-steps`, `--wall-seconds`, `--no-tms`; rerun resumes from the recorded head | [Compass](compass.md#interrupts-deadlines-and-resume-207-215) |
+| `compass status` | Fold records and receipts into the current state and next decision | Compiled Compass project | [Compass](compass.md) |
+| `compass decide` | Print the pure Advisor decision for the current head without acting | Compiled Compass project | [Advisor decisions](compass.md#advisor-decisions) |
+| `compass report` | Report receipts, hypotheses, tools, verification and the bound-relative goal claim | Compiled Compass project | [Verification](compass.md#verification) |
+| `compass record` | Append one open-task note: a trial (command route, metric, receipt SHA-256) or a conflict question, labeled `INPUT_REPORTED`. It runs no command and calls no model; a trial on an already recorded route returns `REUSE`, and a stopped card refuses | Compiled Compass project with an `OPEN` goal; `--note` JSON file whose `kind` is `trial` or `conflict` | [Open task](open-task.md) |
+| `compass tools` | List registered, qualified and retracted RSI tools with library provenance and boundary checks | Compiled Compass project | [Goal-bound RSI](compass.md#goal-bound-rsi) |
+| `compass tool synthesize` | Agent-callable primitive: enumerate laws that reproduce every row of the request within its tolerances. It needs no declaration, writes no ledger record and starts no kernel run | `--request` JSON with `rows`, `inputs`, `observable`, `tolerances`; optional `grammar`, `max_nodes`, `max_candidates`, `probes`, `keep` | [Compass](compass.md) |
+| `compass tool rank` | Agent-callable primitive: rank candidate experiments for the request's rival laws by expected information gain per unit cost. Inputs already in `rows` are never ranked again, and it buys nothing | `--request` JSON with `rivals`, `candidates`, `inputs`, `observable`, `tolerances`; optional `rows`, `limit` | [Compass](compass.md) |
+| `compass tool replay` | Agent-callable primitive: replay one law cell by cell against the request's rows, keeping counterexamples | `--request` JSON with `law`, `rows`, `inputs`, `observable`, `tolerances` | [Compass](compass.md) |
+| `compass tool holdout` | Replay a ledger hypothesis against named measured observations, using the declared tolerances and rechecking their receipts. It refuses stale evidence, an unknown hypothesis and an unmeasured ID | Compiled Compass project; `--request` JSON with `root`, `hypothesis_id`, `measurement_ids`, `observable`, `tolerances` | [Compass](compass.md) |
+| `project init --declaration` | Front door for `compass init` | Same as `compass init` | [Compass](compass.md#declaration) |
+| `project drive --compass` | Front door for `compass drive` | Same as `compass drive` | [Compass](compass.md) |
 
 FULL and QUICK are workflow modes, shown by the stderr `[RDS]` banner and
 nonhashed `workflow` metadata with available capabilities. FULL does not enable

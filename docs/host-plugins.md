@@ -73,6 +73,26 @@ concurrent calls and session changes do not leave an old “running” indicatio
 It uses Python only for the shared bounded invocation recognizer; `RDS_PYTHON`
 can select a Python executable if `python` is not on the host's PATH.
 
+OMP also handles `tool_result` for bash and `before_agent_start` for reminders.
+The result handler supplies `additionalContext`; before a prompt the extension
+supplies a hidden custom message. Exit status comes from structured details or
+`isError`. Calls are serialized and deduplicated by tool call ID; the footer's
+completion check is read-only. Helper failures are silent and the timeout is
+three seconds. The project must already contain a valid `.rds` ledger.
+
+Claude Code and OMP reminder delivery passed real host trials. Codex has package
+and protocol tests only; real delivery has not been verified. Codex registers
+`UserPromptSubmit` and shell `PostToolUse` using the documented
+[`hookSpecificOutput.additionalContext` protocol](https://developers.openai.com/codex/hooks).
+The user must trust the hooks in `/hooks` before they can run.
+
+Automatic attempts record only a route name and outcome: script file names,
+Python module names (`python -m X`), `pytest`, `uv run`, `poetry run`, and
+`npm test` / `pnpm test`. Arguments and tool output are not recorded. Three
+attempts without a goal yield the lowest-priority `missing_goal` reminder; it
+asks for a goal and expected result. A goal removes the condition. Existing
+answer/dismiss and reminder cooldown rules still apply.
+
 ## What the line means
 
 - Loading a plugin or reading its Skill is not a kernel invocation.

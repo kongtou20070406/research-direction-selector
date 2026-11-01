@@ -84,7 +84,7 @@ def build(store, draft, *, _context=None):
     from rds_tms_store import current
     try:
         if _context is None:
-            with store._db(True) as db:
+            with store.readonly() as db:
                 db.execute('BEGIN')
                 state = _state(store, db)
                 from rds_steering import current as current_instruction
@@ -139,7 +139,7 @@ def build(store, draft, *, _context=None):
             if identity not in seen:
                 _read_original(store, item)
                 seen.add(identity)
-        with store._db(True) as db:
+        with store.readonly() as db:
             db.execute('BEGIN')
             require(_fingerprint(_state(store, db)) == report['fingerprint'],
                     'Owned state changed during dialogue read')

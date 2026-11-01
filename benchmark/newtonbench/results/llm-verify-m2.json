@@ -1,0 +1,27 @@
+{
+ "model": "gpt-6.1-sol",
+ "proposals": [
+  "4.78e-02 * (current1 + current2) ** (3 / 2) / distance ** 3",
+  "4.78e-02 * (current1 * current2) ** (3 / 2) / distance ** 3",
+  "4.78e-02 * (current1 + current2) / distance ** 3",
+  "4.78e-02 * current1 * current2 / distance ** 3",
+  "4.78e-02 * ((current1 + current2) / distance) ** (3 / 2)"
+ ],
+ "eig_point": "c1_(5, 3)",
+ "extra_measurement": {
+  "id": "eig-1",
+  "inputs": {
+   "current1": "1",
+   "current2": "5",
+   "distance": "3"
+  },
+  "outputs": {
+   "y": "0.02601902437889687"
+  }
+ },
+ "survivors": [
+  "4.78e-02 * (current1 + current2) ** (3 / 2) / distance ** 3"
+ ],
+ "points_used": 3,
+ "eig_bits": 2.093069208
+}

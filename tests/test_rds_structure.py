@@ -20,6 +20,15 @@ spec = importlib.util.spec_from_file_location('structure_fixture', REPO / 'examp
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 
+# Start-up headroom per owned run, not a value under test: a loaded Windows runner did not finish the
+# 2 s candidate/verifier pair, and an unfinished run leaves the goal UNKNOWN instead of PASS.
+OWNED_RUN_SECONDS = 10
+# The resume test keeps its budget tight on purpose: it fits every reservation counted once and fails if
+# a retained run is counted twice. Runs get the same start-up headroom; the spare stays below one run,
+# so a double count still exceeds the budget. A loaded Windows runner overran the 2 s runs of an 8 s budget.
+RESUME_RUN_SECONDS = 10
+RESUME_BUDGET_SECONDS = 2 * RESUME_RUN_SECONDS + 2 + 5  # two runs, the 2 s feedback allowance, spare
+
 
 class StructureTests(unittest.TestCase):
     def setUp(self):
@@ -124,21 +133,22 @@ class StructureTests(unittest.TestCase):
         modes = [(False, (0,)), (False, (1,)), (False, (0, 1)), (True, (0,))]
         for index, (owned, reserved) in enumerate(modes):
             with self.subTest(owned=owned, reserved=reserved):
-                root = fixture.prepare(Path(self.tmp.name) / ('reserved-' + str(index)), budget=8, owned=owned)
+                root = fixture.prepare(Path(self.tmp.name) / ('reserved-' + str(index)), budget=RESUME_BUDGET_SECONDS,
+                                       owned=owned, timeout=RESUME_RUN_SECONDS)
                 store = ProjectStore(root)
                 task = structure.request(root)['tasks'][0]
-                proposal = fixture.proposal(root, task)
+                proposal = fixture.proposal(root, task, timeout=RESUME_RUN_SECONDS)
                 structure.propose(root, proposal)
                 for position in reserved:
                     store.register(proposal['experiment']['runs'][position])
                 before = store.snapshot()
-                self.assertEqual(before['budget']['wall_seconds']['reserved'], 2 * len(reserved))
+                self.assertEqual(before['budget']['wall_seconds']['reserved'], RESUME_RUN_SECONDS * len(reserved))
                 self.assertTrue(all(r['status'] == 'RESERVED' and r['attempt_id'] is None for r in before['runs']))
                 result = structure.advance(root, 'candidate')
                 self.assertEqual(result['goal_status'], 'PASS')
                 after = store.snapshot()
                 self.assertEqual(after['contract_sha256'], before['contract_sha256'])
-                self.assertEqual(after['budget']['wall_seconds']['cap'], 8)
+                self.assertEqual(after['budget']['wall_seconds']['cap'], RESUME_BUDGET_SECONDS)
                 self.assertEqual(after['budget']['wall_seconds']['reserved'], 0)
                 self.assertEqual(after['budget']['wall_seconds']['charged_estimate'], 0)
                 self.assertEqual(len(after['runs']), 2)
@@ -324,9 +334,9 @@ class StructureTests(unittest.TestCase):
                 action(self.root, 'candidate')
 
     def test_owned_admission_collection_and_goal_consumption_are_reused(self):
-        other = fixture.prepare(Path(self.tmp.name) / 'owned', owned=True)
+        other = fixture.prepare(Path(self.tmp.name) / 'owned', owned=True, timeout=OWNED_RUN_SECONDS)
         task = structure.request(other)['tasks'][0]
-        p = fixture.proposal(other, task)
+        p = fixture.proposal(other, task, timeout=OWNED_RUN_SECONDS)
         structure.propose(other, p)
         self.assertEqual(structure.advance(other, 'candidate')['goal_status'], 'PASS')
         state = ProjectStore(other).snapshot()

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import rds_verify as engine
 import rds_dynamics_verify as dynamics
+import rds_verify_registry as registry
 
 
 def module():
@@ -132,6 +133,179 @@ class DeclarativeTests(unittest.TestCase):
         spec = module()
         spec["theorems"][0]["by"]["rule"] = "os.system"
         self.assertEqual(engine.verify(spec)["status"], "UNKNOWN")
+
+
+class RegistryBridgeTests(unittest.TestCase):
+    def setUp(self):
+        snapshot = (dict(registry._REGISTRY), dict(registry._BY_NAME))
+        self.addCleanup(self._restore, snapshot)
+        self.calls = []
+        calls = self.calls
+
+        class RationalSign(registry.VerifierSpec):
+            name = "test.rational_sign"
+            kinds = {"registered_sign"}
+            semantics = "exact_rational_sign"
+            assurance_level = "CERTIFICATE_CHECKED"
+
+            def read_spec(self, spec):
+                calls.append("read")
+                return {**spec, "value": str(engine.rational(spec["value"]))}
+
+            def verify(self, spec):
+                calls.append("verify")
+                verdict = "PASS" if engine.rational(spec["value"]) >= 0 else "FAIL"
+                return {"status": verdict, "certificate": {
+                    "value": spec["value"], "verdict": verdict,
+                    "assurance": self.assurance_level, "semantics": self.semantics}}
+
+            def check_certificate(self, spec, certificate):
+                calls.append("check")
+                verdict = "PASS" if engine.rational(spec["value"]) >= 0 else "FAIL"
+                return certificate == {"value": spec["value"], "verdict": verdict,
+                                       "assurance": self.assurance_level,
+                                       "semantics": self.semantics}
+
+        registry.register_verifier(RationalSign)
+        self.verifier = registry.get_verifier("registered_sign")
+        self.spec = {"kind": "registered_sign", "value": "2/4"}
+
+    def _restore(self, snapshot):
+        registry._REGISTRY.clear()
+        registry._REGISTRY.update(snapshot[0])
+        registry._BY_NAME.clear()
+        registry._BY_NAME.update(snapshot[1])
+
+    def test_public_verify_and_replay_use_registered_reader_and_checker(self):
+        answer = engine.verify(self.spec)
+        self.assertEqual(answer["status"], "PASS")
+        self.assertEqual(answer["semantics"], self.verifier.semantics)
+        self.assertEqual(answer["certificate"]["proof"]["rule"], self.verifier.name)
+        self.assertEqual(self.calls, ["read", "verify", "read", "check"])
+        with patch.object(self.verifier, "verify", side_effect=AssertionError("No search in replay")):
+            self.assertTrue(engine.check_certificate(self.spec, answer["certificate"]))
+            self.assertEqual(engine.checked_result(self.spec, answer["certificate"])["status"], "PASS")
+
+    def test_registered_failure_is_checked_and_tampering_is_rejected(self):
+        self.spec["value"] = "-1"
+        answer = engine.verify(self.spec)
+        self.assertEqual(answer["status"], "FAIL")
+        self.assertTrue(engine.check_certificate(self.spec, answer["certificate"]))
+        answer["certificate"]["proof"]["certificate"]["value"] = "1"
+        self.assertFalse(engine.check_certificate(self.spec, answer["certificate"]))
+
+    def test_registered_checker_cannot_claim_builtin_assurance(self):
+        answer = engine.verify(self.spec)
+        answer["certificate"]["proof"]["certificate"]["assurance"] = "LEAN_KERNEL_CHECKED"
+        self.assertFalse(engine.check_certificate(self.spec, answer["certificate"]))
+
+    def test_registered_kind_takes_priority_over_legacy_rule(self):
+        legacy = engine.RuleRegistry((engine.ProofRule(
+            "legacy.sign", ("registered_sign",), "rds_scalar_verify"),))
+        with patch.object(engine, "REGISTRY", legacy), patch.object(
+                engine.ProofRule, "generate", side_effect=AssertionError("Legacy search")), patch.object(
+                engine.ProofRule, "check", side_effect=AssertionError("Legacy replay")):
+            self.assertEqual(engine.verify(self.spec)["status"], "PASS")
+
+    def test_builtin_lean_routes_names_and_assurance_cannot_be_shadowed(self):
+        class LeanShadow(registry.VerifierSpec):
+            name = "custom.lean"
+            kinds = {"lean_obligation"}
+            semantics = "fake_lean"
+            assurance_level = "CERTIFICATE_CHECKED"
+
+            def read_spec(self, spec): return spec
+            def verify(self, spec): return {"status": "PASS"}
+            def check_certificate(self, spec, certificate): return True
+
+        with self.assertRaisesRegex(ValueError, "shadows built-in route"):
+            registry.register_verifier(LeanShadow)
+        conjunction_shadow = type("ConjunctionShadow", (registry.VerifierSpec,), {
+            "name": "custom.conjunction", "kinds": {"all"}, "semantics": "fake",
+            "assurance_level": "CERTIFICATE_CHECKED", "read_spec": lambda self, spec: spec,
+            "verify": lambda self, spec: {"status": "PASS"},
+            "check_certificate": lambda self, spec, cert: True})
+        with self.assertRaisesRegex(ValueError, "shadows built-in route"):
+            registry.register_verifier(conjunction_shadow)
+        for assurance in ("LEAN_KERNEL_CHECKED", engine.BOUNDED_PROOF_ASSURANCE,
+                          engine.AFFINE_CHAIN_ASSURANCE):
+            FakeAssurance = type("FakeAssurance", (registry.VerifierSpec,), {
+                "name": "fake." + assurance.lower(), "kinds": {"fake_" + assurance.lower()},
+                "semantics": "fake", "assurance_level": assurance,
+                "read_spec": lambda self, spec: spec,
+                "verify": lambda self, spec: {"status": "PASS"},
+                "check_certificate": lambda self, spec, cert: True})
+            with self.assertRaisesRegex(ValueError, "reserved assurance"):
+                registry.register_verifier(FakeAssurance)
+        collision = type("RuleNameShadow", (registry.VerifierSpec,), {
+            "name": "lean.rational_relation", "kinds": {"harmless_kind"},
+            "semantics": "fake", "assurance_level": "CERTIFICATE_CHECKED",
+            "read_spec": lambda self, spec: spec,
+            "verify": lambda self, spec: {"status": "PASS"},
+            "check_certificate": lambda self, spec, cert: True})
+        with self.assertRaisesRegex(ValueError, "shadows built-in rule"):
+            registry.register_verifier(collision)
+        conjunction_name_shadow = type("ConjunctionNameShadow", (registry.VerifierSpec,), {
+            "name": "logic.and_intro", "kinds": {"harmless_kind"}, "semantics": "fake",
+            "assurance_level": "CERTIFICATE_CHECKED", "read_spec": lambda self, spec: spec,
+            "verify": lambda self, spec: {"status": "PASS"},
+            "check_certificate": lambda self, spec, cert: True})
+        with self.assertRaisesRegex(ValueError, "shadows built-in rule"):
+            registry.register_verifier(conjunction_name_shadow)
+
+    def test_rules_reports_effective_registered_routes(self):
+        rows = engine.rules()
+        lean = next(row for row in rows if "lean_obligation" in row["statement_kinds"])
+        self.assertEqual(lean["route"], "builtin")
+        registered = next(row for row in rows if row["name"] == self.verifier.name)
+        self.assertEqual(registered["route"], "registered")
+        self.assertEqual(registered["assurance_level"], self.verifier.assurance_level)
+        self.assertTrue(registered["implementation"])
+
+    def test_registered_unknown_and_reader_errors_do_not_fall_back(self):
+        with patch.object(self.verifier, "verify", return_value={"status": "UNKNOWN", "reason": "no evidence"}):
+            answer = engine.verify(self.spec)
+            self.assertEqual(answer["status"], "UNKNOWN")
+            self.assertEqual(answer["reason"], "no evidence")
+            self.assertNotIn("certificate", answer)
+        with patch.object(self.verifier, "read_spec", side_effect=ValueError("Invalid registered spec")):
+            answer = engine.verify(self.spec)
+            self.assertEqual(answer["status"], "UNKNOWN")
+            self.assertIn("Invalid registered spec", answer["reason"])
+
+    def test_registered_theorem_leaf_and_requested_rule_are_checked(self):
+        spec = {"schema": 1, "kind": "theorem_module", "definitions": {}, "theorems": [
+            {"name": "sign", "statement": self.spec, "by": {"rule": self.verifier.name}},
+            {"name": "joint", "statement": {"kind": "all", "of": ["sign"]},
+             "by": {"rule": "logic.and_intro", "premises": ["sign"]}}]}
+        answer = engine.verify(spec)
+        self.assertEqual(answer["status"], "PASS")
+        self.assertTrue(engine.check_certificate(spec, answer["certificate"]))
+        spec["theorems"][0]["by"]["rule"] = "os.system"
+        self.assertEqual(engine.verify(spec)["status"], "UNKNOWN")
+
+    def test_registry_declarations_and_implementation_bind_verifier_identity(self):
+        answer = engine.verify(self.spec)
+        identity = engine.verifier_id()
+        read = Path.read_bytes
+        source = Path(__file__)
+        with patch.object(Path, "read_bytes", lambda path: b"changed implementation" if
+                          path.resolve() == source.resolve() else read(path)):
+            self.assertNotEqual(engine.verifier_id(), identity)
+            self.assertFalse(engine.check_certificate(self.spec, answer["certificate"]))
+        self.verifier.version = "2"
+        self.assertNotEqual(engine.verifier_id(), identity)
+        self.assertFalse(engine.check_certificate(self.spec, answer["certificate"]))
+
+    def test_unregistered_route_and_invalid_candidate_evidence_fail_closed(self):
+        answer = engine.verify(self.spec)
+        registry.unregister_verifier("registered_sign")
+        self.assertEqual(engine.verify(self.spec)["status"], "UNKNOWN")
+        self.assertFalse(engine.check_certificate(self.spec, answer["certificate"]))
+        registry.register_verifier(type(self.verifier))
+        self.verifier = registry.get_verifier("registered_sign")
+        with patch.object(self.verifier, "verify", return_value={"status": "PASS"}):
+            self.assertEqual(engine.verify(self.spec)["status"], "UNKNOWN")
 
 
 if __name__ == "__main__":

@@ -70,14 +70,19 @@ class CampaignReportBoundaryTests(unittest.TestCase):
         helper.setUp()
         self.addCleanup(helper.doCleanups)
         import rds_owned_advisor as owned
-        import rds_quick
-        original_cas = rds_quick.cas_json
+        import rds_cas
+        original_cas = rds_cas.cas_json
+        published = []
         def large(root, report, **kwargs):
             report = deepcopy(report)
             report['retained_detail'] = 'x' * (8 * 1024 * 1024 + 1)
-            return original_cas(root, report, **kwargs)
-        with patch.object(rds_quick, 'cas_json', large):
+            ref = original_cas(root, report, **kwargs)
+            published.append(ref)
+            return ref
+        with patch.object(rds_cas, 'cas_json', large):
             foreign, store, receipt = helper.foreign_owned(mode='badjson')
+        self.assertTrue(published)
+        self.assertTrue(all(ref['bytes'] > 8 * 1024 * 1024 for ref in published))
         self.assertEqual(store.last_advisor_review['status'], 'COLLECTION_FAILED')
         before = store.snapshot()
         campaign.bind(helper.f.store, helper.f.workspace)

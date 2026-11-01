@@ -1,0 +1,56 @@
+{
+ "search_seconds": 4.95,
+ "derived": "s12 = mass1 + mass2",
+ "equations": [
+  "0.0007963332",
+  "0.0039184303 / x2",
+  "x3 * (0.00047751935 / x2)",
+  "0.00023763176 / ((x2 / x0) / x1)",
+  "0.0034966737 / ((x2 / (x0 * 0.10656682)) + -1.1182165)",
+  "(0.00062095205 / (x2 / x0)) / sqrt(x2 / x1)"
+ ],
+ "results": [
+  {
+   "equation": "0.0007963332",
+   "supported": true,
+   "rds": "(1990833/2500000000)",
+   "replay": "REFUTED",
+   "counterexamples": 24
+  },
+  {
+   "equation": "0.0039184303 / x2",
+   "supported": true,
+   "rds": "((39184303/10000000000) / distance)",
+   "replay": "REFUTED",
+   "counterexamples": 24
+  },
+  {
+   "equation": "x3 * (0.00047751935 / x2)",
+   "supported": true,
+   "rds": "(((9550387/20000000000) / distance) * (mass1 + mass2))",
+   "replay": "REFUTED",
+   "counterexamples": 23
+  },
+  {
+   "equation": "0.00023763176 / ((x2 / x0) / x1)",
+   "supported": true,
+   "rds": "((2970397/12500000000) / ((distance / mass1) / mass2))",
+   "replay": "REFUTED",
+   "counterexamples": 24
+  },
+  {
+   "equation": "0.0034966737 / ((x2 / (x0 * 0.10656682)) + -1.1182165)",
+   "supported": true,
+   "rds": "((34966737/10000000000) / ((-(2236433/2000000)) + (distance / ((5328341/50000000) * mass1))))",
+   "replay": "REFUTED",
+   "counterexamples": 22
+  },
+  {
+   "equation": "(0.00062095205 / (x2 / x0)) / sqrt(x2 / x1)",
+   "supported": true,
+   "rds": "(((12419041/20000000000) / (distance / mass1)) / sqrt((distance / mass2)))",
+   "replay": "REFUTED",
+   "counterexamples": 21
+  }
+ ]
+}

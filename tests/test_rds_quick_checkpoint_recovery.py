@@ -1,5 +1,6 @@
 """Recover only the original prospective completion after a terminal receipt."""
 import argparse
+from contextlib import contextmanager
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -40,6 +41,114 @@ class QuickCheckpointRecoveryTests(unittest.TestCase):
         advice = rds_cli.cmd_advise(review_args, rds_cli.RDSState(self.f.ledger))
         context = project_context(self.f.ledger, json.loads(self.f.context_path.read_text(encoding='utf-8')))
         return args, (advice, context)
+
+    def test_choice_policy_stays_outside_parent_writers(self):
+        self.f.script('from pathlib import Path\nPath("launch-marker").write_text("started")\n')
+        args, review = self.reviewed_request('choice-lock-boundary')
+        live, original_db = [], ProjectStore._db
+        @contextmanager
+        def tracked(store, *positional, **keywords):
+            with original_db(store, *positional, **keywords) as db:
+                live.append(db)
+                try:
+                    yield db
+                finally:
+                    live.remove(db)
+        def outside(function):
+            def checked(*positional, **keywords):
+                self.assertFalse([db for db in live if db.in_transaction
+                                  and db.execute('PRAGMA query_only').fetchone()[0] == 0],
+                                 'Policy ran inside a ProjectStore writer')
+                return function(*positional, **keywords)
+            return checked
+        with (patch.object(ProjectStore, '_db', tracked),
+              patch.object(quick, 'choice', side_effect=outside(quick.choice)),
+              patch('rds_advisor_coverage.project_context', side_effect=outside(project_context))):
+            result = quick.execute(args, review=review)
+        self.assertEqual(result['receipt']['run_status'], 'SUCCEEDED', result)
+        child = ProjectStore(result['job_root']).snapshot()
+        self.assertEqual(len(child['runs']), 1)
+        self.assertEqual(len(child['receipts']), 1)
+        parent = ProjectStore(self.f.ledger)
+        before = parent.snapshot()['budget']
+        with (patch.object(quick, 'choice', side_effect=AssertionError('recovery reselected')),
+              patch.object(ProjectStore, 'execute', side_effect=AssertionError('recovery redispatched'))):
+            repeated = quick.execute(args, review=review)
+        self.assertEqual(repeated['receipt'], result['receipt'])
+        self.assertEqual(parent.snapshot()['budget'], before)
+
+    def test_changed_prepared_ledger_is_refused_before_allowance(self):
+        self.f.script('print("must not launch")\n')
+        args, review = self.reviewed_request('stale-choice')
+        parent, original = ProjectStore(self.f.ledger), quick._prepare_choice
+        before = parent.snapshot()['budget']
+        def changed(*positional, **keywords):
+            packet = original(*positional, **keywords)
+            with parent._db() as db:
+                db.execute('INSERT INTO events(body) VALUES (?)', ('{"kind":"TEST_EXTERNAL_CHANGE"}',))
+            return packet
+        with patch.object(quick, '_prepare_choice', side_effect=changed):
+            with self.assertRaisesRegex(ValueError, 'STALE'):
+                quick.execute(args, review=review)
+        self.assertEqual(parent.snapshot()['budget'], before)
+        self.assertFalse((self.f.root / '.rds/exec' / args.name).exists())
+
+    def test_changed_prepared_advice_cas_is_refused_before_allowance(self):
+        self.f.script('print("must not launch")\n')
+        args, review = self.reviewed_request('tampered-choice')
+        parent, original = ProjectStore(self.f.ledger), quick._prepare_choice
+        before = parent.snapshot()['budget']
+        def tampered(*positional, **keywords):
+            packet = original(*positional, **keywords)
+            Path(json.loads(packet.decision_json)['advice']['path']).write_bytes(b'tampered')
+            return packet
+        with patch.object(quick, '_prepare_choice', side_effect=tampered):
+            with self.assertRaisesRegex(ValueError, 'Artifact.*changed|Artifact hash mismatch'):
+                quick.execute(args, review=review)
+        self.assertEqual(parent.snapshot()['budget'], before)
+        self.assertFalse((self.f.root / '.rds/exec' / args.name).exists())
+
+    def test_receipt_evidence_recheck_uses_native_reader(self):
+        from rds_quick_admission import evidence_fence
+        parent = ProjectStore(self.f.ledger)
+        sha = 'a' * 64
+        # The foreign receipt is fingerprinted without entering the Store facade.
+        with patch.object(ProjectStore, '_db', side_effect=AssertionError('Store callback')):
+            before = evidence_fence(None, self.f.root, (), ((str(self.f.ledger), sha),), 0)
+        with parent._db() as db:
+            db.execute('INSERT INTO receipts(run_id,sha256,body) VALUES (?,?,?)',
+                       ('synthetic-fence-only', sha, '{}'))
+        with patch.object(ProjectStore, '_db', side_effect=AssertionError('Store callback')):
+            after = evidence_fence(None, self.f.root, (), ((str(self.f.ledger), sha),), 0)
+        self.assertNotEqual(before, after)
+
+    def test_stale_materialization_keeps_original_paid_choice(self):
+        self.f.script('print("original paid choice")\n')
+        args, review = self.reviewed_request('stale-materialization')
+        parent, original = ProjectStore(self.f.ledger), quick._prepare_choice
+        before, calls = parent.snapshot()['budget'], []
+        def changed(*positional, **keywords):
+            packet = original(*positional, **keywords)
+            calls.append(packet)
+            if len(calls) == 2:
+                with parent._db() as db:
+                    db.execute('INSERT INTO events(body) VALUES (?)', ('{"kind":"TEST_EXTERNAL_CHANGE"}',))
+            return packet
+        with patch.object(quick, '_prepare_choice', side_effect=changed):
+            with self.assertRaisesRegex(ValueError, 'STALE'):
+                quick.execute(args, review=review)
+        paid = parent.snapshot()['budget']
+        self.assertEqual(paid['wall_seconds']['charged_estimate'],
+                         before['wall_seconds']['charged_estimate'] + 5)
+        self.assertFalse((self.f.root / '.rds/exec' / args.name).exists())
+        with (patch.object(quick, 'choice', side_effect=AssertionError('paid choice reselected')),
+              patch.object(quick, '_prepare_choice', side_effect=AssertionError('paid choice reprepared'))):
+            recovered = quick.execute(args, review=review)
+        self.assertEqual(recovered['receipt']['run_status'], 'SUCCEEDED', recovered)
+        self.assertEqual(parent.snapshot()['budget'], paid)
+        with parent._db(True) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM events WHERE "
+                "json_extract(body,'$.kind')='EXTERNAL_RUN_ALLOWANCE'").fetchone()[0], 1)
 
     def test_pending_allowance_before_materialization_resumes_same_choice_once(self):
         self.f.script('print("synthetic QUICK recovery")\n')

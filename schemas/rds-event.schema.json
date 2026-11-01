@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rds:event:v1",
+  "title": "Staged RDS durable outbox event",
+  "description": "Notification data, never execution permission or scientific certification. Runtime also enforces canonical UTF-8 size <=65536 bytes, payload depth <=32, matching ledger attempt and contiguous per-attempt sequence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "attempt_id", "sequence", "kind", "payload"],
+  "properties": {
+    "schema_version": {"const": 1, "type": "integer"},
+    "job_id": {"type": "string", "minLength": 1, "maxLength": 80, "description": "Existing ProjectStore run ID; runtime permits only Unicode alphanumeric, hyphen and underscore."},
+    "attempt_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+    "kind": {"enum": ["JOB_STARTED", "CHECKPOINT_COMMITTED", "RESULT_READY", "JOB_FAILED", "RESOURCE_LIMIT", "RESEARCH_JUDGMENT"]},
+    "payload": {"type": "object", "description": "Immutable JSON evidence object. Existing evidence validators remain the caller's responsibility."}
+  }
+}

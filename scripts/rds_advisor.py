@@ -4,7 +4,6 @@ Reports heuristic signals and candidate diagnostics for human or experimental re
 It does not solve parameter ranges or establish causes from endpoint telemetry.
 """
 import json
-import base64
 import math
 import os
 import re
@@ -12,13 +11,17 @@ from pathlib import Path
 import hashlib
 import sqlite3
 import time
-import signal
-import subprocess
-import sys
+import subprocess  # Preserve the existing worker instrumentation entry point.
 from typing import Any, Dict, List, Optional
 
 from rds_artifacts import strict_json
+from rds_checkpoint_decision import (
+    CHECKPOINT_ROUTE_FIELDS, MAX_LOOP_BYTES, _require, _text, _json, _scope,
+    _loop_route, _loop_family, _loop_context, _checkpoint_route, validate_checkpoint_decision,
+)
 from rds_mutation import mutation
+from rds_guard import _bounded_theory_gate
+from rds_project_read_services import has_table
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_KNOWLEDGE_ROWS = 10000
@@ -72,7 +75,6 @@ def _knowledge_entry(rule, entry_id, document_sha, *, legacy=False):
     return entry_id, document_sha, json.dumps(normalized, ensure_ascii=False, allow_nan=False, sort_keys=True)
 
 
-
 def _advice(advisor_type, **fields):
     return {"advisor_type": advisor_type, "assurance": "HEURISTIC_ONLY", "observations": [],
             "alternative_explanations": [], "minimal_test": [],
@@ -88,51 +90,6 @@ def _number(value, name):
         raise ValueError(f"{name} must be a finite number")
     return float(value)
 
-
-def _bounded_theory_gate(request, seconds):
-    """Bound generation and independent replay together, including native children."""
-    from rds_project import _Job
-    bootstrap = ("import json,sys; request=json.loads(sys.stdin.buffer.read()); "
-                 "sys.path.insert(0,sys.argv[1]); from rds_probe import declarative_probe; "
-                 "result=declarative_probe(request['formal'],request['committed']); "
-                 "sys.stdout.buffer.write(json.dumps(result,ensure_ascii=False,allow_nan=False).encode('utf-8'))")
-    deadline = time.monotonic() + seconds
-    process = job = None
-    output = errors = b""
-    try:
-        process = subprocess.Popen([sys.executable, "-I", "-c", bootstrap, str(Path(__file__).resolve().parent)],
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   shell=False, start_new_session=os.name != "nt",
-                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        job = _Job(process)
-        output, errors = process.communicate(_json(request, cap=2 * MAX_DOCUMENT_BYTES).encode("utf-8"),
-                                            timeout=max(0, deadline - time.monotonic()))
-        if process.returncode or time.monotonic() > deadline:
-            raise ValueError(errors.decode("utf-8", errors="replace")[-1000:] or "Theory deadline exceeded")
-        gate = strict_json(output.decode("utf-8"))
-        _json(gate, cap=MAX_DOCUMENT_BYTES)
-        if time.monotonic() > deadline:
-            raise ValueError("Theory deadline exceeded")
-    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        gate = {"status": "UNKNOWN", "assurance": "NONE", "reason": "Bounded theory check: " + str(exc)}
-    finally:
-        if process is not None:
-            if os.name != "nt":
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            elif job is not None:
-                job.stop()
-            else:
-                process.kill()
-            output, errors = process.communicate()
-        if job is not None:
-            job.close()
-    worker = {name: {"base64": base64.b64encode(raw[:cap]).decode("ascii"), "truncated": len(raw) > cap}
-              for name, raw, cap in (("stdout", output, MAX_DOCUMENT_BYTES), ("stderr", errors, 65536))}
-    worker["exit_code"] = process.returncode if process is not None else None
-    return gate, worker
 
 
 
@@ -518,8 +475,8 @@ class RDSAdvisor:
         from rds_project import ProjectStore, require
         store = ProjectStore(self.root_dir)
         if store.path.is_file():
-            with store._db(True) as db:
-                has_contract = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+            with store.readonly() as db:
+                has_contract = has_table(db, 'contract')
                 row = db.execute('SELECT 1 FROM contract WHERE id=1').fetchone() if has_contract else None
                 contract = store._contract(db) if row else {}
             if 'advisor_policy' in contract:
@@ -786,7 +743,7 @@ class RDSAdvisor:
         try:
             db = connect(path)
             try:
-                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+                if not has_table(db, 'checkpoints'):
                     db.close()
                     db = None
                 elif kind == "project":
@@ -976,83 +933,6 @@ class RDSAdvisor:
         return review
 
 
-CHECKPOINT_ROUTE_FIELDS = ("goal_revision", "scope", "candidate", "outcome", "evidence")
-
-
-def _checkpoint_route(prior, checkpoint_id, directory, checked_witnesses, same_question):
-    """Structural checks loop-history review applies to one recorded route decision."""
-    _require(_text(prior["goal_revision"]) and prior["outcome"] in
-             ("rejected", "accepted", "plan_locked", "deferred") and isinstance(prior["evidence"], dict),
-             "Invalid checkpoint decision: " + checkpoint_id)
-    _scope(prior["scope"])
-    _json(prior["evidence"])
-    route = _loop_route(prior["candidate"])
-    _require(route is not None, "Checkpoint decision needs a structured candidate: " + checkpoint_id)
-    # Declared domains prune only within their own question, so only that question checks the witness.
-    if same_question and prior['outcome'] == 'rejected' and 'rejected_domain' in prior:
-        from rds_guard import validate_domain, MAX_BYTES
-        validate_domain(prior['rejected_domain'], prior['candidate'])
-        witness = prior.get('falsification', {})
-        witness_sha = witness.get('sha256')
-        _require(isinstance(witness_sha, str) and re.fullmatch('[0-9a-f]{64}', witness_sha), 'Declared-domain rejection needs a witness hash')
-        original = Path(witness['path']).resolve()
-        _require(original.is_relative_to((directory / 'cas').resolve()), 'Domain witness must be in the project CAS')
-        if (str(original), witness_sha) not in checked_witnesses:
-            with original.open('rb') as handle:
-                witness_raw = handle.read(MAX_BYTES + 1)
-            _require(len(witness_raw) <= MAX_BYTES and hashlib.sha256(witness_raw).hexdigest() == witness_sha,
-                     'Declared-domain witness CAS integrity failure')
-            checked_witnesses.add((str(original), witness_sha))
-    return {**prior, "route_sha256": route, "family_sha256": _loop_family(prior["candidate"]),
-            "review_context": _loop_context(prior["candidate"], prior["evidence"])}
-
-
-def validate_checkpoint_decision(decision, checkpoint_id, directory):
-    """Refuse at save time a route record that its question's loop-history review would always refuse."""
-    if not (isinstance(decision, dict) and _text(decision.get("question_id"))
-            and all(key in decision for key in CHECKPOINT_ROUTE_FIELDS)):
-        return  # Opaque contexts are never read as route decisions.
-    try:
-        _checkpoint_route(decision, checkpoint_id, Path(directory), set(), True)
-        if decision["outcome"] == "rejected" and "rejected_domain" in decision:
-            # Review resolves the witness from its own working directory; only an absolute path stays valid.
-            _require(Path(decision["falsification"]["path"]).is_absolute(), "Domain witness path must be absolute")
-    except (ValueError, KeyError, TypeError, AttributeError, RecursionError, OSError) as exc:
-        raise ValueError("Checkpoint decision for question " + json.dumps(decision["question_id"][:80], ensure_ascii=False)
-                         + " would block loop-history review: "
-                         + str(exc) + ". Record the structured candidate from the Advisor output, "
-                         "or save the note without the route fields (" + ", ".join(CHECKPOINT_ROUTE_FIELDS) + ")") from exc
-
-
-def _loop_route(candidate):
-    """Exact structured route equality; display IDs never establish route identity."""
-    if not isinstance(candidate, dict):
-        return None
-    action = candidate.get("action")
-    if isinstance(action, dict) and isinstance(action.get("description"), str) and action["description"].strip():
-        display = {"id", "goal_contribution"}
-        if any(key in action for key in ("target", "intervention", "parameters", "operation")):
-            display.update(("description", "question", "competing_explanations", "required_observables", "outcomes", "discrimination", "stop_condition"))
-        route = {"action": {key: value for key, value in action.items() if key not in display}}
-    elif isinstance(candidate.get("interventions"), list) and candidate["interventions"] and isinstance(candidate.get("control_bindings"), list):
-        route = {"interventions": sorted(candidate["interventions"], key=_json),
-                 "controls": sorted([{key: value for key, value in control.items() if key not in
-                     ("source", "reason", "truth", "evidence_status")} for control in candidate["control_bindings"]], key=_json)}
-    else:
-        return None
-    return hashlib.sha256(_json(route).encode("utf-8")).hexdigest()
-
-
-def _loop_family(candidate):
-    """Route identity without action parameters: a parameter-only variant shares its family."""
-    action = candidate.get("action") if isinstance(candidate, dict) else None
-    # Without a structured target, intervention or operation, the description is part of route identity.
-    if (not isinstance(action, dict) or not isinstance(action.get("parameters", {}), dict)
-            or not any(key in action for key in ("target", "intervention", "operation"))):
-        return None
-    return _loop_route({**candidate, "action": {**action, "parameters": {}}})
-
-
 def _goal_key(goals):
     """Order-insensitive identity of explicit goal predicates; None when absent or malformed."""
     if not (isinstance(goals, list) and 1 <= len(goals) <= 32 and all(isinstance(goal, dict) for goal in goals)):
@@ -1061,71 +941,3 @@ def _goal_key(goals):
         return _json(sorted(_json(goal) for goal in goals))
     except (ValueError, TypeError, RecursionError):
         return None
-
-
-def _loop_context(candidate, evidence):
-    """Only declared dependencies and review conditions can reopen a route."""
-    derivation, action = candidate.get("derivation", []), candidate.get("action", {})
-    _require(isinstance(derivation, list) and all(isinstance(row, dict) for row in derivation), "Invalid recorded candidate derivation")
-    traces = [item for row in derivation if row.get("step") == "rule_to_template" for item in row.get("trace", [])]
-    _require(all(isinstance(row, dict) for row in traces), "Invalid recorded rule trace")
-    reports = [row for row in derivation + traces if row.get("step") == "fact_to_rule"]
-    reports += candidate.get("facts", []) + candidate.get("control_bindings", []) + candidate.get("observables", [])
-    reports += candidate.get("discrimination", {}).get("conditions", [])
-    _require(all(isinstance(row, dict) for row in reports), "Invalid recorded candidate predicates")
-    observable_names = action.get("required_observables", candidate.get("required_observables", []))
-    names = {row["fact"] for row in reports if isinstance(row.get("fact"), str)}
-    names.update(name for name in observable_names if isinstance(name, str) and name in evidence)
-    selected = {}
-    for name in names:
-        fact = evidence.get(name, {})
-        if isinstance(fact, dict):
-            source = fact.get("source", {})
-            selected[name] = {"value": fact.get("value"), "binding": fact.get("binding", {}),
-                "reliable": fact.get("reliable") is not False and fact.get("reliability") not in ("UNRELIABLE", "UNKNOWN"),
-                "source_sha256": source.get("sha256") if isinstance(source, dict) else None}
-        else:
-            selected[name] = fact
-    predicates = sorted([{key: row[key] for key in ("fact", "operator", "expected", "role") if key in row}
-                         for row in reports], key=_json)
-    return _json({"facts": selected, "conditions": predicates, "observables": observable_names,
-        "outcomes": action.get("outcomes", candidate.get("result_to_decision", [])),
-        "stop": action.get("stop_condition", candidate.get("stop_conditions", []))})
-
-
-# Bounded structured inputs for scoped ledger decisions.
-MAX_LOOP_BYTES = 256 * 1024
-
-
-def _require(condition, message):
-    if not condition:
-        raise ValueError(message)
-
-
-def _text(value):
-    return isinstance(value, str) and bool(value.strip()) and len(value) <= 512
-
-
-def _json(value, cap=MAX_LOOP_BYTES):
-    try:
-        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False, separators=(",", ":"))
-        size = len(raw.encode("utf-8"))
-        _require(size <= cap, f"Advisor loop JSON exceeds byte limit ({size} > {cap}); use a scoped context and shared manifest digest/source locator while retaining full originals. For repeated code file-hash maps: scripts/rds_context_compact.py --input CONTEXT --output-dir NEW_DIRECTORY")
-        strict_json(raw)
-        return raw
-    except (TypeError, RecursionError, UnicodeError, OverflowError) as exc:
-        raise ValueError("Advisor loop input must be finite, bounded JSON") from exc
-
-
-def _scope(value):
-    _require(isinstance(value, dict), f"scope/parameters must be a JSON object (dict); got {type(value).__name__}")
-    _require(len(value) <= 16, f"scope/parameters has {len(value)} fields; at most 16 are allowed")
-    for key, child in value.items():
-        _require(_text(key), "scope/parameters field names must be non-empty strings of at most 512 characters")
-        if child is not None and type(child) not in (str, int, float, bool):
-            field = json.dumps(key[:80], ensure_ascii=True) + ("..." if len(key) > 80 else "")
-            kind = "array" if isinstance(child, list) else "object" if isinstance(child, dict) else None
-            actual = f"{kind} ({type(child).__name__})" if kind else type(child).__name__
-            raise ValueError(f"scope/parameters field {field} must be a JSON atom; got {actual}. "
-                "Keep the structured original input in a source file and reference it with an explicit source binding.")
-    _json(value, 2048)

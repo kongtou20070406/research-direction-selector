@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 import re
 
-from rds_meta import _atomic_bytes, _graph_lock, _load_object, digest, require
+from rds_core import json_digest as digest, require
+from rds_workspace import atomic_bytes, graph_lock, load_object
 
 MAX_EVALUATIONS = 128
 MAX_INPUTS = 8192
@@ -38,9 +39,9 @@ def record_exposure(cases, bindings, campaign, directory):
     directory = Path(directory) / "confirmation"
     ledger_path = directory / "exposures.json"
     # ponytail: one lock per project; split only if measured replay contention warrants it.
-    with _graph_lock(directory):
+    with graph_lock(directory):
         if ledger_path.exists():
-            ledger = _load_object(ledger_path, "RSI exposure ledger")
+            ledger = load_object(ledger_path, "RSI exposure ledger")
             signature = ledger.pop("ledger_sha256", None)
             require(signature == digest(ledger) and ledger.get("schema") == 1,
                     "RSI exposure ledger integrity mismatch")
@@ -69,7 +70,7 @@ def record_exposure(cases, bindings, campaign, directory):
             for fp in fingerprints:
                 ledger["inputs"].setdefault(fp, claim)
             ledger["ledger_sha256"] = digest(ledger)
-            _atomic_bytes(ledger_path, json.dumps(ledger, sort_keys=True, allow_nan=False,
+            atomic_bytes(ledger_path, json.dumps(ledger, sort_keys=True, allow_nan=False,
                                                 ensure_ascii=False, indent=2).encode("utf-8"))
     if campaign is None:
         return None

@@ -1,0 +1,84 @@
+{
+ "schema": 1,
+ "budgets": [
+  8,
+  16,
+  32
+ ],
+ "campaign_root": "C:\\Users\\XU\\AppData\\Local\\Temp\\devset-run-3e5iijgq",
+ "claim_exact_rule": "status == GOAL_IDENTIFIED and 0 counterexamples on full devset replay",
+ "false_certification_rule": "status == GOAL_IDENTIFIED and the law differs from truth on 32 independent uniform samples in the declared box, beyond the devset tolerance; null (UNKNOWN) when no checkable claim exists",
+ "runs": [
+  {
+   "equation": "feynman-I.41.16",
+   "B": 8,
+   "status": "SEARCH_EXHAUSTED",
+   "claim": "NOT_ESTABLISHED",
+   "law": null,
+   "counterexamples": null,
+   "claim_exact": false,
+   "experiments": 8,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   },
+   "seconds": 396.2
+  },
+  {
+   "equation": "feynman-I.41.16",
+   "B": 16,
+   "status": "SEARCH_EXHAUSTED",
+   "claim": "NOT_ESTABLISHED",
+   "law": null,
+   "counterexamples": null,
+   "claim_exact": false,
+   "experiments": 9,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   },
+   "seconds": 146.0
+  },
+  {
+   "equation": "feynman-I.41.16",
+   "B": 32,
+   "status": "SEARCH_EXHAUSTED",
+   "claim": "NOT_ESTABLISHED",
+   "law": null,
+   "counterexamples": null,
+   "claim_exact": false,
+   "experiments": 9,
+   "claimed": false,
+   "false_certification": false,
+   "certification_check": {
+    "points_checked": 0,
+    "max_abs_error": null,
+    "tolerance": null,
+    "reason": "NOT_CLAIMED"
+   },
+   "seconds": 54.8
+  }
+ ],
+ "false_certification_rate": null,
+ "false_certification_count": 0,
+ "claimed_count": 0,
+ "checkable_claimed_count": 0,
+ "degraded_count": 0,
+ "false_certification_rate_rule": "false_certification_count / checkable_claimed_count",
+ "false_certification_status": "NO_CLAIMS",
+ "correct_count": 0,
+ "experiments_total": 26,
+ "seconds_total": 597.0,
+ "experiments_per_correct": null,
+ "seconds_per_correct": null,
+ "cost_per_correct_rule": "totals over the whole sweep divided by the number of runs whose law reproduced truth with 0 counterexamples and survived the independent certification points",
+ "elapsed_seconds": 597.0
+}

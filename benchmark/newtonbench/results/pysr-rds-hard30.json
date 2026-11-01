@@ -1,0 +1,55 @@
+{
+ "search_seconds": 2.91,
+ "equations": [
+  "0.0007963509",
+  "0.0039185304 / x2",
+  "(x0 / x2) * 0.0006918183",
+  "x1 * (x0 * (0.00021165739 / x2))",
+  "(x0 * 0.00039158305) / (x2 + (x1 * -0.25686795))",
+  "((x0 + x1) * 3.216517e-5) * (x0 / (x2 + -1.0333527))"
+ ],
+ "results": [
+  {
+   "equation": "0.0007963509",
+   "rds": "(7963509/10000000000)",
+   "supported": true,
+   "replay": "REFUTED",
+   "counterexamples": 24
+  },
+  {
+   "equation": "0.0039185304 / x2",
+   "rds": "((4898163/1250000000) / distance)",
+   "supported": true,
+   "replay": "REFUTED",
+   "counterexamples": 24
+  },
+  {
+   "equation": "(x0 / x2) * 0.0006918183",
+   "rds": "((mass1 / distance) * (6918183/10000000000))",
+   "supported": true,
+   "replay": "REFUTED",
+   "counterexamples": 24
+  },
+  {
+   "equation": "x1 * (x0 * (0.00021165739 / x2))",
+   "rds": "((((21165739/100000000000) / distance) * mass1) * mass2)",
+   "supported": true,
+   "replay": "REFUTED",
+   "counterexamples": 23
+  },
+  {
+   "equation": "(x0 * 0.00039158305) / (x2 + (x1 * -0.25686795))",
+   "rds": "(((7831661/20000000000) * mass1) / (((-(5137359/20000000)) * mass2) + distance))",
+   "supported": true,
+   "replay": "REFUTED",
+   "counterexamples": 22
+  },
+  {
+   "equation": "((x0 + x1) * 3.216517e-5) * (x0 / (x2 + -1.0333527))",
+   "rds": "(((mass1 + mass2) * (3216517/100000000000)) * (mass1 / ((-(10333527/10000000)) + distance)))",
+   "supported": true,
+   "replay": "REFUTED",
+   "counterexamples": 23
+  }
+ ]
+}

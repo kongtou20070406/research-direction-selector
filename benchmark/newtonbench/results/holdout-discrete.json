@@ -1,0 +1,17 @@
+{
+ "status": "JUDGMENT_REQUIRED",
+ "claim": "CONSISTENT_BUT_UNCONFIRMED",
+ "law": {
+  "y": "ite((x < (61/2)), (1 + x), 1000)"
+ },
+ "holdout_points": [
+  "x30",
+  "x31"
+ ],
+ "holdout_decisions": [
+  "x30",
+  "x31"
+ ],
+ "baseline_exact_match": "31/32 (x=31 wrong)",
+ "baseline_claim": "x + 1"
+}

@@ -1,0 +1,42 @@
+{
+ "search_seconds": 3.06,
+ "equations": [
+  "19.855228",
+  "x0 * 7.9679",
+  "x0 * (x0 * 2.0636723)",
+  "(x0 * (x0 + x0)) + 0.99999994",
+  "((((-0.11551619 / x0) + x0) + x0) * x0) + 1.1155164"
+ ],
+ "results": [
+  {
+   "equation": "19.855228",
+   "rds": "(4963807/250000)",
+   "supported": true,
+   "replay": "REFUTED"
+  },
+  {
+   "equation": "x0 * 7.9679",
+   "rds": "((79679/10000) * x)",
+   "supported": true,
+   "replay": "REFUTED"
+  },
+  {
+   "equation": "x0 * (x0 * 2.0636723)",
+   "rds": "(((20636723/10000000) * x) * x)",
+   "supported": true,
+   "replay": "REFUTED"
+  },
+  {
+   "equation": "(x0 * (x0 + x0)) + 0.99999994",
+   "rds": "(((x + x) * x) + (49999997/50000000))",
+   "supported": true,
+   "replay": "CONSISTENT"
+  },
+  {
+   "equation": "((((-0.11551619 / x0) + x0) + x0) * x0) + 1.1155164",
+   "rds": "((((((-(11551619/100000000)) / x) + x) + x) * x) + (2788791/2500000))",
+   "supported": true,
+   "replay": "CONSISTENT"
+  }
+ ]
+}

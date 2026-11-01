@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "F3 pure L3 research proposal (no execution authority)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "layer", "packet_id", "language", "status", "scientific_status", "execution_permission", "verification_basis", "preflight", "suggestions", "questions", "omitted_candidates", "limitations"],
+  "properties": {
+    "schema": {"const": "rds-advisor-proposal-v1"},
+    "layer": {"const": "L3"},
+    "packet_id": {"type": "string", "pattern": "^packet:[0-9a-f]{64}$"},
+    "language": {"enum": ["zh", "en"]},
+    "status": {"const": "PROPOSED"},
+    "scientific_status": {"const": "UNKNOWN"},
+    "execution_permission": {"const": false},
+    "verification_basis": {"const": "INPUT_REPORTED"},
+    "preflight": {"type": "array", "items": {"$ref": "#/$defs/preflight"}},
+    "suggestions": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/suggestion"}},
+    "questions": {"type": "array", "maxItems": 2, "items": {"type": "string", "minLength": 1}},
+    "omitted_candidates": {"type": "integer", "minimum": 0},
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "sources": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "candidate": {"type": ["string", "null"], "minLength": 1, "maxLength": 512},
+    "scalar": {"type": ["string", "number", "boolean"], "maxLength": 4096},
+    "preflight": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "name", "status", "candidate", "sources"],
+      "properties": {
+        "kind": {"enum": ["PROJECT", "GOAL", "IMPORT", "HYPOTHESIS", "INPUT", "PARAMETER", "DEPENDENCY", "VERIFICATION", "DISCRIMINATOR"]},
+        "name": {"type": "string", "minLength": 1, "maxLength": 512},
+        "status": {"enum": ["MISSING", "PARTIAL", "UNDECLARED", "CONFLICT", "VERIFICATION_FAILED", "VERIFIED_INPUT", "UNVERIFIED", "PRESENT"]},
+        "candidate": {"$ref": "#/$defs/candidate"},
+        "sources": {"$ref": "#/$defs/sources"}
+      }
+    },
+    "explanation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate", "claim", "actor", "status", "sources"],
+      "properties": {
+        "candidate": {"$ref": "#/$defs/candidate"},
+        "claim": {"type": ["string", "null"], "minLength": 1, "maxLength": 16384},
+        "actor": {"enum": ["human", "ai", "unknown"]},
+        "status": {"enum": ["PROPOSED", "UNKNOWN"]},
+        "sources": {"$ref": "#/$defs/sources"}
+      },
+      "oneOf": [
+        {"properties": {"status": {"const": "PROPOSED"}, "candidate": {"type": "string"}, "claim": {"type": "string"}}},
+        {"properties": {"status": {"const": "UNKNOWN"}, "candidate": {"type": "null"}, "claim": {"type": "null"}, "actor": {"const": "unknown"}}}
+      ]
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["values", "favours_prediction", "changes_judgement"],
+      "properties": {
+        "values": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/scalar"}},
+        "favours_prediction": {"enum": ["proposal", "rival"]},
+        "changes_judgement": {"type": "string", "minLength": 1}
+      }
+    },
+    "discrimination": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "explanations", "observable", "outcomes", "judgement"],
+      "properties": {
+        "status": {"enum": ["UNKNOWN", "OVERLAPPING", "DECLARED_DISTINCT"]},
+        "explanations": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/explanation"}},
+        "observable": {"type": ["string", "null"], "minLength": 1},
+        "outcomes": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/outcome"}},
+        "judgement": {"enum": ["UNKNOWN", "CONFLICTING_OBSERVATIONS", "PREDICTION_MATCH_REPORTED", "COUNTEREXAMPLE_REPORTED"]}
+      },
+      "oneOf": [
+        {"properties": {"status": {"enum": ["UNKNOWN", "OVERLAPPING"]}, "outcomes": {"maxItems": 0}, "judgement": {"const": "UNKNOWN"}}},
+        {"properties": {"status": {"const": "DECLARED_DISTINCT"}, "observable": {"type": "string"}, "outcomes": {"minItems": 2}}}
+      ]
+    },
+    "cost": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["status"], "properties": {"status": {"const": "UNKNOWN"}}},
+        {"type": "object", "additionalProperties": false, "required": ["status", "value", "resource", "unit", "sources"],
+         "properties": {
+           "status": {"const": "DECLARED"}, "value": {"type": "number", "minimum": 0},
+           "resource": {"type": "string", "minLength": 1, "maxLength": 128},
+           "unit": {"type": "string", "minLength": 1, "maxLength": 128}, "sources": {"$ref": "#/$defs/sources"}
+         }}
+      ]
+    },
+    "suggestion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "candidate", "status", "summary", "sources", "preflight_status", "discrimination", "cost", "result_changes", "execution_permission"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^suggestion:[1-3]$"},
+        "candidate": {"$ref": "#/$defs/candidate"}, "status": {"const": "PROPOSED"},
+        "summary": {"type": "string", "minLength": 1}, "sources": {"$ref": "#/$defs/sources"},
+        "preflight_status": {"enum": ["COMPLETE", "INCOMPLETE"]},
+        "discrimination": {"$ref": "#/$defs/discrimination"}, "cost": {"$ref": "#/$defs/cost"},
+        "result_changes": {"type": "string", "minLength": 1}, "execution_permission": {"const": false}
+      }
+    }
+  }
+}

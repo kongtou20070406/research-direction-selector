@@ -34,7 +34,7 @@ pathlib.Path(output).write_text(json.dumps(result),encoding="utf-8")
 '''
 
 
-def prepare(root):
+def prepare(root, pilot_timeout=7):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     if any(root.iterdir()):
@@ -67,7 +67,7 @@ def prepare(root):
         # Final forecasts include process startup and a conservative safety
         # factor. Freeze enough hard headroom before any run; pilot limits and
         # the total campaign budget remain independently bounded.
-        timeout = 7 if run_id.startswith('pilot') else 20
+        timeout = pilot_timeout if run_id.startswith('pilot') else 20
         manifest = {'schema':1,'id':run_id,'arm':'tool','control_id':None,
                     'protocol':{'path':path,'sha256':sha(path)},
                     'argv':[sys.executable,'-B','verifier.py' if 'verify' in run_id else 'solver.py',run_id,mode,'outputs/'+run_id+'.json'],

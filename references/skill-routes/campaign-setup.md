@@ -11,6 +11,7 @@ section and its needed guide; reuse unchanged resources already read.
 
 ```text
     IF new goal-driven campaign:
+        REQUIRE discovery found no existing project; honor inherited workspace/campaign bindings
         DEFAULT project init TO FULL; require a valid explicit advisor_policy or recipe
         USE project init --recipe <recipe.json> FOR explicit finite routes and qualified tool consumers
             TO assemble hashes/protocol/route associations; see docs/project-assembly.md
@@ -27,6 +28,7 @@ section and its needed guide; reuse unchanged resources already read.
 
 ```text
     IF reusing an existing QUICK project that now needs owned Advisor:
+        REUSE discovery's canonical root; activation is not new-campaign initialization
         PREVIEW project enable-advisor --policy <policy.json>
         APPLY only the reviewed policy with --apply --expected-snapshot <snapshot_sha256>
         KEEP genesis contract, old runs/receipts/checkpoints and cumulative budget in the same ledger

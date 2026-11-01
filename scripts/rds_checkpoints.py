@@ -6,6 +6,7 @@ import sqlite3
 import time
 from pathlib import Path
 from rds_mutation import mutation
+from rds_project_read_services import has_table
 
 SCHEMA = "rds-checkpoint-v1"
 MAX_BYTES = 4_000_000
@@ -38,7 +39,7 @@ def _checkpoint_record(root, checkpoint_id, snapshot, *, kind, decision=None):
         raise ValueError("Decision context must be an object")
     if decision:
         # Checkpoints are append-only: a route record review would refuse must never be written.
-        from rds_advisor import validate_checkpoint_decision
+        from rds_checkpoint_decision import validate_checkpoint_decision
         validate_checkpoint_decision(decision, checkpoint_id, Path(root).resolve() / ".rds")
     record = {"schema": SCHEMA, "id": checkpoint_id, "kind": kind,
               "created_ns": time.time_ns(), "contract_sha256": _sha(snapshot["contract"]),
@@ -57,7 +58,7 @@ def _checkpoint_record(root, checkpoint_id, snapshot, *, kind, decision=None):
 
 def read_checkpoint(db, checkpoint_id, *, root):
     """Verify a retained row using the caller's coherent transaction."""
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone():
+    if not has_table(db, 'checkpoints'):
         return None
     row = db.execute('SELECT sha,body FROM checkpoints WHERE id=?', (checkpoint_id,)).fetchone()
     if row is None:
@@ -74,7 +75,7 @@ def read_checkpoint(db, checkpoint_id, *, root):
             or not isinstance(record['snapshot'].get('contract'), dict)
             or _sha(record['snapshot']['contract']) != record.get('contract_sha256')):
         raise ValueError('Checkpoint contract mismatch: ' + checkpoint_id)
-    from rds_advisor import validate_checkpoint_decision
+    from rds_checkpoint_decision import validate_checkpoint_decision
     validate_checkpoint_decision(record.get('decision', {}), checkpoint_id, Path(root).resolve() / '.rds')
     return {'record': record, 'sha256': sha}
 
@@ -95,7 +96,7 @@ def append_checkpoint(db, root, checkpoint_id, snapshot, *, kind, decision=None,
         raise ValueError('Checkpoint transaction belongs to a different ledger')
     if kind == 'project' and decision:
         from rds_method_revision import contract_history
-        initialized = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+        initialized = has_table(db, 'contract')
         contract = contract_history(db)[-1]['contract'] if initialized else snapshot.get('contract', {})
         note_only = (set(decision) == {'plan_draft', 'source_kind'}
                      and decision['source_kind'] == 'UNVERIFIED_PLAN_PROPOSAL')
@@ -192,7 +193,7 @@ def save_checkpoint(root, checkpoint_id, snapshot, *, kind, decision=None,
                                  'inspect the retained job and any original receipt; do not rerun')
         if _expected_dependency_snapshot_sha256 is not _DEPENDENCY_UNCHECKED:
             head = None
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dependency_snapshots'").fetchone():
+            if has_table(db, 'dependency_snapshots'):
                 head = db.execute('SELECT sha256 FROM dependency_snapshots ORDER BY rowid DESC LIMIT 1').fetchone()
             if (head['sha256'] if head is not None else None) != _expected_dependency_snapshot_sha256:
                 raise ValueError('Dependency snapshot changed before checkpoint publication; '
@@ -251,7 +252,7 @@ def restore_checkpoint(root, checkpoint_id, live_snapshot, *, kind):
             from rds_method_revision import contract_history, pending_revision
             store = ProjectStore(root)
             try:
-                with store._db(True) as ledger:
+                with store.readonly() as ledger:
                     ledger.execute('BEGIN')
                     lineage = contract_history(ledger)
                     ancestor = (pending_revision(ledger) is None

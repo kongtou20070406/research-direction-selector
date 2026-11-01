@@ -1,0 +1,178 @@
+{
+ "schema": 1,
+ "budgets": [
+  8,
+  16,
+  32
+ ],
+ "campaign_root": "C:\\Users\\XU\\AppData\\Local\\Temp\\devset-run-fw_gc5up",
+ "claim_exact_rule": "status == GOAL_IDENTIFIED and 0 counterexamples on full devset replay",
+ "runs": [
+  {
+   "equation": "feynman-I.12.1",
+   "B": 8,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(mu * n)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 5,
+   "seconds": 3.8
+  },
+  {
+   "equation": "feynman-I.12.1",
+   "B": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(mu * n)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 5,
+   "seconds": 3.0
+  },
+  {
+   "equation": "feynman-I.12.1",
+   "B": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(mu * n)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 5,
+   "seconds": 2.9
+  },
+  {
+   "equation": "feynman-I.14.3",
+   "B": 8,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "((h * m) * g)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 6,
+   "seconds": 4.2
+  },
+  {
+   "equation": "feynman-I.14.3",
+   "B": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "((h * m) * g)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 6,
+   "seconds": 4.1
+  },
+  {
+   "equation": "feynman-I.14.3",
+   "B": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "((h * m) * g)",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 6,
+   "seconds": 4.1
+  },
+  {
+   "equation": "feynman-I.6.20a",
+   "B": 8,
+   "status": "SEARCH_EXHAUSTED",
+   "claim": "NOT_ESTABLISHED",
+   "law": null,
+   "counterexamples": null,
+   "claim_exact": false,
+   "experiments": 8,
+   "seconds": 107.5
+  },
+  {
+   "equation": "feynman-I.6.20a",
+   "B": 16,
+   "status": "SEARCH_EXHAUSTED",
+   "claim": "NOT_ESTABLISHED",
+   "law": null,
+   "counterexamples": null,
+   "claim_exact": false,
+   "experiments": 14,
+   "seconds": 165.3
+  },
+  {
+   "equation": "feynman-I.6.20a",
+   "B": 32,
+   "status": "SEARCH_EXHAUSTED",
+   "claim": "NOT_ESTABLISHED",
+   "law": null,
+   "counterexamples": null,
+   "claim_exact": false,
+   "experiments": 14,
+   "seconds": 165.9
+  },
+  {
+   "equation": "feynman-I.9.18",
+   "B": 8,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(m1 / (r / (m2 / r)))",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 6,
+   "seconds": 13.1
+  },
+  {
+   "equation": "feynman-I.9.18",
+   "B": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(m1 / (r / (m2 / r)))",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 6,
+   "seconds": 12.5
+  },
+  {
+   "equation": "feynman-I.9.18",
+   "B": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(m1 / (r / (m2 / r)))",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 6,
+   "seconds": 12.7
+  },
+  {
+   "equation": "feynman-II.2.42",
+   "B": 8,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(kappa / (d / (t2 - t1)))",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 7,
+   "seconds": 85.7
+  },
+  {
+   "equation": "feynman-II.2.42",
+   "B": 16,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(kappa / (d / (t2 - t1)))",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 7,
+   "seconds": 86.5
+  },
+  {
+   "equation": "feynman-II.2.42",
+   "B": 32,
+   "status": "GOAL_IDENTIFIED",
+   "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+   "law": "(kappa / (d / (t2 - t1)))",
+   "counterexamples": 0,
+   "claim_exact": true,
+   "experiments": 7,
+   "seconds": 86.3
+  }
+ ],
+ "elapsed_seconds": 757.7
+}

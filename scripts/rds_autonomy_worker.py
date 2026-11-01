@@ -115,6 +115,7 @@ def execute(root, rid):
     with mutation():
         enforce(root)
         from rds_workspace import check_admission, connect
+        from rds_project import ProjectStore
         check_admission(root)
         with connect(root, root / '.rds/project.sqlite3') as db:
             db.row_factory = sqlite3.Row
@@ -153,7 +154,7 @@ def execute(root, rid):
                       'request': ref, 'provider': provider, 'argv': argv, 'started_at': time.time(),
                       'prompt_sha256': hashlib.sha256(prompt.encode('utf-8')).hexdigest()}
             intent['sha256'] = sha(intent)
-            db.execute('INSERT INTO events(body) VALUES (?)', (canonical(intent),))
+            ProjectStore.record_event(db, intent)
             db.commit()  # Charge-owning run already RUNNING; delivery intent survives a crash.
     timed_out, returncode, error = False, None, None
     started = time.monotonic()

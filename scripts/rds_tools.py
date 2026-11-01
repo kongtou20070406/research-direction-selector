@@ -16,7 +16,9 @@ from types import SimpleNamespace
 
 from rds_math import blob, get, put, read_bytes, records
 from rds_project import ProjectStore, canonical, digest, file_sha, number, require
-from rds_quick import cas_bytes, execute, _charge_ledger
+from rds_cas import cas_bytes
+from rds_quick_ledger import _charge_ledger
+from rds_quick import execute
 from rds_mutation import mutation
 
 BUILTINS = set('abs all any bool dict enumerate filter float frozenset int isinstance len list map max min next range reversed round set sorted str sum tuple zip ArithmeticError AssertionError IndexError KeyError TypeError ValueError ZeroDivisionError RecursionError UnicodeError'.split())
@@ -120,7 +122,7 @@ def extract(root, source, entry, name):
 
 
 def _cases(raw):
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     cases = strict_json(raw.decode('utf-8-sig'))
     require(isinstance(cases, list) and 1 <= len(cases) <= 64, 'Supply 1–64 explicit local cases')
     for case in cases:
@@ -208,7 +210,7 @@ def _charge_validation(ledger, workspace, token, timeout):
     state = parent.snapshot(check_bindings=True)
     require(not state['binding_check']['errors'], 'Parent validation budget bindings changed')
     request = {'tool_validation': token}
-    with parent._db(True) as db:
+    with parent.readonly() as db:
         contract = parent._contract(db)
         require('advisor_policy' not in contract and 'stop_policy' not in contract
                 and 'maintenance_allowance' not in contract and 'execution_policy' not in contract
@@ -243,8 +245,7 @@ def validate(root, name, case_file, timeout=10, ledger=None, *, comparison=None)
     _qualification_root(root)
     store = ProjectStore(root)
     if store.path.is_file():
-        with store._db(True) as db:
-            _preparation_contract(store, db)  # Repeat atomically before launch.
+        store.read_through(lambda db: _preparation_contract(store, db))  # Repeat atomically before launch.
     name = _name(name)
     candidate = get(root, 'tool:' + name)
     require(candidate is not None, 'Extract a named tool candidate first')

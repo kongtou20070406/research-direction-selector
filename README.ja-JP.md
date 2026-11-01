@@ -116,7 +116,7 @@ RDS は Advisor を判断の中心とする研究システムです。二つの�
 
 ループは **研究目標 → 仮説と候補 → Advisor の検討・選択 → 制約下での実行 → 証拠 → 継続、問題の見直し、停止** です。許可された改訂も同じ研究状態とリソース会計を引き継ぎます。新しい提案が使用済み予算をリセットしたり、自らを検証済みにしたりすることはありません。記録は `.rds/` に保存します。`references/judgment-graph.yaml` は適用範囲を持つ方法論ルールを提供します。
 
-最新の安定リリースは [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0) です。開発 checkout のバージョン表記は `6.0.0-rc.1` で、新しいメジャー世代を開始します。公開は保留中です。範囲は[プレビュー説明](docs/releases/6.0.0-rc.1-preview.md)、研究能力の主張に関する検証は[評価計画](https://github.com/kongtou20070406/research-direction-selector/issues/166)を参照してください。
+公開済みの最新安定リリースは [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0) です。この checkout のバージョン表記は `6.2.0` です（公開は保留中。[6.0.0 説明](docs/releases/6.0.0.md)を参照）。6.0.0 は **Compass** を追加します。1 つの宣言をカーネル契約にコンパイルし、`project drive --compass` が EIG による実験選択 → ベイスン脱出（プローブ、アブダクティブ・ジャンプ、目標拘束 RSI）→ 厳密 / Lean / 証明書検証 → ハッシュ拘束レポートまでを無人で実行します。測定は `INPUT_REPORTED`、`scientific_support` は `UNKNOWN` のままです。[Compass](docs/compass.md)、[マルチトラップ・ベンチマーク](benchmark/compass/README.md)、研究能力の主張に関する検証は[評価計画](https://github.com/kongtou20070406/research-direction-selector/issues/166)を参照してください。
 
 ---
 

@@ -1,0 +1,45 @@
+{
+ "eig": {
+  "survivors": [
+   "4.78e-02 * (current1 + current2) ** (3 / 2) / distance ** 3"
+  ],
+  "points_used": 2,
+  "extra": [],
+  "unique_correct": true
+ },
+ "random_success": 30,
+ "random_trials": 30,
+ "random_points_mean": 2.0,
+ "random_survivor_counts": [
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1
+ ]
+}

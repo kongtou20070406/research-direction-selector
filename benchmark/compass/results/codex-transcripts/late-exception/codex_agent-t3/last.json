@@ -1,0 +1,7 @@
+{
+  "status": "CLAIM",
+  "law_python": "def law(x):\n    return x*x + 1 if x < 7 else 0\n",
+  "accepted_arm": null,
+  "rationale": "Measured all 10 declared candidates once. Inputs 0–6 yield 1, 2, 5, 10, 17, 26, 37; inputs 7–9 yield 0. The law matches every candidate exactly. Corrected measurements would change the answer; an expanded domain would require further validation.",
+  "confidence": 1.0
+}

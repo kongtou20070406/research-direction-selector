@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "Fail-closed proof preflight; does not perform kernel replay",
+  "required": [
+    "schema_version",
+    "obligation_sha256",
+    "kind",
+    "theorem",
+    "status",
+    "assurance",
+    "scientific_support",
+    "usable_as_proved_premise",
+    "formal_alignment",
+    "reasons"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "obligation_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "kind": {
+      "enum": [
+        "CONJECTURE",
+        "LEMMA",
+        "THEOREM"
+      ]
+    },
+    "theorem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "status": {
+      "enum": [
+        "CONJECTURE",
+        "PROOF_REQUIRED",
+        "REJECTED",
+        "REPLAY_REQUIRED"
+      ]
+    },
+    "assurance": {
+      "const": "NONE"
+    },
+    "scientific_support": {
+      "const": "UNKNOWN"
+    },
+    "usable_as_proved_premise": {
+      "const": false
+    },
+    "formal_alignment": {
+      "const": "NOT_CHECKED"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536
+      }
+    }
+  }
+}

@@ -1,12 +1,13 @@
-"""Advisory conversation hooks for direct calls to this installation's RDS CLI.
+"""Advisory conversation hooks and research reminders for host events.
 
-Input/output follow the Claude Code and Codex hook JSON contracts. This module
-does not run commands, read transcripts, or write state. Hosts must configure a
-short hook timeout. Complex shell programs deliberately receive no annotation.
+Hosts configure a short hook timeout. Complex shell programs deliberately
+receive no automatic attempt annotation.
 """
+from contextlib import closing
 import json
 from pathlib import Path
 import re
+import sqlite3
 import sys
 
 MAX_INPUT_BYTES = 65536
@@ -77,6 +78,24 @@ def _local_path(value, cwd=None):
         path = cwd / path
     return path.resolve(strict=True)
 
+def _python_script_index(args):
+    executable = args[0].replace('\\', '/').rsplit('/', 1)[-1]
+    index = 1
+    if executable.lower() in {'py', 'py.exe'} and index < len(args) and re.fullmatch(r'-3(?:\.\d+)?', args[index]):
+        index += 1
+    while index < len(args):
+        arg = args[index]
+        if arg in {'-X', '-W'}:
+            index += 2
+        elif arg.startswith(('-X', '-W')) and len(arg) > 2:
+            index += 1
+        elif re.fullmatch(r'-[BOuEsSIdqv]+', arg):
+            index += 1
+        else:
+            break
+    return index
+
+
 
 def invocation(payload):
     """Return a fixed command label only for this installation's exact entry."""
@@ -103,11 +122,7 @@ def invocation(payload):
     interpreter = args[0].replace("\\", "/").rsplit("/", 1)[-1]
     if not re.fullmatch(r"(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?", interpreter, re.I):
         return None
-    index = 1
-    if interpreter.lower() in {"py", "py.exe"} and index < len(args) and re.fullmatch(r"-3(?:\.\d+)?", args[index]):
-        index += 1
-    while index < len(args) and args[index] in {"-B", "-u"}:
-        index += 1
+    index = _python_script_index(args)
     if index >= len(args) or args[index].startswith("-"):
         return None
     cwd = _local_path(tool_input.get("workdir", tool_input.get("cwd", payload.get("cwd"))))
@@ -146,6 +161,139 @@ def _result_status(payload):
     return "result unknown"
 
 
+def _attempt(payload):
+    if payload.get("tool_name") not in TOOLS:
+        return None
+    data = payload.get("tool_input")
+    if not isinstance(data, dict):
+        return None
+    supplied = [data[key] for key in ("command", "cmd", "argv") if key in data]
+    if len(supplied) != 1:
+        return None
+    raw = supplied[0]
+    if isinstance(raw, list):
+        if not 0 < len(raw) <= MAX_ARGS or any(not isinstance(x, str) or not x or "\x00" in x for x in raw) or sum(map(len, raw)) > MAX_COMMAND_CHARS:
+            return None
+        args = raw
+    else:
+        args = literal_argv(raw)
+    if not args:
+        return None
+    executable = args[0].replace("\\", "/").rsplit("/", 1)[-1]
+    if re.fullmatch(r"(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?", executable, re.I):
+        index = _python_script_index(args)
+        if index >= len(args):
+            return None
+        if args[index] == '-m':
+            if index + 1 >= len(args) or not re.fullmatch(r'[A-Za-z_][\w.]*(?<!\.)', args[index + 1]):
+                return None
+            script = args[index + 1]
+        else:
+            script = args[index]
+            if script.startswith('-') or not script.lower().endswith(('.py', '.pyw')):
+                return None
+    elif re.fullmatch(r'(?:pytest|uv|poetry|npm|pnpm)(?:\.exe)?', executable, re.I):
+        name = executable.lower().removesuffix('.exe')
+        if name == 'pytest':
+            script = name
+        elif len(args) >= 3 and args[1] == 'run' and name in {'uv', 'poetry'}:
+            nested = dict(payload, tool_input={'argv': args[2:]})
+            return _attempt(nested) or (name, {'returned': 'ok', 'nonzero exit': 'fail', 'error': 'fail'}.get(_result_status(payload), 'unknown'))
+        elif len(args) >= 2 and args[1] == 'test' and name in {'npm', 'pnpm'}:
+            script = name + ' test'
+        else:
+            return None
+    elif re.fullmatch(r'(?:powershell|pwsh)(?:\.exe)?', executable, re.I):
+        if len(args) < 3 or args[1].lower() != '-file':
+            return None
+        script = args[2]
+        if not script.lower().endswith('.ps1'):
+            return None
+    elif re.fullmatch(r'(?:bash|node)(?:\.exe)?', executable, re.I):
+        if len(args) < 2 or args[1].startswith('-'):
+            return None
+        script = args[1]
+        if not script.lower().endswith('.sh' if executable.lower().startswith('bash') else '.js'):
+            return None
+    else:
+        script = args[0]
+        if not script.lower().endswith(('.sh', '.ps1', '.bat', '.cmd')):
+            return None
+    route = script.replace("\\", "/").rsplit("/", 1)[-1]
+    if not route or route in {".", ".."}:
+        return None
+    status = _result_status(payload)
+    return route, {'returned': 'ok', 'nonzero exit': 'fail', 'error': 'fail'}.get(status, 'unknown')
+
+
+class _HookConnection(sqlite3.Connection):
+    def execute(self, sql, *args, **kwargs):
+        if sql.strip().upper().startswith("PRAGMA BUSY_TIMEOUT="):
+            sql = "PRAGMA busy_timeout=1000"
+        return super().execute(sql, *args, **kwargs)
+
+
+def _hook_connect(*args, **kwargs):
+    kwargs["timeout"] = 1.0
+    kwargs["factory"] = _HookConnection
+    return _sqlite_connect(*args, **kwargs)
+
+
+_sqlite_connect = sqlite3.connect
+
+
+def _reminder(payload):
+    cwd = payload.get("cwd")
+    if not isinstance(cwd, str) or not cwd or cwd.startswith(("\\\\", "//")):
+        return None
+    root = Path(cwd)
+    if not root.is_absolute() or not (root / ".rds" / "project.sqlite3").is_file():
+        return None
+    with closing(_sqlite_connect((root / '.rds' / 'project.sqlite3').resolve().as_uri() + '?mode=ro', uri=True, timeout=1.0)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+            return None
+    import rds_notes
+    import rds_nudge
+    if payload.get("hook_event_name") in {"PostToolUse", "PostToolUseFailure"}:
+        attempt = _attempt(payload)
+        if attempt:
+            route, outcome = attempt
+            rds_notes.append(root, "attempt", route, route=route, outcome=outcome, auto=True)
+    reminder = rds_nudge.next_for_host(rds_notes.read(root, limit=2000))
+    if reminder:
+        rds_notes.append(root, "shown", key=reminder["key"])
+        return reminder["question"]
+    return None
+
+
+def _with_reminder(payload, host, output):
+    if payload.get('rds_status_only') is True:
+        return output
+    if payload.get("hook_event_name") not in {"PostToolUse", "PostToolUseFailure", "UserPromptSubmit"}:
+        return output
+    try:
+        sqlite3.connect = _hook_connect
+        try:
+            from rds_mutation import mutation
+            with mutation(timeout=0.25):
+                text = _reminder(payload)
+        finally:
+            sqlite3.connect = _sqlite_connect
+    except Exception:
+        return output
+    if not text:
+        return output
+    if output is None:
+        if host == 'omp':
+            return {'additionalContext': text}
+        return {"hookSpecificOutput": {"hookEventName": payload["hook_event_name"], "additionalContext": text}}
+    if host == "omp":
+        output["additionalContext"] += "\n" + text
+    else:
+        output["hookSpecificOutput"]["additionalContext"] += "\n" + text
+    return output
+
+
 def respond(payload, host):
     """Return event-specific additionalContext, never permissions or UI warnings.
 
@@ -166,9 +314,12 @@ def respond(payload, host):
             return None
         return {"systemMessage": OPERATOR_STATUS}
     elif event in {"PreToolUse", "PostToolUse"} or event == "PostToolUseFailure" and host == "claude":
-        label = invocation(payload)
+        try:
+            label = invocation(payload)
+        except (ValueError, OSError):
+            label = None
         if label is None:
-            return None
+            return _with_reminder(payload, host, None)
         status = ("running" if host == "omp" else "pending") if event == "PreToolUse" else _result_status(payload)
         line = f"RDS | {label}: {status}"
         context = line + "\n"
@@ -180,10 +331,10 @@ def respond(payload, host):
             context += "display_once(observed_call_status); call_returned != scientific_acceptance; call_returned != background_task_completed;"
     else:
         # SessionEnd has no model-context contract and there is nothing to clear.
-        return None
+        return _with_reminder(payload, host, None)
     if host == "omp":
-        return {"status": line, "additionalContext": context}
-    return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}
+        return _with_reminder(payload, host, {"status": line, "additionalContext": context})
+    return _with_reminder(payload, host, {"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}})
 
 
 def _unique_object(pairs):
@@ -197,6 +348,8 @@ def _unique_object(pairs):
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
+    if not args:
+        args = ["--host", "claude"]
     if len(args) != 2 or args[0] != "--host" or args[1] not in {"claude", "codex", "omp"}:
         return 0
     try:

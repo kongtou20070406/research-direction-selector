@@ -4,7 +4,6 @@ Enables the agent to synthesize, validate, and apply scoped decision rules
 derived from experimental falsifications, empirical stagnations, and Obelisk causal traces.
 Zero external runtime dependencies; supports PyYAML if installed, with a standard-library fallback.
 """
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,62 +11,21 @@ import re
 import shlex
 import sys
 import time
-import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from uuid import uuid4
+
+from rds_core import (FORBIDDEN_WORDS, REQUIRED_RULE_KEYS, identity, json_digest,
+                      require, validate_rule)
+from rds_workspace import (adoption_lock, atomic_bytes, graph_lock, load_object,
+                           publish_bytes, workspace_publication)
+
+digest = json_digest
 
 try:
     import yaml
 except ImportError:
     yaml = None
-
-REQUIRED_RULE_KEYS = {
-    "id", "scope", "trigger", "correction", "alternatives",
-    "discriminator", "primary_gate", "falsifier", "sources"
-}
-FORBIDDEN_WORDS = {"guaranteed_gain", "always_works", "universal_optimum", "unfalsifiable"}
-
-
-def require(ok, message):
-    if not ok:
-        raise ValueError(message)
-
-
-def digest(value):
-    raw = value if isinstance(value, bytes) else json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
-
-
-def identity(value):
-    require(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", value),
-            "Invalid rule ID (up to 80 ASCII letters, numbers, _, . or -)")
-    return value
-
-
-def validate_rule(rule_dict, existing_ids=None, allow_update=False):
-    """Strictly validates a decision rule against RSI safety invariants."""
-    require(isinstance(rule_dict, dict), "Rule spec must be a dictionary")
-    missing = REQUIRED_RULE_KEYS - set(rule_dict)
-    require(not missing, f"Missing required rule fields: {', '.join(sorted(missing))}")
-    
-    rid = identity(rule_dict["id"])
-    if existing_ids and rid in existing_ids and not allow_update:
-        raise ValueError(f"Rule ID '{rid}' already exists; use allow_update/--force to revise")
-    
-    for str_key in ("scope", "trigger", "correction", "discriminator", "primary_gate", "falsifier"):
-        val = rule_dict.get(str_key)
-        require(isinstance(val, str) and val.strip(), f"Field '{str_key}' must be a non-empty string")
-        for bad in FORBIDDEN_WORDS:
-            require(bad not in val.lower(), f"Unscientific/unfalsifiable claim '{bad}' forbidden in '{str_key}'")
-
-    for list_key in ("alternatives", "sources"):
-        val = rule_dict.get(list_key)
-        require(isinstance(val, list) and len(val) >= 1, f"Field '{list_key}' must be a non-empty list")
-        require(all(isinstance(item, str) and item.strip() for item in val),
-                f"All elements in '{list_key}' must be non-empty strings")
-    
-    return rule_dict
 
 
 def default_graph_path(root_dir=None):
@@ -217,51 +175,13 @@ def save_judgment_graph(path, data):
     _atomic_bytes(path, content.encode("utf-8"))
 
 
-@contextmanager
-def _workspace_publication(path):
-    from rds_mutation import mutation
-    from rds_workspace import check_admission
-    path = Path(path).absolute()
-    metadata = next((parent for parent in (path, *path.parents)
-                     if os.path.normcase(parent.name) == '.rds'), None)
-    if metadata is None:
-        yield
-    else:
-        with mutation():
-            check_admission(metadata.parent)
-            yield
-
-
-def _atomic_bytes(path, content):
-    with _workspace_publication(path):
-        _publish_bytes(path, content)
-
-
-def _publish_bytes(path, content):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".rds-", delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary and temporary.exists():
-            temporary.unlink()
-
-
-def _load_object(value, name):
-    if isinstance(value, (str, Path)):
-        raw = Path(value).read_bytes()
-        require(len(raw) <= 2 * 1024 * 1024, f"{name} exceeds 2 MiB")
-        value = json.loads(raw.decode("utf-8-sig"), parse_constant=lambda v: (_ for _ in ()).throw(ValueError(f"Nonfinite {name}")))
-    require(isinstance(value, dict), f"{name} must be an object or JSON path")
-    require(len(json.dumps(value, allow_nan=False).encode("utf-8")) <= 2 * 1024 * 1024,
-            f"{name} exceeds 2 MiB")
-    return deepcopy(value)
+# Publication primitives moved to rds_workspace (L1); the names stay so the RSI
+# layer keeps its original call sites and semantics.
+_workspace_publication = workspace_publication
+_atomic_bytes = atomic_bytes
+_load_object = load_object
+_graph_lock = graph_lock
+_adoption_lock = adoption_lock
 
 
 def _records_dir(path, record_dir):
@@ -277,29 +197,6 @@ def _write_record(directory, record, path=None):
     _atomic_bytes(path, json.dumps(record, sort_keys=True, ensure_ascii=False, allow_nan=False,
                                 indent=2).encode("utf-8"))
     return path
-
-
-@contextmanager
-def _graph_lock(directory):
-    # Only publication holds the workspace gate; CPU replay stays outside it.
-    with _workspace_publication(directory), _adoption_lock(directory):
-        yield
-
-
-@contextmanager
-def _adoption_lock(directory):
-    directory.mkdir(parents=True, exist_ok=True)
-    lock = directory / "adoption.lock"
-    try:
-        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as exc:
-        raise ValueError("Another adoption/rollback holds the RSI lock; inspect an abandoned lock before retrying") from exc
-    try:
-        os.write(descriptor, str(os.getpid()).encode("ascii"))
-        yield
-    finally:
-        os.close(descriptor)
-        lock.unlink()
 
 
 def apply_rule(rule_dict, graph_path=None, force=False, dry_run=False, *,

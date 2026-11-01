@@ -8,7 +8,6 @@ JSON cannot certify manipulation, metric gain, final authorization or success.
 import argparse
 import ast
 import difflib
-from contextlib import contextmanager
 from copy import deepcopy
 from fractions import Fraction
 import hashlib
@@ -25,50 +24,21 @@ import uuid
 from rds_probe import parse_source, rational, read_rows, formal_requirement
 from rds_formal_kernel import bounded
 from rds_mutation import mutation
+from rds_project_read_services import has_table
 import rds_core as _core
+from rds_reference_values import (
+    READABLE_STATE_VERSIONS, RESOURCES, canonical, require, strict_json,
+)
+from rds_state import RDSState
 
-VERSION = "6.0.0-rc.1"
-# Reading an explicitly supported ledger does not grant execution admission;
-# the contract digest and engine binding are checked at their existing boundaries.
-READABLE_STATE_VERSIONS = frozenset({
-    VERSION, "5.1.0", "5.2.0", "5.3.0", "5.4.0", "5.5.0-rc.1", "5.5.0-rc.2",
-    "5.6.0-rc.1", "5.6.0-rc.2", "5.7.0", "5.8.0", "5.9.0-rc.1", "5.9.0-rc.2",
-})
-RESOURCES = {"runtime_ms", "runs"}
+VERSION = "6.2.0"
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",
                "final_run_authorized", "matched_recipe", "matched_compute"}
-
-
-def canonical(value):
-    return _core.canonical(value)
 
 
 def digest(value):
     raw = value if isinstance(value, bytes) else canonical(value).encode("utf-8")
     return _core.bytes_digest(raw)
-
-
-def require(ok, message):
-    if not ok:
-        raise ValueError(message)
-
-
-def strict_json(raw):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            require(key not in result, "Duplicate JSON key: " + key)
-            result[key] = value
-        return result
-
-    def bad_constant(value):
-        raise ValueError("Non-finite JSON value: " + value)
-
-    try:
-        return json.loads(raw, object_pairs_hook=pairs, parse_constant=bad_constant)
-    except RecursionError as exc:
-        raise ValueError("JSON nesting exceeds the parser limit") from exc
-
 
 def load_spec(path):
     return strict_json(Path(path).read_text(encoding="utf-8-sig"))
@@ -137,8 +107,22 @@ def engine_id():
     here = Path(__file__).resolve().parent
     from rds_verify import verifier_id
     return digest({"cli": digest((here / "rds_cli.py").read_bytes()),
+                   "app": digest((here / "rds_app.py").read_bytes()),
                    "core": digest((here / "rds_core.py").read_bytes()),
+                   "reference_values": digest((here / "rds_reference_values.py").read_bytes()),
+                   "state": digest((here / "rds_state.py").read_bytes()),
                    "quick": digest((here / "rds_quick.py").read_bytes()),
+                   "cas": digest((here / "rds_cas.py").read_bytes()),
+                   "quick_ledger": digest((here / "rds_quick_ledger.py").read_bytes()),
+                   "output_values": digest((here / "rds_output_values.py").read_bytes()),
+                   "result_record": digest((here / "rds_result_record.py").read_bytes()),
+                   "admission_read": digest((here / "rds_admission_read.py").read_bytes()),
+                   "feasibility_values": digest((here / "rds_feasibility_values.py").read_bytes()),
+                   "scalar_values": digest((here / "rds_scalar_values.py").read_bytes()),
+                   "plugin_registry": digest((here / "rds_plugin_registry.py").read_bytes()),
+                   "outbox": digest((here / "rds_outbox.py").read_bytes()),
+                   "project_read_services": digest((here / "rds_project_read_services.py").read_bytes()),
+                   "project_read_port": digest((here / "rds_project_read_port.py").read_bytes()),
                    "methods": digest((here / "rds_methods.py").read_bytes()),
                    "direction_search": digest((here / "rds_advisor_search.py").read_bytes()),
                    "direction_advisor": digest((here / "rds_advisor.py").read_bytes()),
@@ -190,138 +174,6 @@ def cached_admission(state, binding, hypothesis, source):
             if checked.get("status") == "PASS" and checked.get("application_status", "PASS") == "PASS":
                 return checked
     return None
-
-
-class RDSState:
-    def __init__(self, root_dir):
-        self.root = Path(root_dir).resolve()
-        self.directory = self.root / ".rds"
-        self.db_path = self.directory / "state.sqlite3"
-
-    def connect(self, create=False, readonly=False):
-        """Return a reader; native writers must use the complete transaction scope."""
-        require(readonly, 'Writable reference connections require RDSState.transaction()')
-        require(not create, 'Readonly reference connections cannot create state; use RDSState.transaction()')
-        return self._connect(readonly=True)
-
-    def _connect(self, create=False, readonly=False):
-        if not readonly:
-            from rds_campaign import enforce
-            enforce(self.root, kind='reference')
-            from rds_workspace import check_reference_admission
-            check_reference_admission(self.root)
-        if create:
-            require(not (self.directory / "contract.json").exists(),
-                    "Legacy v5 JSON state found; preserve it and initialize a new root")
-            self.directory.mkdir(parents=True, exist_ok=True)
-        require(create or self.db_path.exists(), "RDS is not initialized")
-        target = self.db_path.as_uri() + "?mode=ro" if readonly else self.db_path
-        db = sqlite3.connect(target, uri=readonly, timeout=15, isolation_level=None)
-        db.execute("PRAGMA foreign_keys=ON")
-        if not readonly:
-            db.execute("PRAGMA synchronous=FULL")
-        if create:
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, body TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS artifacts (sha TEXT PRIMARY KEY, raw BLOB NOT NULL);
-                CREATE TABLE IF NOT EXISTS receipts (run_id TEXT PRIMARY KEY, sha TEXT NOT NULL, body TEXT NOT NULL);
-                CREATE TRIGGER IF NOT EXISTS receipt_no_update BEFORE UPDATE ON receipts
-                BEGIN SELECT RAISE(ABORT, 'receipts are append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS receipt_no_delete BEFORE DELETE ON receipts
-                BEGIN SELECT RAISE(ABORT, 'receipts are append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS event_no_update BEFORE UPDATE ON events
-                BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS event_no_delete BEFORE DELETE ON events
-                BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS artifact_no_update BEFORE UPDATE ON artifacts
-                BEGIN SELECT RAISE(ABORT, 'artifacts are append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS artifact_no_delete BEFORE DELETE ON artifacts
-                BEGIN SELECT RAISE(ABORT, 'artifacts are append-only'); END;
-            """)
-        return db
-
-    @staticmethod
-    def read_state(db):
-        row = db.execute("SELECT body FROM state WHERE id=1").fetchone()
-        state = strict_json(row[0]) if row else {}
-        if state:
-            require(state["version"] in READABLE_STATE_VERSIONS,
-                    "Incompatible state version")
-            require(digest(state["contract"]) == state["contract_sha256"], "Contract integrity failure")
-            if "branches" not in state:
-                state["branches"] = {
-                    "main": {
-                        "id": "main", "parent_id": None, "orthogonal_dimension": "baseline",
-                        "rationale": "Initial primary exploration branch", "status": "ACTIVE",
-                        "stagnation_count": 0, "created_ns": 0,
-                        "hypotheses": list(state.get("hypotheses", {}).keys())
-                    }
-                }
-            state.setdefault("active_branch", "main")
-            state.setdefault("baseline_cache", {})
-        return state
-
-    @contextmanager
-    def snapshot(self):
-        """Read a consistent state without taking a writer lock or rewriting it."""
-        db = self.connect(readonly=True)
-        try:
-            db.execute("BEGIN")
-            yield db, self.read_state(db)
-        finally:
-            db.close()
-
-    @contextmanager
-    def transaction(self, create=False):
-        from rds_mutation import mutation
-        with mutation(), self._transaction(create) as pair:
-            yield pair
-
-    @contextmanager
-    def _transaction(self, create=False):
-        db = self._connect(create)
-        try:
-            db.execute("BEGIN IMMEDIATE")
-            state = self.read_state(db)
-            yield db, state
-            from rds_mutation import mutation
-            from rds_workspace import check_reference_admission
-            with mutation():
-                check_reference_admission(self.root)
-                if state:
-                    self.invariants(state)
-                    db.execute("INSERT INTO state VALUES (1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
-                               (canonical(state),))
-                db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
-
-    @staticmethod
-    def invariants(state):
-        budget = state["budget"]
-        for key in RESOURCES:
-            require(budget["spent"][key] >= 0 and budget["reserved"][key] >= 0, "Negative ledger balance")
-            require(budget["spent"][key] + budget["reserved"][key] <= budget["limits"][key],
-                    "Budget invariant violated")
-            live = sum(p["spec"]["resources"][key] for p in state["plans"].values()
-                       if p["run_status"] == "RESERVED")
-            require(live == budget["reserved"][key], "Reservation ledger does not match plans")
-
-    @staticmethod
-    def event(db, kind, **fields):
-        body = {"kind": kind, "time_ns": time.time_ns(), **fields}
-        cur = db.execute("INSERT INTO events(body) VALUES (?)", (canonical(body),))
-        return cur.lastrowid
-
-    @staticmethod
-    def artifact(db, raw):
-        sha = digest(raw)
-        db.execute("INSERT OR IGNORE INTO artifacts VALUES (?,?)", (sha, raw))
-        return sha
 
 
 def cmd_init(args, rds):
@@ -650,7 +502,7 @@ def cmd_run(args, rds):
             }
             rds.event(db, "BASELINE_CACHED", baseline_key=baseline_key, run_id=run_id)
         receipt["sha256"] = digest(receipt)
-        db.execute("INSERT INTO receipts VALUES (?,?,?)", (run_id, receipt["sha256"], canonical(receipt)))
+        RDSState.record_receipt(db, run_id, receipt["sha256"], canonical(receipt))
         live["run_status"] = status
         rds.event(db, "RUN_FINISHED", run_id=run_id, run_status=status, receipt_sha256=receipt["sha256"])
     return {"run_id": run_id, "run_status": status, "receipt_sha256": receipt["sha256"],
@@ -1155,11 +1007,11 @@ def cmd_project(args):
     if args.action == 'compose-tools':
         from rds_tool_calls import compose
         return compose(args.root, args.request)
-    from rds_project import ProjectStore
+    from rds_app import open_store
     from rds_project_lifecycle import check_root, discover, enable_advisor, initialize
     if args.action == 'discover':
         return discover(args.root)
-    store = ProjectStore(args.root)
+    store = open_store(args.root)
     if args.action == 'bind-workspace':
         from rds_campaign import bind
         return {'status': 'BOUND', 'binding': bind(store, args.workspace_root), 'execution_started': False}
@@ -1199,6 +1051,11 @@ def cmd_project(args):
     if args.action == "init":
         from rds_workspace import check_admission
         check_admission(store.root, supersedes=args.supersedes, separate_project=args.separate_project is not None)
+        if args.declaration:
+            require(args.supersedes is None and args.mode is None and args.separate_project is None,
+                    'A Compass declaration initializes its own campaign contract')
+            from rds_compass_cli import command as compass_command
+            return compass_command(argparse.Namespace(root=args.root, action='init', declaration=args.declaration))
         if args.recipe:
             require(args.supersedes is None, 'Recipe initialization cannot supersede an existing project')
             require(args.mode != 'quick', 'A recipe creates a FULL project with program-owned Advisor')
@@ -1219,7 +1076,11 @@ def cmd_project(args):
         return _project_result(store, store.execute(args.id, background=args.background))
     if args.action == "recover":
         return _project_result(store, store.recover(args.id))
+    if args.action == "drive" and args.compass:
+        from rds_compass_drive import drive as compass_drive
+        return compass_drive(args.root, max_steps=args.max_steps, wall_seconds=args.wall_seconds)
     if args.action == "drive":
+        require(args.wall_seconds is None, '--wall-seconds applies to project drive --compass')
         from rds_autonomy import drive
         return drive(store, args.max_steps, prepare_only=args.prepare_only,
                      until_judgment=args.until_judgment, controller_wall_seconds=args.controller_wall_seconds)
@@ -1230,7 +1091,11 @@ def cmd_project(args):
         advice = review(store)
         selected = advice.get('selected_manifest')
         if selected is None:
-            return advice
+            # A non-launch carries no receipt key; `launch` states why nothing started (#207).
+            return {**advice,
+                    'launch': {'status': 'NOT_LAUNCHED', 'advisor_status': advice.get('status'),
+                               'next_move': advice.get('next_move'), 'warnings': (advice.get('warnings') or [])[:8],
+                               'execution_started': False}}
         snapshot = store.snapshot()
         if not any(run['id'] == selected['id'] for run in snapshot['runs']):
             store.register(selected)
@@ -1270,8 +1135,7 @@ def _owned_project(root):
         return None
     from rds_project import ProjectStore
     store = ProjectStore(root)
-    with store._db(True) as db:
-        return store if 'advisor_policy' in store._contract(db) else None
+    return store if 'advisor_policy' in store.contract() else None
 
 
 def _has_project_contract(root):
@@ -1279,8 +1143,8 @@ def _has_project_contract(root):
     store = ProjectStore(root)
     if not store.path.is_file():
         return False
-    with store._db(True) as db:
-        table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
+    with store.readonly() as db:
+        table = has_table(db, 'contract')
         return bool(table and db.execute('SELECT 1 FROM contract WHERE id=1').fetchone())
 
 
@@ -1621,6 +1485,7 @@ def parser():
     pr_source = pr_init.add_mutually_exclusive_group(required=True)
     pr_source.add_argument("--contract")
     pr_source.add_argument("--recipe", help="Compile explicit research declarations into an owned contract")
+    pr_source.add_argument("--declaration", help="Compile a Compass declaration (same as compass init)")
     pr_init.add_argument('--mode', choices=['full', 'quick'], help='New projects default to FULL with Advisor; QUICK is explicitly limited. Existing exact retries retain their mode')
     pr_init.add_argument('--separate-project', metavar='REASON', help='Explicitly declare an independent project; required under an existing research root')
     pr_init.add_argument("--supersedes", metavar="PREDECESSOR_ROOT",
@@ -1641,6 +1506,8 @@ def parser():
     pr_drive.add_argument("--prepare-only", action="store_true", help="Retain a reviewable model request and pause before its repair worker; ordinary work and recovery continue")
     pr_drive.add_argument("--until-judgment", action="store_true", help="Continue frozen owned routes and reconcile paid work, stopping before new model reasoning with an evidence-bound handoff")
     pr_drive.add_argument("--controller-wall-seconds", type=float, help="Explicit control allowance for an ordinary owned --until-judgment pass, taken from the existing wall budget; frozen autonomy allowance cannot be overridden")
+    pr_drive.add_argument("--compass", action="store_true", help="Drive a Compass campaign unattended (same as compass drive)")
+    pr_drive.add_argument("--wall-seconds", type=float, help="Compass controller deadline; ends with resumable partial evidence")
     pr_actions.add_parser("recover").add_argument("--id", required=True)
     pr_actions.add_parser("next", help="Print the single next actionable project step and its command").add_argument("--brief", "--digest", action="store_true")
     pr_actions.add_parser("compare", help="Compare recorded arms against the precommitted min_useful_delta")
@@ -1654,6 +1521,8 @@ def parser():
     pr_control.add_argument("--candidate", required=True)
     pr_control.add_argument("--current", required=True)
 
+    from rds_compass_cli import add_parser as add_compass
+    add_compass(commands)
     hook = commands.add_parser("host-hook", help="Bind host dispatch to ledger admission identities; coverage is not an OS sandbox")
     hook_actions = hook.add_subparsers(dest="action", required=True)
     hook_actions.add_parser("install").add_argument("--permissive", action="store_true",
@@ -1670,6 +1539,27 @@ def parser():
     workspace_actions.add_parser("coverage")
     for child in workspace_actions.choices.values():
         child.add_argument("--json", action="store_true")
+
+    note = commands.add_parser('note', help='Record a research fact')
+    note.add_argument('note_type', choices=('goal', 'expect', 'observe', 'attempt', 'claim', 'constraint'))
+    note.add_argument('text')
+    for name in ('route', 'outcome', 'metric', 'scale', 'source'):
+        note.add_argument('--' + name)
+    for name in ('value', 'tolerance'):
+        note.add_argument('--' + name, type=float)
+    note.add_argument('--ref', action='append')
+    note.add_argument('--aggregate', action='store_true', default=None)
+    note.add_argument('--endpoint', action='store_true', default=None)
+    nudge = commands.add_parser('nudge', help='Inspect or close research reminders')
+    nudge_actions = nudge.add_subparsers(dest='action')
+    answer = nudge_actions.add_parser('answer')
+    answer.add_argument('key')
+    answer.add_argument('--ref', required=True, action='append')
+    dismiss = nudge_actions.add_parser('dismiss')
+    dismiss.add_argument('key')
+    dismiss.add_argument('--reason', required=True)
+    research_map = commands.add_parser('map', help='Export an offline research map')
+    research_map.add_argument('--output', required=True)
 
     checkpoints = commands.add_parser("checkpoint", help="Record decisions and recover against live project state")
     cp_actions = checkpoints.add_subparsers(dest="action", required=True)
@@ -1980,6 +1870,16 @@ def _main():
                 result = getattr(rds_structure, args.action)(args.root, args.id)
         elif args.command == "project":
             result = cmd_project(args)
+            if getattr(args, 'compass', False) or getattr(args, 'declaration', None):
+                # One exit contract for both Compass front doors: 0 only for a settled goal.
+                from rds_compass_cli import exit_code as compass_exit
+                print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+                return compass_exit(result)
+        elif args.command == "compass":
+            from rds_compass_cli import command as compass_command, exit_code as compass_exit
+            result = compass_command(args)
+            print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+            return compass_exit(result)
         elif args.command == "host-hook":
             from rds_host_hook import install, coverage, validate_request
             if args.action == "install":
@@ -1994,6 +1894,30 @@ def _main():
                 result = bind_workspace(args.root)
             else:
                 result = workspace_coverage(args.root)
+        elif args.command == 'note':
+            import rds_notes
+            fields = {name: getattr(args, name) for name in ('route', 'outcome', 'metric', 'value', 'tolerance', 'scale', 'ref', 'aggregate', 'endpoint', 'source') if getattr(args, name) is not None}
+            result = rds_notes.append(args.root, args.note_type, args.text, **fields)
+        elif args.command == 'nudge':
+            import rds_notes, rds_nudge
+            if args.action == 'answer':
+                result = rds_nudge.answer(args.root, args.key, args.ref)
+            elif args.action == 'dismiss':
+                result = rds_nudge.dismiss(args.root, args.key, args.reason)
+            else:
+                result = rds_nudge.status(rds_notes.read(args.root))
+        elif args.command == 'map':
+            import rds_notes, rds_nudge, rds_research_map
+            from rds_hypergraph_view import write_html_atomic
+            output = Path(args.output)
+            resolved = output.resolve()
+            require(not resolved.is_relative_to((Path(args.root) / '.rds').resolve()), 'Map output cannot be inside .rds')
+            if output.is_file():
+                with output.open('rb') as stream:
+                    require(stream.read(16) != b'SQLite format 3\x00', 'Map output cannot overwrite a SQLite database')
+            notes = rds_notes.read(args.root)
+            write_html_atomic(output, rds_research_map.render(notes, rds_nudge.evaluate(notes)))
+            result = {'output': str(output)}
         elif args.command == "checkpoint":
             result = cmd_checkpoint(args, rds)
         elif args.command == "artifacts":
@@ -2072,7 +1996,7 @@ def _main():
             return 1 if result['correctness'] == 'FAIL' else 2 if result['status'] == 'UNKNOWN' else 0
         if args.command == 'project' and args.action == 'compose-tools' and result['status'] == 'HANDOFF':
             return 2
-        if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and result.get('receipt', result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
+        if args.command in {"project", "run"} and args.action in {"execute", "recover", "advance"} and (result.get('receipt') or result).get("run_status") in {"FAILED", "INTERRUPTED", "TIMED_OUT"}:
             return 1
         if result.get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'} or (result.get('advisor') or {}).get('status') in {'COLLECTION_FAILED', 'INCOMPLETE_ANALYSIS'}:
             return 2  # The receipt is retained; collection needs attention, never a training retry.

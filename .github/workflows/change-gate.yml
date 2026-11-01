@@ -1,0 +1,271 @@
+# Merge-time gate for the risk-classified development contract.
+#
+# docs/development-contract.md section I says the checks must fail closed at the
+# merge point. tools/validate_plan.py deliberately does not hard-fail when run
+# locally; --strict is what turns "advice" into "gate". This workflow is the only
+# caller that is allowed to pass --strict, and it is a separate file on purpose:
+# the existing test job must not get slower, and a broken gate must not be able to
+# mask the native/lean suites.
+#
+# Three things happen here:
+#   1. resolve the PR base to the real fork point and check out full history,
+#   2. run tools/validate_plan.py --strict --evidence, summary into the job page,
+#   3. run tools/import_graph.py and compare upward/cycles/unclassified to the
+#      pinned baseline so a new module cannot dodge classification.
+name: change-gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: change-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: risk class + import graph
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with enough history to reach the PR base
+        uses: actions/checkout@v4
+        with:
+          # The gate diffs against the fork point, which may be far behind HEAD.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Resolve PR base to the merge-base with HEAD
+        id: base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+          # A two-dot `git diff origin/<base>` also counts commits that landed on
+          # the base branch after this PR forked, and reports them as deletions in
+          # this PR. The merge-base is the only honest base for a change gate.
+          base_sha=""
+          if git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"; then
+            base_sha="$(git merge-base "origin/${BASE_REF}" HEAD || true)"
+          fi
+          if [ -z "$base_sha" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            echo "::warning::could not resolve origin/${BASE_REF}; using pull_request.base.sha"
+          fi
+          if ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            echo "::error::base commit ${base_sha} is not present in this checkout"
+            exit 1
+          fi
+          echo "sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "base ${BASE_REF} -> ${base_sha} ($(git rev-parse --short "${base_sha}"))"
+
+      - name: Look for a non-empty Evidence section in the PR description
+        id: evidence
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, re
+
+          body = os.environ.get("PR_BODY") or ""
+          section, capturing = [], False
+          for line in body.splitlines():
+              heading = re.match(r"^ {0,3}(#{1,6})\s+(.*?)\s*$", line)
+              if heading:
+                  level = len(heading.group(1))
+                  if level <= 2:
+                      capturing = (level == 2
+                                   and heading.group(2).strip().lower().startswith("evidence"))
+                      continue
+              if capturing:
+                  section.append(line)
+
+          text = "\n".join(section).strip()
+          # A bare heading with nothing under it is not evidence. 12 non-space
+          # characters is the floor that accepts a path/label and rejects "TODO".
+          found = len(re.sub(r"\s+", "", text)) >= 12
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write("pointer=" + ("PR:Evidence" if found else "") + "\n")
+          print("## Evidence section: " + ("found" if found else "MISSING")
+                + f" ({len(text)} chars captured)")
+          PY
+
+      - name: Risk-class gate (R0/R1 need evidence, R2 needs a mapped test, R3 passes)
+        id: risk
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+          EVIDENCE_POINTER: ${{ steps.evidence.outputs.pointer }}
+        run: |
+          set -uo pipefail
+          plan_json="${RUNNER_TEMP}/plan.json"
+          args=(--base "$BASE_SHA" --strict --json)
+          # An empty pointer is left off entirely: validate_plan.py then records
+          # "needs an evidence pointer", which is exactly the R0/R1 hard fail.
+          if [ -n "${EVIDENCE_POINTER:-}" ]; then
+            args+=(--evidence "$EVIDENCE_POINTER")
+          fi
+          set +e
+          python -B tools/validate_plan.py "${args[@]}" > "$plan_json"
+          rc=$?
+          set -e
+          python - "$plan_json" "$rc" <<'PY'
+          import json, os, sys
+
+          path, rc = sys.argv[1], int(sys.argv[2])
+          summary = os.environ["GITHUB_STEP_SUMMARY"]
+
+          def emit(lines, stream=None):
+              text = "\n".join(lines) + "\n"
+              with open(summary, "a", encoding="utf-8") as handle:
+                  handle.write(text)
+              if stream is not None:
+                  stream.write(text)
+
+          try:
+              plan = json.load(open(path, encoding="utf-8"))
+          except (OSError, ValueError):
+              emit(["## Change gate", "",
+                    f"**FAIL - tools/validate_plan.py produced no JSON (exit {rc})**"])
+              print("::error::validate_plan.py produced no parseable JSON")
+              sys.exit(1)
+
+          overall = plan["overall"]
+          missing = plan["missing"]
+          files = plan["files"]
+          rows = ["## Change gate", "",
+                  f"- overall risk class: **{overall}** (R0 most severe .. R3 no behaviour)",
+                  f"- base: `{plan['base']}`",
+                  f"- evidence pointer: `{os.environ.get('EVIDENCE_POINTER') or 'none'}`",
+                  ""]
+
+          if files:
+              rows += ["| risk | file | why |", "| --- | --- | --- |"]
+              for item in files[:40]:
+                  rows.append(f"| {item['risk']} | `{item['path']}` | {item['why']} |")
+              if len(files) > 40:
+                  rows.append(f"| | ... {len(files) - 40} more file(s) | |")
+          else:
+              rows.append("No files changed against the base; an empty diff is not a failure.")
+          rows.append("")
+
+          if plan["required_evidence"]:
+              rows += [f"### Required evidence for {overall}", ""]
+              rows += [f"- {line}" for line in plan["required_evidence"]]
+              rows.append("")
+          if missing:
+              rows += ["### Missing", ""]
+              rows += [f"- {line}" for line in missing]
+              rows.append("")
+
+          if rc == 0:
+              if overall == "R3":
+                  verdict = "PASS - R3 changes no behaviour and needs no evidence"
+              elif overall == "R2":
+                  verdict = "PASS - every changed script under scripts/ has a mapped test"
+              else:
+                  verdict = f"PASS - {overall} carries an evidence pointer"
+              rows.append(f"**{verdict}**")
+          else:
+              reasons = []
+              if any("evidence pointer" in line for line in missing):
+                  reasons.append(f"{overall} hard-fail: the PR description has no non-empty"
+                                 " `## Evidence` section")
+              if any("no mapped test" in line for line in missing):
+                  reasons.append("R2 hard-fail: a changed script under scripts/ has no test"
+                                 " importing it")
+              if not reasons:
+                  # A rule added to validate_plan.py later must not slip past this gate.
+                  reasons = [f"hard-fail: {line}" for line in missing] or ["hard-fail: no reason recorded"]
+              rows += [f"**FAIL - {reason}**" for reason in reasons]
+              for reason in reasons:
+                  print(f"::error::{reason}")
+          rows.append("")
+          emit(rows, stream=sys.stdout)
+          sys.exit(0 if rc == 0 else 1)
+          PY
+
+      - name: Import-graph baseline (upward / cycles / unclassified may not grow)
+        id: graph
+        run: |
+          set -uo pipefail
+          ig_json="${RUNNER_TEMP}/import-graph.json"
+          if ! python -B tools/import_graph.py > "$ig_json"; then
+            echo "::error::tools/import_graph.py failed; baseline comparison did not run"
+            exit 1
+          fi
+          python - "$ig_json" <<'PY'
+          import json, os, sys
+
+          # Pinned in docs/development-contract.md, section IV "Baseline".
+          # upward_edges counts de-duplicated (source, target) pairs, not raw import
+          # sites, so it must be read from counts and compared with 17, never with
+          # len(graph["upward"]).
+          BASE = {"modules": 177, "edges": 664, "upward_edges": 17,
+                  "cycles": 3, "mutual_pairs": 39, "unclassified": 0}
+          HARD = ("upward_edges", "cycles", "unclassified")
+
+          graph = json.load(open(sys.argv[1], encoding="utf-8"))
+          current = {
+              "modules": graph["counts"]["modules"],
+              "edges": graph["counts"]["edges"],
+              "upward_edges": graph["counts"]["upward_edges"],
+              "cycles": len(graph["cycles"]),
+              "mutual_pairs": len(graph["mutual_pairs"]),
+              "unclassified": len(graph["unclassified_edges"]),
+          }
+          grew = {key: current[key] - BASE[key] for key in HARD if current[key] > BASE[key]}
+
+          rows = ["## Import graph vs pinned baseline", "",
+                  "| count | baseline | now | delta |", "| --- | --- | --- | --- |"]
+          for key in BASE:
+              delta = current[key] - BASE[key]
+              mark = "" if not delta else (" **+%d**" % delta if delta > 0 else " %+d" % delta)
+              rows.append(f"| {key} | {BASE[key]} | {current[key]}{mark} | {delta:+d} |")
+          rows.append("")
+
+          if grew:
+              rows += ["### Growth in a gated count", ""]
+              for key, delta in grew.items():
+                  rows.append(f"- **{key}: {BASE[key]} -> {current[key]} (+{delta})**")
+              rows.append("")
+              if "upward_edges" in grew:
+                  pairs = sorted({(edge.get("source", "?"), edge.get("target", "?"))
+                                  for edge in graph["upward"]})
+                  rows += [f"Upward pairs, de-duplicated (baseline {BASE['upward_edges']} of these;"
+                           " the extra pair(s) are inside this set):", "",
+                           "```"]
+                  rows += [f"{source} -> {target}" for source, target in pairs]
+                  rows += ["```", ""]
+              if "cycles" in grew:
+                  rows += [f"Cycles present (baseline {BASE['cycles']}; the extra ring is inside"
+                           " this list):", "", "```"]
+                  rows += [" -> ".join(list(cycle) + [cycle[0]] if cycle else ["?"])
+                           for cycle in graph["cycles"]]
+                  rows += ["```", ""]
+              if "unclassified" in grew:
+                  rows += ["Edges not classified by the resolver:", "", "```"]
+                  rows += [f"{edge.get('source', '?')} -> {edge.get('target', '?')}"
+                           if isinstance(edge, dict) else str(edge)
+                           for edge in graph["unclassified_edges"]]
+                  rows += ["```", ""]
+              verdict = ("FAIL - a gated count grew; new modules must be classified and"
+                         " must not add upward edges or cycles")
+          else:
+              verdict = ("PASS - upward, cycles and unclassified did not grow against the"
+                         " baseline")
+          rows.append(f"**{verdict}**")
+          text = "\n".join(rows) + "\n"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write(text)
+          print(text)
+          if grew:
+              for key, delta in grew.items():
+                  print(f"::error::import_graph {key} grew {BASE[key]} -> {current[key]}")
+          sys.exit(1 if grew else 0)
+          PY

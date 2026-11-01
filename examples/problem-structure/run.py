@@ -18,7 +18,7 @@ from rds_project import ProjectStore, digest, file_sha
 from rds_tms_store import maintain
 
 
-def prepare(root, case='knowledge', budget=100, owned=False):
+def prepare(root, case='knowledge', budget=100, owned=False, timeout=2):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=False)
     for name in ('candidate.py', 'evaluator.py'):
@@ -50,7 +50,8 @@ def prepare(root, case='knowledge', budget=100, owned=False):
                               'conclusion': 'goal', 'status': 'SUPPORTED', 'source': 'initial assumed decomposition'}], 'goals': ['goal']}
     maintain(root, initial=initial)
     if owned:
-        manifests = [manifest(root, 'candidate', 'interaction'), manifest(root, 'candidate', verifier=True)]
+        manifests = [manifest(root, 'candidate', 'interaction', timeout=timeout),
+                     manifest(root, 'candidate', verifier=True, timeout=timeout)]
         def node(ident, conditions):
             return {'id': ident, 'sources': ['synthetic frozen evaluator fixture'], 'executable': {
                 'decisions': ['next'], 'preconditions': conditions,

@@ -943,8 +943,16 @@ class OwnedAdvisorCLITests(unittest.TestCase):
         self.initialize('slownegative', mutate_policy=lambda value: value['context'].update(max_candidates=2))
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda _: self.call('project', 'advance', ok=False), range(2)))
-        self.assertTrue(any(result.returncode == 0 for result in results),
-                        '\n'.join(result.stdout + result.stderr for result in results))
+        if not any(result.returncode == 0 for result in results):
+            # Both callers can lose: the ledger fence turns any concurrent write, including the other
+            # caller's Advisor review event, into STALE, and the reservation refuses a second run ID.
+            # Neither refusal may launch; the documented retry must launch the attempt once.
+            refusals = '\n'.join(result.stdout + result.stderr for result in results)
+            for result in results:
+                self.assertTrue(any(reason in result.stdout + result.stderr
+                                    for reason in ('STALE; retry admission', 'Run ID already exists')), refusals)
+            self.assertEqual(self.starts(), [], refusals)
+            self.call('project', 'advance')
         self.assertEqual(self.starts(), ['baseline'])
         state = self.snapshot()
         self.assertEqual(len(state['receipts']), 1)

@@ -1,0 +1,72 @@
+[
+ {
+  "task": "sparse-tail",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 1000)",
+  "exact_match": "32/32"
+ },
+ {
+  "task": "sparse-mid",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32"
+ },
+ {
+  "task": "sparse-edge",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32"
+ },
+ {
+  "task": "sparse-two",
+  "status": "SEARCH_EXHAUSTED",
+  "claim": null,
+  "law": null,
+  "exact_match": "0/32"
+ },
+ {
+  "task": "sparse-small",
+  "status": "JUDGMENT_REQUIRED",
+  "claim": "CONSISTENT_BUT_UNCONFIRMED",
+  "law": "ite((x < (61/2)), (1 + x), 2)",
+  "exact_match": "32/32"
+ },
+ {
+  "task": "regime-double",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < 10), (1 + x), (x + x))",
+  "exact_match": "32/32"
+ },
+ {
+  "task": "regime-square",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < 5), (1 + 2), (x * x))",
+  "exact_match": "32/32"
+ },
+ {
+  "task": "regime-const",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < (39/2)), ((2 + 2) + 1), x)",
+  "exact_match": "32/32"
+ },
+ {
+  "task": "regime-linear",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < (31/2)), ((1 + x) + x), ((-1 - 2) + x))",
+  "exact_match": "32/32"
+ },
+ {
+  "task": "regime-tail",
+  "status": "GOAL_IDENTIFIED",
+  "claim": "CONSISTENT_WITH_ALL_RECEIPTED_MEASUREMENTS",
+  "law": "ite((x < (59/2)), (1 + x), 7)",
+  "exact_match": "32/32"
+ }
+]

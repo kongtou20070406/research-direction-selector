@@ -1,0 +1,1 @@
+{"status":"CLAIM","law_python":"def law(x):\n    return x**3 + 1\n","accepted_arm":null,"rationale":"All eight declared candidates were measured once. For x=-3,-2,-1,0,1,2,3,4, the outputs were -26,-7,0,1,2,9,28,65, exactly matching x**3+1. A conflicting corrected measurement would change this claim; behavior outside the declared domain is untested.","confidence":1.0}

@@ -245,9 +245,138 @@ class BrokerTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(lambda client: client.tool('rds_execute_selected', selected), (first, second)))
         self.assertTrue(any(not r['result']['isError'] for r in results), results)
-        self.assertEqual(self.fixture.starts(), ['baseline'])
-        self.assertEqual(len(self.fixture.snapshot()['receipts']), 1)
+        state = self.fixture.snapshot()
+        evidence = {'responses': results, 'runs': state['runs'], 'receipts': state['receipts']}
+        self.assertEqual([r['id'] for r in state['runs']], ['baseline'], evidence)
+        if not self.fixture.starts():
+            # The loser's review can land in both launch fences of the winner's claim. That is the
+            # native second-STALE rule, pinned deterministically below; never a second launch.
+            self.assert_claim_kept(state, evidence)
+            self.assertEqual(first.value('rds_recover', selected)['result']['attempt_id'], state['runs'][0]['attempt_id'])
+            self.assertEqual(self.fixture.starts(), [])
+            return
+        self.assertEqual(self.fixture.starts(), ['baseline'], evidence)
+        self.assertEqual(len(state['receipts']), 1, evidence)
+        self.assertEqual(state['budget']['cpu_seconds']['charged_estimate'], 1, evidence)
+        self.assertEqual(state['budget']['cpu_seconds']['reserved'], 0, evidence)
         self.assertEqual(first.value('rds_recover', selected)['result']['run_id'], 'baseline')
+
+    def assert_claim_kept(self, state, evidence):
+        run = state['runs'][0]
+        self.assertIsNotNone(run['attempt_id'], evidence)
+        self.assertIsNone(run['pid'], evidence)
+        self.assertIn(run['status'], ('RESERVED', 'RUNNING'), evidence)
+        self.assertEqual(state['receipts'], [], evidence)
+        self.assertEqual(state['budget']['cpu_seconds']['charged_estimate'], 0, evidence)
+        self.assertEqual(state['budget']['cpu_seconds']['reserved'], 1, evidence)
+
+    def test_review_in_both_launch_fences_keeps_the_claim_and_never_launches(self):
+        broker, observer = Broker(self.root, self.marker), Broker(self.root, self.marker)
+        selected = broker.call('rds_next', {})['selection']
+        original = broker.store._advisor_prepare_run
+        fenced = []
+
+        def interleave(run_id, **kwargs):
+            token = original(run_id, **kwargs)
+            if self.fixture.snapshot()['runs'][0]['status'] == 'RUNNING':
+                fenced.append(run_id)
+                observer.call('rds_next', {})
+            return token
+
+        with patch.object(broker.store, '_advisor_prepare_run', side_effect=interleave):
+            observed = broker.call('rds_execute_selected', selected)['result']
+        self.assertEqual(fenced, ['baseline', 'baseline'])
+        state = self.fixture.snapshot()
+        self.assertEqual(self.fixture.starts(), [])
+        self.assert_claim_kept(state, observed)
+        # The bounded broker retry observes the same attempt; it neither relaunches nor settles it.
+        self.assertEqual(observed['attempt_id'], state['runs'][0]['attempt_id'])
+        self.assertIn('no rerun', observed['recovery'])
+        self.assertEqual(broker.call('rds_recover', selected)['result']['attempt_id'], observed['attempt_id'])
+        self.assertEqual(self.fixture.starts(), [])
+        self.assertEqual(self.fixture.snapshot()['receipts'], [])
+
+    def test_concurrent_review_retries_same_identity_without_double_reservation(self):
+        broker, observer = Broker(self.root, self.marker), Broker(self.root, self.marker)
+        selected = broker.call('rds_next', {})['selection']
+        original = broker.store._advisor_prepare_run
+        preparations = []
+
+        def interleave(run_id, **kwargs):
+            token = original(run_id, **kwargs)
+            preparations.append(run_id)
+            if len(preparations) == 1:
+                observer.call('rds_next', {})
+            return token
+
+        with patch.object(broker, '_call_once', wraps=broker._call_once) as attempts, \
+                patch.object(broker.store, '_advisor_prepare_run', side_effect=interleave):
+            receipt = broker.call('rds_execute_selected', selected)['result']
+        # Worker claim/start also prevalidate; bound broker attempts, not those checks.
+        self.assertEqual(attempts.call_count, 2)
+        self.assertEqual([call.args for call in attempts.call_args_list],
+                         [('rds_execute_selected', selected)] * 2)
+        self.assertEqual(set(preparations), {'baseline'})
+        self.fixture.assert_owned_receipt(receipt, 'baseline', 'SUCCEEDED')
+        state = self.fixture.snapshot()
+        self.assertEqual(self.fixture.starts(), ['baseline'])
+        self.assertEqual([r['id'] for r in state['runs']], ['baseline'])
+        self.assertEqual(len(state['receipts']), 1)
+        self.assertEqual(state['budget']['cpu_seconds']['charged_estimate'], 1)
+        self.assertEqual(state['budget']['cpu_seconds']['reserved'], 0)
+
+    def test_repeated_stale_admission_is_bounded_and_keeps_reservation(self):
+        from rds_admission_read import StaleAdmission
+        broker, observer = Broker(self.root, self.marker), Broker(self.root, self.marker)
+        selected = broker.call('rds_next', {})['selection']
+        original = broker.store._advisor_prepare_run
+        preparations = []
+
+        def interleave(run_id, **kwargs):
+            token = original(run_id, **kwargs)
+            preparations.append(run_id)
+            observer.call('rds_next', {})
+            return token
+
+        with patch.object(broker.store, '_advisor_prepare_run', side_effect=interleave):
+            with self.assertRaises(StaleAdmission):
+                broker.call('rds_execute_selected', selected)
+        self.assertEqual(preparations, ['baseline', 'baseline'])
+        self.assertEqual(self.fixture.starts(), [])
+        state = self.fixture.snapshot()
+        self.assertEqual(len(state['runs']), 1)
+        self.assertIsNone(state['runs'][0]['attempt_id'])
+        self.assertEqual(state['receipts'], [])
+        self.assertEqual(state['budget']['cpu_seconds']['charged_estimate'], 0)
+        self.assertEqual(state['budget']['cpu_seconds']['reserved'], 1)
+
+    def test_nonstale_refusal_is_not_retried(self):
+        broker = Broker(self.root, self.marker)
+        selected = broker.call('rds_next', {})['selection']
+        with patch.object(broker.store, '_advisor_prepare_run', side_effect=ValueError('original refusal')) as prepare:
+            with self.assertRaisesRegex(ValueError, 'original refusal'):
+                broker.call('rds_execute_selected', selected)
+        prepare.assert_called_once()
+        self.assertEqual(self.fixture.starts(), [])
+
+    def test_retry_does_not_select_a_different_manifest(self):
+        from rds_admission_read import StaleAdmission
+        broker = Broker(self.root, self.marker)
+        selected = broker.call('rds_next', {})['selection']
+        actual = broker.store._advisor_prepare_run
+
+        def stale_then_finish(run_id, **kwargs):
+            actual(run_id, **kwargs)
+            # A concurrent command finishes the selected run before this caller retries.
+            with patch.object(broker.store, '_advisor_prepare_run', side_effect=actual):
+                broker.store.execute(run_id)
+            raise StaleAdmission('concurrent completion')
+
+        with patch.object(broker.store, '_advisor_prepare_run', side_effect=stale_then_finish):
+            receipt = broker.call('rds_execute_selected', selected)['result']
+        self.fixture.assert_owned_receipt(receipt, 'baseline', 'SUCCEEDED')
+        self.assertEqual(self.fixture.starts(), ['baseline'])
+        self.assertEqual([r['id'] for r in self.fixture.snapshot()['runs']], ['baseline'])
 
     def test_strict_transport_rejects_duplicate_keys_nan_batch_and_notifications(self):
         client = self.client()

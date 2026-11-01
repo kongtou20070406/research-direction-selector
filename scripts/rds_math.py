@@ -9,8 +9,9 @@ from pathlib import Path
 import re
 
 from rds_project import ProjectStore, canonical, digest, require
-from rds_quick import cas_bytes
+from rds_cas import cas_bytes
 from rds_mutation import mutation
+from rds_project_read_services import has_table
 
 MAX_BYTES = 8 * 1024 * 1024
 MAX_RECORDS = 2048
@@ -27,7 +28,7 @@ def read_bytes(path):
 
 def objective_spec(raw):
     require(len(raw) <= 64 * 1024, 'Objective declaration exceeds 64 KiB')
-    from rds_cli import strict_json
+    from rds_reference_values import strict_json
     spec = strict_json(raw.decode('utf-8-sig'))
     require(isinstance(spec, dict) and set(spec) == FIELDS | {'schema', 'question_id', 'goal_revision', 'scope'},
             'Objective needs schema, question_id, goal_revision, scope and all six mathematical fields')
@@ -58,8 +59,8 @@ def records(root):
     store = _store(root)
     if not store.path.exists():
         return []
-    with store._db(True) as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_records'").fetchone():
+    with store.readonly() as db:
+        if not has_table(db, 'research_records'):
             return []
         rows = db.execute('SELECT sha256,body FROM research_records ORDER BY rowid LIMIT ?', (MAX_RECORDS + 1,)).fetchall()
     require(len(rows) <= MAX_RECORDS, 'Research ledger exceeds its 2048-record bound')
@@ -89,8 +90,8 @@ def get(root, record_id):
     store = _store(root)
     if not store.path.exists():
         return None
-    with store._db(True) as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_records'").fetchone():
+    with store.readonly() as db:
+        if not has_table(db, 'research_records'):
             return None
         row = db.execute('SELECT sha256,body FROM research_records WHERE id=?', (record_id,)).fetchone()
     if row is None:
@@ -160,8 +161,8 @@ def bind_objective(root, raw):
     previous = objective(root)
     require(previous is not None or not records(root), 'Bind the objective before native assets; use an explicit new project')
     if previous is None and _store(root).path.exists():
-        with _store(root)._db(True) as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
+        with _store(root).readonly() as db:
+            if has_table(db, 'contract'):
                 row = db.execute('SELECT body FROM contract WHERE id=1').fetchone()
                 require(row is None, 'An existing operational contract cannot be retroactively objective-bound; use an explicit new project')
     return put(root, 'objective', 'objective', raw, data=spec)

@@ -91,7 +91,7 @@ def _prepare(args):
     from rds_tools import _cases, _check_validation, _name, command
     store = ProjectStore(args.root)
     if store.path.is_file():
-        with store._db(True) as db:
+        with store.readonly() as db:
             exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone()
             require(not exists or db.execute('SELECT 1 FROM contract').fetchone() is None,
                     'Prepare the application before project init; a live project needs its authorized method revision')

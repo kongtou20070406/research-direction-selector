@@ -14,7 +14,7 @@ from urllib.request import url2pathname
 
 from rds_artifacts import strict_json
 from rds_bounded_io import read_regular_bytes
-from rds_project import ProjectStore, digest, require, TERMINAL
+from rds_project import ProjectStore, digest, require, TERMINAL, TOKEN_RESOURCE
 import rds_structure as structure
 
 POLICY_PATH = 'jump-generation.json'
@@ -29,9 +29,7 @@ def _seal(value):
 
 def _origin(store, state):
     """Locate one original generation through verified effective ancestors."""
-    from rds_method_revision import contract_history
-    with store._db(True) as db:
-        history = contract_history(db)
+    history = store.contract_history()
     require(history[-1]['sha256'] == state['contract_sha256'], 'Jump effective ancestry changed')
     events = [e for e in structure._events(store) if e['kind'] == structure.PREFIX + 'JUMP']
     require(len(events) <= 1, 'Multiple jump generations require an explicit new plan/workspace')
@@ -81,7 +79,7 @@ def packet(store):
     All predicates are delivered intact or the entire payload requires an original.
     """
     from rds_project import canonical
-    from rds_quick import cas_json
+    from rds_cas import cas_json
     from rds_tms_store import current
     value = {'schema': PACKET_SCHEMA, 'status': 'UNAVAILABLE', 'items': [],
              'omissions': {'items': 0, 'generation_results': False},
@@ -192,7 +190,7 @@ def packet(store):
         value.update(status='CURRENT', items=items, sources=prior, generation_status=finished['status'],
                      generation_results=results)
         if len(history) > 1:
-            with store._db(True) as db:
+            with store.readonly() as db:
                 from rds_artifacts import strict_json
                 revisions = [strict_json(r['body']) for r in db.execute(
                     "SELECT body FROM events WHERE json_extract(body,'$.kind')='METHOD_REVISION_ADOPTED' ORDER BY id")]
@@ -876,7 +874,8 @@ def load_plan(store, state):
         require(isinstance(run.get('outpaths'), list) and isinstance(stage['output'], str)
                 and stage['output'] in run['outpaths'], 'Jump output must be declared by its run')
         require(not outputs.intersection(run['outpaths']), 'Jump routes must not overwrite prior outputs')
-        require(set(run.get('resource_estimates', {})) == set(state['budget']), 'Jump route resource dimensions differ')
+        require(set(run.get('resource_estimates', {})) == set(state['budget']) - {TOKEN_RESOURCE},
+                'Jump route resource dimensions differ')
         ids.add(run['id'])
         outputs.update(run['outpaths'])
     _generator_bindings(store, state['contract'], plan)
@@ -983,7 +982,7 @@ def _execute_stage(store, stage, req, control):
     if admitted:
         # Discount only this call's freshly settled native worker measurement.
         # Admission, observation and final collection stay on the controller bill.
-        with store._db(True) as db:
+        with store.readonly() as db:
             row = db.execute('SELECT run_id,sha256,body FROM receipts WHERE run_id=?', (run['id'],)).fetchone()
             require(row is not None, 'Fresh jump attempt has no settled original receipt')
             original = store._receipt(row)

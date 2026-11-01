@@ -11,6 +11,7 @@ from pathlib import Path
 from rds_artifacts import strict_json
 from rds_project import ROLES, canonical, digest, file_sha, number, require
 from rds_mutation import mutation
+from rds_project_read_services import has_table
 
 MAX_BYTES = 2 * 1024 * 1024
 FILE_ROLES = ROLES - {'protocol'}
@@ -214,8 +215,8 @@ def initialize(store, recipe_path, *, separate_reason=None):
     # Reject changes before preparing any artifact. initialize independently
     # repeats this check under its existing transaction, including concurrent init.
     if store.path.is_file():
-        with store._db(True) as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='contract'").fetchone():
+        with store.readonly() as db:
+            if has_table(db, 'contract'):
                 row = db.execute('SELECT sha256 FROM contract WHERE id=1').fetchone()
                 require(row is None or row['sha256'] == digest(contract),
                         'Recipe differs from the initialized contract; use the original revision workflow')

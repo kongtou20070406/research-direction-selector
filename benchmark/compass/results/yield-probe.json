@@ -1,0 +1,114 @@
+[
+ {
+  "world": "arith",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 9,
+  "claim": "((x * x) + 1)",
+  "observations": 9
+ },
+ {
+  "world": "arith",
+  "grammar": "arithmetic",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 9,
+  "claim": "((x * x) + 1)",
+  "observations": 9
+ },
+ {
+  "world": "sin",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 5,
+  "claim": "sin(x)",
+  "observations": 5
+ },
+ {
+  "world": "sin",
+  "grammar": "arithmetic",
+  "status": "SEARCH_EXHAUSTED",
+  "experiments": 5,
+  "claim": null,
+  "observations": 5
+ },
+ {
+  "world": "cos",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 5,
+  "claim": "cos(x)",
+  "observations": 5
+ },
+ {
+  "world": "cos",
+  "grammar": "arithmetic",
+  "status": "SEARCH_EXHAUSTED",
+  "experiments": 5,
+  "claim": null,
+  "observations": 5
+ },
+ {
+  "world": "sqrt",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 5,
+  "claim": "sqrt(x)",
+  "observations": 5
+ },
+ {
+  "world": "sqrt",
+  "grammar": "arithmetic",
+  "status": "SEARCH_EXHAUSTED",
+  "experiments": 5,
+  "claim": null,
+  "observations": 5
+ },
+ {
+  "world": "exp",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 9,
+  "claim": "sqrt(sqrt(exp(x)))",
+  "observations": 9
+ },
+ {
+  "world": "exp",
+  "grammar": "arithmetic",
+  "status": "SEARCH_EXHAUSTED",
+  "experiments": 9,
+  "claim": null,
+  "observations": 9
+ },
+ {
+  "world": "log",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 9,
+  "claim": "log((1 + x))",
+  "observations": 9
+ },
+ {
+  "world": "log",
+  "grammar": "arithmetic",
+  "status": "SEARCH_EXHAUSTED",
+  "experiments": 9,
+  "claim": null,
+  "observations": 9
+ },
+ {
+  "world": "popcount",
+  "grammar": "open",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 17,
+  "claim": "((1 + digitsum2_x) + digitsum2_x)",
+  "observations": 17
+ },
+ {
+  "world": "popcount",
+  "grammar": "arithmetic",
+  "status": "GOAL_IDENTIFIED",
+  "experiments": 17,
+  "claim": "((1 + digitsum2_x) + digitsum2_x)",
+  "observations": 17
+ }
+]

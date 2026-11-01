@@ -199,7 +199,8 @@ class NativeTailBindingTests(unittest.TestCase):
         helper.initialize('positive')
         helper.create()
         child = ProjectStore(helper.root)
-        publish_cas = quick.cas_json
+        import rds_cas
+        publish_cas = rds_cas.cas_json
         executed = []
 
         def delayed_review(root, value, **kwargs):
@@ -211,7 +212,7 @@ class NativeTailBindingTests(unittest.TestCase):
                     executed.append(child.execute('baseline'))
             return ref
 
-        with patch.dict(os.environ, helper.env), patch.object(quick, 'cas_json', side_effect=delayed_review):
+        with patch.dict(os.environ, helper.env), patch.object(rds_cas, 'cas_json', side_effect=delayed_review):
             old_report = owned.review(child)
         self.assertEqual(len(executed), 2)
         receipt = executed[1]

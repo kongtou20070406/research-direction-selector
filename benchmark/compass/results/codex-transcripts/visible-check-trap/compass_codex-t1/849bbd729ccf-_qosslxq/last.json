@@ -1,0 +1,21 @@
+{
+  "decisions": [
+    {
+      "id": "j01-0",
+      "disposition": "adopt",
+      "reason": "The cubic reproduces all three receipts: y(-2)=-7, y(-1)=0, and y(0)=1. Retain it as a candidate, although these measurements do not uniquely establish the law.",
+      "next_step": "Measure y at x=1: the cubic predicts 2, while the proposed quadratic predicts 8, so this measurement will distinguish them.",
+      "hypothesis": null
+    }
+  ],
+  "proposals": [
+    {
+      "id": "quadratic_rival",
+      "predict": {
+        "y": "3*x**2 + 4*x + 1"
+      },
+      "applies": null,
+      "statement": "y = 3*x**2 + 4*x + 1"
+    }
+  ]
+}

@@ -18,6 +18,10 @@ import struct
 import zipfile
 import zlib
 
+from rds_hypergraph_render import (D3_BUNDLE, PIXI_LICENSE, PIXI_SHA256,
+                                   REPLICA_FILES, display_record,
+                                   patch_replica_renderer, readable_text)
+
 MAX_BYTES = 512 * 1024 * 1024
 MAX_NODES = 250_000
 MAX_EDGES = 2_000_000
@@ -236,7 +240,6 @@ def _identity(row, seen, name):
 
 
 def _text(value, default=""):
-    from rds_hypergraph_view import readable_text
     if isinstance(value, dict):
         value = next((value[key] for key in ("zh", "en")
                       if isinstance(value.get(key), str) and value[key].strip()), default)
@@ -247,7 +250,6 @@ def _text(value, default=""):
 
 def _presentation(row, *, native=False, edge=False):
     """Reuse the scientific viewer's recorded-result semantics without editing raw data."""
-    from rds_hypergraph_view import display_record
     kind = row.get("type") if isinstance(row.get("type"), str) else "record"
     original = dict(row)
     wrapped = kind in {"original_node", "history_node"}
@@ -354,7 +356,6 @@ def build_archive_display(graph):
         presentation = _presentation(row, native=native)
         label = presentation["label"]
         if not label:
-            from rds_hypergraph_view import readable_text
             label = readable_text(row["id"], machine=True).strip(" .:_-/") or "记录 " + str(i + 1)
             if "/" in label or "\\" in label:
                 label = label.replace("\\", "/").rsplit("/", 1)[-1]
@@ -430,7 +431,6 @@ def _clusters(nodes, edges, groups):
             record = source_records[source][0]
         if record is not None:
             return record["label"]
-        from rds_hypergraph_view import readable_text
         text = source.removeprefix("source:").removeprefix("type:")
         return readable_text(text, machine=True) or "来源"
 
@@ -525,13 +525,14 @@ def _clusters(nodes, edges, groups):
 
 
 def _packed(raw):
-    return base64.b64encode(gzip.compress(raw, mtime=0)).decode("ascii")
+    compressed = bytearray(gzip.compress(raw, compresslevel=9, mtime=0))
+    # Python 3.11/3.12 may expose zlib's host OS byte; exports are platform-neutral.
+    compressed[9] = 255
+    return base64.b64encode(compressed).decode("ascii")
 
 
 def render_archive_html(bundle, replica_root, pixi_js):
     """Use the same pinned offline renderer bytes as the scientific viewer."""
-    from rds_hypergraph_view import (D3_BUNDLE, PIXI_LICENSE, PIXI_SHA256,
-                                    REPLICA_FILES, patch_replica_renderer)
     sources = {}
     for name, expected in REPLICA_FILES.items():
         raw = (Path(replica_root) / "replica" / name).read_bytes().replace(b"\r\n", b"\n")
