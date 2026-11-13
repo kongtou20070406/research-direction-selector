@@ -118,9 +118,9 @@ RDS 是以 Advisor 为决策中心的研究系统，两端协作并共享已记�
 
 闭环为 **研究目标 → 假说与候选路线 → Advisor 审阅或选择 → 受约束执行 → 证据 → 继续、修订问题或停止**。已授权修订沿用同一研究状态与资源核算；新提案不会重置已花费预算，也不能自行验证自身。项目记录保存在 `.rds/`；`references/judgment-graph.yaml` 提供有适用范围的方法论规则，并非自动改写的、已获证明的因果规律集合。
 
-**6.3.0 稳定版：尚待发布。** 见 [6.3.0 发布说明](docs/releases/6.3.0.md)和[计划中的 GitHub Release](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v6.3.0)；正式发布前，Release 链接可能尚不可用。
+**6.3.0：统一科研闭环。** 见 [6.3.0 发布说明](docs/releases/6.3.0.md)和[GitHub Release](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v6.3.0)，可查看发布状态和下载包。
 
-统一研究循环围绕同一目标提出修改、执行检查并记录选择。可以直接告诉 Agent：“继续这个目标，提出一项具体修改，说明什么检查会改变判断，并报告结果和下一步选择。”宿主私有调用 `research start`、`status`、`propose`、`check` 和 `select`；你得到修改方案、检查结果、选择理由和剩余不确定性。记录复用现有 notes 与 CAS。检查使用受支持的形式化、数学或结构工具，或外部观测；外部观测仍为 `INPUT_REPORTED`。科研收益为 **UNMEASURED**，`scientific_support` 保持 `UNKNOWN`。[研究循环指南](docs/research-loop.md)将随集成补充。
+统一研究循环围绕同一目标提出修改、执行检查并记录选择。可以直接告诉 Agent：“继续这个目标，提出一项具体修改，说明什么检查会改变判断，并报告结果和下一步选择。”宿主私有调用 `research start`、`status`、`propose`、`check` 和 `select`；你得到修改方案、检查结果、选择理由和剩余不确定性。记录复用现有 notes 与 CAS。检查使用受支持的形式化、数学或结构工具，或外部观测；外部观测仍为 `INPUT_REPORTED`。科研收益为 **UNMEASURED**，`scientific_support` 保持 `UNKNOWN`。详见[科研闭环指南](docs/research-loop.md)。
 
 6.0.0 引入了 **Compass**：一份声明编译为内核合约，`project drive --compass` 无人值守地完成 EIG 选实验 → 盆地逃逸（探测、溯因跳跃、目标绑定 RSI）→ 精确 / Lean / 证书验证 → 哈希绑定报告；测量保持 `INPUT_REPORTED`，`scientific_support` 保持 `UNKNOWN`。见 [Compass](docs/compass.md)、[多陷阱基准](benchmark/compass/README.md)，科研能力主张的验证方案见[评估计划](https://github.com/kongtou20070406/research-direction-selector/issues/166)。
 
