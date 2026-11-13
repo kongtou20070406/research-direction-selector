@@ -38,6 +38,13 @@ class PluginPackageTests(unittest.TestCase):
                 version = subprocess.run(cli + ["--version"], cwd=project, env=env,
                                          capture_output=True, text=True, encoding="utf-8", timeout=15)
                 self.assertEqual(version.returncode, 0, version.stderr)
+                from rds_reference_values import VERSION
+                self.assertEqual(version.stdout.strip(), VERSION)
+                self.assertIn('version: v' + VERSION, (skill / 'SKILL.md').read_text(encoding='ascii'))
+                plugin = skill.parents[1]
+                manifest_path = {"claude": ".claude-plugin/plugin.json", "codex": ".codex-plugin/plugin.json",
+                                 "omp": "package.json"}[host]
+                self.assertEqual(json.loads((plugin / manifest_path).read_text(encoding='utf-8'))['version'], VERSION)
                 result = subprocess.run(cli + ["advise", "--context", str(skill / "examples/advisor-search/boundary-context.json"),
                            "--graph", str(skill / "references/judgment-graph.yaml")], cwd=project, env=env,
                            capture_output=True, text=True, encoding="utf-8", timeout=20)
@@ -48,6 +55,19 @@ class PluginPackageTests(unittest.TestCase):
                 self.assertFalse((project / ".rds").exists())
                 self.assertTrue((skill / "formal/lakefile.lean").is_file())
                 self.assertTrue((skill / "references/theory-tools.json").is_file())
+
+    def test_packaged_research_loop_works_after_relocation(self):
+        for host in ('claude', 'codex', 'omp'):
+            with self.subTest(host=host):
+                skill = self.moved / host / build_plugins.NAME / 'skills' / build_plugins.NAME
+                project = self.workspace / (host + ' loop')
+                run = subprocess.run([sys.executable, '-B', str(skill / 'examples/research-loop/run.py'),
+                                      '--root', str(project)], cwd=self.workspace, capture_output=True,
+                                     text=True, encoding='utf-8', timeout=30)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                result = json.loads(run.stdout)
+                self.assertEqual(result['status'], 'INTEGRATION_PASS')
+                self.assertEqual(result['scientific_support'], 'UNKNOWN')
 
     def test_manifest_hook_command_runs_from_unrelated_cwd_after_relocation(self):
         for host, variable in (("claude", "CLAUDE_PLUGIN_ROOT"), ("codex", "PLUGIN_ROOT")):

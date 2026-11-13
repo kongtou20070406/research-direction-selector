@@ -30,7 +30,12 @@ def append(root, type, text='', **fields):
         db.execute('BEGIN IMMEDIATE')
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
         if tables and 'events' not in tables:
-            raise ValueError('Existing database is not an RDS event ledger')
+            if tables != {'research_records'}:
+                raise ValueError('Existing database is not an RDS event ledger')
+            # Native objectives/assets can precede the event ledger. Validate
+            # that existing store before adding notes to the same database.
+            from rds_math import records
+            records(store.root)
         from rds_campaign import detached_admission
         detached_admission(store.root, db)
         db.execute('CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,body TEXT NOT NULL)')

@@ -21,11 +21,11 @@ GROUPS = {
           "continuous_confirmation polynomial_confirmation domain_confirmation advancement guard",
     "L2": "hypergraph hypergraph_blockers hypergraph_input bus_adapter accelerator trajectory "
           "context_compact compress dynamics_probe discrimination",
-    "L3": "advisor advisor_choice advisor_coverage advisor_search advisor_workset owned_advisor autonomy "
+    "L3": "advisor advisor_choice advisor_coverage advisor_search advisor_workset owned_advisor autonomy research_checks "
           "continuation experiments feasibility frontier frontier_proposals global_planning graph_ranker "
           "jump jump_search math_router meta methods operators resources result_tools rsi "
           "adversary search_allocation search_neighborhood structure theory_tools",
-    "L4": "app cli quick project_worker autonomy_worker project_assembly hypergraph_archive hypergraph_render "
+    "L4": "app cli research quick project_worker autonomy_worker project_assembly hypergraph_archive hypergraph_render "
           "broker_hook host_broker host_hook conversation_hook dashboard dialogue "
           "hypergraph_readable hypergraph_view obelisk session capabilities model_export "
           "outputs research_note usage wheel",

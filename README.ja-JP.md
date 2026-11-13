@@ -116,7 +116,11 @@ RDS は Advisor を判断の中心とする研究システムです。二つの�
 
 ループは **研究目標 → 仮説と候補 → Advisor の検討・選択 → 制約下での実行 → 証拠 → 継続、問題の見直し、停止** です。許可された改訂も同じ研究状態とリソース会計を引き継ぎます。新しい提案が使用済み予算をリセットしたり、自らを検証済みにしたりすることはありません。記録は `.rds/` に保存します。`references/judgment-graph.yaml` は適用範囲を持つ方法論ルールを提供します。
 
-公開済みの最新安定リリースは [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0) です。この checkout のバージョン表記は `6.2.0` です（公開は保留中。[6.0.0 説明](docs/releases/6.0.0.md)を参照）。6.0.0 は **Compass** を追加します。1 つの宣言をカーネル契約にコンパイルし、`project drive --compass` が EIG による実験選択 → ベイスン脱出（プローブ、アブダクティブ・ジャンプ、目標拘束 RSI）→ 厳密 / Lean / 証明書検証 → ハッシュ拘束レポートまでを無人で実行します。測定は `INPUT_REPORTED`、`scientific_support` は `UNKNOWN` のままです。[Compass](docs/compass.md)、[マルチトラップ・ベンチマーク](benchmark/compass/README.md)、研究能力の主張に関する検証は[評価計画](https://github.com/kongtou20070406/research-direction-selector/issues/166)を参照してください。
+**6.3.0：統一研究ループ。** [6.3.0 リリースノート](docs/releases/6.3.0.md)と[GitHub Release](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v6.3.0)を参照してください。公開状況と配布パッケージは Release ページに記載されています。
+
+統一研究ループは、同じ目標のもとで変更を提案し、検査し、選択を記録します。Agent に「この目標を続け、具体的な変更を提案し、どの検査で判断が変わるかを説明して、結果と次の選択を報告してください」と伝えられます。ホストは `research start`、`status`、`propose`、`check`、`select` を内部ツールとして使い、研究者には変更案、検査結果、選択理由と残る不確実性を返します。記録は既存の notes と CAS を再利用します。検査には対応する形式・数学・構造ツール、または外部観測を使います。外部観測は `INPUT_REPORTED` のままです。科学的な利益は **UNMEASURED**、`scientific_support` は `UNKNOWN` です。詳細は[研究ループのガイド](docs/research-loop.md)を参照してください。
+
+6.0.0 は **Compass** を導入しました。1 つの宣言をカーネル契約にコンパイルし、`project drive --compass` が EIG による実験選択 → ベイスン脱出（プローブ、アブダクティブ・ジャンプ、目標拘束 RSI）→ 厳密 / Lean / 証明書検証 → ハッシュ拘束レポートまでを無人で実行します。測定は `INPUT_REPORTED`、`scientific_support` は `UNKNOWN` のままです。[Compass](docs/compass.md)、[マルチトラップ・ベンチマーク](benchmark/compass/README.md)、研究能力の主張に関する検証は[評価計画](https://github.com/kongtou20070406/research-direction-selector/issues/166)を参照してください。
 
 ---
 

@@ -118,7 +118,11 @@ RDS is an Advisor-centered research decision system with two cooperating sides a
 
 The loop is **research goal → hypotheses and candidate routes → Advisor review or selection → constrained execution → evidence → continue, reformulate or stop**. Authorized revisions return to the same recorded state and resource accounting; a new proposal does not reset spent budget or verify itself. Project records live in `.rds/`; `references/judgment-graph.yaml` supplies scoped methodology rules, not an automatically rewritten collection of proven causal laws.
 
-The latest published stable release is [5.8.0](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v5.8.0). This checkout identifies itself as `6.2.0` (publication pending; see the [6.0.0 notes](docs/releases/6.0.0.md)). 6.0.0 adds **Compass**: one declaration compiles into a kernel contract, and `project drive --compass` then runs the whole loop unattended:
+**6.3.0: unified research loop.** See the [6.3.0 notes](docs/releases/6.3.0.md) and [GitHub release](https://github.com/kongtou20070406/research-direction-selector/releases/tag/v6.3.0) for publication status and downloadable packages.
+
+The unified research loop keeps one goal across proposed changes, checks and selections. Ask your Agent: “Continue this goal, propose a concrete change, explain which check would change the decision, and report the result and next choice.” The host privately uses `research start`, `status`, `propose`, `check` and `select`; you receive the proposed change, check results, selection reason and remaining uncertainty. Records reuse existing notes and CAS. Checks use supported formal, mathematical or structural tools, or external observations; external observations remain `INPUT_REPORTED`. Scientific gain is **UNMEASURED**, and `scientific_support` remains `UNKNOWN`. See the [research-loop guide](docs/research-loop.md).
+
+6.0.0 introduced **Compass**: one declaration compiles into a kernel contract, and `project drive --compass` then runs the whole loop unattended:
 - the Advisor picks the highest-EIG experiment;
 - basin escape (probe, abductive jump, goal-bound RSI) runs when evidence stalls;
 - exact, Lean and certificate verification run on the result;
