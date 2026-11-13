@@ -28,6 +28,7 @@ def _text(value, name):
 
 
 def _entries(root):
+    root = Path(root).resolve()
     result = {}
     for note in notes.read(root):
         source = note.get('source', '')

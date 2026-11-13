@@ -37,6 +37,13 @@ class ResearchStateTests(unittest.TestCase):
         self.assertEqual(repeated['context']['project_root'], str(self.root.resolve()))
         self.assertFalse((child / '.rds').exists())
 
+    def test_equivalent_root_spelling_replays_original_records(self):
+        child = self.root / 'child'
+        child.mkdir()
+        rows = research._entries(child / '..')
+        self.assertEqual(rows[self.goal]['payload']['summary'], 'Find a fixed point')
+        self.assertEqual(rows, research._entries(self.root.resolve()))
+
     def test_change_retains_parent_and_goal(self):
         old = research.propose(self.root, proposal(self.goal))['record_id']
         new = research.propose(self.root, proposal(self.goal, old))

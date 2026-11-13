@@ -34,6 +34,10 @@ Acceptance and reverse checks:
 - Parent/goal links must resolve in the same project and current goal scope.
   Child-directory entry discovers the canonical project instead of making a
   second ledger. Existing native objectives remain usable.
+  Equivalent root spellings (including Windows short paths and `child/..`)
+  must replay the same original CAS records. Both sides of containment use
+  canonical filesystem identities; an actual CAS redirect outside that root
+  must still be rejected before its bytes can be admitted.
 - Formal, exact-math and existing structure feedback adapters preserve their
   assurance and scope. Empirical observations remain INPUT_REPORTED; all
   scientific_support fields remain UNKNOWN.
