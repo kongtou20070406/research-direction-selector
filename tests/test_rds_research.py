@@ -41,6 +41,8 @@ class ResearchStateTests(unittest.TestCase):
         old = research.propose(self.root, proposal(self.goal))['record_id']
         new = research.propose(self.root, proposal(self.goal, old))
         self.assertEqual(new['context']['routes'][-1]['refs'], [self.goal, old])
+        self.assertNotIn('payload', new['context']['routes'][-1])
+        self.assertEqual(new['context']['routes'][-1]['change']['kind'], 'representation')
         self.assertEqual(len(new['context']['routes']), 2)
         self.assertEqual(new['context']['scientific_support'], 'UNKNOWN')
 

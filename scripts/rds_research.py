@@ -8,7 +8,7 @@ from pathlib import Path
 
 import rds_notes as notes
 from rds_cas import cas_json
-from rds_project import canonical, require
+from rds_project import require, _shell_argument
 from rds_project_lifecycle import discover
 from rds_reference_values import strict_json
 
@@ -69,6 +69,26 @@ def _get(entries, ident, kind):
 
 def _active_goal(entries):
     return next((r for r in reversed(entries.values()) if r['kind'] == 'goal'), None)
+
+
+def _workflow(root):
+    from rds_project_lifecycle import describe
+    value = describe(root)
+    if value['mode'] == 'UNINITIALIZED':
+        return {'mode': value['mode'], 'advisor': value['advisor'], 'execution_contract': 'NOT_INITIALIZED'}
+    prefix = 'python -B scripts/rds_cli.py'
+    actual = 'python -B ' + _shell_argument(str(Path(__file__).resolve().with_name('rds_cli.py')))
+
+    def rebind(item):
+        if isinstance(item, dict):
+            return {key: rebind(part) for key, part in item.items()}
+        if isinstance(item, list):
+            return [rebind(part) for part in item]
+        if isinstance(item, str):
+            return item.replace(prefix, actual)
+        return item
+
+    return rebind(value)
 
 
 def start(root, goal):
@@ -144,13 +164,13 @@ def context(root):
         statuses = [o['result']['status'] for o in obligations]
         next_action = ('REFORMULATE' if 'FAIL' in statuses else 'INTERPRET_CHECKED_SCOPE'
                        if all(s == 'PASS' for s in statuses) else 'CHECK_OR_COLLECT_EVIDENCE')
-        routes.append({**row, 'obligations': obligations, 'next_action': next_action})
+        routes.append({'id': row['id'], 'source': row['source'], 'refs': row['refs'],
+                       **row['payload'], 'obligations': obligations, 'next_action': next_action})
     selections = [r for r in rows.values() if r['kind'] == 'selection' and any(r['refs'] == [p['id']] for p in routes)]
     observations = [r for r in rows.values() if r['kind'] == 'observation' and any(r['refs'] == [p['id']] for p in routes)]
     focus = routes[-1] if routes else None
     if selections and int(selections[-1]['id'][1:]) > int(focus['id'][1:]):
         focus = next(r for r in routes if r['id'] == selections[-1]['refs'][0])
-    from rds_project_lifecycle import describe
     from rds_math import objective
     reported = [n for n in notes.read(root) if n['id'] not in rows]
     return {'schema': 'rds-research-context-v1', 'project_root': str(root), 'goal': goal,
@@ -158,7 +178,7 @@ def context(root):
             'selected': selections[-1] if selections else None,
             'focus_route': focus['id'] if focus else None,
             'next_action': focus['next_action'] if focus else 'PROPOSE' if goal else 'STATE_GOAL',
-            'retained_context': {'native_objective': objective(root), 'workflow': describe(root),
+            'retained_context': {'native_objective': objective(root), 'workflow': _workflow(root),
                                  'reported_notes': reported[-20:], 'omitted_notes': max(0, len(reported) - 20)},
             'scientific_support': 'UNKNOWN', 'research_benefit': 'UNMEASURED',
             'authorization': 'UNCHANGED', 'execution_started': False}

@@ -81,6 +81,9 @@ selection; adding another proposal focuses that new exploration.
 Repeated proposals with identical content reuse their note. Repeated checks
 reuse the original result and replay it; they do not silently rerun a failed or
 unknown operation. Different evidence requires an explicit revised proposal.
+`research check` exits zero when the operation was recorded or reused, including
+a checked FAIL or UNKNOWN. Read `check.status` and the returned context for the
+research outcome; this differs from the standalone `formal` verdict exit codes.
 Use `research show --id <check-record-id>` to retrieve the original result and
 request. The context includes this id beside each check. Missing/tampered CAS
 or receipts fail closed. An interrupted empirical attempt uses the existing
