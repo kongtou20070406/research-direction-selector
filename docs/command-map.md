@@ -8,6 +8,13 @@ Use this map when the short Skill route table does not cover the task. It covers
 
 | Command | Behavior | Prerequisite | Guide |
 | --- | --- | --- | --- |
+| `research start` | Retain the working goal and return shared context | Actual user goal; existing project is discovered | [Research loop](research-loop.md) |
+| `research status` | Restore goals, routes and replayed checks | Project root; no execution or proof search | [Research loop](research-loop.md) |
+| `research propose` | Retain a changed route and discriminating obligations | Explicit proposal file and goal/parent ids | [Research loop](research-loop.md) |
+| `research check` | Run a local checker or consume settled evidence, then return context | Proposal and obligation; original file for observations | [Research loop](research-loop.md) |
+| `research advance` | Execute/recover a frozen structure experiment and consume its feedback | Existing authorized structure proposal | [Research loop](research-loop.md) |
+| `research select` | Record the host's next route choice without certification | Proposal id and reason | [Research loop](research-loop.md) |
+| `research show` | Read an original CAS-bound research record | Returned note id | [Research loop](research-loop.md) |
 | `structure request` | Return bounded open Agent tasks | Initialized project and saved dependencies | [Problem structure](problem-structure.md) |
 | `structure jump` | Generate explanations and return their original content to the Agent | Frozen `jump-generation.json` routes and `--steps` in 1..3 | [Jump generation and AI input](jump-generation.md) |
 | `structure propose` | Retain an experimental topology branch | Current request, sourced testable proposal and allowed manifests | [Problem structure](problem-structure.md) |

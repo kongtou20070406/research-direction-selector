@@ -31,7 +31,7 @@ from rds_reference_values import (
 )
 from rds_state import RDSState
 
-VERSION = "6.2.0"
+VERSION = "6.3.0"
 SELF_SIGNED = {"manipulation_verified", "falsifier_triggered", "primary_metric_gain",
                "final_run_authorized", "matched_recipe", "matched_compute"}
 
@@ -1326,6 +1326,8 @@ def parser():
     p.add_argument("--root", "--workspace", "--project-root", "-w", "-d", "--dir", default=".")
     p.add_argument("--version", action="version", version=VERSION)
     commands = p.add_subparsers(dest="command", required=True)
+    from rds_research import add_parser as add_research_parser
+    add_research_parser(commands)
     quick = commands.add_parser("exec", help="Freeze, bind and execute a local tool command without contract JSON")
     quick.add_argument("--name", "--id", help="Optional stable identity; defaults to frozen-request hash")
     quick.add_argument("--timeout", "-t", "--time", "--timeout-seconds", type=float, default=60, help="Wall cap in seconds (default 60, max 3600)")
@@ -1779,6 +1781,9 @@ def _main():
             confirmations = (strict_json(read_bounded(args.confirmations, 1024 * 1024).decode("utf-8-sig"))
                              if args.confirmations else [])
             result = evaluate_advancement(protocol, trajectories, confirmations)
+        elif args.command == 'research':
+            from rds_research import command
+            result = command(args)
         elif args.command == 'math':
             from rds_math import command
             result = command(args)
@@ -2054,6 +2059,8 @@ def observation_argv(argv):
         return token
 
     if len(tokens) == 1 and option_name(entry, tokens[0]) in {"--version", "--help", "-h"}:
+        return True
+    if tokens == ['research', 'status']:
         return True
     if tokens[:1] != ["status"]:
         return False

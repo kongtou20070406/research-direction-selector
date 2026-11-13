@@ -51,7 +51,11 @@ def _entries(root):
 def _save(root, kind, payload, refs=()):
     value = {'kind': kind, 'payload': payload, 'refs': list(refs)}
     original = cas_json(root, value, max_bytes=MAX_BYTES)
-    note_type = {'goal': 'goal', 'proposal': 'expect', 'check': 'observe',
+    if kind == 'proposal':
+        previous = [n for n in notes.read(root) if n.get('source') == PREFIX + original['sha256']]
+        if previous:
+            return previous[-1]['id']
+    note_type = {'goal': 'goal', 'proposal': 'constraint', 'check': 'observe',
                  'observation': 'observe', 'selection': 'claim'}[kind]
     return notes.append(root, note_type, payload.get('summary', kind),
                         source=PREFIX + original['sha256'], ref=list(refs))['id']
@@ -61,6 +65,10 @@ def _get(entries, ident, kind):
     row = entries.get(ident)
     require(row is not None and row['kind'] == kind, 'Expected ' + kind + ' reference: ' + str(ident))
     return row
+
+
+def _active_goal(entries):
+    return next((r for r in reversed(entries.values()) if r['kind'] == 'goal'), None)
 
 
 def start(root, goal):
@@ -78,6 +86,7 @@ def propose(root, spec):
     require(isinstance(spec, dict) and set(spec) == {'goal', 'parent', 'change', 'summary', 'discriminator', 'obligations'},
             'Proposal needs goal, parent, change, summary, discriminator and obligations')
     _get(rows, spec['goal'], 'goal')
+    require(_active_goal(rows)['id'] == spec['goal'], 'Proposal belongs to an older goal')
     _text(spec['summary'], 'summary')
     refs = [spec['goal']]
     change = spec['change']
@@ -116,8 +125,7 @@ def propose(root, spec):
 def context(root):
     root = project_root(root)
     rows = _entries(root)
-    goals = [r for r in rows.values() if r['kind'] == 'goal']
-    goal = goals[-1] if goals else None
+    goal = _active_goal(rows)
     routes = []
     for row in rows.values():
         if row['kind'] != 'proposal' or not goal or row['payload']['goal'] != goal['id']:
@@ -139,10 +147,19 @@ def context(root):
         routes.append({**row, 'obligations': obligations, 'next_action': next_action})
     selections = [r for r in rows.values() if r['kind'] == 'selection' and any(r['refs'] == [p['id']] for p in routes)]
     observations = [r for r in rows.values() if r['kind'] == 'observation' and any(r['refs'] == [p['id']] for p in routes)]
+    focus = routes[-1] if routes else None
+    if selections and int(selections[-1]['id'][1:]) > int(focus['id'][1:]):
+        focus = next(r for r in routes if r['id'] == selections[-1]['refs'][0])
+    from rds_project_lifecycle import describe
+    from rds_math import objective
+    reported = [n for n in notes.read(root) if n['id'] not in rows]
     return {'schema': 'rds-research-context-v1', 'project_root': str(root), 'goal': goal,
             'routes': routes, 'observations': observations,
             'selected': selections[-1] if selections else None,
-            'next_action': routes[-1]['next_action'] if routes else 'PROPOSE' if goal else 'STATE_GOAL',
+            'focus_route': focus['id'] if focus else None,
+            'next_action': focus['next_action'] if focus else 'PROPOSE' if goal else 'STATE_GOAL',
+            'retained_context': {'native_objective': objective(root), 'workflow': describe(root),
+                                 'reported_notes': reported[-20:], 'omitted_notes': max(0, len(reported) - 20)},
             'scientific_support': 'UNKNOWN', 'research_benefit': 'UNMEASURED',
             'authorization': 'UNCHANGED', 'execution_started': False}
 
@@ -154,3 +171,80 @@ def select(root, proposal, reason):
     require(row['payload']['goal'] == current['goal']['id'], 'Selection belongs to an older goal')
     ident = _save(root, 'selection', {'summary': _text(reason, 'reason')}, [proposal])
     return {'record_id': ident, 'context': context(root)}
+
+
+def check(root, proposal, name, evidence=None):
+    from rds_research_checks import obligation, run, replay
+    root = project_root(root)
+    rows = _entries(root)
+    row = _get(rows, proposal, 'proposal')
+    item = obligation(row['payload'], name)
+    existing = [r for r in rows.values() if r['kind'] == 'check' and r['refs'] == [proposal]
+                and r['payload']['obligation'] == name]
+    if existing:
+        if evidence is not None:
+            from rds_math import read_bytes
+            require(item['tool'] == 'observation' and
+                    hashlib.sha256(read_bytes(evidence)).hexdigest() == existing[-1]['payload']['result']['original']['sha256'],
+                    'Different evidence requires an explicit revised proposal')
+        checked = replay(root, row['payload'], existing[-1]['payload'])
+        return {'record_id': existing[-1]['id'], 'reused': True, 'check': checked, 'context': context(root)}
+    require(_active_goal(rows)['id'] == row['payload']['goal'], 'New check belongs to an older goal')
+    result = run(root, item, evidence)
+    saved = {'obligation': name, 'request': item, 'result': result}
+    ident = _save(root, 'check', saved, [proposal])
+    return {'record_id': ident, 'reused': False, 'check': replay(root, row['payload'], saved), 'context': context(root)}
+
+
+def advance(root, proposal, name):
+    from rds_research_checks import obligation
+    from rds_structure import advance as advance_structure
+    root = project_root(root)
+    rows = _entries(root)
+    row = _get(rows, proposal, 'proposal')
+    require(_active_goal(rows)['id'] == row['payload']['goal'], 'Execution belongs to an older goal')
+    item = obligation(row['payload'], name)
+    require(item['tool'] == 'structure' and set(item['spec']) == {'proposal_id'},
+            'Advance requires an existing authorized structure proposal')
+    result = advance_structure(root, item['spec']['proposal_id'])
+    if result.get('status') == 'RECOVERY_REQUIRED':
+        return {'execution': result, 'context': context(root)}
+    return {'execution': result, **check(root, proposal, name)}
+
+
+def command(args):
+    if args.action == 'start':
+        return start(args.root, args.goal)
+    if args.action == 'status':
+        return context(args.root)
+    if args.action == 'show':
+        rows = _entries(project_root(args.root))
+        require(args.id in rows, 'Unknown research record')
+        return rows[args.id]
+    if args.action == 'propose':
+        from rds_math import read_bytes
+        return propose(args.root, strict_json(read_bytes(args.file).decode('utf-8-sig')))
+    if args.action == 'select':
+        return select(args.root, args.proposal, args.reason)
+    if args.action == 'advance':
+        return advance(args.root, args.proposal, args.obligation)
+    return check(args.root, args.proposal, args.obligation, args.evidence)
+
+
+def add_parser(commands):
+    entry = commands.add_parser('research', help='Continue one goal through changed routes, checks and feedback')
+    actions = entry.add_subparsers(dest='action', required=True)
+    actions.add_parser('start').add_argument('--goal', required=True)
+    actions.add_parser('status')
+    actions.add_parser('show').add_argument('--id', required=True)
+    actions.add_parser('propose').add_argument('--file', required=True)
+    choice = actions.add_parser('select')
+    choice.add_argument('--proposal', required=True)
+    choice.add_argument('--reason', required=True)
+    check_parser = actions.add_parser('check')
+    check_parser.add_argument('--proposal', required=True)
+    check_parser.add_argument('--obligation', required=True)
+    check_parser.add_argument('--evidence', help='Original external output; remains INPUT_REPORTED')
+    advance_parser = actions.add_parser('advance', help='Execute an already authorized structure experiment and consume its feedback')
+    advance_parser.add_argument('--proposal', required=True)
+    advance_parser.add_argument('--obligation', required=True)
