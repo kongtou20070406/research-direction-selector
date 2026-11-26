@@ -27,6 +27,7 @@ Never use or accept any of these shortcuts:
 2. **Equations & URLs**: Break long two-column displays cleanly with `aligned` / `multline`, `\allowbreak`, and `xurl` + `\emergencystretch=1em`.
 3. **Tables & floats**: Use `booktabs` (`\toprule`/`\midrule`/`\bottomrule`), `tabularx` (`X` columns) or `\setlength{\tabcolsep}{4pt}` + `\small`, place table captions **above** tables, use `[t]` / `[tp]` (never `[H]`), and place `figure*` / `table*` 1–2 paragraphs *before* their first mention.
 4. **Clean page tightening**: Tighten `\looseness=-1` on paragraphs with 1–3 trailing words on a new line, trim oversized table padding, or ask the Lead to tighten prose.
+5. **Single-source multi-wrapper**: Keep ONE `latex/sections_en/` + `latex/sections_zh/` tree; put every venue/arXiv wrapper (`main_*.tex`) and `paper_gate*.json` in `latex/` so all PDFs stay synchronized automatically.
 
 ## Read on Demand
 
