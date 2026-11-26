@@ -15,11 +15,17 @@
       "~/.config/magpie/library/skills/paper-figure-craft",
       "~/.claude/skills/magpie-skills/.skills/paper-figure-craft",
       "~/.codex/skills/magpie-skills/.skills/paper-figure-craft"
+    ],
+    "latex-typeset": [
+      "~/.config/magpie/library/skills/latex-typeset",
+      "~/.claude/skills/magpie-skills/.skills/latex-typeset",
+      "~/.codex/skills/magpie-skills/.skills/latex-typeset"
     ]
   },
   "copies": {
     "paper-write": ["~/.gemini/config/skills/paper-write"],
     "research-gate": ["~/.gemini/config/skills/research-gate"],
-    "paper-figure-craft": ["~/.gemini/config/skills/paper-figure-craft"]
+    "paper-figure-craft": ["~/.gemini/config/skills/paper-figure-craft"],
+    "latex-typeset": ["~/.gemini/config/skills/latex-typeset"]
   }
 }

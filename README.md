@@ -46,6 +46,7 @@ In day-to-day conversation, you talk to your Lead model in plain language while 
 | "Have an independent reviewer check this proof" | Parallel read-only reviewer sessions returning raw evidence (not verdicts) | Lean 4 / SymPy / Python counterexamples or CPU probes |
 | "Draft section X / switch to conference format" | `paper-write` with arXiv default (`% gate-sorry` / `TBD` tracked for pending numbers) | Clarity & De-AI gates, `theory_gate`, `--layout-check --render-pages` |
 | "Design Figure 1" | `paper-figure-craft` owned by the Lead model (read-only critique from workers) | Symbol parity + visual inspection |
+| "Fix two-column overflow and fit the ICML page limit" | `latex-typeset` snapshots prose tokens and offloads the mechanical edit-compile-audit loop to a layout worker; Lead visually signs off rendered PNGs | `layout_audit.py` log line-map + PDF box-collision/orphan check + zero prose drift |
 | "Run a swarm here while a second chat drafts the paper" | `scripts/sessions.py` tracks parallel chats & Lead-owned swarm workers (`--owner` / `--cascade`) across shared checkouts or `git worktree`s; `experience_brief.py` surfaces them every turn | Disjoint scope/GPU conflict guard + verify-and-land before cleanup |
 
 ## Three exploration modes (`probe` / `paper` / `program`)

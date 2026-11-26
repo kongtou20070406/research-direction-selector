@@ -16,7 +16,7 @@ def skills(prompt, cwd=""):
 
 
 def test_every_workflow_skill_has_triggers_and_files_exist():
-    assert {"paper-write", "paper-figure-craft", "research-gate"} <= set(TRIG)
+    assert {"paper-write", "paper-figure-craft", "research-gate", "latex-typeset"} <= set(TRIG)
     for name, cfg in TRIG.items():
         for rel in cfg["must_read"]:
             assert (cfg["_dir"] / rel).is_file(), (name, rel)
@@ -117,3 +117,19 @@ def test_secondary_root_auto_triggers_companion_skill(tmp_path):
     loaded = sr.load_triggers([sr.SOURCE_ROOT, tmp_path])
     matched = [r["skill"] for r in sr.route("只估一下这个模型的理论最低时延", loaded)]
     assert matched == ["perf-ruler"]
+
+
+def test_latex_typeset_routes_layout_and_skips_pure_prose():
+    for p in (
+        "帮我修一下双栏公式溢出和三线表排版",
+        "ICML模板超页了帮我压页并检查版面",
+        "Audit overfull hbox and table overflow in main_icml.tex",
+    ):
+        assert "latex-typeset" in skills(p), p
+
+    for prose in (
+        "LaTeX 草稿被新门禁拦下，应该允许加 sorry",
+        "帮我改一下 latex/sections_en/00_abstract.tex",
+        "把 method_notes.md 整理成这篇论文的中文摘要",
+    ):
+        assert "latex-typeset" not in skills(prose), prose
