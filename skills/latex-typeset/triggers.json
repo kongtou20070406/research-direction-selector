@@ -1,0 +1,25 @@
+{
+  "why": "Routes LaTeX layout, overflow, table, float, page-limit, and XeLaTeX typography tasks to latex-typeset without capturing pure prose-drafting turns.",
+  "keywords": [
+    "排版", "版式", "版面", "压页", "超页", "页数限制", "溢出", "overfull", "underfull",
+    "\\bhbox\\b", "\\bvbox\\b", "孤立标题", "白洞", "浮动体", "三线表", "booktabs", "tabularx",
+    "双栏", "单栏", "换模板", "(顶会|会议|icml|neurips|iclr|cvpr)模板", "xelatex", "ctex",
+    "typeset", "layout[-_ ]?audit", "layout[-_ ]?check", "page[-_ ]?limit",
+    "table\\s*overflow", "equation\\s*overflow", "float\\s*placement"
+  ],
+  "paths": [
+    "main_(icml|neurips|iclr|cvpr|aaai|arxiv|en|zh)\\.tex",
+    "layout_audit\\.py",
+    "tables/auto_.*\\.tex"
+  ],
+  "exclude": [
+    "gate[-_ ]?sorry",
+    "允许加\\s*sorry"
+  ],
+  "must_read": [
+    "SKILL.md",
+    "references/venue-recipes.md",
+    "references/fix-cookbook.md"
+  ],
+  "then": "Offload the mechanical LaTeX layout fix loop to a layout worker after snapshotting prose tokens (layout_audit.py --snapshot-prose); mechanically verify zero prose drift (--verify-prose) and zero audit errors, then let the Lead visually inspect rendered PNGs and own any prose tightening."
+}

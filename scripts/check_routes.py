@@ -14,6 +14,7 @@ ACTIVE_L1_SKILLS = (
     "paper-write",
     "research-gate",
     "paper-figure-craft",
+    "latex-typeset",
     "paper_search",
     "perf-ruler",
     "obelisk",
@@ -39,6 +40,7 @@ def _line_budgets(skills_root: Path, repo_root: Path) -> list[tuple[Path, int]]:
         (repo_root / "AGENTS.md", 60),
         (skills_root / "paper-write" / "SKILL.md", 80),
         (skills_root / "research-gate" / "SKILL.md", 80),
+        (skills_root / "latex-typeset" / "SKILL.md", 80),
     ]
 
 
@@ -49,6 +51,8 @@ NEIGHBOR_CLUSTERS: tuple[tuple[str, ...], ...] = (
     ("research-gate", "research-direction-selector"),
     ("research-direction-selector", "math-research-solve", "obelisk"),
     ("paper-figure-craft", "nn-svg-diagram"),
+    ("paper-write", "latex-typeset"),
+    ("paper-figure-craft", "latex-typeset"),
     ("codex-autoresearch", "codexhost-delegation", "workflow-design"),
 )
 CACHE_NAMES = ("__pycache__", ".hypothesis", ".pytest_cache")
@@ -70,6 +74,8 @@ ROUTING_FIXTURES: list[tuple[str, str]] = [
     ("继续按之前方案推进，先恢复任务上下文并查询过去决定与失败经验。", "obelisk"),
     ("把去雾课题的实验交接打包归档", "research-gate"),
     ("Draft the rebuttal replies to reviewers.", "paper-write"),
+    ("Fix overfull hbox warnings, two-column equation overflow, and booktabs table layout in ICML LaTeX.", "latex-typeset"),
+    ("帮我修一下论文双栏公式溢出、三线表排版和顶会压页问题。", "latex-typeset"),
     ("刚跑完第一组对照结果，你想先看走势还是换个学习率？", "NONE"),
 ]
 
