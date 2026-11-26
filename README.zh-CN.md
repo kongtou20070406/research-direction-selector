@@ -66,7 +66,7 @@ python scripts/bootstrap.py --init-project path/to/your-project --name my_study 
 
 RDS v7 专注于研究方向、工作流与确定性门禁，推荐与以下两个专精工具配合使用：
 
-- **[Proofline](https://github.com/kongtou20070406/proofline)** — *零 GPU 占用、带 Z3 与 Lean 4 形式化证明的 PyTorch 硬件时延下界工具。* 恰好卡在 `reference/` 与 `engine/` 之间：写任何 Triton/CUDA 核之前，先在 CPU 上算出算子的 `compute`/`memory`/`serial` 理论极限，确认真有优化空间再动手，省下大量盲目优化的时间。
+- **[Proofline](https://github.com/kongtou20070406/proofline)** — *零 GPU PyTorch 性能预算器：在显式理想化 Roofline / 调度模型下输出 Z3 + Lean 4 机器核验时延下界证书。* 恰好卡在 `reference/` 与 `engine/` 之间：写任何 Triton/CUDA 核之前，先在 CPU 上算出算子的 `compute`/`memory`/`serial` 理论极限，确认真有优化空间再动手，省下大量盲目优化的时间。
 - **[Obelisk](https://github.com/tommy0103/obelisk)** — *跨会话、跨代理的本地 SQLite 原始证据检索引擎。* 与 RDS 的单轮轻量简报和 `handoff.py` 阶段封包互补，在上下文压缩或新开会话后迅速找回历史实验与讨论原文。
 
 ## 安装与部署
