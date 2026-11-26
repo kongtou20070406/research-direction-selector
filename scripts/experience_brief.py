@@ -43,6 +43,22 @@ def _automated() -> re.Pattern[str]:
     return runpy.run_path(str(Path(__file__).with_name("skill_router.py")))["AUTOMATED"]
 
 
+@cache
+def _sessions_brief():
+    if __package__:
+        from .sessions import brief_lines
+
+        return brief_lines
+    return runpy.run_path(str(Path(__file__).with_name("sessions.py")))["brief_lines"]
+
+
+def _session_rows(root: Path) -> list[str]:
+    try:
+        return _sessions_brief()(root)
+    except Exception:
+        return []
+
+
 def find_config(cwd: str | Path | None) -> Path | None:
     if not cwd:
         return None
@@ -163,11 +179,21 @@ def _feedback_rows(directory: Path, query: set[str]) -> list[str]:
     return [line for _, line in hits[:3]]
 
 
-def _fit(checklist: str, status: str, knowledge: list[str], decisions: list[str], feedback: list[str]) -> str:
+def _fit(
+    checklist: str,
+    status: str,
+    knowledge: list[str],
+    decisions: list[str],
+    feedback: list[str],
+    sessions: list[str] | tuple[str, ...] = (),
+) -> str:
+    session_lines = list(sessions)
+
     def render() -> str:
         sections = [TITLE, checklist]
         for label, lines in (
             ("STATUS 自动区", status.splitlines()),
+            ("活跃并行会话（勿撞文件/GPU/Git）", session_lines),
             ("知识库（与本轮相关的禁区不要重复）", knowledge),
             ("研究者的决定", decisions),
             ("过往反馈", feedback),
@@ -177,7 +203,7 @@ def _fit(checklist: str, status: str, knowledge: list[str], decisions: list[str]
         return "\n\n".join(filter(None, [*sections, REMINDER]))
 
     result = render()
-    for lines in (decisions, feedback, knowledge):
+    for lines in (decisions, feedback, knowledge, session_lines):
         while len(result) > MAX_CHARS and lines:
             lines.pop()
             result = render()
@@ -243,6 +269,7 @@ def build(prompt: str, cwd: str | Path | None) -> str:
         _knowledge_rows(cfg.get("knowledge", []), root, prompt),
         _decision_rows(cfg.get("decisions", {}), root, query),
         _feedback_rows(root / memory_dir, query) if memory_dir else [],
+        _session_rows(root),
     )
 
 

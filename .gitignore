@@ -3,3 +3,5 @@ skills/paper-write/references/exemplars/papers/
 __pycache__/
 *.pyc
 .magpie-library
+.agents/sessions.json
+.agents/.sessions.*.tmp
