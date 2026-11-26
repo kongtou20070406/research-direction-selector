@@ -46,6 +46,7 @@ python scripts/bootstrap.py --init-project path/to/your-project --name my_study 
 | “让独立审稿人核一下这条证明” | 并发启动只读审稿代理，只收可核验原始证据（不收口头结论） | Lean 4 / SymPy / Python 反例或纯 CPU 探针复核 |
 | “写第 X 节 / 切到顶会排版” | `paper-write` 默认按 arXiv 单栏写稿（待补数字用 `% gate-sorry` / `TBD` 登记） | 句式清晰与去 AI 味检查、`theory_gate`、`--layout-check --render-pages` |
 | “画一张机制主图” | `paper-figure-craft` 由主模型亲手设计构图与配色（协作者只做只读挑刺） | 符号一致性核对 + 渲染图视觉审查 |
+| “这边拉蜂群干活，那边新开对话改论文” | `scripts/sessions.py` 统一登记并行对话与主对话名下的蜂群 worker（`--owner` / `--cascade`，兼容 `git worktree`），`experience_brief.py` 每轮自动提醒 | 确定性路径/GPU 冲突拦截 + 先验收集成再清理工作区 |
 
 ## 三档探索模式（`probe` / `paper` / `program`）
 

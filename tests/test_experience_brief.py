@@ -263,3 +263,37 @@ def test_focus_string_and_program_json(project):
     configure(root, {**cfg, "mode": "program", "focus": {"program": "missing.json"}})
     ok, issues = experience_brief.check_config(cwd)
     assert not ok and any("focus.program" in issue for issue in issues)
+
+
+def test_parallel_sessions_surface_and_conflict(project, tmp_path):
+    root, cwd, _ = project
+    from scripts import sessions
+
+    baseline = experience_brief.build(PROMPT, cwd)
+    assert "活跃并行会话" not in baseline
+
+    sessions.claim(root, "chat-train", task="Card 056", scope=["loop_agi/"], resources=["gpu:0"])
+    sessions.claim(root, "w-kernel", owner="chat-train", task="Kernel", scope=["loop_agi/engine"])
+    sessions.claim(root, "chat-paper", task="Draft §3", scope=["latex/"])
+    brief = experience_brief.build(PROMPT, cwd)
+    assert "活跃并行会话（勿撞文件/GPU/Git）" in brief
+    assert "chat-train [lead]" in brief and "gpu:0" in brief
+    assert "  ↳ w-kernel [worker]" in brief
+    assert "chat-paper" in brief
+    assert "CONFLICT" not in brief
+    assert len(brief) <= experience_brief.MAX_CHARS
+
+    # Overlapping force claim surfaces conflict warning
+    sessions.claim(root, "chat-eng", task="Kernel", scope=["loop_agi/engine"], force=True)
+    brief_conflict = experience_brief.build(PROMPT, cwd)
+    assert "⚠ CONFLICT: chat-eng <-> chat-train" in brief_conflict
+
+    # Linked worktree shares main checkout's sessions.json
+    wt = tmp_path / "wt-paper"
+    (wt / ".agents").mkdir(parents=True)
+    (wt / ".agents" / "brief.json").write_text(json.dumps({"checklist": CHECKLIST, "knowledge": []}), encoding="utf-8")
+    (root / ".git" / "worktrees" / "wt-paper").mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {root / '.git' / 'worktrees' / 'wt-paper'}\n", encoding="utf-8")
+    (root / ".git" / "worktrees" / "wt-paper" / "commondir").write_text("../..\n", encoding="utf-8")
+    wt_brief = experience_brief.build(PROMPT, wt)
+    assert "chat-train" in wt_brief

@@ -64,3 +64,24 @@ Every worker dispatch MUST define:
 - Match a late worker deliverable to the current goal and file versions. Reuse what still applies; refresh the rest instead of applying stale edits.
 
 Sections 5–6 adapt CCFA-Skills (`ccf-common/references/continuity.md`, MIT) to this workflow.
+
+## 7. Parallel Conversations on One Large Project
+
+When multiple independent conversations work on the same large project simultaneously (for example, one running training cards while another drafts the manuscript or refactors an engine), keep them from colliding with five rules:
+
+1. **Claim disjoint scope & hardware silently (`scripts/sessions.py`)**: Register each active conversation's write scope and hardware (`sessions.py claim <id> --task "..." --scope <paths> --resource <gpu:0>`) and release it when done. `experience_brief.py` automatically surfaces active sibling sessions and `⚠ CONFLICT` warnings every turn at 0 LLM tokens.
+2. **Use a sibling `git worktree` for parallel code edits**: If two conversations edit code in the same repo, put the second conversation in a sibling `git worktree` instead of sharing one working tree; share one working tree only when write scopes are strictly disjoint (e.g., `latex/` vs. `src/`). Linked worktrees automatically share the main checkout's `.agents/sessions.json` board.
+3. **Scoped commits only**: In a shared checkout, stage only your claimed paths (`git add <claimed_paths>`)—never `git add -A` or `git commit -a`. Keep shared logs (`STATUS.md`, `DECISIONS.md`, `ledger/*.jsonl`) append-only or single-owner.
+4. **GPU mutual exclusion**: Before touching a local GPU, check `sessions.py check --resource gpu:0` alongside actual device occupancy; route secondary conversations to CPU or cloud GPUs when the local GPU is claimed.
+5. **Cross-conversation memory**: Never assume another conversation's chat history. Pass facts through project files, `handoff.py` bundles, or `obelisk` search.
+
+## 8. Lead-Managed Swarm Discipline
+
+When a Lead conversation spins up a swarm of workers on a large task, prevent runaway churn and context pollution with six rules:
+
+1. **Wave cap & admission (`<=3–4` active workers)**: Use a swarm only for coverage, independent verification, or scale beyond one context; keep sequential reasoning, core narrative, and visual design inline in the Lead.
+2. **Context firewall (structured gist back, raw logs on disk)**: Workers write full logs, diffs, and tables to disk and return only a compact structured gist (`<=12` lines: artifact paths, exit status, exact metrics/hashes, blockers). Never dump raw worker chatter to the researcher.
+3. **Bounded briefs & pipeline harvesting**: Every worker brief sets an explicit stop budget (max tool/retry rounds; stop after 2 failed attempts instead of looping). Harvest and verify workers as each completes instead of blocking on one straggler; inspect age on `sessions.py` and intervene or cancel if stalled.
+4. **Isolated worktrees & owner-scoped claims**: Authoring workers edit inside isolated `workspace:"share"` / `git worktree`s and register with `sessions.py claim <worker> --owner <lead> --scope <slice> --worktree <path>`, blocking sibling-worker and cross-conversation collisions while allowing the Lead to slice its own scope. Readers and verifiers stay read-only.
+5. **Verify and land before cleanup**: Run deterministic verification (`accept_worker_deliverable.py` / tests / parity) and land each finished worker's branch one at a time BEFORE killing its worktree; release finished workers (or `sessions.py release <lead> --cascade` at wave end) so zombie workers and stale claims never accumulate.
+6. **Independent blind votes, Lead sovereignty**: Parallel reviewers never see each other's reports and never run debate rounds; the Lead verifies blocking findings mechanically, keeps its own judgment, and surfaces `<=2` crisp choices to the researcher.
