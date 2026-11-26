@@ -14,6 +14,7 @@ started at logon by Task Scheduler; ``--once`` checks once and exits (for tests 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -24,7 +25,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 GATE = Path(__file__).resolve().parent / "paper_gate.py"
 CENTER = Path(__file__).resolve().parents[2] / "research-gate" / "scripts" / "command_center.py"
-PATTERNS = ("*.tex", "*.bib", "paper_gate*.json")
+PATTERNS = ("*.tex", "*.bib", "*.sty", "*.cls", "paper_gate*.json", "*.png", "*.svg", "*.jpg")
 LOCK = Path(os.environ.get("TEMP", ".")) / "paper_gate_watch.lock"
 
 
@@ -111,9 +112,41 @@ def configs(paper: Path) -> list[Path]:
     return sorted(paper.glob("paper_gate*.json"), key=lambda p: (p.name != "paper_gate.json", p.name))
 
 
-def run_gate(paper: Path, fix: bool, runner=subprocess.run) -> tuple[bool, str]:
-    ok_all, heads = True, []
-    for cfg in configs(paper) or [paper / "paper_gate.json"]:
+def _affected_configs(paper: Path, changed_paths: set[str]) -> list[Path]:
+    all_cfgs = configs(paper) or [paper / "paper_gate.json"]
+    if not changed_paths or len(all_cfgs) <= 1:
+        return all_cfgs
+    zh_only = True
+    en_only = True
+    for raw in changed_paths:
+        p = Path(raw)
+        try:
+            parts = [part.lower() for part in p.relative_to(paper).parts]
+        except ValueError:
+            parts = [part.lower() for part in p.parts]
+        stem = p.stem.lower()
+        is_zh = any("sections_zh" in part or part.endswith("_zh") for part in parts) or stem.endswith("_zh")
+        is_en = any("sections_en" in part or part.endswith("_en") for part in parts) or stem.endswith("_en") or stem in ("main_en", "main_arxiv_en", "paper_gate")
+        if is_zh and not is_en:
+            en_only = False
+        elif is_en and not is_zh:
+            zh_only = False
+        else:
+            return all_cfgs
+    if zh_only and not en_only:
+        sub = [c for c in all_cfgs if "_zh" in c.stem.lower()]
+        return sub or all_cfgs
+    if en_only and not zh_only:
+        sub = [c for c in all_cfgs if "_zh" not in c.stem.lower()]
+        return sub or all_cfgs
+    return all_cfgs
+
+
+def run_gate(paper: Path, fix: bool, runner=subprocess.run, target_configs: list[Path] | None = None) -> tuple[bool, str]:
+    cfgs = target_configs or configs(paper) or [paper / "paper_gate.json"]
+    multi = len(cfgs) > 1
+
+    def _run_one(cfg: Path) -> tuple[bool, str]:
         cmd = [sys.executable.replace("pythonw.exe", "python.exe"), "-E", "-s", "-X", "utf8", "-B", str(GATE), str(paper),
                "--compile", "--config", str(cfg)]
         if fix:
@@ -121,8 +154,16 @@ def run_gate(paper: Path, fix: bool, runner=subprocess.run) -> tuple[bool, str]:
         p = runner(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         head = next((l for l in (p.stdout or "").splitlines() if l.startswith("errors ")), f"rc={p.returncode}")
-        ok_all &= p.returncode == 0
-        heads.append(f"{cfg.stem}: {head}" if len(configs(paper)) > 1 else head)
+        label = f"{cfg.stem}: {head}" if multi else head
+        return p.returncode == 0, label
+
+    if multi and runner is subprocess.run:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(cfgs))) as pool:
+            outcomes = list(pool.map(_run_one, cfgs))
+    else:
+        outcomes = [_run_one(cfg) for cfg in cfgs]
+    ok_all = all(ok for ok, _ in outcomes)
+    heads = [head for _, head in outcomes]
     return ok_all, "；".join(heads)
 
 
@@ -136,6 +177,7 @@ class Watcher:
         self.quiet, self.fix, self.runner, self.notifier = quiet, fix, runner, notifier
         self.seen = {p: snapshot(p) for p in self.papers}
         self.changed_at: dict[Path, float] = {}
+        self.changed_files: dict[Path, set[str]] = {}
         self.last_ok: dict[Path, bool] = {}
 
     def tick(self, now: float) -> list[tuple[Path, bool, str]]:
@@ -148,12 +190,21 @@ class Watcher:
         for paper in self.papers:
             snap = snapshot(paper)
             if snap != self.seen[paper]:
+                diff_paths = {k for k in set(snap) | set(self.seen[paper]) if snap.get(k) != self.seen[paper].get(k)}
+                self.changed_files.setdefault(paper, set()).update(diff_paths)
                 self.seen[paper] = snap
                 self.changed_at[paper] = now
             if paper in self.changed_at and now - self.changed_at[paper] >= self.quiet:
                 del self.changed_at[paper]
-                ok, head = run_gate(paper, self.fix, self.runner)
-                self.seen[paper] = snapshot(paper)  # the gate's own writes are not a new edit
+                dirty = self.changed_files.pop(paper, set())
+                cfgs = _affected_configs(paper, dirty)
+                ok, head = run_gate(paper, self.fix, self.runner, target_configs=cfgs)
+                after_snap = snapshot(paper)
+                if not self.fix and after_snap != snap:
+                    mid_dirty = {k for k in set(after_snap) | set(snap) if after_snap.get(k) != snap.get(k)}
+                    self.changed_files.setdefault(paper, set()).update(mid_dirty)
+                    self.changed_at[paper] = now
+                self.seen[paper] = after_snap  # the gate's own writes are not a new edit
                 if not ok:
                     self.notifier(f"论文门禁未通过：{paper.name}", f"{head}。详情见 paper_gate_report.md")
                 elif self.last_ok.get(paper) is False:
@@ -184,17 +235,31 @@ def main(argv: list[str] | None = None) -> int:
             print(p)
         return 0
     if a.once:
+        all_ok = True
         for p in papers:
-            print(p.name, *run_gate(p, a.fix))
-        return 0
+            ok, head = run_gate(p, a.fix)
+            print(p.name, ok, head)
+            all_ok &= ok
+        return 0 if all_ok else 1
     try:
         fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         try:  # stale lock from a crash: take it over if its process is gone
             pid = int(LOCK.read_text().strip() or 0)
-            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True,
-                                 encoding="mbcs" if os.name == "nt" else "utf-8", errors="replace").stdout
-            alive = pid > 0 and str(pid) in (out or "")  # tasklist speaks the console code page (GBK here)
+            if pid <= 0:
+                alive = False
+            elif os.name == "nt":
+                out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True,
+                                     encoding="mbcs", errors="replace").stdout
+                alive = str(pid) in (out or "")  # tasklist speaks the console code page (GBK here)
+            else:
+                try:
+                    os.kill(pid, 0)
+                    alive = True
+                except ProcessLookupError:
+                    alive = False
+                except PermissionError:
+                    alive = True
         except (OSError, ValueError, LookupError):
             alive = False
         if alive:

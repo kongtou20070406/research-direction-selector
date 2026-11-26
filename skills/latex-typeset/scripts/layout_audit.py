@@ -26,6 +26,7 @@ _UNDERFULL_BOX_RE = re.compile(r"Underfull \\([hv]box) \(badness (\d+)\)(?:.*?(?
 _FLOAT_TOO_LARGE_RE = re.compile(r"LaTeX Warning: Float too large for page by ([0-9.]+)pt(?: on input line (\d+))?")
 _UNDEF_REF_RE = re.compile(r"LaTeX Warning: (Reference|Citation) `([^']+)' on page \S+ undefined(?: on input line (\d+))?")
 _MISSING_CHAR_RE = re.compile(r"Missing character: There is no (.+?) in font ([^!]+)")
+_FATAL_LOG_RE = re.compile(r"^(?:!\s*(?:Emergency stop|Fatal error occurred)|.+?:\d+:\s*Emergency stop|\*\*\*\s*\(job aborted)")
 
 _VSPACE_HACK_RE = re.compile(r"\\(?:vspace\*?|vskip)\s*\{?\s*-\s*([0-9.]+)\s*(pt|em|ex|cm|mm|in)\s*\}?")
 _SPACING_HACK_RE = re.compile(r"\\(?:renewcommand\s*\{\s*\\baselinestretch\s*\}\s*\{([0-9.]+)\}|linespread\s*\{([0-9.]+)\})")
@@ -139,6 +140,14 @@ def parse_tex_log(log_text: str, *, overfull_pt: float = 6.0, error_overfull_pt:
                 "file": current_file(),
                 "line": "",
                 "message": f"Missing character `{m.group(1)}` in font {m.group(2).strip()}",
+            })
+        elif _FATAL_LOG_RE.search(line):
+            findings.append({
+                "severity": "error",
+                "kind": "COMPILE_ABORTED",
+                "file": current_file(),
+                "line": "",
+                "message": line.strip(),
             })
     return findings
 
@@ -256,16 +265,52 @@ def _normalize_prose(text: str) -> list[str]:
         " ",
         cleaned,
     )
-    cleaned = re.sub(r"\\(?:resizebox|scalebox|makecell)\{[^}]*\}(?:\{[^}]*\})?", " ", cleaned)
+    cleaned = re.sub(r"\\makecell(?:\[[^\]]*\])?", " ", cleaned)
+    cleaned = re.sub(r"\\resizebox\{[^}]*\}\{[^}]*\}", " ", cleaned)
+    cleaned = re.sub(r"\\scalebox\{[^}]*\}(?:\[[^\]]*\])?", " ", cleaned)
     cleaned = cleaned.replace("\\\\", " ").replace("&", " ")
-    # Collapse pure-layout whitespace differences while preserving prose words & numbers.
-    tokens = re.findall(r"[A-Za-z0-9_.\-%]+|[\u4e00-\u9fff]+", cleaned)
+    # Collapse pure-layout whitespace differences while preserving prose words, math operators, kana/hangul/greek, & numbers.
+    tokens = re.findall(r"[A-Za-z0-9_.\-%]+|[<>=≠≤≥±+\-]+|[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af\u0370-\u03ff]+", cleaned)
     return tokens
+
+
+_TEX_INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
+
+
+def _expand_tex_inputs(tex_files: list[Path], root: Path | None = None) -> list[Path]:
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+    queue: list[Path] = list(tex_files)
+    while queue:
+        p = queue.pop(0)
+        try:
+            rp = p.resolve()
+        except OSError:
+            continue
+        if rp in seen or not rp.is_file():
+            continue
+        seen.add(rp)
+        ordered.append(p)
+        text = rp.read_text(encoding="utf-8-sig", errors="replace")
+        for raw_line in text.splitlines():
+            code = raw_line.split("%", 1)[0]
+            for m in _TEX_INPUT_RE.finditer(code):
+                rel = m.group(1).strip()
+                if not rel:
+                    continue
+                if not Path(rel).suffix:
+                    rel = f"{rel}.tex"
+                for base in ([root] if root else []) + [rp.parent]:
+                    cand = (base / rel)
+                    if cand.is_file():
+                        queue.append(cand)
+                        break
+    return ordered
 
 
 def extract_prose_fingerprint(tex_files: list[Path], root: Path | None = None) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
-    for p in sorted(tex_files):
+    for p in sorted(_expand_tex_inputs(tex_files, root=root)):
         key = str(p.relative_to(root)).replace("\\", "/") if root and p.is_relative_to(root) else p.name
         out[key] = _normalize_prose(p.read_text(encoding="utf-8-sig", errors="replace"))
     return out

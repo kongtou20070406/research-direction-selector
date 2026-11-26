@@ -47,7 +47,7 @@ In day-to-day conversation, you talk to your Lead model in plain language while 
 | "Draft section X / switch to conference format" | `paper-write` with arXiv default (`% gate-sorry` / `TBD` tracked for pending numbers) | Clarity & De-AI gates, `theory_gate`, `--layout-check --render-pages` |
 | "Design Figure 1" | Lead sets art direction; `dispatch_gpt.py --skill paper-figure-craft` offloads Matplotlib/TikZ coding & coordinate loops | `audit_figure_taste.py` (`>=85` ACCEPT) + Lead PNG sign-off |
 | "Fix two-column overflow and fit the ICML page limit" | `dispatch_gpt.py --skill latex-typeset` inlines the skill contract, locks prose tokens, and runs the mechanical fix-compile loop | `layout_audit.py` line-map + PDF collision/orphan check + zero prose drift |
-| "Run a swarm here while a second chat drafts the paper" | `scripts/sessions.py` tracks parallel chats & Lead-owned swarm workers (`--owner` / `--cascade`) across shared checkouts or `git worktree`s; `experience_brief.py` surfaces them every turn | Disjoint scope/GPU conflict guard + verify-and-land before cleanup |
+| "Run a swarm here while a second chat drafts the paper" | `scripts/sessions.py` tracks parallel chats & Lead-owned swarm workers (`--owner` / `--cascade`) across shared checkouts or `git worktree`s; `experience_brief.py` surfaces them via cooldown-throttled hooks (with immediate conflict/delta alerts) | Disjoint scope/GPU conflict guard + verify-and-land before cleanup |
 
 ## Three exploration modes (`probe` / `paper` / `program`)
 
@@ -89,4 +89,4 @@ Contributions, issue reports, and workflow improvements are welcome—see [CONTR
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE). Note: vendored reference texts under `skills/paper-write/references/ars/` remain subject to their upstream [CC BY-NC 4.0](skills/paper-write/references/ars/VENDORED.md) non-commercial license.

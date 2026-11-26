@@ -4,7 +4,7 @@ One command after every edit, so agents stop hand-hunting mechanical slips:
 
     python paper_gate.py PAPER_DIR --fix --compile
 
-Per-paper settings live in PAPER_DIR/paper_gate.json. Exit code 0 means no
+Per-paper settings live in PAPER_DIR/paper_gate.json (see the NSI example). Exit code 0 means no
 errors remain (warnings allowed); 1 means errors remain and the paper must not be delivered.
 
 Auto-fixed (deterministic, logged, originals backed up to PAPER_DIR/.gate_backup/<stamp>/):
@@ -493,8 +493,8 @@ def finish_checks(paper, cfg, srcs, rep, *, allow_sorry):
     apply_sorries(combined, rep, allow=allow_sorry, relative_paths=True)
 
 
-def check_placeholders(srcs, cfg, rep):
-    allowed = set(cfg.get("allowed_placeholders", ["TBD"]))
+def check_placeholders(srcs, cfg, rep, *, allow_sorry: bool = True):
+    allowed = set(cfg.get("allowed_placeholders", ["TBD"])) if allow_sorry else set()
     count = 0
     for s in srcs:
         for m in re.finditer(r"\bTBD\b|\bTODO\b|\bXXX\b|\?\?\?|\\pending\{", s.text):
@@ -702,7 +702,11 @@ def check_layout(paper: Path, cfg: dict, labels: dict, rep: Report, *, render_pa
 
 
 def compile_paper(paper: Path, cfg: dict, rep: Report) -> bool:
-    cmd = cfg.get("compile", ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", cfg["main_tex"]])
+    cmd = list(cfg.get("compile", ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", cfg["main_tex"]]))
+    if cmd and cmd[0] == "latexmk" and shutil.which("latexmk") is None and os.name == "nt":
+        win_mk = Path("C:/texlive/2025/bin/windows/latexmk.exe")
+        if win_mk.is_file():
+            cmd[0] = str(win_mk)
     for _ in range(int(cfg.get("compile_passes", 2))):
         r = subprocess.run(cmd, cwd=paper, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
         if r.returncode != 0:
@@ -711,7 +715,7 @@ def compile_paper(paper: Path, cfg: dict, rep: Report) -> bool:
     return True
 
 
-def run_checks(paper, cfg, srcs, rep, apply_fix):
+def run_checks(paper, cfg, srcs, rep, apply_fix, *, allow_sorry: bool = True):
     labels = read_aux(paper, cfg)
     fix_terms(srcs, cfg, rep, apply_fix)
     fix_acronyms(srcs, cfg, rep, apply_fix)
@@ -719,7 +723,7 @@ def run_checks(paper, cfg, srcs, rep, apply_fix):
     check_refs(srcs, labels, paper, cfg, rep)
     check_equations(srcs, cfg, rep)
     check_numbers(srcs, rep)
-    check_placeholders(srcs, cfg, rep)
+    check_placeholders(srcs, cfg, rep, allow_sorry=allow_sorry)
     check_process(srcs, cfg, rep)
     check_new_words(srcs, cfg, rep)
     check_scope(srcs, cfg, paper, rep)
@@ -814,7 +818,7 @@ def main() -> int:
 
     rep = Report()
     try:
-        run_checks(paper, cfg, srcs, rep, a.fix)
+        run_checks(paper, cfg, srcs, rep, a.fix, allow_sorry=not a.no_sorry)
     except ValueError as exc:
         ap.error(str(exc))
     changed = [s for s in srcs if s.text != s.orig]
@@ -836,7 +840,7 @@ def main() -> int:
             # re-check on the compiled state (labels, log, floats); fixes are already applied
             post = Report()
             srcs = load_sources(paper, cfg)
-            labels = run_checks(paper, cfg, srcs, post, False)
+            labels = run_checks(paper, cfg, srcs, post, False, allow_sorry=not a.no_sorry)
             check_floats(paper, cfg, srcs, labels, post)
             check_layout(paper, cfg, labels, post, render_pages=a.render_pages)
             rep.errors = [e for e in rep.errors if e.startswith("compile")] + post.errors
@@ -854,8 +858,11 @@ def main() -> int:
                 try:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(paper / (Path(cfg["main_tex"]).stem + ".pdf"), dest)
-                except OSError as exc:  # an unmounted drive must not fail the gate
-                    rep.warnings.append(f"deliver  could not copy to {target}: {exc}")
+                except OSError as exc:  # an unmounted drive must not fail the gate, but a failed copy on a mounted dir must
+                    if dest.anchor and not Path(dest.anchor).exists():
+                        rep.warnings.append(f"deliver  could not copy to {target}: {exc}")
+                    else:
+                        rep.errors.append(f"deliver  failed to copy PDF to {target}: {exc}")
                     continue
                 note = f" with {len(rep.sorries)} sorry" if rep.sorries else ""
                 rep.infos.append(f"deliver  copied PDF to {target}{note}")

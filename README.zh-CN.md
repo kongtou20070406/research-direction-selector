@@ -47,7 +47,7 @@ python scripts/bootstrap.py --init-project path/to/your-project --name my_study 
 | “写第 X 节 / 切到顶会排版” | `paper-write` 默认按 arXiv 单栏写稿（待补数字用 `% gate-sorry` / `TBD` 登记） | 句式清晰与去 AI 味检查、`theory_gate`、`--layout-check --render-pages` |
 | “画一张机制主图” | 主模型任美术导演定构图与配色，`dispatch_gpt.py --skill paper-figure-craft` 外包绘图编码与坐标消重叠 | `audit_figure_taste.py` 过线（≥85）+ 主模型终审 PNG |
 | “修一下双栏公式溢出和三线表，顺便按 ICML 压页” | `dispatch_gpt.py --skill latex-typeset` 自动注入技能契约并锁正文指纹，由协作者跑通机械改版编译闭环 | `layout_audit.py` 行号定位 + PDF 撞框/孤立标题核查 + 零正文篡改 |
-| “这边拉蜂群干活，那边新开对话改论文” | `scripts/sessions.py` 统一登记并行对话与主对话名下的蜂群 worker（`--owner` / `--cascade`，兼容 `git worktree`），`experience_brief.py` 每轮自动提醒 | 确定性路径/GPU 冲突拦截 + 先验收集成再清理工作区 |
+| “这边拉蜂群干活，那边新开对话改论文” | `scripts/sessions.py` 统一登记并行对话与主对话名下的蜂群 worker（`--owner` / `--cascade`，兼容 `git worktree`），`experience_brief.py` 按会话冷却与增量/冲突变更自动提醒 | 确定性路径/GPU 冲突拦截 + 先验收集成再清理工作区 |
 
 ## 三档探索模式（`probe` / `paper` / `program`）
 
@@ -89,4 +89,4 @@ python scripts/bootstrap.py --apply   # 可选：将技能链接到本地代理�
 
 ## 开源协议
 
-本项目基于 [Apache License 2.0](LICENSE) 协议开源。
+本项目基于 [Apache License 2.0](LICENSE) 协议开源。注意：`skills/paper-write/references/ars/` 下收录的第三方参考材料仍受其上游 [CC BY-NC 4.0](skills/paper-write/references/ars/VENDORED.md) 非商业协议约束。
