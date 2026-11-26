@@ -46,7 +46,14 @@ def load_targets(path: Path = TARGETS) -> tuple[dict[str, list[Path]], dict[str,
 
 
 def is_link(p: Path) -> bool:
-    return p.is_symlink() or (hasattr(os.path, "isjunction") and os.path.isjunction(p))
+    if p.is_symlink() or (hasattr(os.path, "isjunction") and os.path.isjunction(p)):
+        return True
+    if os.name == "nt" and p.exists():
+        try:
+            return bool(p.lstat().st_file_attributes & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+        except OSError:
+            return False
+    return False
 
 
 def make_link(link: Path, target: Path) -> None:
