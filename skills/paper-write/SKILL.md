@@ -39,7 +39,7 @@ The lead agent writes and translates all manuscript prose. Use the lead model as
 
 ### Lead–GPT Complementarity & Clean-Room Voice Charter
 
-The Lead owns the thesis, framing, manuscript voice, and all aesthetic/visual/layout/figure design (read-only evaluation/critique excluded). Anchor that voice to a relevant card in [exemplars/](references/exemplars/index.md) and its original passage. GPT owns counterexamples, Lean↔LaTeX checks, read-only evaluations, and closed engineering tasks with verifiable outputs. The Lead drafts from manuscript evidence and `lead_action_brief.md`. Keep raw GPT commentary outside the Lead's writing context. Apply scope caveats to §7 Limitations and state the supported claims directly in the Abstract, Introduction and Method.
+The Lead owns the thesis, framing, core manuscript voice, and final visual PNG sign-off. Anchor that voice to a relevant card in [exemplars/](references/exemplars/index.md) and its original passage. Offload mechanical TeX/BibTeX/table/ref/acronym fixes, layout/page-limit loops, and EN↔ZH numeric/label parity checks to workers via `scripts/dispatch_gpt.py --skill latex-typeset` (automatically enforcing `--verify-prose`), alongside counterexamples, Lean↔LaTeX checks, and read-only evaluations. The Lead drafts from manuscript evidence and `lead_action_brief.md`. Keep raw worker commentary outside the Lead's writing context. Apply scope caveats to §7 Limitations and state the supported claims directly in the Abstract, Introduction and Method.
 
 ## Assemble and freeze
 

@@ -45,8 +45,8 @@ python scripts/bootstrap.py --init-project path/to/your-project --name my_study 
 | “在卡上试试这个新机制” | `research-gate` 查历史禁区；`reference/` 写纯净 PyTorch，可选跑 Proofline 算下界，有空间再进 `engine/` | AST 纯净度 + 前向/反向数值等价 + 同配方多随机种子基线 |
 | “让独立审稿人核一下这条证明” | 并发启动只读审稿代理，只收可核验原始证据（不收口头结论） | Lean 4 / SymPy / Python 反例或纯 CPU 探针复核 |
 | “写第 X 节 / 切到顶会排版” | `paper-write` 默认按 arXiv 单栏写稿（待补数字用 `% gate-sorry` / `TBD` 登记） | 句式清晰与去 AI 味检查、`theory_gate`、`--layout-check --render-pages` |
-| “画一张机制主图” | `paper-figure-craft` 由主模型亲手设计构图与配色（协作者只做只读挑刺） | 符号一致性核对 + 渲染图视觉审查 |
-| “修一下双栏公式溢出和三线表，顺便按 ICML 压页” | `latex-typeset` 先锁正文文本指纹，把机械改版编译闭环拆给排版协作者跑通；主模型终审标红 PNG 版面 | `layout_audit.py` 源码行号定位 + PDF 撞框/孤立标题核查 + 零正文篡改校验 |
+| “画一张机制主图” | 主模型任美术导演定构图与配色，`dispatch_gpt.py --skill paper-figure-craft` 外包绘图编码与坐标消重叠 | `audit_figure_taste.py` 过线（≥85）+ 主模型终审 PNG |
+| “修一下双栏公式溢出和三线表，顺便按 ICML 压页” | `dispatch_gpt.py --skill latex-typeset` 自动注入技能契约并锁正文指纹，由协作者跑通机械改版编译闭环 | `layout_audit.py` 行号定位 + PDF 撞框/孤立标题核查 + 零正文篡改 |
 | “这边拉蜂群干活，那边新开对话改论文” | `scripts/sessions.py` 统一登记并行对话与主对话名下的蜂群 worker（`--owner` / `--cascade`，兼容 `git worktree`），`experience_brief.py` 每轮自动提醒 | 确定性路径/GPU 冲突拦截 + 先验收集成再清理工作区 |
 
 ## 三档探索模式（`probe` / `paper` / `program`）

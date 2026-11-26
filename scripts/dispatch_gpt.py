@@ -14,6 +14,9 @@ from uuid import uuid4
 
 
 GATE = Path(__file__).resolve().parents[1] / "skills/research-gate/scripts/accept_worker_deliverable.py"
+SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
+FALLBACK_SKILLS_DIR = Path.home() / ".gemini" / "config" / "skills"
+LAYOUT_AUDIT = SKILLS_DIR / "latex-typeset" / "scripts" / "layout_audit.py"
 SANDBOX_NOTE = (
     "Inside the Windows Codex sandbox, do not run full pytest or git clone (ACLs block temp dirs and Git signal pipes).\n"
     "Do not create temporary permission-probe directories inside the repo.\n"
@@ -51,6 +54,53 @@ def repo_relative(repo: Path, paths: list[str]) -> list[str]:
     return result
 
 
+def resolve_skill_files(skill_names: list[str]) -> list[tuple[str, list[Path]]]:
+    resolved: list[tuple[str, list[Path]]] = []
+    for name in skill_names:
+        sdir = next((d / name for d in (SKILLS_DIR, FALLBACK_SKILLS_DIR) if (d / name / "SKILL.md").is_file()), None)
+        if sdir is None:
+            raise ValueError(f"unknown skill: {name}")
+        rels = ["SKILL.md"]
+        trig = sdir / "triggers.json"
+        if trig.is_file():
+            try:
+                must_read = json.loads(trig.read_text(encoding="utf-8-sig")).get("must_read", [])
+                for rel in must_read:
+                    if isinstance(rel, str) and rel not in rels:
+                        rels.append(rel)
+            except (OSError, ValueError):
+                pass
+        files = [sdir / rel for rel in rels if (sdir / rel).is_file()]
+        resolved.append((name, files))
+    return resolved
+
+
+def build_skill_bundle(skill_names: list[str]) -> str:
+    if not skill_names:
+        return ""
+    blocks = []
+    for name, files in resolve_skill_files(skill_names):
+        parts = [
+            f"[MANDATORY SKILL CONTRACT: {name}]",
+            "Follow every rule below strictly. Write verbose logs/diffs to disk and return a concise structured gist (<=15 lines: files changed, exact metrics/checks, blockers).",
+        ]
+        for path in files:
+            parts.append(f"--- {path.name} ---\n{path.read_text(encoding='utf-8-sig').strip()}")
+        blocks.append("\n\n".join(parts))
+    return "\n\n".join(blocks)
+
+
+def _tex_targets(repo: Path, allow: list[str]) -> list[Path]:
+    found: list[Path] = []
+    for rel in allow:
+        p = repo / rel
+        if p.is_file() and p.suffix == ".tex":
+            found.append(p)
+        elif p.is_dir():
+            found.extend(sorted(p.rglob("*.tex")))
+    return list(dict.fromkeys(found))
+
+
 def print_verdict(verdict: str, changed: int | None, checks: dict, report: Path) -> None:
     def status(name: str) -> str:
         check = checks.get(name, {})
@@ -68,12 +118,17 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
     repo = args.repo.resolve(strict=True)
     allow, protect = repo_relative(repo, args.allow), repo_relative(repo, args.protect)
     write = args.sandbox == "workspace-write"
+    skill_names = list(getattr(args, "skill", None) or [])
+    skill_bundle = build_skill_bundle(skill_names)
+    verify_cmd = getattr(args, "verify_cmd", None)
+    venue = getattr(args, "venue", "arxiv")
     parent = scratch_parent(repo)
     scratch_dir = (nullcontext(parent / f"dispatch-gpt-{uuid4().hex}") if args.dry_run
                    else tempfile.TemporaryDirectory(prefix="dispatch-gpt-", dir=parent))
     with scratch_dir as tmp:
         scratch = Path(tmp)
         baseline = scratch / "baseline.json"
+        prose_snap = scratch / "prose_snap.json"
         staged_report = scratch / "report.md"
         report = args.out_report.resolve() if args.out_report else scratch.with_suffix(".md")
         ledger = args.ledger.resolve() if args.ledger else None
@@ -96,18 +151,28 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
             acceptance += ["--ledger", str(ledger)]
         if args.dry_run:
             print(json.dumps({"codex": codex, "acceptance": acceptance if write else None,
-                              "report": str(report)}, ensure_ascii=False, indent=2))
+                              "report": str(report), "skills": skill_names, "verify_cmd": verify_cmd},
+                             ensure_ascii=False, indent=2))
             return 0
 
         prompt = args.prompt_file.read_text(encoding="utf-8-sig")
+        if skill_bundle:
+            prompt = f"{skill_bundle}\n\n{prompt}"
         if write and not args.no_sandbox_note:
             prompt = f"{SANDBOX_NOTE}\n\n{prompt}"
         options = {"capture_output": True, "encoding": "utf-8", "errors": "replace",
                    "env": dict(os.environ, PYTHONDONTWRITEBYTECODE="1")}
+        tex_files = _tex_targets(repo, allow) if (write and "latex-typeset" in skill_names and LAYOUT_AUDIT.is_file()) else []
         if write:
             saved = subprocess.run(snapshot, **options)
             if saved.returncode:
                 raise RuntimeError(saved.stderr.strip() or saved.stdout.strip() or "snapshot failed")
+            if tex_files:
+                snap_cmd = [sys.executable, "-E", "-s", "-X", "utf8", "-B", str(LAYOUT_AUDIT),
+                            str(repo), "--tex", *[str(p) for p in tex_files], "--snapshot-prose", str(prose_snap)]
+                snapped = subprocess.run(snap_cmd, **options)
+                if snapped.returncode:
+                    raise RuntimeError(snapped.stderr.strip() or snapped.stdout.strip() or "prose snapshot failed")
         try:
             worker = runner(codex, input=prompt, timeout=args.timeout, **options)
             report_text = staged_report.read_text(encoding="utf-8-sig") if staged_report.is_file() else None
@@ -130,10 +195,31 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
             except ValueError as exc:
                 raise RuntimeError(accepted.stderr.strip() or "acceptance returned no verdict") from exc
             checks = result["checks"]
-            failures = ", ".join(result["failure_modes"])
-            verdict = result["verdict"] + (f" ({failures})" if failures else "")
+            failure_modes = list(result["failure_modes"])
+            skill_gate_ok = True
+            if tex_files and prose_snap.is_file():
+                audit_cmd = [sys.executable, "-E", "-s", "-X", "utf8", "-B", str(LAYOUT_AUDIT),
+                             str(repo), "--tex", *[str(p) for p in tex_files], "--venue", venue,
+                             "--verify-prose", str(prose_snap)]
+                audited = subprocess.run(audit_cmd, **options)
+                if audited.returncode:
+                    skill_gate_ok = False
+                    failure_modes.append("skill_gate_failed")
+            verify_cmd_ok = True
+            if verify_cmd:
+                verified = subprocess.run(verify_cmd, shell=True, cwd=repo, **options)
+                if verified.returncode:
+                    verify_cmd_ok = False
+                    failure_modes.append("verify_cmd_failed")
+            overall_verdict = result["verdict"] if (skill_gate_ok and verify_cmd_ok) else "REJECTED"
+            failures = ", ".join(dict.fromkeys(failure_modes))
+            verdict = overall_verdict + (f" ({failures})" if failures else "")
             print_verdict(verdict, len(checks["scope"]["changed"]), checks, report)
-            return 0 if accepted.returncode == 0 and result["verdict"] == "ACCEPTED" else 1
+            if not skill_gate_ok:
+                print("SkillGate: failed")
+            if not verify_cmd_ok:
+                print("VerifyCmd: failed")
+            return 0 if accepted.returncode == 0 and overall_verdict == "ACCEPTED" else 1
         finally:
             # Publish only after acceptance, keeping dispatcher writes outside the diff.
             if staged_report.is_file():
@@ -156,6 +242,9 @@ def main(argv: list[str] | None = None, *, runner=subprocess.run) -> int:
     parser.add_argument("--skip-pytest", action="store_true")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--out-report", type=Path)
+    parser.add_argument("--skill", nargs="*", default=[], help="inline skill contract(s) and enforce skill gates")
+    parser.add_argument("--verify-cmd", default=None, help="host-side verification command run after acceptance")
+    parser.add_argument("--venue", default="arxiv", help="venue passed to layout_audit when latex-typeset is active")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)

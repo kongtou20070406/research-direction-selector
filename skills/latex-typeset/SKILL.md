@@ -9,10 +9,9 @@ Fix layout, overflows, tables, floats, and page budgets cleanly without touching
 
 ## 1. Division of Labor (Offload Mechanical Loop, Keep Prose & Visual Sign-Off)
 
-1. **Snapshot prose before delegating**: Run `python scripts/layout_audit.py <paper_dir> --snapshot-prose <scratch>/prose_snap.json` so every word and number in the `.tex` sources is locked.
-2. **Delegate the mechanical loop**: Dispatch a **layout worker** (`scripts/dispatch_gpt.py`) to run the edit → compile → `layout_audit.py` cycle until `errors == 0`. Forbid the worker from rewriting claims, changing numbers, or using desk-reject hacks.
-3. **Verify zero prose tampering & render**: Run `python scripts/layout_audit.py <paper_dir> --verify-prose <scratch>/prose_snap.json --render-annotated` to prove zero prose/number drift and inspect `.gate_cache/typeset_preview/page_*.png`.
-4. **Lead owns final sign-off & genuine cuts**: Main model inspects the annotated PNGs visually. If hitting a venue page limit truly requires cutting sentences or redesigning figures, the worker stops and reports the exact overflow height so the Lead tightens prose (`paper-write`) or figures (`paper-figure-craft`).
+1. **Mandatory skill-contract dispatch**: Run `scripts/dispatch_gpt.py --skill latex-typeset` on the target `.tex` paths. It automatically inlines this skill contract + references into the **layout worker**, snapshots prose tokens (`--snapshot-prose`), and runs `--verify-prose` on return so zero words or numbers can drift.
+2. **Mechanical loop in background**: The worker runs edit → compile → `layout_audit.py` until `errors == 0`, writing logs to disk and returning a concise gist (`<=15` lines).
+3. **Render & Lead sign-off**: Inspect `.gate_cache/typeset_preview/page_*.png` (`--render-annotated`) visually. If hitting a venue page limit truly requires cutting sentences or redesigning figures, the worker stops and reports the exact overflow height so the Lead tightens prose (`paper-write`) or figures (`paper-figure-craft`).
 
 ## 2. Hard Anti-Hack Baselines (Desk-Reject Prevention)
 
