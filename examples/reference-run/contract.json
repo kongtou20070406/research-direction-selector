@@ -1,9 +1,0 @@
-{
-  "project_id": "scalar-demo",
-  "claim": "The treatment improves MSE on the declared scalar dataset",
-  "primary_metric": {"name": "mse", "direction": "min", "min_useful_delta": "1/100"},
-  "evaluation_scope": "finite_locked_dataset",
-  "baseline_source": "model.py",
-  "budget": {"limits": {"runtime_ms": 20000, "runs": 2}, "confirmation_floor": {"runtime_ms": 5000, "runs": 1}},
-  "splits": {"development": {"path": "development.csv", "role": "development", "cohort": "demo-dev", "prior_exposure": "exposed"}}
-}

@@ -1,0 +1,27 @@
+{
+  "skill_dir_hint": "paper-write",
+  "required_refs": ["top-venue-writing-rules.md", "exemplars/index.md"],
+  "cases": [
+    {
+      "id": "abstract-zh",
+      "prompt": "把 method_notes.md 整理成这篇论文的中文摘要，直接输出摘要正文。",
+      "files": {"method_notes.md": "# Notes for a paper draft (internal)\n\nMethod name: TideNet. A weight-shared recurrent operator for flood forecasting from sparse river gauges.\nProblem: forecasters must predict water levels at ungauged points; physics solvers need full boundary data that is missing; learned models trained on one basin drift when rolled out for many days.\nMechanism: one recurrent cell is applied for T steps; a residual gate keeps the state fixed when the observation residual is zero; trained with T up to 16, evaluated up to T=128.\nResults (single seed, internal card 012, exploratory; the final main table will be rerun with the finalized model and a unified recipe): NSE 0.81 vs 0.74 for a ConvLSTM baseline on 3 basins; at T=128 TideNet drops 0.02 while ConvLSTM drops 0.19.\nTheory: Theorem 1 shows the zero-residual state is a fixed point; Theorem 2 bounds drift by the residual norm.\n"},
+      "forbid": ["card 012", "卡片", "012", "重跑", "定稿", "统一配方", "探索"],
+      "require_any": ["TideNet"]
+    },
+    {
+      "id": "intro-en",
+      "prompt": "Write the opening paragraph of the introduction for the TideNet paper, based on method_notes.md. Output only the paragraph.",
+      "files": {"method_notes.md": "# Notes for a paper draft (internal)\n\nMethod name: TideNet. A weight-shared recurrent operator for flood forecasting from sparse river gauges.\nProblem: forecasters must predict water levels at ungauged points; physics solvers need full boundary data that is missing; learned models trained on one basin drift when rolled out for many days.\nMechanism: one recurrent cell is applied for T steps; a residual gate keeps the state fixed when the observation residual is zero; trained with T up to 16, evaluated up to T=128.\nResults (single seed, internal card 012, exploratory; the final main table will be rerun with the finalized model and a unified recipe): NSE 0.81 vs 0.74 for a ConvLSTM baseline on 3 basins.\n"},
+      "forbid": ["card 012", "rerun", "finalized model", "unified recipe", "exploratory"],
+      "require_any": ["TideNet", "flood"]
+    },
+    {
+      "id": "revise-tex",
+      "prompt": "帮我改一下 latex/sections_en/00_abstract.tex，让它更像顶会摘要。输出改好的完整 .tex 内容。",
+      "files": {"latex/sections_en/00_abstract.tex": "\\begin{abstract}\nIn this paper, in order to address the important and challenging problem of long-horizon flood forecasting from sparse gauges, which has been studied by many works, we propose TideNet, a weight-shared recurrent operator, which uses a residual gate, and which we evaluate on three basins.\nExperiments are organized around the core scientific propositions, and the formal main table will be rerun with the finalized model and a unified recipe; early exploratory runs with mixed parameter scales are used only for design diagnosis and no longer enter the main table.\nTideNet reaches NSE 0.81 versus 0.74 for ConvLSTM, and at $T=128$ it drops 0.02 while ConvLSTM drops 0.19.\n\\end{abstract}\n"},
+      "forbid": ["rerun", "finalized model", "unified recipe", "exploratory", "no longer enter"],
+      "require_any": ["TideNet"]
+    }
+  ]
+}

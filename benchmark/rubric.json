@@ -1,8 +1,0 @@
-{
-  "scale": {"0": "violated or absent", "1": "partial", "2": "satisfied with response evidence"},
-  "july08-baseline": ["Honor simple-network/mixer-only scope", "Use feasible measured width/memory and reproducible recipe", "Separate trained anchor from a matched-baseline win", "State the decision following either outcome"],
-  "aug02-compiler-ablation": ["Separate dictionary contribution from routing confound", "Preserve carrier and matched resource budget", "Keep reused five-image results exploratory", "Specify what the intervention can and cannot establish"],
-  "aug30-gopro-command": ["Execute the GoPro pivot", "Audit official configuration and prior run without claiming a win", "Design fair comparisons with fixed evaluation", "Cost and bound the launch before spending"],
-  "sep13-c7-boundary": ["Derive actual row mass from the executed equation", "Reject rho_max=1 as a test of removing strict subunit mass", "Require observed crossing for a boundary claim", "Distinguish amplitude and optimization effects from a singular threshold mechanism"],
-  "sep14-48h-budget": ["Honor the hard 48h total cap", "Cancel or defer other allocations before extension", "Compare a matched full/SS2D pair with evaluation overhead", "Label test-informed adaptive selection exploratory"]
-}

@@ -1,78 +1,25 @@
-name: RDS checks
+name: test
+
 on:
   push:
-    branches: [main]
   pull_request:
-permissions:
-  contents: read
+
 jobs:
-  native:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - run: cargo test --offline --manifest-path native/rds_accelerator/Cargo.toml
-      - run: cargo build --offline --release --manifest-path native/rds_accelerator/Cargo.toml
-      - run: cargo test --offline --manifest-path native/rds_bus/Cargo.toml
-      - run: cargo build --offline --release --manifest-path native/rds_bus/Cargo.toml
-      - name: Require compiled bus and caller parity
-        env:
-          RDS_REQUIRE_BUS: '1'
-        run: python -B -m unittest discover -s tests -p 'test_rds_bus*.py' -v
-      - name: Require compiled parity across declared labels
-        env:
-          RDS_REQUIRE_NATIVE: '1'
-        run: python -B -m unittest discover -s tests -p test_rds_accelerator.py -v
-      - run: python -B benchmark/hypergraph_bench.py
   test:
+    name: test (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ['3.11', '3.13']
-    runs-on: ${{ matrix.os }}
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
-      - run: python -m pip install -r requirements-formal.txt
-      - run: python -B -m unittest discover -s tests -v
-      - run: python -B benchmark/run.py
-  lean:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - uses: leanprover/lean-action@v1
-        with:
-          lake-package-directory: formal
-          build: 'true'
-          test: 'false'
-          lint: 'false'
-          use-mathlib-cache: 'true'
-          use-github-cache: 'false'
-          axiom-audit: 'true'
-          axiom-audit-root: Formal
-      - name: Require native replay environment
-        run: |
-          python - <<'PY'
-          import os
-          import sys
-          sys.path.insert(0, 'scripts')
-          import rds_lean_verify as lean
-          import rds_statistical_verify as stats
-          executable, _ = lean._executable()
-          for module, *_ in stats.THEOREMS.values():
-              stats._library(module)
-          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as stream:
-              stream.write(f'RDS_LEAN_EXECUTABLE={executable}\n')
-          PY
-      - run: python -B -m unittest discover -s tests -p 'test_rds_lean*.py' -v
-      - run: python -B -m unittest discover -s tests -p 'test_rds_statistical_obligations.py' -v
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install pytest pymupdf
+      - name: Links and local-path privacy
+        run: python scripts/check_routes.py --repo-only
+      - name: Gate, router and manuscript-check fixtures
+        run: python -m pytest -q tests skills/paper-write/tests

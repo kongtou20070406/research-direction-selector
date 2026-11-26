@@ -1,19 +1,5 @@
+# Exemplar papers are fetched per machine by skills/paper-write/scripts/fetch_exemplar_papers.py
+skills/paper-write/references/exemplars/papers/
 __pycache__/
-*.py[cod]
-.venv/
-.rds/
-.rds.lock
-.rds-campaign.json
-.codex/*
-!.codex/instructions.md
-*.sqlite*
-*.log
-!examples/artifact-import/raw.log
-*.zip
-obq-*.mjs
-dist/
-formal/.lake/
-native/**/target/
-.dsh-ops-update-*.lock
-.code-review-graph/
-.ig.json
+*.pyc
+.magpie-library

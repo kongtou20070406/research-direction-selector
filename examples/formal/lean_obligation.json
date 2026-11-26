@@ -1,7 +1,0 @@
-{
-  "schema": 1,
-  "kind": "lean_obligation",
-  "relation": "lt",
-  "left": "1/2",
-  "right": "3/4"
-}

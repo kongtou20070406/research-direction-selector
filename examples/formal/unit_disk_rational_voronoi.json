@@ -1,6 +1,0 @@
-{
-  "schema": 1,
-  "kind": "unit_disk_rational_voronoi",
-  "centers": [["0", "0"]],
-  "radius_squared": "1"
-}

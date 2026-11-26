@@ -1,0 +1,17 @@
+{
+  "why": "Routes manuscript work to this skill without the user naming it (scripts/skill_router.py).",
+  "keywords": [
+    "论文", "摘要", "引言", "正文", "草稿", "定稿", "冻结", "审稿", "审稿意见", "回复审稿", "rebuttal", "润色",
+    "相关工作", "结论", "讨论与局限", "局限性", "定理叙述", "投稿", "camera[- ]ready", "顶会",
+    "\\babstract\\b", "\\bintroduction\\b", "\\bmanuscript\\b", "paper draft", "\\bthe paper\\b", "related work",
+    "\\bconclusion\\b", "\\blimitations?\\b", "revise (the|this) (section|paragraph|sentence)", "reviewer comments?"
+  ],
+  "paths": ["\\.tex\\b", "sections_(en|zh)", "main_(en|zh)", "paper_gate", "论文草稿"],
+  "exclude": ["只画图", "only (draw|plot)"],
+  "must_read": [
+    "SKILL.md",
+    "references/top-venue-writing-rules.md",
+    "references/exemplars/index.md"
+  ],
+  "then": "按 exemplars/index.md 选一张与本次写作问题匹配的卡片并读它指向的原文段落；正文、导言、译稿与全部图表排版审美归主模型（只读评价除外）；默认 arXiv / 顶会标准，改稿后跑 paper_gate.py --fix --compile --layout-check --render-pages，并可用 verify_manuscript_formal.py --results-to-tex 同步实测数字。"
+}

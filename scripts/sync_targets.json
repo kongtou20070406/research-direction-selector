@@ -1,0 +1,25 @@
+{
+  "_doc": "Where skills/<name> is installed. Magpie distributes these skills: its library entries are links to this repo; it links them into the Claude and Codex routers and copies them into the Gemini dir (agy, antigravity) when the repo changes. 'links' must resolve to this repo; 'copies' are compared only. '~' is the user's home.",
+  "links": {
+    "paper-write": [
+      "~/.config/magpie/library/skills/paper-write",
+      "~/.claude/skills/magpie-skills/.skills/paper-write",
+      "~/.codex/skills/magpie-skills/.skills/paper-write"
+    ],
+    "research-gate": [
+      "~/.config/magpie/library/skills/research-gate",
+      "~/.claude/skills/magpie-skills/.skills/research-gate",
+      "~/.codex/skills/magpie-skills/.skills/research-gate"
+    ],
+    "paper-figure-craft": [
+      "~/.config/magpie/library/skills/paper-figure-craft",
+      "~/.claude/skills/magpie-skills/.skills/paper-figure-craft",
+      "~/.codex/skills/magpie-skills/.skills/paper-figure-craft"
+    ]
+  },
+  "copies": {
+    "paper-write": ["~/.gemini/config/skills/paper-write"],
+    "research-gate": ["~/.gemini/config/skills/research-gate"],
+    "paper-figure-craft": ["~/.gemini/config/skills/paper-figure-craft"]
+  }
+}

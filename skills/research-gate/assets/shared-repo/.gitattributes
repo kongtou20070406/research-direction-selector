@@ -1,0 +1,2 @@
+# Keep bytes exactly as exported so MANIFEST.json hashes match on every OS
+* -text

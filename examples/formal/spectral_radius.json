@@ -1,6 +1,0 @@
-{
-  "schema": 1,
-  "kind": "matrix_spectral_exact",
-  "matrix": [["1/2", "100"], ["0", "1/2"]],
-  "threshold": "1"
-}

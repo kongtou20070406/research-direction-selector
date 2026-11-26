@@ -1,4 +1,0 @@
-{
-  "id": "P1", "hypothesis_id": "H1", "split_id": "development", "purpose": "explore",
-  "source": "model.py", "resources": {"runtime_ms": 10000, "runs": 1}
-}
