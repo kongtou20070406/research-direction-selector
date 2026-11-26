@@ -197,7 +197,7 @@ def _extract_dynamic_lines(brief_text: str) -> tuple[str, list[str], list[str]]:
             if "⚠ CONFLICT:" in ln:
                 conflict_lines.append(ln)
             else:
-                kept.append(ln)
+                kept.append(re.sub(r"\|\s*(?:just now|\d+[mh] ago)\s*\|", "| <age> |", ln))
         if kept:
             static_blocks.append("\n".join(kept))
     static_sha = hashlib.sha256("\n\n".join(static_blocks).encode("utf-8")).hexdigest()[:16]
