@@ -18,7 +18,7 @@ This workflow empowers a **one-person AI research fleet** to pursue hard open sc
 1. **Scientific honesty & no leakage**: disjoint train/val/holdout splits, untouched tests, traceable `run_meta`/seed/precision, report only observed runs.
 2. **Code purity & parity**: `reference/` holds clean, minimal native PyTorch (passing `--code-quality`); before optimizing, check `proofline` (`perf-ruler`) zero-GPU formal latency lower bounds (`compute`/`memory`/`serial` + Z3/Lean 4). Only when `engine/` has clear headroom do per-device kernels (`Triton`/`CUDA`/`torch.compile`) go to an `engineering worker` via `scripts/dispatch_gpt.py` with `--protect reference tests`, passing forward+backward parity + `>=1.15x` speedup (else keep `reference/`). Never delete handwritten drafts or hijack an occupied local GPU.
 3. **Zero privacy leaks**: keep local paths and credentials out of shared/public repos.
-4. **Human & lead-model sovereignty**: researcher owns the north star, direction and final verdicts; main model writes prose and creates all visual/aesthetic designs (read-only critique excluded).
+4. **Human & lead-model sovereignty**: researcher owns the north star, direction and final verdicts; Lead owns core prose voice, art direction, and final visual PNG sign-off, offloading mechanical chores (plot/TikZ coding, LaTeX typesetting/BibTeX/ref sync, card/CI/test plumbing, heavy pre-digs) to workers via `scripts/dispatch_gpt.py --skill <name>` with mandatory skill-contract injection and post-gates.
 
 ## Core scientific discipline
 

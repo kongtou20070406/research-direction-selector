@@ -147,3 +147,80 @@ def test_worker_failure_publishes_partial_report_and_exits_nonzero(workspace, ca
     assert dispatch_gpt.main(arguments(repo, prompt, "--out-report", str(report)), runner=runner) == 1
     assert "timed out" in capsys.readouterr().err
     assert report.read_text(encoding="utf-8") == "Partial output"
+
+
+@pytest.mark.parametrize("tamper_prose", [False, True])
+def test_skill_latex_typeset_inlines_contract_and_blocks_prose_drift(tmp_path, capsys, tamper_prose):
+    repo = tmp_path / "paper"
+    repo.mkdir()
+    (repo / "03_method.tex").write_text("We cut MSE from 0.364 to 0.255.\n", encoding="utf-8")
+    (repo / "test_dummy.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    for args in (["init", "-q"], ["add", "."],
+                 ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "init"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("Fix layout.", encoding="utf-8")
+
+    def runner(command, *, input, **kwargs):
+        assert "[MANDATORY SKILL CONTRACT: latex-typeset]" in input
+        assert "venue-recipes.md" in input and "fix-cookbook.md" in input
+        if tamper_prose:
+            (repo / "03_method.tex").write_text("We cut MSE from 0.350 to 0.255.\n", encoding="utf-8")
+        else:
+            (repo / "03_method.tex").write_text("\\looseness=-1\nWe cut MSE from 0.364 to 0.255.\n", encoding="utf-8")
+        Path(command[command.index("-o") + 1]).write_text("Verdict: PASS\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0)
+
+    rc = dispatch_gpt.main(
+        [
+            "--repo", str(repo),
+            "--task-id", "T-LATEX",
+            "--allow", "03_method.tex",
+            "--prompt-file", str(prompt),
+            "--skill", "latex-typeset",
+            "--venue", "icml",
+            "--skip-pytest",
+            "--out-report", str(tmp_path / "rep.md"),
+        ],
+        runner=runner,
+    )
+    out = capsys.readouterr().out
+    assert rc == int(tamper_prose)
+    if tamper_prose:
+        assert "skill_gate_failed" in out and "SkillGate: failed" in out
+
+
+def test_skill_figure_inlines_contract_and_enforces_verify_cmd(workspace, capsys):
+    repo, prompt = workspace
+
+    def runner(command, *, input, **kwargs):
+        assert "[MANDATORY SKILL CONTRACT: paper-figure-craft]" in input
+        assert "taste-rubric-and-benchmarks.md" in input
+        (repo / "worker.py").write_text("VALUE = 2\n", encoding="utf-8")
+        Path(command[command.index("-o") + 1]).write_text("Verdict: PASS\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0)
+
+    ok_rc = dispatch_gpt.main(
+        arguments(repo, prompt, "--skill", "paper-figure-craft", "--skip-pytest", "--verify-cmd", "python -c \"assert True\""),
+        runner=runner,
+    )
+    assert ok_rc == 0
+    capsys.readouterr()
+
+    bad_rc = dispatch_gpt.main(
+        arguments(repo, prompt, "--skill", "paper-figure-craft", "--skip-pytest", "--verify-cmd", "python -c \"raise SystemExit(2)\""),
+        runner=runner,
+    )
+    assert bad_rc == 1
+    assert "VerifyCmd: failed" in capsys.readouterr().out
+
+
+def test_unknown_skill_fails_before_runner(workspace, capsys):
+    repo, prompt = workspace
+
+    def fail(*args, **kwargs):
+        pytest.fail("unknown skill must fail before launching worker")
+
+    rc = dispatch_gpt.main(arguments(repo, prompt, "--skill", "nonexistent-skill"), runner=fail)
+    assert rc == 1
+    assert "unknown skill: nonexistent-skill" in capsys.readouterr().err

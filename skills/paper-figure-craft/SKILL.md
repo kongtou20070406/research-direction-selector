@@ -5,7 +5,7 @@ description: Design, render, and quantitatively audit publication-grade scientif
 
 # Publication figures
 
-- **Ownership**: The lead (main) model owns all aesthetic, visual, layout, color, typography, and figure design/creation directly—never delegate visual design or drawing to GPT. Independent read-only evaluation or critique is excluded (GPT may still review rendered figures), with the main model implementing any visual edits itself.
+- **Art Director vs. Graphics Worker**: The lead (main) model acts as Art Director—owning visual narrative, panel hierarchy, palette, exact symbols, and **final visual PNG sign-off** (stepping in directly for bespoke Fig. 1 design whenever needed). Offload Matplotlib/TikZ/SVG coding, `RESULTS.json` binding, and coordinate/overlap iteration to a graphics worker via `scripts/dispatch_gpt.py --skill paper-figure-craft --verify-cmd "python skills/paper-figure-craft/scripts/audit_figure_taste.py ..."` so the worker passes the taste gate before returning rendered PNGs.
 - Render architecture diagrams with `scripts/render_tikz.py` (`sourcesanspro`, `newtxmath`). Export SVG and 360 DPI PNG. Use `#000000` structural ink and ≤2 accents.
 - Give Fig. 1 one focal point visible in three seconds. Highlight the core feedback loop with one `#D55E00` arrow. Use ≤12 labels, ≤1 short equation and a `same weights` callout for shared predictors.
 

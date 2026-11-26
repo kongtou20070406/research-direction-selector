@@ -21,5 +21,5 @@
     "references/venue-recipes.md",
     "references/fix-cookbook.md"
   ],
-  "then": "Offload the mechanical LaTeX layout fix loop to a layout worker after snapshotting prose tokens (layout_audit.py --snapshot-prose); mechanically verify zero prose drift (--verify-prose) and zero audit errors, then let the Lead visually inspect rendered PNGs and own any prose tightening."
+  "then": "Offload the mechanical LaTeX layout fix loop via scripts/dispatch_gpt.py --skill latex-typeset (automatically inlines the skill contract, snapshots prose tokens, and enforces zero prose drift + layout checks on return), then let the Lead visually inspect rendered PNGs and own any prose tightening."
 }

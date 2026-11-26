@@ -10,5 +10,5 @@
     "SKILL.md",
     "references/taste-rubric-and-benchmarks.md"
   ],
-  "then": "所有图表、配色、排版与视觉审美设计均由主模型亲自完成，不外包给 GPT（只读审美评价/审图除外）。"
+  "then": "主模型担任美术导演（定视觉叙事、配色规范与最终 PNG 终审），把 Matplotlib/TikZ/SVG 绘图编码、数据绑定与坐标消重叠迭代通过 scripts/dispatch_gpt.py --skill paper-figure-craft 派给图形协作者，过 audit_figure_taste.py 门槛后再交回主模型终审。"
 }
