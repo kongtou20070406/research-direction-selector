@@ -326,3 +326,7 @@ def test_session_throttle_wakeup_dedup_and_delta_brief(project, tmp_path, monkey
     assert s2 == {}
     s3 = skill_router.agy_hook({"conversationId": "conv-skill-cd", "lastUserInput": "修一下双栏公式溢出和三线表排版", "invocationNum": "0", "cwd": str(cwd)})
     assert "latex-typeset" in s3["injectSteps"][0]["systemMessage"]["systemMessage"]
+
+    h1, _, _ = skill_router._extract_dynamic_lines("活跃并行会话（勿撞文件/GPU/Git）\n- a [lead] | scope: src | 4m ago | run")
+    h2, _, _ = skill_router._extract_dynamic_lines("活跃并行会话（勿撞文件/GPU/Git）\n- a [lead] | scope: src | 5m ago | run")
+    assert h1 == h2
