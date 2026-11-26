@@ -43,7 +43,7 @@ Every worker dispatch MUST define:
 ## 3. Non-Blocking Concurrent Launch Recipe
 
 1. Write separate task contracts into an out-of-repo scratch directory and take one snapshot (`--snapshot-out`, `--protect`) before any worker starts.
-2. Launch disjoint workers concurrently with short async wait (`WaitMsBeforeAsync=500`) while the lead agent writes prose or analysis directly.
+2. Launch disjoint workers concurrently with short async wait (`WaitMsBeforeAsync=500`) while the lead agent writes prose or analysis directly. **Never poll background commands or subagents with `schedule` timers or shell `sleep` loops**: the host wakes the Lead automatically on completion; use only a single generous `NotificationTimeoutSeconds` (300–600s) as a stall guard. Repeated 25s–60s polling timers re-read the entire context for zero progress.
 3. Run the automated acceptance gate on every finished worker output against the shared snapshot, passing the other workers' scopes as `--exclude`, and log the distilled lesson before integrating downstream work.
 
 ## 4. Review Aggregation (Independent Votes, Not Debate)

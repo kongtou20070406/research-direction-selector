@@ -16,7 +16,7 @@ The lead agent writes and translates all manuscript prose. Use the lead model as
 
 ## Draft
 
-- Write independent `latex/sections_en/00..08.tex` and `latex/sections_zh/00..08.tex` modules. Include them from `latex/main_en.tex` and `latex/main_zh.tex`. Use `--markdown` when assembling a legacy Markdown draft.
+- Write independent `latex/sections_en/00..08.tex` and `latex/sections_zh/00..08.tex` modules. Include them from `latex/main_en.tex` and `latex/main_zh.tex`. **Single-source multi-wrapper rule**: never clone `sections_*` into separate `arxiv_en/` or `arxiv_zh/` folders; put all target wrappers (`main_arxiv_en.tex`, `main_arxiv_zh.tex`, venue wrappers) and their `paper_gate*.json` configs inside `latex/` so every PDF builds from identical source bytes. Use `--markdown` when assembling a legacy Markdown draft.
 - Default layout during research is clean single-column arXiv preprint (`"venue": "arxiv"` in `paper_gate.json`). When switching to a target conference/journal wrapper (`main_<venue>.tex` + `"venue"` / `"page_limit"`), run `paper_gate.py --compile --layout-check --render-pages` to check page limits, overfull boxes and margins automatically and visually inspect the rendered PNG pages with the Main Model.
 - Generate `\input{tables/auto_*.tex}` directly from experiment `RESULTS.json` via `verify_manuscript_formal.py --results-to-tex` instead of hand-copying numbers.
 - Use Abstract → Introduction → Setup → Method → Theoretical Justification → Experiments → Related Work → Discussion & Limitations → Appendix. Swap Method and Theory only for pure theory.
