@@ -57,7 +57,7 @@ Every worker dispatch MUST define:
 ## 5. From Lessons to Rules
 
 - A lesson becomes a candidate rule only with an id, a `failure_mode`, an evidence pointer and a count of recurrences. Track how often each rule helped or misfired (E4).
-- Agents propose rule deltas; 空投 approves the merge into a SKILL.md. Agents never rewrite a whole SKILL.md, and self-written skills are not trusted without that review (E3).
+- Agents propose rule deltas; the researcher approves the merge into a SKILL.md. Agents never rewrite a whole SKILL.md, and self-written skills are not trusted without that review (E3).
 - Retire a rule when newer evidence contradicts it or it has not fired across recent cards; record the retirement next to the rule's evidence.
 - Before a SKILL.md change ships, run a small smoke comparison: same model and budget, one fresh context per task, old versus new skill files. A script checks literal anchors (numbers, citation keys, terms); a reader who sees anonymized outputs judges meaning. Claim no gain when the reader cannot tell the versions apart. A character count is not a token measurement. (Adapted from CCFA-Skills `evaluation/behavioral`, whose own smoke found no writing difference.)
 
