@@ -1,0 +1,22 @@
+[
+  {"id": "1706.03762", "card": "transformer-writing-style", "title": "Attention Is All You Need", "url": "https://arxiv.org/pdf/1706.03762v7"},
+  {"id": "cvpr-2025-vggt", "card": "vggt", "title": "VGGT: Visual Geometry Grounded Transformer", "url": "https://openaccess.thecvf.com/content/CVPR2025/papers/Wang_VGGT_Visual_Geometry_Grounded_Transformer_CVPR_2025_paper.pdf"},
+  {"id": "aaai-2025-every-bit-helps", "card": "aaai-2025-every-bit-helps", "title": "Every Bit Helps: Achieving the Optimal Distortion with a Few Queries", "url": "https://ojs.aaai.org/index.php/AAAI/article/download/33507/35662"},
+  {"id": "icml-2025-collabllm", "card": "icml-2025-collabllm", "title": "CollabLLM: From Passive Responders to Active Collaborators", "url": "https://raw.githubusercontent.com/mlresearch/v267/main/assets/wu25i/wu25i.pdf"},
+  {"id": "icml-2024-videopoet", "card": "icml-2024-videopoet", "title": "VideoPoet: A Large Language Model for Zero-Shot Video Generation", "url": "https://raw.githubusercontent.com/mlresearch/v235/main/assets/kondratyuk24a/kondratyuk24a.pdf"},
+  {"id": "neurips-2024-var", "card": "neurips-2024-var", "title": "Visual Autoregressive Modeling: Scalable Image Generation via Next-Scale Prediction", "url": "https://proceedings.neurips.cc/paper_files/paper/2024/file/9a24e284b187f662681440ba15c416fb-Paper-Conference.pdf"},
+  {"id": "neurips-2025-1000-layer-ssl-rl", "card": "neurips-2025-1000-layer-ssl-rl", "title": "1000 Layer Networks for Self-Supervised RL: Scaling Depth Can Enable New Goal-Reaching Capabilities", "url": "https://proceedings.neurips.cc/paper_files/paper/2025/file/e74ee34cc0f2d0780f34ee77d8fba25b-Paper-Conference.pdf"},
+  {"id": "acl-2024-mission-impossible", "card": "acl-2024-mission-impossible", "title": "Mission: Impossible Language Models", "url": "https://aclanthology.org/2024.acl-long.787.pdf"},
+  {"id": "acl-2025-minilongbench", "card": "acl-2025-minilongbench", "title": "MiniLongBench: The Low-cost Long Context Understanding Benchmark for Large Language Models", "url": "https://aclanthology.org/2025.acl-long.560.pdf"},
+  {"id": "eccv-2022-partial-distance-correlation", "card": "eccv-2022-partial-distance-correlation", "title": "On the Versatile Uses of Partial Distance Correlation in Deep Learning", "url": "https://www.ecva.net/papers/eccv_2022/papers_ECCV/papers/136860318.pdf"},
+  {"id": "iclr-2024-generalization-diffusion", "card": "iclr-2024-outstanding-papers", "title": "Generalization in diffusion models arises from geometry-adaptive harmonic representations", "url": "https://arxiv.org/pdf/2310.02557"},
+  {"id": "iclr-2024-learning-interactive-sim", "card": "iclr-2024-outstanding-papers", "title": "Learning Interactive Real-World Simulators", "url": "https://arxiv.org/pdf/2310.06114"},
+  {"id": "iclr-2024-never-train-from-scratch", "card": "iclr-2024-outstanding-papers", "title": "Never Train from Scratch: Fair Comparison of Long-Sequence Models Requires Data-Driven Priors", "url": "https://arxiv.org/pdf/2310.02980"},
+  {"id": "iclr-2024-protein-discovery", "card": "iclr-2024-outstanding-papers", "title": "Protein Discovery with Discrete Walk-Jump Sampling", "url": "https://arxiv.org/pdf/2306.12360"},
+  {"id": "iclr-2024-vision-transformers-registers", "card": "iclr-2024-outstanding-papers", "title": "Vision Transformers Need Registers", "url": "https://arxiv.org/pdf/2309.16588"},
+  {"id": "iclr-2025-safety-alignment", "card": "iclr-2025-outstanding-papers", "title": "Safety Alignment Should Be Made More Than Just a Few Tokens Deep", "url": "https://arxiv.org/pdf/2406.05946"},
+  {"id": "iclr-2025-learning-dynamics-llm", "card": "iclr-2025-outstanding-papers", "title": "Learning Dynamics of LLM Finetuning", "url": "https://arxiv.org/pdf/2407.10490"},
+  {"id": "iclr-2025-alphaedit", "card": "iclr-2025-outstanding-papers", "title": "AlphaEdit: Null-Space Constrained Knowledge Editing for Language Models", "url": "https://arxiv.org/pdf/2410.02355"},
+  {"id": "iclr-2026-transformers-succinct", "card": "iclr-2026-outstanding-papers", "title": "Transformers are Inherently Succinct", "url": "https://arxiv.org/pdf/2510.19315"},
+  {"id": "iclr-2026-llms-lost-multi-turn", "card": "iclr-2026-outstanding-papers", "title": "LLMs Get Lost In Multi-Turn Conversation", "url": "https://arxiv.org/pdf/2505.06120"}
+]

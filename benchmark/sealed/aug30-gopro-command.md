@@ -1,5 +1,0 @@
-## sealed_later_outcome — do not show to proposer or prospective judge
-
-The team audited the old result, then ran Original, CSPN-style, SS2D, and DASP-K6 arms under VIVNet-B with seeds 42–44, 49,350 updates, fixed endpoints and 1,111 test images. All 12 runs and artifact hashes completed. DASP-K6 scored 30.5575±0.0619 dB versus SS2D 30.3319±0.1441 dB, +0.2256 dB, and led each paired seed. This is the early DASP-K6/halo-tiling GoPro protocol, not the later NSI full-image 30.8687 table.
-
-Sources: original human pivot `codex:01a05273-2670-7d51-a636-64470fed50d5:000348` (2026-08-30 11:46 UTC); prior-run audit and proposed protocol `:000941`; resource canary `:002348`; human launch authorization `:002354` (contains credential text: cite ID only, never quote full message); all-run result and hashes `:004469`; detailed later check `codex:01a05b11-1356-7112-b489-17f64ae41ac0:001069` (2026-09-01). Evidence level: original-session report of 12 completed runs and hash checks, no independent rerun here. The 30.157510 prior-run score predated the cutoff but was retrieved during the subsequent audit.

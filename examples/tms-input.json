@@ -1,9 +1,0 @@
-{
-  "claims": {
-    "premise": {"status": "supported", "source": "synthetic-observation.json"}
-  },
-  "rules": [
-    {"from": "premise", "to": "target", "status": "supported", "source": "synthetic-implication.json"}
-  ],
-  "goal": "target"
-}

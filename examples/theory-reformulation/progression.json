@@ -1,9 +1,0 @@
-{
-  "schema": 2,
-  "domain": ["0", "1"],
-  "limits": {
-    "max_domain_size": 4,
-    "max_native_pairs": 16,
-    "egraph_iterations": 8
-  }
-}

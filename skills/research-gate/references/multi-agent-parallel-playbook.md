@@ -1,0 +1,66 @@
+# Multi-Agent Parallel Orchestration Playbook
+
+Maximize throughput cleanly while keeping academic prose coherent and preventing merge conflicts. Evidence for each rule: [agent-workflow-evidence.md](agent-workflow-evidence.md).
+
+## 0. Admission Rule (Fan Out Only Decomposable Work)
+
+Dispatch parallel workers only when all three hold: (a) the pieces share no mutable state or intermediate result, (b) each piece has its own mechanical acceptance test, and (c) the lead can verify each piece without redoing it. Keep sequential chains (debugging, iterative derivation, a proof whose steps depend on each other) in one agent. Under matched budgets, multi-agent setups lost 39–70% on a sequential benchmark and gained 81% on a decomposable one (E1).
+
+## 1. Strict Responsibility Boundary (Advisory vs. Closed Execution)
+
+- **Main Agent Only (Never Delegate + Zero-Command Interface)**: All research narrative, submission paper drafts, reviewer briefs, bilingual introductions, open-ended research design, aesthetic/visual design (read-only critique excluded), and final synthesis. Never ask the researcher to type CLI commands or flags; translate natural conversation into background tool runs and present `<=2` crisp choices.
+- **Parallel Verifiable Semi-Open Research & Red-Team (`independent reviewer`, `-s read-only`)**:
+  - **Verifiable Semi-Open Problems (Zero GPU)**: Fan out 2–3 independent read-only reviewer sessions concurrently on non-experimental semi-open problems that carry a clear deterministic acceptance bar (Lean 4/SymPy proof patch or 10-line Python counterexample, minimal-operator derivation with spectral/gradient bounds + CPU test, competing root-cause CPU probes, cited cross-domain prior art with scope limits, or Top-3 reviewer attack maps). The Lead mechanically verifies every output and distills `<=2` options for the researcher; the reviewer never sets the North Star or writes final prose.
+  - **Proof Refereeing & Blinded Experiment Audit**: Use the `independent reviewer` both as a mathematical proof referee (checking symbol collisions, missing hypotheses, and compliance with the 3-part academic theorem standard) and for `T1–T5` blinded empirical audits. Whenever empirical findings arbitrate a divergence, update the hypothesis directly; if a sub-branch conflicts with core constraints, quarantine it and keep advancing the clean line.
+- **Editorial & Evidence-Consistency Advisor (`editorial reviewer`, read-only)**: Before freezing a manuscript version, run a read-only `codex exec -s read-only` review (using `--model` configurable per task) to audit academic restraint, `§3 -> §4` causal alignment, cross-section symbol collisions, prose-vs-ledger numerical fidelity, and 3-tier external citation discipline. Stop it after its report. Never let it write manuscript prose.
+- **Default Native Swarm & Relay Workers (`lead model` / configurable `--model`)**: Relay workers that only execute local `codex exec` and post output back to the board (outsourcing all reasoning to an external reviewer) default to a lightweight tier; native `swarm` workers performing independent reasoning default to medium/high effort, while pre-freeze editorial review uses a read-only editorial reviewer. Both native `swarm` model/effort tiers and `codex exec` flags (`-m`, `-c 'model_reasoning_effort=...'`, `-s`) remain explicitly configurable per task. Relays post file paths and raw `codex exec` output, never their own summaries; drop the relay hop when the lead can call `codex exec` directly.
+- **Closed Implementation Tasks -> Contract + Parallel Workers (`engineering worker`)**: Once the specification, math equations, file ownership, and acceptance tests are locked down, dispatch cleanly scoped, mutually exclusive mechanical deliverables (scripts, `tests/`, engine adapters, formatters) concurrently.
+
+### 1.1 Reference vs. Per-Device Engine Layer (Silent Closed Loop)
+
+1. **Reference (`<pkg>/reference/`)**: Lead writes clean, device-agnostic native PyTorch (`<=4` core forward equations), locks `recipe.lock.json`, and writes `tests/test_reference_engine_parity.py` (forward output + backward gradient `allclose`, shape/mask/blindness invariants, and fallback behavior).
+2. **Bottleneck Check**: Run `perf-ruler` on the target GPU. For small quick screens or compute-saturated runs where `reference/` is already near the floor, skip hand-written kernels and run `reference/` directly.
+3. **Per-Device Engine (`<pkg>/engine/`)**: When memory-bandwidth or launch-bound, dispatch an `engineering worker` via `scripts/dispatch_gpt.py` with `--allow <pkg>/engine/ --protect <pkg>/reference/ tests/`, targeting the specific GPU architecture (e.g., Colab T4/L4, A100/H100, RTX 5090) and requiring graceful fallback to `reference/` on unsupported devices.
+4. **Parity & Gain Gate**: Host runs the locked parity test plus wall-clock/VRAM check; reject or silently fall back to `reference/` if mathematical semantics shift or speedup is `<1.15x`, and report one summary line (speedup + max numerical diff).
+
+## 2. Explicit Process, Deliverable Contract & Automated Acceptance Gate
+
+Every worker dispatch MUST define:
+1. Exact **disjoint write scope** (one file or one directory per worker).
+2. Explicit **deliverable contract & invariants** (exact symbols, zero cache artifacts, expected test pass).
+3. **Mandatory Automated Acceptance Gate** (never accept by reading prose summary alone; a worker's PASS is a claim, not an observation, E6): snapshot before dispatch with `scripts/accept_worker_deliverable.py --snapshot-out <scratch>/base.json --protect tests`, then accept with `--baseline <scratch>/base.json` (or project-level `scripts/accept_gpt_deliverable.py --record`). The gate verifies:
+   - Scope: only paths changed since the snapshot count, so a dirty tree works; any change outside `--allow` rejects (strict by default; `--lenient-scope` only reports);
+   - Protected paths: any add, edit or delete under `--protect`, including a new `conftest.py`, is `test_tampering` (E5);
+   - AST syntax parse + `pytest -p no:cacheprovider` pass, re-run by the gate itself; optional `--holdout-tests` the worker never saw catch special-cased fixes;
+   - Zero `.pyc`, `__pycache__/`, `.hypothesis/`, or `.pytest_cache/` residue;
+   - Append one JSON row to `ledger/gpt_experience.jsonl` with `failure_modes` derived from the failed checks, `worker_claim`, `lesson` and `evidence`. A claimed PASS that the gate rejects is logged as `false_claim`.
+
+## 3. Non-Blocking Concurrent Launch Recipe
+
+1. Write separate task contracts into an out-of-repo scratch directory and take one snapshot (`--snapshot-out`, `--protect`) before any worker starts.
+2. Launch disjoint workers concurrently with short async wait (`WaitMsBeforeAsync=500`) while the lead agent writes prose or analysis directly.
+3. Run the automated acceptance gate on every finished worker output against the shared snapshot, passing the other workers' scopes as `--exclude`, and log the distilled lesson before integrating downstream work.
+
+## 4. Review Aggregation (Independent Votes, Not Debate)
+
+- Give each reviewer the artifact plus raw evidence (diff, logs, ledger rows, `run_meta.json`). Withhold the producer's verdict and summary; auditors adopt a stated conclusion even when it is wrong (E7).
+- Two-phase blind review: the reviewer writes its own reading of what the evidence supports, then opens `claim.sealed` and reports the gap.
+- Reviewers run in parallel and never see each other's reports. Do not run debate rounds; voting carries most of the gain and debate can suppress a correct minority (E8).
+- The aggregator copies every blocking finding verbatim. One blocking finding that survives a mechanical recheck stops the freeze, whatever the other reviewers say.
+- The model family that wrote an artifact never approves it (E9).
+
+## 5. From Lessons to Rules
+
+- A lesson becomes a candidate rule only with an id, a `failure_mode`, an evidence pointer and a count of recurrences. Track how often each rule helped or misfired (E4).
+- Agents propose rule deltas; the researcher approves the merge into a SKILL.md. Agents never rewrite a whole SKILL.md, and self-written skills are not trusted without that review (E3).
+- Retire a rule when newer evidence contradicts it or it has not fired across recent cards; record the retirement next to the rule's evidence.
+- Before a SKILL.md change ships, run a small smoke comparison: same model and budget, one fresh context per task, old versus new skill files. A script checks literal anchors (numbers, citation keys, terms); a reader who sees anonymized outputs judges meaning. Claim no gain when the reader cannot tell the versions apart. A character count is not a token measurement. (Adapted from CCFA-Skills `evaluation/behavioral`, whose own smoke found no writing difference.)
+
+## 6. Resuming After Compaction or Handoff
+
+- Separate proposed, executed and verified. A plan is not a change, and a finished tool call is not a valid deliverable; check the artifact before trusting a completion statement (E6).
+- A summary or task-state file is an index, not evidence. When it conflicts with the current instruction or a primary source, suspend that conclusion and the decisions built on it, and re-derive the facts from the source.
+- Before repeating a side-effecting step (a training run, push, message or submission), check whether its result already exists. Resuming does not authorize a new external action.
+- Match a late worker deliverable to the current goal and file versions. Reuse what still applies; refresh the rest instead of applying stale edits.
+
+Sections 5–6 adapt CCFA-Skills (`ccf-common/references/continuity.md`, MIT) to this workflow.

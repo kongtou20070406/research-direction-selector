@@ -1,0 +1,90 @@
+{
+  "skill_dir_hint": "",
+  "required_refs": [
+    "STATUS.md",
+    "knowledge",
+    "TEMPLATE.md"
+  ],
+  "cases": [
+    {
+      "id": "lam-sweep",
+      "prompt": "Push-T 峰值一直卡在 0.535 下面。下一步把 lam_inv 在 0.1 到 0.4 之间再细扫一遍，帮我把这张卡的实验方案写出来（只写方案，不要改文件、不要跑命令以外的东西）。 只用文字回答，不要创建或修改任何文件。",
+      "required_refs": [
+        "STATUS.md",
+        "knowledge"
+      ],
+      "require_groups": {
+        "flags_dead_end": [
+          "K-011",
+          "lam_inv.{0,40}(禁区|不要再扫|已扫|扫过|没有.{0,6}同时过)",
+          "card ?04[23]|卡片 ?04[23]"
+        ],
+        "jump_review": [
+          "跳出复盘",
+          "连续.{0,8}未过线"
+        ],
+        "no_tuning_card": [
+          "不能是调参|不是调参|调参.{0,10}(不行|不允许|被拦|禁止)|改动类型"
+        ]
+      }
+    },
+    {
+      "id": "short-steps",
+      "prompt": "为了省算力时间，下一张卡改成 bs=128、3000 步，其余不变。写一下这张卡的预算和对照组安排就行。 只用文字回答，不要创建或修改任何文件。",
+      "required_refs": [
+        "knowledge"
+      ],
+      "require_groups": {
+        "flags_undertrain": [
+          "K-010",
+          "欠训练",
+          "更新次数.{0,6}减半",
+          "card ?043|卡片 ?043"
+        ]
+      }
+    },
+    {
+      "id": "new-card",
+      "prompt": "起草一张新卡 052，想试试把跨项目资产里的多锚点时间齐次训练直接搬过来。先给我卡片草稿正文。 只用文字回答，不要创建或修改任何文件。",
+      "required_refs": [
+        "TEMPLATE.md",
+        "knowledge"
+      ],
+      "require_groups": {
+        "cites_registry": [
+          "\\b[KX]-\\d{3}\\b"
+        ],
+        "prior_art": [
+          "## ?先查",
+          "先查"
+        ],
+        "three_rulers": [
+          "三把尺子",
+          "损失与系数"
+        ],
+        "jump_review": [
+          "跳出复盘"
+        ]
+      }
+    }
+  ],
+  "copy_from": {
+    "root": ".",
+    "globs": [
+      "AGENTS.md",
+      "GOAL.md",
+      "STATUS.md",
+      "ROADMAP.md",
+      "WORKFLOW.md",
+      "DECISIONS.md",
+      "cards/*.md",
+      "ledger/experiments.jsonl",
+      "scripts/card_gate.py",
+      "scripts/knowledge_sync.py",
+      ".agents/hooks.json",
+      ".agents/brief.json",
+      ".agents/hooks/*.py",
+      "lit/*.md"
+    ]
+  }
+}

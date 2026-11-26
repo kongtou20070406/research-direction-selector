@@ -1,5 +1,0 @@
-{
-  "id": "H1", "type": "task_gain",
-  "proposition": "Multiplication by two reduces paired MSE on these examples",
-  "falsifier": "Paired gain does not exceed the precommitted minimum useful delta"
-}
