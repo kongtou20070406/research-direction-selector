@@ -66,7 +66,7 @@ Full design principles, research manifesto, and CLI reference live in [CHARTER.m
 
 RDS v7 focuses on research direction, workflows, and verification gates, and pairs naturally with two dedicated open-source companions:
 
-- **[Proofline](https://github.com/kongtou20070406/proofline)** — *Zero-GPU, formally verified hardware latency lower bounds (Roofline + Z3 + Lean 4) for PyTorch models.* Sits right between `reference/` and `engine/`: compute theoretical `compute`/`memory`/`serial` floors on CPU before writing a single line of Triton or CUDA, so you only optimize kernels that actually have headroom.
+- **[Proofline](https://github.com/kongtou20070406/proofline)** — *Zero-GPU PyTorch Roofline profiler with machine-checked latency-bound certificates (Z3 + Lean 4) under an explicit idealized scheduling model.* Sits right between `reference/` and `engine/`: compute theoretical `compute`/`memory`/`serial` floors on CPU before writing a single line of Triton or CUDA, so you only optimize kernels that actually have headroom.
 - **[Obelisk](https://github.com/tommy0103/obelisk)** — *Queryable SQLite memory over your past coding-agent sessions, subagents, and workflows.* Serves as the cross-session and post-compaction evidence recall layer alongside RDS's per-turn `experience_brief` and `handoff.py` packages.
 
 ## Setup & deployment
