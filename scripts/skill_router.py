@@ -19,11 +19,15 @@ its own copies under ~/.gemini/config/skills so the reads stay inside paths it m
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import runpy
 import sys
+import tempfile
+import time
+import uuid
 from functools import cache
 from pathlib import Path
 
@@ -31,6 +35,12 @@ sys.dont_write_bytecode = True
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "skills"
 AGY_ROOT = Path.home() / ".gemini" / "config" / "skills"
+BRIEF_COOLDOWN_TURNS = 10
+BRIEF_COOLDOWN_SECS = 1800.0
+WAKEUP_DEDUP_SECS = 600.0
+SKILL_COOLDOWN_TURNS = 4
+_KB_LINE_RE = re.compile(r"^- [A-Z]+-\d+\b")
+_DYNAMIC_SECTION_HEADERS = ("知识库（", "研究者的决定", "空投的决定", "过往反馈")
 
 
 def load_triggers(roots: list[Path]) -> dict[str, dict]:
@@ -121,8 +131,156 @@ def _turn_context(prompt: str, cwd: str, read_root: Path | None = None) -> str:
     return "\n\n".join(filter(None, (skill_text, brief_text)))
 
 
+def _state_path() -> Path:
+    override = os.environ.get("SKILL_ROUTER_STATE", "").strip()
+    return Path(override) if override else (Path(tempfile.gettempdir()) / "rds_skill_router_state.json")
+
+
+def _session_id(payload: dict) -> str:
+    for key in ("conversationId", "conversation_id", "session_id", "sessionId", "transcriptPath", "transcript_path"):
+        val = payload.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def _load_state(path: Path, now: float) -> dict[str, dict]:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        k: v
+        for k, v in data.items()
+        if isinstance(v, dict) and now - float(v.get("last_seen_at", 0.0)) < 86400.0
+    }
+
+
+def _save_state(path: Path, state: dict[str, dict]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.parent / f".router.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        for attempt in range(4):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 3:
+                    break
+                time.sleep(0.015)
+        if tmp.exists():
+            tmp.unlink()
+    except OSError:
+        pass
+
+
+def _extract_dynamic_lines(brief_text: str) -> tuple[str, list[str], list[str]]:
+    static_blocks: list[str] = []
+    kb_lines: list[str] = []
+    conflict_lines: list[str] = []
+    for block in brief_text.split("\n\n"):
+        lines = block.splitlines()
+        if not lines:
+            continue
+        if lines[0].startswith(_DYNAMIC_SECTION_HEADERS):
+            for ln in lines[1:]:
+                if _KB_LINE_RE.match(ln):
+                    kb_lines.append(ln)
+            continue
+        kept = []
+        for ln in lines:
+            if "⚠ CONFLICT:" in ln:
+                conflict_lines.append(ln)
+            else:
+                kept.append(ln)
+        if kept:
+            static_blocks.append("\n".join(kept))
+    static_sha = hashlib.sha256("\n\n".join(static_blocks).encode("utf-8")).hexdigest()[:16]
+    return static_sha, kb_lines, conflict_lines
+
+
+def _turn_context_for_session(
+    prompt: str,
+    cwd: str,
+    read_root: Path | None = None,
+    session_id: str = "",
+    *,
+    now: float | None = None,
+    delta_header: str = "[Context Delta]",
+) -> str:
+    if not session_id:
+        return _turn_context(prompt, cwd, read_root)
+    if AUTOMATED.search(prompt or ""):
+        return ""
+
+    cur_now = time.time() if now is None else now
+    state_file = _state_path()
+    state = _load_state(state_file, cur_now)
+    rec = dict(state.get(session_id) or {})
+
+    prompt_sha = hashlib.sha256((prompt or "").strip().encode("utf-8")).hexdigest()[:16]
+    if prompt_sha == rec.get("last_prompt_sha") and (cur_now - float(rec.get("last_seen_at", 0.0))) < WAKEUP_DEDUP_SECS:
+        return ""
+
+    turn = int(rec.get("turn", 0)) + 1
+    skill_turns = dict(rec.get("skill_turns") or {})
+    try:
+        matches = route(prompt, load_triggers(roots_from_env()), cwd)
+    except Exception:
+        matches = []
+    fresh_matches = [m for m in matches if (turn - int(skill_turns.get(m["skill"], -100))) >= SKILL_COOLDOWN_TURNS]
+    for m in fresh_matches:
+        skill_turns[m["skill"]] = turn
+    skill_text = message(fresh_matches, read_root) if fresh_matches else ""
+
+    brief_text = ""
+    try:
+        full_brief = _brief_builder()(prompt, cwd)
+    except Exception:
+        full_brief = ""
+    if full_brief:
+        static_sha, kb_lines, conflict_lines = _extract_dynamic_lines(full_brief)
+        last_brief_at = float(rec.get("last_brief_at", 0.0))
+        last_brief_turn = int(rec.get("last_brief_turn", 0))
+        need_full = (
+            last_brief_at == 0.0
+            or (turn - last_brief_turn) >= BRIEF_COOLDOWN_TURNS
+            or (cur_now - last_brief_at) >= BRIEF_COOLDOWN_SECS
+            or static_sha != rec.get("brief_static_sha")
+        )
+        if need_full:
+            brief_text = full_brief
+            rec["last_brief_at"] = cur_now
+            rec["last_brief_turn"] = turn
+            rec["brief_static_sha"] = static_sha
+            rec["seen_kb"] = list(kb_lines)
+            rec["seen_conflicts"] = list(conflict_lines)
+        else:
+            seen_kb = list(rec.get("seen_kb") or [])
+            seen_conflicts = list(rec.get("seen_conflicts") or [])
+            new_kb = [ln for ln in kb_lines if ln not in seen_kb]
+            new_conflicts = [ln for ln in conflict_lines if ln not in seen_conflicts]
+            if new_kb or new_conflicts:
+                brief_text = "\n".join([delta_header, *new_conflicts, *new_kb])
+                rec["seen_kb"] = seen_kb + new_kb
+                rec["seen_conflicts"] = seen_conflicts + new_conflicts
+
+    rec["turn"] = turn
+    rec["last_prompt_sha"] = prompt_sha
+    rec["last_seen_at"] = cur_now
+    rec["skill_turns"] = skill_turns
+    state[session_id] = rec
+    _save_state(state_file, state)
+    return "\n\n".join(filter(None, (skill_text, brief_text)))
+
+
 def claude_hook(payload: dict) -> dict:
-    text = _turn_context(str(payload.get("prompt", "")), str(payload.get("cwd") or ""))
+    text = _turn_context_for_session(str(payload.get("prompt", "")), str(payload.get("cwd") or ""), None, _session_id(payload))
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}} if text else {}
 
 
@@ -137,7 +295,7 @@ def agy_hook(payload: dict) -> dict:
         read_root = AGY_ROOT if AGY_ROOT.is_dir() else None
     except OSError:
         read_root = None
-    text = _turn_context(str(payload.get("lastUserInput", "")), str(cwd or ""), read_root)
+    text = _turn_context_for_session(str(payload.get("lastUserInput", "")), str(cwd or ""), read_root, _session_id(payload))
     return {"injectSteps": [{"systemMessage": {"systemMessage": text}}]} if text else {}
 
 

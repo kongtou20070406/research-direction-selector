@@ -297,3 +297,32 @@ def test_parallel_sessions_surface_and_conflict(project, tmp_path):
     (root / ".git" / "worktrees" / "wt-paper" / "commondir").write_text("../..\n", encoding="utf-8")
     wt_brief = experience_brief.build(PROMPT, wt)
     assert "chat-train" in wt_brief
+
+
+def test_session_throttle_wakeup_dedup_and_delta_brief(project, tmp_path, monkeypatch):
+    root, cwd, _ = project
+    monkeypatch.setenv("SKILL_ROUTER_STATE", str(tmp_path / "router_state.json"))
+    sid = "conv-throttle-test"
+
+    r1 = skill_router.agy_hook({"conversationId": sid, "lastUserInput": "继续", "invocationNum": "0", "cwd": str(cwd)})
+    m1 = r1["injectSteps"][0]["systemMessage"]["systemMessage"]
+    assert experience_brief.TITLE in m1 and "STATUS 自动区" in m1
+
+    assert skill_router.agy_hook({"conversationId": sid, "lastUserInput": "继续", "invocationNum": "0", "cwd": str(cwd)}) == {}
+    assert skill_router.agy_hook({"conversationId": sid, "lastUserInput": "1", "invocationNum": "0", "cwd": str(cwd)}) == {}
+
+    r4 = skill_router.agy_hook({"conversationId": sid, "lastUserInput": "看看 alpha 旧路线", "invocationNum": "0", "cwd": str(cwd)})
+    m4 = r4["injectSteps"][0]["systemMessage"]["systemMessage"]
+    assert "[Context Delta]" in m4 and "K-001" in m4 and experience_brief.TITLE not in m4
+
+    (root / "STATUS.md").write_text("<!-- START -->\n- 新状态\n<!-- END -->\n", encoding="utf-8")
+    r5 = skill_router.agy_hook({"conversationId": sid, "lastUserInput": "看看", "invocationNum": "0", "cwd": str(cwd)})
+    m5 = r5["injectSteps"][0]["systemMessage"]["systemMessage"]
+    assert experience_brief.TITLE in m5 and "- 新状态" in m5
+
+    s1 = skill_router.agy_hook({"conversationId": "conv-skill-cd", "lastUserInput": "改一下摘要", "invocationNum": "0", "cwd": str(cwd)})
+    assert "[RDS Context Hint]" in s1["injectSteps"][0]["systemMessage"]["systemMessage"]
+    s2 = skill_router.agy_hook({"conversationId": "conv-skill-cd", "lastUserInput": "把摘要再改短点", "invocationNum": "0", "cwd": str(cwd)})
+    assert s2 == {}
+    s3 = skill_router.agy_hook({"conversationId": "conv-skill-cd", "lastUserInput": "修一下双栏公式溢出和三线表排版", "invocationNum": "0", "cwd": str(cwd)})
+    assert "latex-typeset" in s3["injectSteps"][0]["systemMessage"]["systemMessage"]
