@@ -56,7 +56,10 @@ def repo_relative(repo: Path, paths: list[str]) -> list[str]:
 
 def resolve_skill_files(skill_names: list[str]) -> list[tuple[str, list[Path]]]:
     resolved: list[tuple[str, list[Path]]] = []
-    for name in skill_names:
+    for raw_name in skill_names:
+        name = raw_name.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            raise ValueError(f"invalid skill name (expected bare identifier): {raw_name!r}")
         sdir = next((d / name for d in (SKILLS_DIR, FALLBACK_SKILLS_DIR) if (d / name / "SKILL.md").is_file()), None)
         if sdir is None:
             raise ValueError(f"unknown skill: {name}")
@@ -85,7 +88,11 @@ def build_skill_bundle(skill_names: list[str]) -> str:
             "Follow every rule below strictly. Write verbose logs/diffs to disk and return a concise structured gist (<=15 lines: files changed, exact metrics/checks, blockers).",
         ]
         for path in files:
-            parts.append(f"--- {path.name} ---\n{path.read_text(encoding='utf-8-sig').strip()}")
+            text = path.read_text(encoding="utf-8-sig").strip()
+            if path.name != "SKILL.md" and len(text) > 6000:
+                parts.append(f"--- {path.name} (read on demand: {path.as_posix()}, {len(text)} chars) ---")
+            else:
+                parts.append(f"--- {path.name} ---\n{text}")
         blocks.append("\n\n".join(parts))
     return "\n\n".join(blocks)
 
@@ -159,7 +166,10 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
         if skill_bundle:
             prompt = f"{skill_bundle}\n\n{prompt}"
         if write and not args.no_sandbox_note:
-            prompt = f"{SANDBOX_NOTE}\n\n{prompt}"
+            note = SANDBOX_NOTE
+            if "latex-typeset" in skill_names:
+                note = "\n".join(ln for ln in SANDBOX_NOTE.splitlines() if "py_compile" not in ln)
+            prompt = f"{note}\n\n{prompt}"
         options = {"capture_output": True, "encoding": "utf-8", "errors": "replace",
                    "env": dict(os.environ, PYTHONDONTWRITEBYTECODE="1")}
         tex_files = _tex_targets(repo, allow) if (write and "latex-typeset" in skill_names and LAYOUT_AUDIT.is_file()) else []
@@ -173,6 +183,7 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
                 snapped = subprocess.run(snap_cmd, **options)
                 if snapped.returncode:
                     raise RuntimeError(snapped.stderr.strip() or snapped.stdout.strip() or "prose snapshot failed")
+        worker_ok = False
         try:
             worker = runner(codex, input=prompt, timeout=args.timeout, **options)
             report_text = staged_report.read_text(encoding="utf-8-sig") if staged_report.is_file() else None
@@ -180,37 +191,46 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
                 detail = (worker.stderr or "").strip().splitlines()
                 raise RuntimeError(f"Codex exit {worker.returncode}. " +
                                    (detail[-1] if detail else "No usable worker report"))
+            worker_ok = True
             if not write:
                 print(f"Report: {report}")
                 print("Summary: " + " ".join(report_text.split())[:240])
                 return 0
 
+            skill_gate_ok = True
+            post_tex_files = sorted(set(tex_files) | set(_tex_targets(repo, allow))) if "latex-typeset" in skill_names else []
+            if (tex_files or post_tex_files) and prose_snap.is_file():
+                audit_cmd = [sys.executable, "-E", "-s", "-X", "utf8", "-B", str(LAYOUT_AUDIT),
+                             str(repo), "--tex", *[str(p) for p in post_tex_files], "--venue", venue,
+                             "--verify-prose", str(prose_snap)]
+                audited = subprocess.run(audit_cmd, timeout=args.timeout, **options)
+                if audited.returncode:
+                    skill_gate_ok = False
+            verify_cmd_ok = True
+            if verify_cmd:
+                verified = subprocess.run(verify_cmd, shell=True, cwd=repo, timeout=args.timeout, **options)
+                if verified.returncode:
+                    verify_cmd_ok = False
+
+            if not (skill_gate_ok and verify_cmd_ok) and "--ledger" in acceptance:
+                idx = acceptance.index("--ledger")
+                acceptance = acceptance[:idx] + acceptance[idx + 2:]
+
             claim = re.search(r"^\s*(?:(?:worker[- ]claim|verdict|status)\s*:\s*)?(PASS|DONE|SUPPORTED|FIXED|OK)\s*$",
                               report_text, re.IGNORECASE | re.MULTILINE)
             if claim:
                 acceptance += ["--worker-claim", claim[1]]
-            accepted = subprocess.run(acceptance, **options)
+            accepted = subprocess.run(acceptance, timeout=args.timeout, **options)
             try:
                 result = json.loads(accepted.stdout)
             except ValueError as exc:
                 raise RuntimeError(accepted.stderr.strip() or "acceptance returned no verdict") from exc
             checks = result["checks"]
             failure_modes = list(result["failure_modes"])
-            skill_gate_ok = True
-            if tex_files and prose_snap.is_file():
-                audit_cmd = [sys.executable, "-E", "-s", "-X", "utf8", "-B", str(LAYOUT_AUDIT),
-                             str(repo), "--tex", *[str(p) for p in tex_files], "--venue", venue,
-                             "--verify-prose", str(prose_snap)]
-                audited = subprocess.run(audit_cmd, **options)
-                if audited.returncode:
-                    skill_gate_ok = False
-                    failure_modes.append("skill_gate_failed")
-            verify_cmd_ok = True
-            if verify_cmd:
-                verified = subprocess.run(verify_cmd, shell=True, cwd=repo, **options)
-                if verified.returncode:
-                    verify_cmd_ok = False
-                    failure_modes.append("verify_cmd_failed")
+            if not skill_gate_ok:
+                failure_modes.append("skill_gate_failed")
+            if not verify_cmd_ok:
+                failure_modes.append("verify_cmd_failed")
             overall_verdict = result["verdict"] if (skill_gate_ok and verify_cmd_ok) else "REJECTED"
             failures = ", ".join(dict.fromkeys(failure_modes))
             verdict = overall_verdict + (f" ({failures})" if failures else "")
@@ -221,8 +241,8 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
                 print("VerifyCmd: failed")
             return 0 if accepted.returncode == 0 and overall_verdict == "ACCEPTED" else 1
         finally:
-            # Publish only after acceptance, keeping dispatcher writes outside the diff.
-            if staged_report.is_file():
+            # Publish only after acceptance, keeping dispatcher writes outside the diff, and never clobber an existing report on worker failure.
+            if staged_report.is_file() and (worker_ok or not report.exists()):
                 report.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(staged_report, report)
 

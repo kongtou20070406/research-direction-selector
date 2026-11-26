@@ -187,10 +187,12 @@ def _fit(
     feedback: list[str],
     sessions: list[str] | tuple[str, ...] = (),
 ) -> str:
-    session_lines = list(sessions)
+    conflict_lines = [ln for ln in sessions if "⚠ CONFLICT:" in ln]
+    normal_sessions = [ln for ln in sessions if "⚠ CONFLICT:" not in ln]
 
     def render() -> str:
         sections = [TITLE, checklist]
+        session_lines = [*conflict_lines, *normal_sessions]
         for label, lines in (
             ("STATUS 自动区", status.splitlines()),
             ("活跃并行会话（勿撞文件/GPU/Git）", session_lines),
@@ -203,17 +205,19 @@ def _fit(
         return "\n\n".join(filter(None, [*sections, REMINDER]))
 
     result = render()
-    for lines in (decisions, feedback, knowledge, session_lines):
+    for lines in (decisions, feedback, knowledge, normal_sessions):
         while len(result) > MAX_CHARS and lines:
             lines.pop()
             result = render()
     if len(result) > MAX_CHARS:
-        # A project can supply more fixed text than the entire budget.
+        # A project can supply more fixed text than the entire budget; always preserve active conflict alerts.
+        conflict_section = "\n".join(["活跃并行会话（勿撞文件/GPU/Git）", *conflict_lines]) if conflict_lines else ""
         status_section = f"STATUS 自动区\n{status}" if status else ""
-        room = MAX_CHARS - len(TITLE) - len(REMINDER) - 2 * (1 + bool(checklist) + bool(status))
+        room = MAX_CHARS - len(TITLE) - len(REMINDER) - len(conflict_section) - 2 * (1 + bool(checklist) + bool(status) + bool(conflict_section))
+        room = max(0, room)
         checklist = checklist[:room - min(len(status_section), room // 2)].rstrip()
-        status_section = status_section[:room - len(checklist)].rstrip()
-        result = "\n\n".join(filter(None, [TITLE, checklist, status_section, REMINDER]))
+        status_section = status_section[:max(0, room - len(checklist))].rstrip()
+        result = "\n\n".join(filter(None, [TITLE, checklist, status_section, conflict_section, REMINDER]))
     return result
 
 
@@ -252,7 +256,13 @@ def build(prompt: str, cwd: str | Path | None) -> str:
     root = path.parent.parent
     query = _knowledge()._tokens(prompt)
     memory_dir = cfg.get("memory_dir")
-    checklist = cfg.get("checklist", "").strip()
+    raw_checklist = cfg.get("checklist", "")
+    if isinstance(raw_checklist, list):
+        checklist = "\n".join(str(item).strip() for item in raw_checklist if str(item).strip())
+    elif isinstance(raw_checklist, str):
+        checklist = raw_checklist.strip()
+    else:
+        checklist = ""
     header_lines: list[str] = []
     mode = cfg.get("mode")
     if isinstance(mode, str) and mode in MODES:
@@ -285,6 +295,10 @@ def check_config(cwd: str | Path | None) -> tuple[bool, list[str]]:
 
     root = path.parent.parent
     issues = []
+    if "checklist" in cfg:
+        cl = cfg["checklist"]
+        if not (isinstance(cl, str) or (isinstance(cl, list) and all(isinstance(x, str) for x in cl))):
+            issues.append("checklist: expected string or list of strings")
     if "mode" in cfg:
         mode = cfg["mode"]
         if not isinstance(mode, str) or mode not in MODES:

@@ -112,13 +112,19 @@ def path_overlaps(a: str, b: str) -> bool:
     has_glob_a = bool(_GLOB_RE.search(na))
     has_glob_b = bool(_GLOB_RE.search(nb))
     if has_glob_a or has_glob_b:
-        if fnmatch.fnmatchcase(na, nb) or fnmatch.fnmatchcase(nb, na):
+        if os.name == "nt":
+            na_cmp, nb_cmp = na.lower(), nb.lower()
+        else:
+            na_cmp, nb_cmp = na, nb
+        if fnmatch.fnmatchcase(na_cmp, nb_cmp) or fnmatch.fnmatchcase(nb_cmp, na_cmp):
             return True
-        pa = _GLOB_RE.split(na, maxsplit=1)[0].rstrip("/")
-        pb = _GLOB_RE.split(nb, maxsplit=1)[0].rstrip("/")
+        pa = _GLOB_RE.split(na_cmp, maxsplit=1)[0].rstrip("/")
+        pb = _GLOB_RE.split(nb_cmp, maxsplit=1)[0].rstrip("/")
         if not pa or not pb:
             return True
-        return _dir_overlaps(pa, pb)
+        return pa.startswith(pb) or pb.startswith(pa)
+    if os.name == "nt":
+        return _dir_overlaps(na.lower(), nb.lower())
     return _dir_overlaps(na, nb)
 
 
@@ -226,6 +232,45 @@ def load_active(
     return active
 
 
+def _board_lock(path: Path, timeout_s: float = 2.0):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _ctx():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock = path.with_suffix(".lock")
+        deadline = time.monotonic() + timeout_s
+        fd = None
+        while True:
+            try:
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode("ascii"))
+                os.close(fd)
+                fd = None
+                break
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime > 30.0:
+                        lock.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out waiting for board lock: {lock}")
+                time.sleep(0.02)
+        try:
+            yield
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            lock.unlink(missing_ok=True)
+
+    return _ctx()
+
+
 def _save_atomic(path: Path, sessions: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"schema": SCHEMA, "sessions": sessions}, ensure_ascii=False, indent=2) + "\n"
@@ -271,32 +316,33 @@ def claim(
     clean_role = role or ("worker" if clean_owner else "lead")
     if clean_role not in ROLES:
         raise ValueError(f"role must be one of {', '.join(ROLES)}")
-    active = load_active(project_root, now=now)
-    norm_scopes = _norm_scopes(scope)
-    norm_res = _norm_resources(resources)
-    if not force:
-        conflicts = find_conflicts(active, candidate_id=sid, owner=clean_owner, scope=norm_scopes, resources=norm_res)
-        if conflicts:
-            return False, conflicts
-    ts = _fmt_utc(_utcnow(now))
-    existing = next((s for s in active if s["id"] == sid), None)
-    entry: dict = {
-        "id": sid,
-        "role": clean_role,
-        "task": task.strip(),
-        "scope": norm_scopes,
-        "resources": norm_res,
-        "started_at": existing.get("started_at", ts) if existing else ts,
-        "updated_at": ts,
-        "ttl_hours": float(ttl_hours),
-    }
-    if clean_owner:
-        entry["owner"] = clean_owner
-    if worktree and worktree.strip():
-        entry["worktree"] = Path(worktree.strip()).as_posix()
-    updated = [entry, *(s for s in active if s["id"] != sid)]
-    _save_atomic(board_path(project_root), updated)
-    return True, entry
+    with _board_lock(board_path(project_root)):
+        active = load_active(project_root, now=now)
+        norm_scopes = _norm_scopes(scope)
+        norm_res = _norm_resources(resources)
+        if not force:
+            conflicts = find_conflicts(active, candidate_id=sid, owner=clean_owner, scope=norm_scopes, resources=norm_res)
+            if conflicts:
+                return False, conflicts
+        ts = _fmt_utc(_utcnow(now))
+        existing = next((s for s in active if s["id"] == sid), None)
+        entry: dict = {
+            "id": sid,
+            "role": clean_role,
+            "task": task.strip(),
+            "scope": norm_scopes,
+            "resources": norm_res,
+            "started_at": existing.get("started_at", ts) if existing else ts,
+            "updated_at": ts,
+            "ttl_hours": float(ttl_hours),
+        }
+        if clean_owner:
+            entry["owner"] = clean_owner
+        if worktree and worktree.strip():
+            entry["worktree"] = Path(worktree.strip()).as_posix()
+        updated = [entry, *(s for s in active if s["id"] != sid)]
+        _save_atomic(board_path(project_root), updated)
+        return True, entry
 
 
 def heartbeat(
@@ -308,31 +354,44 @@ def heartbeat(
     resources: list[str] | None = None,
     role: str | None = None,
     ttl_hours: float | None = None,
+    force: bool = False,
     now: dt.datetime | None = None,
 ) -> dict | None:
-    active = load_active(project_root, now=now)
-    existing = next((s for s in active if s["id"] == session_id), None)
-    if existing is None:
-        return None
-    entry = dict(existing)
-    if task is not None:
-        entry["task"] = task.strip()
-    if scope is not None:
-        entry["scope"] = _norm_scopes(scope)
-    if resources is not None:
-        entry["resources"] = _norm_resources(resources)
-    if role is not None:
-        if role not in ROLES:
-            raise ValueError(f"role must be one of {', '.join(ROLES)}")
-        entry["role"] = role
-    if ttl_hours is not None:
-        if ttl_hours <= 0:
-            raise ValueError("ttl_hours must be positive")
-        entry["ttl_hours"] = float(ttl_hours)
-    entry["updated_at"] = _fmt_utc(_utcnow(now))
-    updated = [entry, *(s for s in active if s["id"] != session_id)]
-    _save_atomic(board_path(project_root), updated)
-    return entry
+    sid = session_id.strip()
+    with _board_lock(board_path(project_root)):
+        active = load_active(project_root, now=now)
+        existing = next((s for s in active if s["id"] == sid), None)
+        if existing is None:
+            return None
+        entry = dict(existing)
+        if task is not None:
+            entry["task"] = task.strip()
+        if scope is not None:
+            entry["scope"] = _norm_scopes(scope)
+        if resources is not None:
+            entry["resources"] = _norm_resources(resources)
+        if role is not None:
+            if role not in ROLES:
+                raise ValueError(f"role must be one of {', '.join(ROLES)}")
+            entry["role"] = role
+        if ttl_hours is not None:
+            if ttl_hours <= 0:
+                raise ValueError("ttl_hours must be positive")
+            entry["ttl_hours"] = float(ttl_hours)
+        if not force and (scope is not None or resources is not None):
+            conflicts = find_conflicts(
+                active,
+                candidate_id=sid,
+                owner=entry.get("owner"),
+                scope=entry.get("scope"),
+                resources=entry.get("resources"),
+            )
+            if conflicts:
+                raise ValueError(f"heartbeat conflict with active session(s): {', '.join(c['id'] for c in conflicts)}")
+        entry["updated_at"] = _fmt_utc(_utcnow(now))
+        updated = [entry, *(s for s in active if s["id"] != sid)]
+        _save_atomic(board_path(project_root), updated)
+        return entry
 
 
 def release(
@@ -342,24 +401,26 @@ def release(
     cascade: bool = False,
     now: dt.datetime | None = None,
 ) -> bool:
+    sid = session_id.strip()
     path = board_path(project_root)
     if not path.is_file():
         return False
-    active = load_active(project_root, now=now)
-    to_remove = {session_id}
-    if cascade:
-        changed = True
-        while changed:
-            changed = False
-            for s in active:
-                if s.get("owner") in to_remove and s["id"] not in to_remove:
-                    to_remove.add(s["id"])
-                    changed = True
-    remaining = [s for s in active if s["id"] not in to_remove]
-    existed = len(remaining) != len(active)
-    if existed:
-        _save_atomic(path, remaining)
-    return existed
+    with _board_lock(path):
+        active = load_active(project_root, now=now)
+        to_remove = {sid}
+        if cascade:
+            changed = True
+            while changed:
+                changed = False
+                for s in active:
+                    if s.get("owner") in to_remove and s["id"] not in to_remove:
+                        to_remove.add(s["id"])
+                        changed = True
+        remaining = [s for s in active if s["id"] not in to_remove]
+        existed = len(remaining) != len(active)
+        if existed:
+            _save_atomic(path, remaining)
+        return existed
 
 
 def prune(

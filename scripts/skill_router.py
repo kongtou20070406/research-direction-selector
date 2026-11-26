@@ -40,7 +40,8 @@ BRIEF_COOLDOWN_SECS = 1800.0
 WAKEUP_DEDUP_SECS = 600.0
 SKILL_COOLDOWN_TURNS = 4
 _KB_LINE_RE = re.compile(r"^- [A-Z]+-\d+\b")
-_DYNAMIC_SECTION_HEADERS = ("知识库（", "研究者的决定", "空投的决定", "过往反馈")
+def _is_dynamic_header(line: str) -> bool:
+    return line.startswith(("知识库（", "研究者的决定", "过往反馈")) or line.endswith("的决定")
 
 
 def load_triggers(roots: list[Path]) -> dict[str, dict]:
@@ -99,7 +100,7 @@ def message(matches: list[dict], read_root: Path | None = None) -> str:
     for m in matches:
         base = (read_root / m["skill"]) if read_root else m["dir"]
         files = "; ".join(str(base / rel).replace("\\", "/") for rel in m["must_read"])
-        lines.append(f"- {m['skill']} (matched: {', '.join(m['hits'])}). Suggested reference: {files}. {m['then'] or ''}".rstrip())
+        lines.append(f"- {m['skill']} — Suggested reference: {files}. {m['then'] or ''} (matched: {', '.join(m['hits'])})".rstrip())
     lines.append("Use what fits the current step; skip freely for quick questions.")
     return "\n".join(lines)
 
@@ -144,6 +145,13 @@ def _session_id(payload: dict) -> str:
     return ""
 
 
+def _safe_float(val: object, default: float = 0.0) -> float:
+    try:
+        return default if val is None else float(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def _load_state(path: Path, now: float) -> dict[str, dict]:
     if not path.is_file():
         return {}
@@ -156,25 +164,53 @@ def _load_state(path: Path, now: float) -> dict[str, dict]:
     return {
         k: v
         for k, v in data.items()
-        if isinstance(v, dict) and now - float(v.get("last_seen_at", 0.0)) < 86400.0
+        if isinstance(v, dict) and now - _safe_float(v.get("last_seen_at"), 0.0) < 86400.0
     }
 
 
-def _save_state(path: Path, state: dict[str, dict]) -> None:
+def _save_state(path: Path, state: dict[str, dict], *, session_id: str = "", now: float | None = None) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.parent / f".router.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
-        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-        for attempt in range(4):
+        lock = path.with_suffix(".lock")
+        deadline = time.monotonic() + 1.0
+        acquired = False
+        while True:
             try:
-                os.replace(tmp, path)
-                return
-            except PermissionError:
-                if attempt == 3:
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                acquired = True
+                break
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime > 15.0:
+                        lock.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
                     break
-                time.sleep(0.015)
-        if tmp.exists():
-            tmp.unlink()
+                time.sleep(0.01)
+        try:
+            merged = _load_state(path, time.time() if now is None else now) if session_id else {}
+            if session_id and session_id in state:
+                merged[session_id] = state[session_id]
+            else:
+                merged = state
+            tmp = path.parent / f".router.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+            tmp.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+            for attempt in range(4):
+                try:
+                    os.replace(tmp, path)
+                    return
+                except PermissionError:
+                    if attempt == 3:
+                        break
+                    time.sleep(0.015)
+            if tmp.exists():
+                tmp.unlink()
+        finally:
+            if acquired:
+                lock.unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -187,9 +223,9 @@ def _extract_dynamic_lines(brief_text: str) -> tuple[str, list[str], list[str]]:
         lines = block.splitlines()
         if not lines:
             continue
-        if lines[0].startswith(_DYNAMIC_SECTION_HEADERS):
+        if _is_dynamic_header(lines[0]):
             for ln in lines[1:]:
-                if _KB_LINE_RE.match(ln):
+                if ln.startswith("- "):
                     kb_lines.append(ln)
             continue
         kept = []
@@ -224,7 +260,20 @@ def _turn_context_for_session(
     rec = dict(state.get(session_id) or {})
 
     prompt_sha = hashlib.sha256((prompt or "").strip().encode("utf-8")).hexdigest()[:16]
-    if prompt_sha == rec.get("last_prompt_sha") and (cur_now - float(rec.get("last_seen_at", 0.0))) < WAKEUP_DEDUP_SECS:
+    if prompt_sha == rec.get("last_prompt_sha") and (cur_now - _safe_float(rec.get("last_seen_at"), 0.0)) < WAKEUP_DEDUP_SECS:
+        try:
+            dedup_brief = _brief_builder()(prompt, cwd)
+        except Exception:
+            dedup_brief = ""
+        if dedup_brief:
+            _, _, dedup_conflicts = _extract_dynamic_lines(dedup_brief)
+            seen_conflicts = list(rec.get("seen_conflicts") or [])
+            new_conflicts = [ln for ln in dedup_conflicts if ln not in seen_conflicts]
+            if new_conflicts:
+                rec["seen_conflicts"] = seen_conflicts + new_conflicts
+                state[session_id] = rec
+                _save_state(state_file, state, session_id=session_id, now=cur_now)
+                return "\n".join([delta_header, *new_conflicts])
         return ""
 
     turn = int(rec.get("turn", 0)) + 1
@@ -245,8 +294,8 @@ def _turn_context_for_session(
         full_brief = ""
     if full_brief:
         static_sha, kb_lines, conflict_lines = _extract_dynamic_lines(full_brief)
-        last_brief_at = float(rec.get("last_brief_at", 0.0))
-        last_brief_turn = int(rec.get("last_brief_turn", 0))
+        last_brief_at = _safe_float(rec.get("last_brief_at"), 0.0)
+        last_brief_turn = int(_safe_float(rec.get("last_brief_turn"), 0))
         need_full = (
             last_brief_at == 0.0
             or (turn - last_brief_turn) >= BRIEF_COOLDOWN_TURNS
@@ -275,7 +324,7 @@ def _turn_context_for_session(
     rec["last_seen_at"] = cur_now
     rec["skill_turns"] = skill_turns
     state[session_id] = rec
-    _save_state(state_file, state)
+    _save_state(state_file, state, session_id=session_id, now=cur_now)
     return "\n\n".join(filter(None, (skill_text, brief_text)))
 
 
