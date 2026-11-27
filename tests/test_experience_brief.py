@@ -312,8 +312,10 @@ def test_session_throttle_wakeup_dedup_and_delta_brief(project, tmp_path, monkey
     assert skill_router.agy_hook({"conversationId": sid, "lastUserInput": "1", "invocationNum": "0", "cwd": str(cwd)}) == {}
 
     r4 = skill_router.agy_hook({"conversationId": sid, "lastUserInput": "看看 alpha 旧路线", "invocationNum": "0", "cwd": str(cwd)})
+    assert skill_router.agy_hook({"conversationId": sid, "lastUserInput": "1 改进吧", "invocationNum": "0", "cwd": str(cwd)}) == {}
     m4 = r4["injectSteps"][0]["systemMessage"]["systemMessage"]
     assert "[Context Delta]" in m4 and "K-001" in m4 and experience_brief.TITLE not in m4
+    assert "2026-01-01" not in m4 and "a｜只凭正文命中" not in m4
 
     (root / "STATUS.md").write_text("<!-- START -->\n- 新状态\n<!-- END -->\n", encoding="utf-8")
     r5 = skill_router.agy_hook({"conversationId": sid, "lastUserInput": "看看", "invocationNum": "0", "cwd": str(cwd)})

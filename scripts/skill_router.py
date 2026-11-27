@@ -35,10 +35,11 @@ sys.dont_write_bytecode = True
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "skills"
 AGY_ROOT = Path.home() / ".gemini" / "config" / "skills"
-BRIEF_COOLDOWN_TURNS = 10
-BRIEF_COOLDOWN_SECS = 1800.0
+BRIEF_COOLDOWN_TURNS = 25
+BRIEF_COOLDOWN_SECS = 21600.0
 WAKEUP_DEDUP_SECS = 600.0
-SKILL_COOLDOWN_TURNS = 4
+SKILL_COOLDOWN_TURNS = 12
+SHORT_ACK_MAX_CHARS = 8
 _KB_LINE_RE = re.compile(r"^- [A-Z]+-\d+\b")
 def _is_dynamic_header(line: str) -> bool:
     return line.startswith(("知识库（", "研究者的决定", "过往反馈")) or line.endswith("的决定")
@@ -224,9 +225,10 @@ def _extract_dynamic_lines(brief_text: str) -> tuple[str, list[str], list[str]]:
         if not lines:
             continue
         if _is_dynamic_header(lines[0]):
-            for ln in lines[1:]:
-                if ln.startswith("- "):
-                    kb_lines.append(ln)
+            if lines[0].startswith("知识库（"):
+                for ln in lines[1:]:
+                    if _KB_LINE_RE.match(ln) and "［禁区］" in ln:
+                        kb_lines.append(ln)
             continue
         kept = []
         for ln in lines:
@@ -312,7 +314,8 @@ def _turn_context_for_session(
         else:
             seen_kb = list(rec.get("seen_kb") or [])
             seen_conflicts = list(rec.get("seen_conflicts") or [])
-            new_kb = [ln for ln in kb_lines if ln not in seen_kb]
+            is_short_ack = len((prompt or "").strip()) < SHORT_ACK_MAX_CHARS and not fresh_matches
+            new_kb = [] if is_short_ack else [ln for ln in kb_lines if ln not in seen_kb]
             new_conflicts = [ln for ln in conflict_lines if ln not in seen_conflicts]
             if new_kb or new_conflicts:
                 brief_text = "\n".join([delta_header, *new_conflicts, *new_kb])
