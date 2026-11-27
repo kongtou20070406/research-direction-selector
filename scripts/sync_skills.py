@@ -178,7 +178,8 @@ def backup_drifted_copies(repo: Path = REPO, targets: Path = TARGETS, backup_roo
                 continue
             diffs = tree_diff(place, target)
             if diffs:
-                dest = backup_root / f"copy__{'__'.join(p.strip(':\\/') for p in place.parts[-4:])}"
+                slug = "__".join(p.strip(":\\/") for p in place.parts[-4:])
+                dest = backup_root / f"copy__{slug}"
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(place, dest, dirs_exist_ok=True)
                 print(f"BACKED UP drifted copy {place} -> {dest} ({len(diffs)} differences)")
