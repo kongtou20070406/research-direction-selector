@@ -6,7 +6,7 @@ from scripts import sessions
 
 
 def _utc(hours_ago: float = 0.0) -> dt.datetime:
-    return dt.datetime(2026, 11, 26, 12, 0, 0, tzinfo=dt.timezone.utc) - dt.timedelta(hours=hours_ago)
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0) - dt.timedelta(hours=hours_ago)
 
 
 def test_path_overlaps_edge_cases():
