@@ -6,7 +6,7 @@ This charter captures the design philosophy behind **Research Direction Selector
 
 ## 1. Workflow Design Charter (One-Person Fleet)
 
-1. **One-Person Research Fleet:** One researcher directs a Lead model (planning, synthesis, prose, visual design), parallel engineering workers (closed kernel/pipeline tasks), parallel independent reviewers (proofs, counterexamples, literature, blinded audits), and deterministic 0-token verification scripts.
+1. **One-Person Research Fleet:** One researcher directs a Lead model (planning, synthesis, prose, visual design, and per-device operator optimization), parallel engineering workers (closed pipeline/baseline/plumbing tasks), parallel independent reviewers (proofs, counterexamples, literature, blinded audits, and operator fault-finding), and deterministic 0-token verification scripts.
 2. **Zero-Command Conversation:** The researcher focuses on four irreplaceable tasks: setting the north star, contributing scientific intuition, owning final aesthetic taste, and making key tradeoffs. Scripts, flags, and verification details stay behind the scenes.
 3. **Remind Gently, Verify Strictly:** Align on falsifiable hypotheses, baselines, and kill thresholds before spending GPU; during drafting, track pending numbers with `% gate-sorry` / `TBD` and clear them at `--no-sorry` freeze. Accept deliverables only via real runs, compilers, SHA-256 digests, numerical parity, and counterexamples.
 4. **Three Exploration Modes (`probe` / `paper` / `program`):**

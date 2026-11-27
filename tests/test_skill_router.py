@@ -78,6 +78,7 @@ def test_paper_gate_talk_does_not_trigger_research_gate():
 def test_reference_engine_fused_kernel_auto_triggers():
     for prompt in (
         "给 RTX 5090 写个 Triton 融合算子加速",
+        "帮我做一下这个算子性能优化",
         "帮我用 torch.compile 优化 engine/ 下这个循环层",
         "先写原生 PyTorch 参考实现，再按 L4 写 CUDA kernel",
         "帮我跑个实验试试这个想法",
@@ -87,6 +88,7 @@ def test_reference_engine_fused_kernel_auto_triggers():
         assert "research-gate" in skills(prompt), prompt
     msg = sr.message(sr.route("帮我跑个实验试试这个想法", TRIG))
     assert "reference/" in msg and "engine/" in msg and "数值等价" in msg
+    assert "主模型" in msg and "算子性能优化" in msg and "找碴" in msg
     assert "research-gate" not in skills("只估一下这个模型的理论最低时延")
 
 
