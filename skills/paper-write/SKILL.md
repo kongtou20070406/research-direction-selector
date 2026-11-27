@@ -9,7 +9,7 @@ The lead agent writes and translates all manuscript prose. Use the lead model as
 
 **Draft vs. Freeze (Anti-Amnesia).** Do not let style or formatting rules stall early drafting: during everyday compilation, record known gaps with `% gate-sorry: <check> — <reason>` or `TBD` so the PDF still delivers while every deferred item stays counted and listed. Before submission or `--freeze`, run with `--no-sorry` and `--require-headline-bindings` so every deferred debt turns back into a hard check and nothing is forgotten.
 
-**Before writing anything, every time** (these reads are required, not on demand, and do not count against any "read few files" budget):
+**Before writing anything, read** (long files in slices of at most 200 lines):
 1. Read [top-venue-writing-rules.md](references/top-venue-writing-rules.md) in full.
 2. For an abstract, introduction or theorem narrative, read [exemplars/index.md](references/exemplars/index.md), then one matching card and its original passage.
 3. **Pre-Draft 3-Question Positioning Gate (hard gate before drafting Abstract/Intro/Method):** Run a read-only `independent-reviewer` (Domain Skeptic + Devil's Advocate) check against the locked Fact Ledger and eval code, answering three questions (if evidence is missing, narrow the claim instead of spinning):
@@ -28,7 +28,7 @@ The lead agent writes and translates all manuscript prose. Use the lead model as
 - State only supported claims. Cut lab tags, repo paths, workflow slogans, coined shorthand, proxy-metric padding and speculative side claims. Keep protocols, speedups and unit tests out of the headline.
 - Describe completed results and protocols in the present or past tense, keep plans, reruns, internal stages and submission schedules out of the prose, and mark pending numbers as TBD in tables. Sentence clarity in submission mode and the paper gate both flag internal workflow wording.
 - Match prose and figures to code. Give each metric its direction (↑/↓), denominator, seed count and precision. Separate three-seed main tables from single-seed appendix tables. Use plain type for numbers, hyperparameters and model names.
-- Write one idea per sentence. Aim for 12–22 English words (soft limit 25, maximum 35) or 15–28 Han characters (soft limit 42, maximum 60). Count commas and semicolons together. EN soft 3 / hard 4, ZH soft 2 / hard 3. Avoid ≥3 的 and nested 在…中通过…以… chains.
+- Write one idea per sentence and connect sentences through cause and consequence. Sentence-length numbers are p90 diagnostics reported by `check_sentence_clarity.py`, not drafting targets: it flags English sentences above 25 words (maximum 35) or Chinese sentences above 42 Han characters (maximum 60), and comma-plus-semicolon counts above EN 3 / ZH 2 (hard EN 4 / ZH 3). Fix a flagged sentence by untangling its logic, not by chopping it into fragments. Avoid ≥3 的 and nested 在…中通过…以… chains.
 - Give each main-text theorem 1–2 intuition sentences, a statement with ≤5 active symbols and a proof sketch of ≤5 steps. Move algebra, auxiliary constants and edge cases to the appendix.
 
 ### De-AI hard rules

@@ -26,9 +26,9 @@ REMINDER = "Use this project context to build on prior evidence; if a better pat
 KNOWLEDGE_SCRIPT = Path(__file__).resolve().parents[1] / "skills/research-gate/scripts/knowledge.py"
 TYPES = {"dead_end": "禁区", "primitive": "原语", "asset": "跨项目资产", "practice": "最佳实践"}
 MODES = {
-    "probe": "灵感探针（probe）｜直奔核心直觉，用极简原生 PyTorch 快速验证关键假说",
-    "paper": "专题成文（paper）｜把一个清晰发现打磨成自包含、可读可复现的高质量论文",
-    "program": "长期科学探索（program）｜锚定开放性核心难题，以简洁机制、扎实理论与高信息量实验步步推进",
+    "probe": "灵感探针（probe）｜用极简原生 PyTorch 快速验证一个关键假说",
+    "paper": "专题成文（paper）｜把一个清晰发现写成可复现的论文",
+    "program": "长期科学探索（program）｜围绕一个开放难题持续做理论与实验",
 }
 FILLER = frozenset(
     "的 是 了 我 你 他 我们 你们 自己 这个 那个 一些 如何 怎么 可以 一下 问题 工作 提升 做吧 看看 希望 还有 需要".split()
