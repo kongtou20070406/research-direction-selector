@@ -138,7 +138,11 @@ def freeze(plan_path: Path, out: Path) -> str:
     for rel, meta in plan.get("files", {}).items():
         meta["sha256"] = sha256_file(root / rel)
     plan["frozen_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
-    plan["root"] = str(root.resolve())
+    try:
+        rel_root = root.resolve().relative_to(out.resolve().parent)
+        plan["root"] = rel_root.as_posix() or "."
+    except ValueError:
+        plan["root"] = str(root.resolve())
     out.write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return plan_digest(plan)
 
@@ -153,7 +157,7 @@ def pack(frozen_path: Path, expect_plan: str, out: Path) -> dict:
     errors = check_plan(plan, frozen_path, require_hashes=True)
     if errors:
         raise ValueError("plan check failed:\n  " + "\n  ".join(errors))
-    root = Path(plan["root"])
+    root = _root(plan, frozen_path)
     receipt = {"plan_sha256": digest, "packed_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
                "members": {rel: meta["sha256"] for rel, meta in plan["files"].items()}}
     tmp = out.with_suffix(out.suffix + ".part")
@@ -182,9 +186,13 @@ def verify(bundle: Path) -> dict:
                 missing.append(rel)
             elif hashlib.sha256(zf.read(name)).hexdigest() != meta["sha256"]:
                 mismatched.append(rel)
+    expected_members = {rel: meta["sha256"] for rel, meta in plan["files"].items()}
+    extra = sorted(n[6:] for n in names if n.startswith("files/") and not n.endswith("/") and n[6:] not in expected_members)
+    members_ok = receipt.get("members") == expected_members
     plan_ok = receipt.get("plan_sha256") == plan_digest(plan)
-    return {"ok": plan_ok and not missing and not mismatched, "plan_matches_receipt": plan_ok,
-            "members": len(plan["files"]), "missing": missing, "mismatched": mismatched,
+    return {"ok": plan_ok and members_ok and not missing and not mismatched and not extra,
+            "plan_matches_receipt": plan_ok, "members_match_receipt": members_ok,
+            "members": len(plan["files"]), "missing": missing, "mismatched": mismatched, "extra": extra,
             "scope": plan.get("scope"), "replay_performed": False}
 
 

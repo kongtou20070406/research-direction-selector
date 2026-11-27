@@ -4,7 +4,7 @@ One command after every edit, so agents stop hand-hunting mechanical slips:
 
     python paper_gate.py PAPER_DIR --fix --compile
 
-Per-paper settings live in PAPER_DIR/paper_gate.json (see the NSI example). Exit code 0 means no
+Per-paper settings live in PAPER_DIR/paper_gate.json. Exit code 0 means no
 errors remain (warnings allowed); 1 means errors remain and the paper must not be delivered.
 
 Auto-fixed (deterministic, logged, originals backed up to PAPER_DIR/.gate_backup/<stamp>/):
@@ -497,7 +497,7 @@ def check_placeholders(srcs, cfg, rep, *, allow_sorry: bool = True):
     allowed = set(cfg.get("allowed_placeholders", ["TBD"])) if allow_sorry else set()
     count = 0
     for s in srcs:
-        for m in re.finditer(r"\bTBD\b|\bTODO\b|\bXXX\b|\?\?\?|\\pending\{", s.text):
+        for m in re.finditer(r"(?<![A-Za-z0-9_])(?:TBD|TODO|XXX)(?![A-Za-z0-9_])|\?\?\?|\\pending\{", s.text):
             tok = "TBD" if m.group(0).startswith("\\pending") else m.group(0)
             if tok in allowed:
                 count += 1
@@ -704,9 +704,9 @@ def check_layout(paper: Path, cfg: dict, labels: dict, rep: Report, *, render_pa
 def compile_paper(paper: Path, cfg: dict, rep: Report) -> bool:
     cmd = list(cfg.get("compile", ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", cfg["main_tex"]]))
     if cmd and cmd[0] == "latexmk" and shutil.which("latexmk") is None and os.name == "nt":
-        win_mk = Path("C:/texlive/2025/bin/windows/latexmk.exe")
-        if win_mk.is_file():
-            cmd[0] = str(win_mk)
+        win_mks = sorted(Path("C:/texlive").glob("*/bin/windows/latexmk.exe"), reverse=True)
+        if win_mks:
+            cmd[0] = str(win_mks[0])
     for _ in range(int(cfg.get("compile_passes", 2))):
         r = subprocess.run(cmd, cwd=paper, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
         if r.returncode != 0:
@@ -855,9 +855,10 @@ def main() -> int:
                     rep.infos.append(f"deliver  NOT copied to {target} because errors remain")
                     continue
                 dest = paper / target
+                src_pdf = paper / cfg.get("pdf", Path(cfg["main_tex"]).stem + ".pdf")
                 try:
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(paper / (Path(cfg["main_tex"]).stem + ".pdf"), dest)
+                    shutil.copy2(src_pdf, dest)
                 except OSError as exc:  # an unmounted drive must not fail the gate, but a failed copy on a mounted dir must
                     if dest.anchor and not Path(dest.anchor).exists():
                         rep.warnings.append(f"deliver  could not copy to {target}: {exc}")

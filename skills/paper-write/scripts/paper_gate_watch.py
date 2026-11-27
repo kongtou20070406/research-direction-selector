@@ -157,7 +157,17 @@ def run_gate(paper: Path, fix: bool, runner=subprocess.run, target_configs: list
         label = f"{cfg.stem}: {head}" if multi else head
         return p.returncode == 0, label
 
-    if multi and runner is subprocess.run:
+    def _distinct_stems(items: list[Path]) -> bool:
+        stems: list[str] = []
+        for cfg_p in items:
+            try:
+                mt = json.loads(cfg_p.read_text(encoding="utf-8-sig")).get("main_tex", cfg_p.stem)
+            except (OSError, ValueError):
+                mt = cfg_p.stem
+            stems.append(Path(str(mt)).stem.lower() if os.name == "nt" else Path(str(mt)).stem)
+        return len(set(stems)) == len(stems)
+
+    if multi and runner is subprocess.run and _distinct_stems(cfgs):
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(cfgs))) as pool:
             outcomes = list(pool.map(_run_one, cfgs))
     else:
@@ -235,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
             print(p)
         return 0
     if a.once:
+        if a.papers and len(papers) < len(a.papers):
+            return 1
         all_ok = True
         for p in papers:
             ok, head = run_gate(p, a.fix)
@@ -245,9 +257,10 @@ def main(argv: list[str] | None = None) -> int:
         fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         try:  # stale lock from a crash: take it over if its process is gone
-            pid = int(LOCK.read_text().strip() or 0)
+            raw_pid = LOCK.read_text().strip()
+            pid = int(raw_pid or 0)
             if pid <= 0:
-                alive = False
+                alive = (time.time() - LOCK.stat().st_mtime) < 2.0
             elif os.name == "nt":
                 out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True,
                                      encoding="mbcs", errors="replace").stdout

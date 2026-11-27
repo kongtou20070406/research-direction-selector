@@ -220,6 +220,8 @@ def vault_prefix(out: Path) -> str:
 
 
 def build(data: Path, out: Path, today: str | None = None) -> dict:
+    if not data.is_dir():
+        return {"pages": 0, "changed": 0, "removed": 0, "problems": [f"data directory not found: {data}"]}
     try:
         entries, projects = load_data(data)
     except (OSError, ValueError, SystemExit) as error:

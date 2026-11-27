@@ -245,6 +245,11 @@ def check_code_quality(
                 py_files.append(rf)
 
     errors, warnings = [], []
+    for raw in targets:
+        p = Path(raw)
+        cand = p if p.is_absolute() else (repo_root / p)
+        if not cand.exists():
+            errors.append(f"missing_target  {raw}: target path does not exist")
     for path in py_files:
         try:
             rel = path.relative_to(repo_root.resolve()).as_posix()

@@ -18,14 +18,15 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 if __package__:
-    from . import check_routes, experience_brief, sync_skills
+    from . import check_routes, experience_brief, rds_profile, sync_skills
 else:
     import check_routes
     import experience_brief
+    import rds_profile
     import sync_skills
 
 GATE_SCRIPTS = Path(__file__).resolve().parents[1] / "skills/research-gate/scripts"
-TASKS = ("LoopAGI_Obsidian_Merge", "PaperGate_Watch", "Research_Overview_Weekly")
+TASKS: tuple[str, ...] = ()
 
 
 @cache
@@ -146,7 +147,19 @@ def _shared(directory: Path) -> tuple[str, list[str]]:
 
 
 def _tasks() -> tuple[str, list[str]]:
-    names = ", ".join(f"'{name}'" for name in TASKS)
+    raw_tasks = rds_profile.load_profile().get("scheduled_tasks")
+    if raw_tasks is not None:
+        if not isinstance(raw_tasks, list) or not all(isinstance(x, str) and x.strip() for x in raw_tasks):
+            return "FAIL", ["scheduled_tasks in profile must be a list of non-empty strings"]
+        tasks = tuple(raw_tasks)
+    else:
+        tasks = TASKS
+    if not tasks:
+        return "OK", ["no scheduled tasks configured in profile"]
+    invalid = [t for t in tasks if not re.fullmatch(r"[A-Za-z0-9_.\-\\ ]+", t)]
+    if invalid:
+        return "FAIL", [f"invalid scheduled_task name: {t!r}" for t in invalid]
+    names = ", ".join("'" + name.replace("'", "''") + "'" for name in tasks)
     command = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n" + f"""
 foreach ($name in @({names})) {{
     try {{
@@ -166,8 +179,8 @@ foreach ($name in @({names})) {{
     rows = dict(line.split("|", 1) for line in result.stdout.splitlines() if "|" in line)
     issues = [f"{name}: LastTaskResult {rows[name]}" if rows.get(name, "").isdigit()
               else f"{name}: {rows.get(name) or 'no task info returned'}"
-              for name in TASKS if rows.get(name) not in {"0", "267009", "267011"}]
-    return ("FAIL", issues) if issues else ("OK", [f"{len(TASKS)} scheduled tasks checked"])
+              for name in tasks if rows.get(name) not in {"0", "267009", "267011"}]
+    return ("FAIL", issues) if issues else ("OK", [f"{len(tasks)} scheduled tasks checked"])
 
 
 def _retro(project: Path) -> tuple[str, list[str]]:

@@ -325,7 +325,14 @@ def audit_figure(
     """Score a figure (PNG/JPG + optional TeX/SVG/HTML/Py source) from 0 to 100 across 9 dimensions."""
     img_p = Path(image_path)
     src_p = Path(source_path) if source_path else None
-    arr = np.array(Image.open(img_p).convert("RGB"))
+    with Image.open(img_p) as raw_im:
+        if raw_im.mode in ("RGBA", "LA") or "transparency" in raw_im.info:
+            rgba = raw_im.convert("RGBA")
+            bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            im_rgb = Image.alpha_composite(bg, rgba).convert("RGB")
+        else:
+            im_rgb = raw_im.convert("RGB")
+        arr = np.array(im_rgb)
     px = _rgb_to_hsv_stats(arr)
 
     nodes, svg_stats = _extract_source_text_nodes(src_p)
@@ -357,6 +364,8 @@ def audit_figure(
         prose_score = 10.5 if px["p95_local_congestion"] <= 0.42 else max(5.0, 10.5 - (px["p95_local_congestion"] - 0.42) * 18.0)
         prose_score = round(prose_score, 2)
 
+    if src_p is not None and not src_p.is_file():
+        raise FileNotFoundError(f"--source file not found: {src_p}")
     # 2. Zero ASCII-Math Typography Gate (15 pts)
     if src_p is not None:
         math_score = max(0.0, 15.0 - 3.5 * len(ascii_hits))
@@ -465,6 +474,8 @@ def audit_figure(
         2,
     )
 
+    if px["pure_white_ratio"] >= 0.98 or px["ink_ratio"] <= 0.005:
+        total = min(total, 40.0)
     return {
         "image": str(img_p),
         "source": str(src_p) if src_p else None,
@@ -521,6 +532,8 @@ def main() -> None:
             f"col={d['color_harmony_12']:.1f} edit={d['editorial_craft_15']:.1f} | "
             f"white={m['pure_white_ratio']:.2f} sat95={m['surface_fill_sat_p95']:.2f} ascii={m['ascii_math_violations']}"
         )
+    if any(r["grade"] == "REJECT" for r in results):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

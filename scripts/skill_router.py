@@ -31,6 +31,14 @@ import uuid
 from functools import cache
 from pathlib import Path
 
+if __package__:
+    from . import rds_profile
+else:
+    _SCRIPT_DIR = str(Path(__file__).resolve().parent)
+    if _SCRIPT_DIR not in sys.path:
+        sys.path.insert(0, _SCRIPT_DIR)
+    import rds_profile
+
 sys.dont_write_bytecode = True
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "skills"
@@ -42,7 +50,8 @@ SKILL_COOLDOWN_TURNS = 12
 SHORT_ACK_MAX_CHARS = 8
 _KB_LINE_RE = re.compile(r"^- [A-Z]+-\d+\b")
 def _is_dynamic_header(line: str) -> bool:
-    return line.startswith(("知识库（", "研究者的决定", "过往反馈")) or line.endswith("的决定")
+    decisions_label = rds_profile.profile_str("decisions_label", "研究者的决定")
+    return line.startswith(("知识库（", "研究者的决定", "过往反馈", decisions_label)) or line.endswith("的决定")
 
 
 def load_triggers(roots: list[Path]) -> dict[str, dict]:
@@ -97,12 +106,19 @@ def route(prompt: str, triggers: dict[str, dict], cwd: str = "") -> list[dict]:
 def message(matches: list[dict], read_root: Path | None = None) -> str:
     if not matches:
         return ""
-    lines = ["[RDS Context Hint] Relevant workflow skill(s) for this turn (advisory):"]
+    header = rds_profile.profile_str("skill_header", "[RDS Context Hint] Relevant workflow skill(s) for this turn (advisory):")
+    footer = rds_profile.profile_str("skill_footer", "Use what fits the current step; skip freely for quick questions.")
+    verb = rds_profile.profile_str("skill_read_verb", "Suggested reference: ")
+    sep = rds_profile.profile_str("skill_file_sep", "; ")
+    hit_prefix = rds_profile.profile_str("skill_hit_prefix", " (matched: ")
+    hit_suffix = rds_profile.profile_str("skill_hit_suffix", ")")
+    hit_sep = rds_profile.profile_str("skill_hit_sep", ", ")
+    lines = [header]
     for m in matches:
         base = (read_root / m["skill"]) if read_root else m["dir"]
-        files = "; ".join(str(base / rel).replace("\\", "/") for rel in m["must_read"])
-        lines.append(f"- {m['skill']} — Suggested reference: {files}. {m['then'] or ''} (matched: {', '.join(m['hits'])})".rstrip())
-    lines.append("Use what fits the current step; skip freely for quick questions.")
+        files = sep.join(str(base / rel).replace("\\", "/") for rel in m["must_read"])
+        lines.append(f"- {m['skill']} — {verb}{files}. {m['then'] or ''}{hit_prefix}{hit_sep.join(m['hits'])}{hit_suffix}".rstrip())
+    lines.append(footer)
     return "\n".join(lines)
 
 
@@ -135,7 +151,11 @@ def _turn_context(prompt: str, cwd: str, read_root: Path | None = None) -> str:
 
 def _state_path() -> Path:
     override = os.environ.get("SKILL_ROUTER_STATE", "").strip()
-    return Path(override) if override else (Path(tempfile.gettempdir()) / "rds_skill_router_state.json")
+    if override:
+        return Path(override)
+    pid = rds_profile.profile_id()
+    suffix = "" if pid == "public" else f"_{pid}"
+    return Path(tempfile.gettempdir()) / f"rds_skill_router_state{suffix}.json"
 
 
 def _session_id(payload: dict) -> str:
@@ -249,8 +269,10 @@ def _turn_context_for_session(
     session_id: str = "",
     *,
     now: float | None = None,
-    delta_header: str = "[Context Delta]",
+    delta_header: str | None = None,
 ) -> str:
+    if delta_header is None:
+        delta_header = rds_profile.profile_str("delta_header", "[Context Delta]")
     if not session_id:
         return _turn_context(prompt, cwd, read_root)
     if AUTOMATED.search(prompt or ""):
@@ -271,10 +293,11 @@ def _turn_context_for_session(
             _, _, dedup_conflicts = _extract_dynamic_lines(dedup_brief)
             seen_conflicts = list(rec.get("seen_conflicts") or [])
             new_conflicts = [ln for ln in dedup_conflicts if ln not in seen_conflicts]
-            if new_conflicts:
-                rec["seen_conflicts"] = seen_conflicts + new_conflicts
+            if dedup_conflicts != seen_conflicts:
+                rec["seen_conflicts"] = list(dedup_conflicts)
                 state[session_id] = rec
                 _save_state(state_file, state, session_id=session_id, now=cur_now)
+            if new_conflicts:
                 return "\n".join([delta_header, *new_conflicts])
         return ""
 
@@ -320,7 +343,7 @@ def _turn_context_for_session(
             if new_kb or new_conflicts:
                 brief_text = "\n".join([delta_header, *new_conflicts, *new_kb])
                 rec["seen_kb"] = seen_kb + new_kb
-                rec["seen_conflicts"] = seen_conflicts + new_conflicts
+            rec["seen_conflicts"] = list(conflict_lines)
 
     rec["turn"] = turn
     rec["last_prompt_sha"] = prompt_sha
@@ -352,7 +375,21 @@ def agy_hook(payload: dict) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
+    raw_argv = sys.argv[1:] if argv is None else list(argv)
+    filtered: list[str] = []
+    i = 0
+    while i < len(raw_argv):
+        if raw_argv[i] == "--profile" and i + 1 < len(raw_argv):
+            rds_profile.set_cli_profile(raw_argv[i + 1])
+            i += 2
+            continue
+        if raw_argv[i].startswith("--profile="):
+            rds_profile.set_cli_profile(raw_argv[i].split("=", 1)[1])
+            i += 1
+            continue
+        filtered.append(raw_argv[i])
+        i += 1
+    argv = filtered
     mode = argv[0] if argv else "test"
     if mode == "test":
         print(message(route(" ".join(argv[1:]), load_triggers(roots_from_env()))) or "(no skill matched)")

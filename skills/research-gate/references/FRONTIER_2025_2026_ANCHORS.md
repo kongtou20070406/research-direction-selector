@@ -16,16 +16,16 @@ Companion reference for [SKILL.md](../SKILL.md). Every rule in `SKILL.md` is gro
 
 ---
 
-## 2. Verified `Obelisk` Empirical Post-Mortems (Do Not Repeat)
+## 2. Anonymized Empirical Post-Mortems (Do Not Repeat)
 
-| Date | Experiment / Diagnostic | Verified Observation | Permanent Design Rule Derived |
-|---|---|---|---|
-| **2026-11-03** | `Probe H` (`frm_arc_v0`, Obelisk `arc_probe_conf_rule_shared`) | Training saw noisy ground-truth states (`level * gt + noise`) while test-time rollout fed back self-generated guesses, causing carry collapse (`R16 .32`, re-saturating `.90`). | Train the loop on its **own self-generated carry states** (`nograd_k_1step`: `k` no-grad self-steps + gradient step). |
-| **2026-11-11** | `dc_b` Hard Keep Routing (`arc_probe_dc_keep.json`, Obelisk) | Hard threshold keep-mask routing selected **`pad` tokens (`39.4%`) more often than `content` tokens (`26.9%`)** (`final_exact = 1/31`). | Reject brittle binary routing masks; use smooth differentiable `softmax` Cross-Attention slot pooling. |
-| **2026-11-13** | `baseline_targets_example` & `aux_loss_ablation_example` (`RESULTS.md`) | (1) `CE + 0.1 * encoder(y)` with `SIGReg/Gaussian = 0` scored `0/16` exact on real ARC (`NLL 0.9926 vs 0.9107`).<br>(2) Blind full-state/KV replay losses (`38.28% / 41.99%`) lost to compute-matched ordinary training (`47.85%`). | Never use unregularized latent target matching without `SIGReg`, and never add blind state-replay losses without a causal ablation win. |
-| **2026-11-15** | `homm_rule_recurrence_20261115` (`RESULTS.md` lines 22–37) | Re-partitioning the same 40 episode points (`32 support / 8 query`, expanding direct transition supervision without adding data or auxiliary heads) improved unseen dev RMSE `0.364115 -> 0.255019` (`0/128 -> 1/128`). | **Episode-internal transition prediction** across multiple `(x_m -> y_m)` pairs using the **same network and task loss** is a clean, zero-hyperparameter world-transition supervision mechanism. |
-| **2026-11-16** | `Stage1B` & `hnet_closure` (`RESULTS.md`, `model_clean.py`) | Adding recurrent cross-attention to support memory lifted L1 unseen dev accuracy from `37.70%` (`193/512`) to `65.04%` (`333/512`, `hard = 57.47%`), though `8 -> 16` still had net `-13` and relied on explicit graph edges. | Recurrent reading from in-context support helps generalization; next step must strip explicit graph-edge priors and validate across heterogeneous domains. |
-| **2026-11-17** | `universal_hnet_loop_20261117` (`CURRENT.md`, `PRECISION_FAILURE_preln.json`) | Cholesky solver + manual 2nd-order features + `p > 0.5`/STE + 6-term loss (`InverseActionHead`, `CQR`, contraction hinge) on Norman:<br>- `compiler_only`: `T16 DE20 = 0.9377`, `FP32diff = 0.0016` (PASS)<br>- `hnet_single_step`: `T16 DE20 = 0.5881`, `FP32diff = 1.923` (FAIL)<br>- `hnet_loop_obs_only`: `T16 DE20 = 0.9145`, `FP32diff = 0.0146` (FAIL)<br>- `hnet_loop_world_cqr`: `T16 DE20 = 0.9197`, `FP32diff = 0.0387` (FAIL) | (1) Never embed Ridge/Cholesky solvers or tune an entire architecture to a 94%-linear tabular benchmark.<br>(2) Hard `p > 0.5` routing flips discrete chunk boundaries between BF16 and FP32.<br>(3) Detached `InverseActionHead` + variance smoothing is **not** a world model loss. |
+| Pattern | Verified Failure Mode | Permanent Design Rule Derived |
+|---|---|---|
+| **Teacher-Forced Rollout Training** | Training with noisy ground-truth states while test-time rollout feeds back self-generated predictions causes compounding carry collapse. | Train recurrent loops on their **own self-generated carry states** (`k` no-grad self-steps + gradient step). |
+| **Hard Binary Keep-Mask Routing** | Hard threshold keep-mask routing can over-select padding/noise tokens over real content tokens. | Reject brittle binary routing masks; use smooth differentiable `softmax` Cross-Attention slot pooling. |
+| **Unregularized Latent Target Matching** | Adding auxiliary latent-target or blind state-replay losses without variance/covariance regularization (`SIGReg`) degrades generalization vs. compute-matched training. | Never use unregularized latent target matching without `SIGReg`, and never add blind state-replay losses without a causal ablation win. |
+| **Episode-Internal Transition Supervision** | Re-partitioning existing episode trajectories into support/query pairs expands direct transition supervision without adding data or auxiliary heads. | Prefer **episode-internal transition prediction** using the **same network and task loss** over ad-hoc auxiliary heads. |
+| **In-Context Support Cross-Attention** | Recurrent reading from in-context support improves unseen generalization, provided explicit dataset-specific graph priors are stripped. | Validate cross-attention readers across heterogeneous domains without dataset-specific priors. |
+| **Discrete Routing + BF16/FP32 Drift** | Embedding Ridge/Cholesky solvers or hard `p > 0.5`/STE gating flips discrete chunk boundaries between BF16 and FP32. | Keep forward passes smooth and verify BF16-vs-FP32 numerical parity directly. |
 
 ---
 
@@ -37,5 +37,5 @@ When training **one single shared model with one shared hyperparameter set** sim
 2. **Smooth Abstraction (`L -> K` Cross-Attention Slots)**: $K$ learned query slots cross-attend smoothly over support transition tokens to form episode context representation $S = \operatorname{XAttn}(Q_{\text{slot}}, K_{\text{sup}}, V_{\text{sup}})$ with `0` routing thresholds or STE.
 3. **Shared Pre-LN Recurrent Transition Core (`Huginn / TRM` Style)**: initialize $h_0 = E_\theta(x_q)$; for $t = 0 \dots T-1$,
    $$h_{t+1} = h_t + \operatorname{Block}_\theta\bigl(\operatorname{RMSNorm}(h_t),\; \text{context}=[E_\theta(x_q), S]\bigr)$$
-   using `nograd_k_1step` during training ($k \sim \{0..3\}$ self-rollout + 1 grad step) to match inference dynamics.
+   using `k`-step warmup + 1-step grad during training ($k \sim \{0..3\}$ self-rollout + 1 grad step) to match inference dynamics.
 4. **Thin Shared Readout (`Coda`) + Minimal Objective**: decode $\hat{y}_T = C_\theta(h_T)$ on both $x_q$ and held-out in-episode support transitions $(x_m \to y_m)$ using the primary observable task loss (plus optional `LeWM` `||F(E(x_m)) - E(y_m)||^2 + SIGReg` only as a 1-scalar controlled ablation against `lambda_world = 0`).

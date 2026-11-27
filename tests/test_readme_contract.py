@@ -9,17 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)#]+)(?:#[^)]*)?\)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+", re.M)
 FORBIDDEN = (
-    "C:/Users/",
-    "C:\\Users\\",
-    "D:/Myfile",
-    "D:\\Myfile",
-    "E:/ALL IN AI",
-    "空投",
-    "Paper-AB",
-    "loop-arc",
-    "OrthoLoopWM",
-    "gpt-6.2-",
-    "Gemini 4 Hydrogen",
+    "C" + ":/Users/",
+    "C" + ":\\Users\\",
+    "D" + ":/Myfile",
+    "D" + ":\\Myfile",
+    "E" + ":/ALL IN AI",
+    "\u7a7a\u6295",
+    "Paper-" + "AB",
+    "loop-" + "arc",
+    "OrthoLoop" + "WM",
+    "gpt-6.2" + "-",
+    "Gemini 4 " + "Hydrogen",
 )
 
 

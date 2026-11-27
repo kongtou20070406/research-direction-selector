@@ -126,6 +126,7 @@ def test_doctor_reports_sync_status(healthy_stack, monkeypatch, capsys, sync_out
 
 @pytest.mark.parametrize(("last_result", "status"), [("0", "OK"), ("7", "FAIL")])
 def test_scheduled_task_result_handling(monkeypatch, last_result, status):
+    monkeypatch.setattr(doctor, "TASKS", ("Task_A", "Task_B", "Research_Overview_Weekly"))
     def powershell(args, **kwargs):
         assert "Get-ScheduledTaskInfo" in args[-1]
         assert kwargs["timeout"] == 10

@@ -125,7 +125,7 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
     repo = args.repo.resolve(strict=True)
     allow, protect = repo_relative(repo, args.allow), repo_relative(repo, args.protect)
     write = args.sandbox == "workspace-write"
-    skill_names = list(getattr(args, "skill", None) or [])
+    skill_names = [s.strip() for s in (getattr(args, "skill", None) or []) if isinstance(s, str) and s.strip()]
     skill_bundle = build_skill_bundle(skill_names)
     verify_cmd = getattr(args, "verify_cmd", None)
     venue = getattr(args, "venue", "arxiv")
@@ -141,6 +141,12 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
         ledger = args.ledger.resolve() if args.ledger else None
         if report in (args.prompt_file.resolve(), ledger):
             raise ValueError("--out-report must differ from --prompt-file and --ledger")
+        protected_paths = {(repo / p).resolve() for p in protect}
+        if any(
+            report == pp or report.is_relative_to(pp) or (report.exists() and pp.exists() and os.path.samefile(report, pp))
+            for pp in protected_paths
+        ):
+            raise ValueError(f"--out-report cannot overwrite protected path: {report}")
 
         codex = [*codex_launcher(), "exec"]
         if not write:
@@ -184,6 +190,7 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
                 if snapped.returncode:
                     raise RuntimeError(snapped.stderr.strip() or snapped.stdout.strip() or "prose snapshot failed")
         worker_ok = False
+        publish_ok = False
         try:
             worker = runner(codex, input=prompt, timeout=args.timeout, **options)
             report_text = staged_report.read_text(encoding="utf-8-sig") if staged_report.is_file() else None
@@ -193,16 +200,24 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
                                    (detail[-1] if detail else "No usable worker report"))
             worker_ok = True
             if not write:
+                if verify_cmd:
+                    verified = subprocess.run(verify_cmd, shell=True, cwd=repo, timeout=args.timeout, **options)
+                    if verified.returncode:
+                        print(f"Report: {report}")
+                        print("VerifyCmd: failed")
+                        return 1
+                publish_ok = True
                 print(f"Report: {report}")
                 print("Summary: " + " ".join(report_text.split())[:240])
                 return 0
 
             skill_gate_ok = True
             post_tex_files = sorted(set(tex_files) | set(_tex_targets(repo, allow))) if "latex-typeset" in skill_names else []
-            if (tex_files or post_tex_files) and prose_snap.is_file():
+            if post_tex_files and LAYOUT_AUDIT.is_file():
                 audit_cmd = [sys.executable, "-E", "-s", "-X", "utf8", "-B", str(LAYOUT_AUDIT),
-                             str(repo), "--tex", *[str(p) for p in post_tex_files], "--venue", venue,
-                             "--verify-prose", str(prose_snap)]
+                             str(repo), "--tex", *[str(p) for p in post_tex_files], "--venue", venue]
+                if prose_snap.is_file():
+                    audit_cmd += ["--verify-prose", str(prose_snap)]
                 audited = subprocess.run(audit_cmd, timeout=args.timeout, **options)
                 if audited.returncode:
                     skill_gate_ok = False
@@ -232,6 +247,7 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
             if not verify_cmd_ok:
                 failure_modes.append("verify_cmd_failed")
             overall_verdict = result["verdict"] if (skill_gate_ok and verify_cmd_ok) else "REJECTED"
+            publish_ok = overall_verdict == "ACCEPTED"
             failures = ", ".join(dict.fromkeys(failure_modes))
             verdict = overall_verdict + (f" ({failures})" if failures else "")
             print_verdict(verdict, len(checks["scope"]["changed"]), checks, report)
@@ -241,8 +257,8 @@ def dispatch(args: argparse.Namespace, runner=subprocess.run) -> int:
                 print("VerifyCmd: failed")
             return 0 if accepted.returncode == 0 and overall_verdict == "ACCEPTED" else 1
         finally:
-            # Publish only after acceptance, keeping dispatcher writes outside the diff, and never clobber an existing report on worker failure.
-            if staged_report.is_file() and (worker_ok or not report.exists()):
+            # Publish only after acceptance, keeping dispatcher writes outside the diff, and never clobber an existing report on failure/rejection.
+            if staged_report.is_file() and ((worker_ok and publish_ok) or not report.exists()):
                 report.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(staged_report, report)
 

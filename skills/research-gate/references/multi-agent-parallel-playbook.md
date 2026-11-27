@@ -12,7 +12,7 @@ Dispatch parallel workers only when all three hold: (a) the pieces share no muta
 - **Lead Offload Matrix (Always Pass `--skill <name>` to `scripts/dispatch_gpt.py` so GPT receives the inlined skill contract and passes host-side post-gates)**:
   - *Figure coding & coordinate iteration* → `gpt-6.2-sol` / `gpt-6.2-astra` with `--skill paper-figure-craft --verify-cmd "...audit_figure_taste.py..."`; Lead inspects final PNGs.
   - *LaTeX layout, BibTeX/ref/table sync* → `gpt-6.2-astra` with `--skill latex-typeset` (auto-enforces `--snapshot-prose` / `--verify-prose` + `layout_audit.py`).
-  - *Card/CI/test/repo/handoff plumbing* → `gpt-6.2-sol` with `--protect tests` + `accept_worker_deliverable.py`.
+  - *Card/CI/test/repo/handoff plumbing* → `gpt-6.2-sol` with `--protect tests` + `skills/research-gate/scripts/accept_worker_deliverable.py`.
   - *Heavy codebase, ledger, or literature pre-digs* → read-only subagent or parallel `gpt-6.2-astra` returning `<=12`-line gists with file/citation pointers.
 - **Parallel Verifiable Semi-Open Research & Red-Team (`gpt-6.2-astra`, `-s read-only`)**:
   - **Verifiable Semi-Open Problems (Zero GPU)**: Fan out 2–3 independent read-only `astra` sessions concurrently on non-experimental semi-open problems that carry a clear deterministic acceptance bar (Lean 4/SymPy proof patch or 10-line Python counterexample, minimal-operator derivation with spectral/gradient bounds + CPU test, competing root-cause CPU probes, cited cross-domain prior art with scope limits, or Top-3 reviewer attack maps). The Lead mechanically verifies every output and distills `<=2` options for the researcher; `astra` never sets the North Star or writes final prose.

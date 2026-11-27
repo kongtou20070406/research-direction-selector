@@ -89,4 +89,4 @@ python scripts/bootstrap.py --apply   # 可选：将技能链接到本地代理�
 
 ## 开源协议
 
-本项目基于 [Apache License 2.0](LICENSE) 协议开源。注意：`skills/paper-write/references/ars/` 下收录的第三方参考材料仍受其上游 [CC BY-NC 4.0](skills/paper-write/references/ars/VENDORED.md) 非商业协议约束。
+本项目基于 [Apache License 2.0](LICENSE) 协议开源。注意：`skills/paper-write/references/ars/` 下收录的第三方参考材料仍受其上游 [CC BY-NC 4.0](skills/paper-write/references/ars/VENDORED.md) 非商业协议约束，`skills/paper-write/references/exemplars/` 下的范例卡片保留其上游 [MIT](skills/paper-write/references/exemplars/LICENSE) 声明。

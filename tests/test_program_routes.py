@@ -17,7 +17,7 @@ spec.loader.exec_module(program)
 
 def _prog():
     return {
-        "schema": "research-program/v1", "program": "loop-agi",
+        "schema": "research-program/v1", "program": "demo-program",
         "north_star": {"current": "S@1", "versions": [{"id": "S@1", "date": "2026-08-01", "statement": "s"}],
                        "amendments": [], "review_every_days": 60},
         "propositions": [
@@ -30,7 +30,7 @@ def _prog():
             {"id": "C2", "statement": "y", "strength": "observed", "status": "refuted", "evidence": ["ledger:2"], "refuted_by": ["ledger:3"], "propositions": ["W3"], "anchored_to": "S@1", "route": "R-anti"},
         ],
         "papers": [],
-        "contributors": [{"id": "kongtou", "kind": "person", "scope": "internal"}],
+        "contributors": [{"id": "researcher", "kind": "person", "scope": "internal"}],
         "routes": [
             {"id": "R-old", "question": "q", "targets": ["W1"], "status": "active", "opened": "2026-10-01", "last_activity": "2026-11-23",
              "kill": {"falsifier": "T=64 diverges", "budget_gpu_hours": 20, "deadline": "2026-12-31"}, "spent_gpu_hours": 25, "cards": ["002"]},
@@ -75,7 +75,7 @@ def test_review_quiet_program_and_owned_claims():
     p["routes"][0]["spent_gpu_hours"] = 5
     p["north_star"]["last_review"] = "2026-11-20"
     p["papers"] = [{"id": "P1", "title": "t", "status": "drafting", "anchored_to": "S@1", "propositions": ["W1"],
-                    "primary_claims": ["C1"], "background_claims": [], "contributors": [{"who": "kongtou", "roles": ["writing"]}]}]
+                    "primary_claims": ["C1"], "background_claims": [], "contributors": [{"who": "researcher", "roles": ["writing"]}]}]
     agenda = program.review(p, today="2026-11-24", stale_days=14)
     assert agenda["over_budget"] == [] and agenda["stalled"] == [] and agenda["past_deadline"] == []
     assert agenda["paper_candidates"] == []
