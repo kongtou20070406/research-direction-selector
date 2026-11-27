@@ -12,14 +12,18 @@ The lead agent writes and translates all manuscript prose. Use the lead model as
 **Before writing anything, every time** (these reads are required, not on demand, and do not count against any "read few files" budget):
 1. Read [top-venue-writing-rules.md](references/top-venue-writing-rules.md) in full.
 2. For an abstract, introduction or theorem narrative, read [exemplars/index.md](references/exemplars/index.md), then one matching card and its original passage.
-3. After writing, run the clarity check and `paper_gate.py`. They block internal workflow wording (reruns, stages, schedules), internal labels and long sentences, whether or not you remembered the rule.
+3. **Pre-Draft 3-Question Positioning Gate (hard gate before drafting Abstract/Intro/Method):** Run a read-only `independent-reviewer` (Domain Skeptic + Devil's Advocate) check against the locked Fact Ledger and eval code, answering three questions (if evidence is missing, narrow the claim instead of spinning):
+   - *Equal-budget ablation*: If shared components are split at matched capacity and compute, what joint capability is actually lost? (No evidence → do not claim "unification".)
+   - *Premise-to-code binding*: Which exact update line in code and independent measurement supports each theorem hypothesis, and does any lower bound cover the actual baseline algorithm in code?
+   - *Comparability & wall-clock symmetry*: After adding same-supervision amortized baselines, end-to-end wall-clock latency (`ms`), and real-environment zero-action / trivial baselines, which headline claim still holds?
+4. After writing, run the clarity check and `paper_gate.py`. Passing `paper_gate.py` means deliverable build/format parity, **not** scientific positioning or empirical validity.
 
 ## Draft
 
 - Write independent `latex/sections_en/00..08.tex` and `latex/sections_zh/00..08.tex` modules. Include them from `latex/main_en.tex` and `latex/main_zh.tex`. **Single-source multi-wrapper rule**: never clone `sections_*` into separate `arxiv_en/` or `arxiv_zh/` folders; put all target wrappers (`main_arxiv_en.tex`, `main_arxiv_zh.tex`, venue wrappers) and their `paper_gate*.json` configs inside `latex/` so every PDF builds from identical source bytes. Use `--markdown` when assembling a legacy Markdown draft.
 - Default layout during research is clean single-column arXiv preprint (`"venue": "arxiv"` in `paper_gate.json`). When switching to a target conference/journal wrapper (`main_<venue>.tex` + `"venue"` / `"page_limit"`), run `paper_gate.py --compile --layout-check --render-pages` to check page limits, overfull boxes and margins automatically and visually inspect the rendered PNG pages with the Main Model.
 - Generate `\input{tables/auto_*.tex}` directly from experiment `RESULTS.json` via `verify_manuscript_formal.py --results-to-tex` instead of hand-copying numbers.
-- Use Abstract → Introduction → Setup → Method → Theoretical Justification → Experiments → Related Work → Discussion & Limitations → Appendix. Swap Method and Theory only for pure theory.
+- Use Abstract → Introduction → Setup → Method → [Optional Theoretical Justification] → Experiments → Related Work → Discussion & Limitations → Appendix. Swap Method and Theory only for pure theory; omit Theory and extra table slots cleanly when empirical evidence carries the paper instead of padding weak claims into a fixed template.
 - Open the abstract and introduction with a concrete problem, why it matters and where current methods fail. Name the method and its capability by abstract sentence 3.
 - State only supported claims. Cut lab tags, repo paths, workflow slogans, coined shorthand, proxy-metric padding and speculative side claims. Keep protocols, speedups and unit tests out of the headline.
 - Describe completed results and protocols in the present or past tense, keep plans, reruns, internal stages and submission schedules out of the prose, and mark pending numbers as TBD in tables. Sentence clarity in submission mode and the paper gate both flag internal workflow wording.
@@ -36,6 +40,8 @@ The lead agent writes and translates all manuscript prose. Use the lead model as
 **Narrative Planning Rule.** Before drafting, map the problem, evidence of the bottleneck, proposed mechanism and supported result. Give each paragraph a job in that sequence and identify the evidence supporting its claim.
 
 **Pre-Compile De-AI Pass.** Run `check_sentence_clarity.py --submission-mode --strict-deai --draft-dir <paper-dir>` on both languages and review the flagged passages in context before compiling. See the [six mechanical checks](references/top-venue-writing-rules.md#bilingual-mechanical-checklist).
+
+**Anti-Autoresearch Style DNA & Content-Lock Rewrite.** Before drafting or rewriting any Abstract, Introduction, Theory narrative, or Conclusion, read [style-dna-anti-autoresearch.md](references/style-dna-anti-autoresearch.md) for advisory word/decimal budgets, Information Layering, and the Two-Stage Content-Lock Protocol (`FACT_LEDGER.md` → clean-room fresh rewrite → ledger back-check). Style DNA improves readability only; scientific positioning is governed by the Pre-Draft 3-Question Positioning Gate above.
 
 ### Lead–GPT Complementarity & Clean-Room Voice Charter
 

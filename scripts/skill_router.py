@@ -117,7 +117,8 @@ def message(matches: list[dict], read_root: Path | None = None) -> str:
     for m in matches:
         base = (read_root / m["skill"]) if read_root else m["dir"]
         files = sep.join(str(base / rel).replace("\\", "/") for rel in m["must_read"])
-        lines.append(f"- {m['skill']} — {verb}{files}. {m['then'] or ''}{hit_prefix}{hit_sep.join(m['hits'])}{hit_suffix}".rstrip())
+        copy_note = " (read-only copy; edit source in rds-v7/skills/ and run sync_skills.py)" if read_root else ""
+        lines.append(f"- {m['skill']} — {verb}{files}.{copy_note} {m['then'] or ''}{hit_prefix}{hit_sep.join(m['hits'])}{hit_suffix}".rstrip())
     lines.append(footer)
     return "\n".join(lines)
 
