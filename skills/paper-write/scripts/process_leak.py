@@ -184,6 +184,11 @@ INLINE_PROSE = {
 
 
 def _latex_projection(source: str):
+    source = re.sub(
+        r"\\textcolor\s*(?:\[[^\]]*\])?\s*\{[^}]*\}",
+        lambda m: re.sub(r"[^\r\n]", " ", m.group(0)),
+        source,
+    )
     from latex_text import (
         _DISPLAY, _ENV, _HEADINGS, _LITERALS, _REFERENCE, _SOURCE_TOKEN, _TABLE, _TOKEN,
         _VERBATIM, _end_pattern, _group, _math, _skip_options,

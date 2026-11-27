@@ -56,7 +56,12 @@ def _validate_evidence(owner, field, entries, root, errors):
     if root is None:
         return
     for entry in entries:
-        if ":" in entry or ("/" not in entry and "\\" not in entry):
+        has_drive = len(entry) >= 3 and entry[0].isalpha() and entry[1] == ":" and entry[2] in "/\\"
+        is_path_like = (
+            has_drive or "/" in entry or "\\" in entry
+            or entry.lower().endswith((".lean", ".py", ".json", ".md", ".csv", ".tex", ".pdf", ".log", ".txt", ".png"))
+        )
+        if (":" in entry and not has_drive) or not is_path_like:
             continue
         relative = Path(entry.replace("\\", "/"))
         exists_under_root = False

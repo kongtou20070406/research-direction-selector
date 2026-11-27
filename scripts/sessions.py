@@ -7,6 +7,7 @@ import datetime as dt
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import sys
 import time
@@ -87,12 +88,15 @@ def board_path(project_root: Path) -> Path:
 
 
 def _norm_scope(raw: str) -> str:
+    import posixpath
+
     s = raw.strip().replace("\\", "/")
     while s.startswith("./"):
         s = s[2:]
     if s in ("", ".", "*"):
         return s
-    return s.rstrip("/")
+    normed = posixpath.normpath(s.rstrip("/"))
+    return "." if normed == "." else normed
 
 
 def is_readonly(scope: str) -> bool:
@@ -118,11 +122,27 @@ def path_overlaps(a: str, b: str) -> bool:
             na_cmp, nb_cmp = na, nb
         if fnmatch.fnmatchcase(na_cmp, nb_cmp) or fnmatch.fnmatchcase(nb_cmp, na_cmp):
             return True
-        pa = _GLOB_RE.split(na_cmp, maxsplit=1)[0].rstrip("/")
-        pb = _GLOB_RE.split(nb_cmp, maxsplit=1)[0].rstrip("/")
+        raw_pa = _GLOB_RE.split(na_cmp, maxsplit=1)[0]
+        raw_pb = _GLOB_RE.split(nb_cmp, maxsplit=1)[0]
+        pa = raw_pa.rstrip("/")
+        pb = raw_pb.rstrip("/")
         if not pa or not pb:
             return True
-        return pa.startswith(pb) or pb.startswith(pa)
+        if raw_pa.endswith("/") and raw_pb.endswith("/"):
+            return _dir_overlaps(pa, pb)
+        if raw_pa.endswith("/"):
+            return _dir_overlaps(pa, posixpath.dirname(pb) or pb) if not raw_pb.endswith("/") else _dir_overlaps(pa, pb)
+        if raw_pb.endswith("/"):
+            return _dir_overlaps(posixpath.dirname(pa) or pa, pb)
+        dir_a, dir_b = posixpath.dirname(pa), posixpath.dirname(pb)
+        if dir_a == dir_b:
+            return pa == pb or pa.startswith(pb) or pb.startswith(pa)
+        # If wildcard sits inside a directory segment (e.g. pkg-*/src/*.py vs pkg-one/src), compare prefixes safely
+        if "*" in na_cmp.split("/")[0] or "?" in na_cmp.split("/")[0] or "[" in na_cmp.split("/")[0]:
+            return fnmatch.fnmatchcase(nb_cmp, na_cmp.split("/")[0] + "*") or _dir_overlaps(pa, pb)
+        if "*" in nb_cmp.split("/")[0] or "?" in nb_cmp.split("/")[0] or "[" in nb_cmp.split("/")[0]:
+            return fnmatch.fnmatchcase(na_cmp, nb_cmp.split("/")[0] + "*") or _dir_overlaps(pa, pb)
+        return _dir_overlaps(dir_a or pa, dir_b or pb)
     if os.name == "nt":
         return _dir_overlaps(na.lower(), nb.lower())
     return _dir_overlaps(na, nb)
@@ -387,7 +407,7 @@ def heartbeat(
                 resources=entry.get("resources"),
             )
             if conflicts:
-                raise ValueError(f"heartbeat conflict with active session(s): {', '.join(c['id'] for c in conflicts)}")
+                raise ValueError(f"heartbeat conflict with active session(s): {', '.join(c['with'] for c in conflicts)}")
         entry["updated_at"] = _fmt_utc(_utcnow(now))
         updated = [entry, *(s for s in active if s["id"] != sid)]
         _save_atomic(board_path(project_root), updated)
@@ -430,14 +450,15 @@ def prune(
     default_ttl_hours: float = DEFAULT_TTL_HOURS,
 ) -> int:
     path = board_path(project_root)
-    raw = _read_raw_entries(path)
-    if not raw:
-        return 0
-    active = load_active(project_root, now=now, default_ttl_hours=default_ttl_hours)
-    removed = len(raw) - len(active)
-    if removed > 0:
-        _save_atomic(path, active)
-    return removed
+    with _board_lock(path):
+        raw = _read_raw_entries(path)
+        if not raw:
+            return 0
+        active = load_active(project_root, now=now, default_ttl_hours=default_ttl_hours)
+        removed = len(raw) - len(active)
+        if removed > 0:
+            _save_atomic(path, active)
+        return removed
 
 
 def _format_age(updated_at: str, ref_now: dt.datetime) -> str:
@@ -576,15 +597,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "heartbeat":
-        updated = heartbeat(
-            root,
-            args.id,
-            task=args.task,
-            scope=args.scope,
-            resources=args.resource,
-            role=args.role,
-            ttl_hours=args.ttl_hours,
-        )
+        try:
+            updated = heartbeat(
+                root,
+                args.id,
+                task=args.task,
+                scope=args.scope,
+                resources=args.resource,
+                role=args.role,
+                ttl_hours=args.ttl_hours,
+            )
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
         if updated is None:
             print(f"NOT FOUND: {args.id}")
             return 1

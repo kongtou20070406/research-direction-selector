@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata in this file."
 type: software
 title: Research Direction Selector
-version: 7.3.3
+version: 7.4.0
 authors:
   - name: Research Direction Selector contributors
 repository-code: "https://github.com/kongtou20070406/research-direction-selector"

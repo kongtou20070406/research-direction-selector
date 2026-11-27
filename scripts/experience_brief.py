@@ -8,8 +8,17 @@ import importlib.util
 import json
 import re
 import runpy
+import sys
 from functools import cache
 from pathlib import Path
+
+if __package__:
+    from . import rds_profile
+else:
+    _SCRIPT_DIR = str(Path(__file__).resolve().parent)
+    if _SCRIPT_DIR not in sys.path:
+        sys.path.insert(0, _SCRIPT_DIR)
+    import rds_profile
 
 MAX_CHARS = 1200
 TITLE = "[Project Context Brief]"
@@ -126,7 +135,8 @@ def _dated_decisions(text: str):
         if "日期" in cells:
             date_col = cells.index("日期")
             # the meaning column says what was decided; the quote column alone is often just the user's prompt
-            decision_col = next((cells.index(label) for label in ("含义", "决定", "研究者原话") if label in cells), 1)
+            quote_col = rds_profile.profile_str("decision_quote_col", "研究者原话")
+            decision_col = next((cells.index(label) for label in ("含义", "决定", quote_col, "研究者原话") if label in cells), 1)
             continue
         if len(cells) <= max(date_col, decision_col):
             continue
@@ -187,37 +197,44 @@ def _fit(
     feedback: list[str],
     sessions: list[str] | tuple[str, ...] = (),
 ) -> str:
+    max_chars = rds_profile.profile_int("max_chars", MAX_CHARS)
+    title = rds_profile.profile_str("title", TITLE)
+    reminder = rds_profile.profile_str("reminder", REMINDER)
+    decisions_label = rds_profile.profile_str("decisions_label", "研究者的决定")
     conflict_lines = [ln for ln in sessions if "⚠ CONFLICT:" in ln]
     normal_sessions = [ln for ln in sessions if "⚠ CONFLICT:" not in ln]
 
     def render() -> str:
-        sections = [TITLE, checklist]
+        sections = [title, checklist]
         session_lines = [*conflict_lines, *normal_sessions]
         for label, lines in (
             ("STATUS 自动区", status.splitlines()),
             ("活跃并行会话（勿撞文件/GPU/Git）", session_lines),
             ("知识库（与本轮相关的禁区不要重复）", knowledge),
-            ("研究者的决定", decisions),
+            (decisions_label, decisions),
             ("过往反馈", feedback),
         ):
             if lines:
                 sections.append("\n".join([label, *lines]))
-        return "\n\n".join(filter(None, [*sections, REMINDER]))
+        return "\n\n".join(filter(None, [*sections, reminder]))
 
     result = render()
     for lines in (decisions, feedback, knowledge, normal_sessions):
-        while len(result) > MAX_CHARS and lines:
+        while len(result) > max_chars and lines:
             lines.pop()
             result = render()
-    if len(result) > MAX_CHARS:
-        # A project can supply more fixed text than the entire budget; always preserve active conflict alerts.
+    if len(result) > max_chars:
+        # A project can supply more fixed text than the entire budget; preserve active conflict alerts within max_chars.
         conflict_section = "\n".join(["活跃并行会话（勿撞文件/GPU/Git）", *conflict_lines]) if conflict_lines else ""
+        if len(conflict_section) > max_chars - len(title) - len(reminder) - 6:
+            cap = max(0, max_chars - len(title) - len(reminder) - 6)
+            conflict_section = conflict_section[:cap].rstrip()
         status_section = f"STATUS 自动区\n{status}" if status else ""
-        room = MAX_CHARS - len(TITLE) - len(REMINDER) - len(conflict_section) - 2 * (1 + bool(checklist) + bool(status) + bool(conflict_section))
+        room = max_chars - len(title) - len(reminder) - len(conflict_section) - 2 * (1 + bool(checklist) + bool(status) + bool(conflict_section))
         room = max(0, room)
         checklist = checklist[:room - min(len(status_section), room // 2)].rstrip()
         status_section = status_section[:max(0, room - len(checklist))].rstrip()
-        result = "\n\n".join(filter(None, [TITLE, checklist, status_section, conflict_section, REMINDER]))
+        result = "\n\n".join(filter(None, [title, checklist, status_section, conflict_section, reminder]))
     return result
 
 
@@ -258,7 +275,7 @@ def build(prompt: str, cwd: str | Path | None) -> str:
     memory_dir = cfg.get("memory_dir")
     raw_checklist = cfg.get("checklist", "")
     if isinstance(raw_checklist, list):
-        checklist = "\n".join(str(item).strip() for item in raw_checklist if str(item).strip())
+        checklist = "\n".join(item.strip() for item in raw_checklist if isinstance(item, str) and item.strip())
     elif isinstance(raw_checklist, str):
         checklist = raw_checklist.strip()
     else:

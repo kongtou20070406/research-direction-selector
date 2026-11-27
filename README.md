@@ -89,4 +89,4 @@ Contributions, issue reports, and workflow improvements are welcome—see [CONTR
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE). Note: vendored reference texts under `skills/paper-write/references/ars/` remain subject to their upstream [CC BY-NC 4.0](skills/paper-write/references/ars/VENDORED.md) non-commercial license.
+Licensed under the [Apache License 2.0](LICENSE). Note: vendored reference texts under `skills/paper-write/references/ars/` remain subject to their upstream [CC BY-NC 4.0](skills/paper-write/references/ars/VENDORED.md) non-commercial license, and exemplar cards under `skills/paper-write/references/exemplars/` retain their upstream [MIT](skills/paper-write/references/exemplars/LICENSE) notice.
