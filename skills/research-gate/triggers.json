@@ -45,6 +45,7 @@
     "手写算子",
     "算子加速",
     "算子优化",
+    "算子性能优化",
     "算子融合",
     "原生\\s*pytorch",
     "参考实现",
@@ -104,5 +105,5 @@
   "must_read": [
     "SKILL.md"
   ],
-  "then": "以推进开放性科学难题与简洁优雅机制为目标（probe/paper/program）：先形成基于机理的独立判断，不盲从用户或子代理措辞，共创清晰假说与高信息量实验方案；清晰原生 PyTorch 留在 reference/ 一眼对应公式，先用 proofline / perf-ruler 测出理论时延下界与瓶颈，确有优化空间再把按设备提速算子放 engine/ 交 scripts/dispatch_gpt.py（封闭工程交 engineering worker，可核验理论/反例/文献等半开放子问题并行交 2-3 个 independent reviewer）并过数值等价；开训走 scripts/card_gate.py 与 scripts/colab_run.sh；跨会话或压缩后善用 obelisk 找回原始证据；正文与视觉审美由主模型亲笔打磨（只读评价除外）；演化工作流前读 references/workflow-evolution-rules.md。"
+  "then": "以推进开放性科学难题与简洁优雅机制为目标（probe/paper/program）：先形成基于机理的独立判断，不盲从用户或子代理措辞，共创清晰假说与高信息量实验方案；清晰原生 PyTorch 留在 reference/ 一眼对应公式，先用 proofline / perf-ruler 测出理论时延下界与瓶颈，确有优化空间再由主模型在 engine/ 做按设备算子性能优化、交只读 independent reviewer 专职找碴并过数值等价（仅算子性能优化归主模型；其余封闭工程/管线/基线仍经 scripts/dispatch_gpt.py 交 engineering worker，可核验理论/反例/文献等半开放子问题并行交 2-3 个 independent reviewer）；开训走 scripts/card_gate.py 与 scripts/colab_run.sh；跨会话或压缩后善用 obelisk 找回原始证据；正文与视觉审美由主模型亲笔打磨（只读评价除外）；演化工作流前读 references/workflow-evolution-rules.md。"
 }
