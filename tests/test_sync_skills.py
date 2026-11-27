@@ -54,4 +54,20 @@ def test_hook_installs_push_check_and_copy_refresh(tmp_path):
     assert "skills/paper-write/tests" in (hooks / "pre-push").read_text(encoding="utf-8")
     for name in ("post-commit", "post-merge"):
         body = (hooks / name).read_text(encoding="utf-8")
-        assert "magpie library sync" in body and body.rstrip().endswith("exit 0")
+        assert "pre-sync" in body and "magpie library sync" in body and body.rstrip().endswith("exit 0")
+
+
+def test_backup_drifted_copies_preserves_copy_edits(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "skills" / "s1").mkdir(parents=True)
+    (repo / "skills" / "s1" / "SKILL.md").write_bytes(b"---\nname: s1\n---\nrepo\n")
+    copy_dir = tmp_path / "agy" / "s1"
+    copy_dir.mkdir(parents=True)
+    (copy_dir / "SKILL.md").write_bytes(b"---\nname: s1\n---\nlocal edit\n")
+    targets = tmp_path / "targets.json"
+    targets.write_text(json.dumps({"links": {}, "copies": {"s1": [str(copy_dir)]}}), encoding="utf-8")
+
+    bak = tmp_path / "bak"
+    assert sync.backup_drifted_copies(repo, targets, bak) == 1
+    saved = list(bak.iterdir())
+    assert len(saved) == 1 and b"local edit" in (saved[0] / "SKILL.md").read_bytes()

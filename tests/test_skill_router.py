@@ -135,3 +135,8 @@ def test_latex_typeset_routes_layout_and_skips_pure_prose():
         "把 method_notes.md 整理成这篇论文的中文摘要",
     ):
         assert "latex-typeset" not in skills(prose), prose
+
+
+def test_read_root_marks_copy_as_read_only(tmp_path):
+    msg = sr.message(sr.route("改一下摘要", TRIG), read_root=tmp_path)
+    assert "read-only copy" in msg and "rds-v7/skills/" in msg

@@ -167,6 +167,25 @@ def link_all(repo: Path = REPO, targets: Path = TARGETS, backup_root: Path | Non
     return 1 if refused else 0
 
 
+def backup_drifted_copies(repo: Path = REPO, targets: Path = TARGETS, backup_root: Path | None = None) -> int:
+    _, copies = load_targets(targets)
+    backup_root = backup_root or Path.home() / ".skill-link-backups" / _dt.date.today().isoformat()
+    backed = 0
+    for skill, places in copies.items():
+        target = repo / "skills" / skill
+        for place in places:
+            if not place.is_dir():
+                continue
+            diffs = tree_diff(place, target)
+            if diffs:
+                dest = backup_root / f"copy__{'__'.join(p.strip(':\\/') for p in place.parts[-4:])}"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(place, dest, dirs_exist_ok=True)
+                print(f"BACKED UP drifted copy {place} -> {dest} ({len(diffs)} differences)")
+                backed += 1
+    return backed
+
+
 HOOK = """#!/bin/sh
 # Installed by scripts/sync_skills.py hook. Blocks a push when the repo checks fail.
 PY="${{RDS_PYTHON:-{python}}}"
@@ -177,6 +196,9 @@ export PYTHONDONTWRITEBYTECODE=1
 # Links already point at this clone; only the copies (Gemini) go stale after a commit or pull.
 SYNC_HOOK = """#!/bin/sh
 # Installed by scripts/sync_skills.py hook. Refreshes agent skill copies; never blocks git.
+PY="${{RDS_PYTHON:-{python}}}"
+export PYTHONDONTWRITEBYTECODE=1
+"$PY" -B scripts/sync_skills.py pre-sync >/dev/null 2>&1 || true
 if command -v magpie >/dev/null 2>&1; then
   magpie library sync >/dev/null 2>&1 || echo "research-direction-selector: magpie library sync failed; run it by hand" >&2
 fi
@@ -187,7 +209,7 @@ exit 0
 def install_hook(repo: Path = REPO) -> int:
     hooks = repo / ".git" / "hooks"
     py = Path(sys.executable).as_posix()
-    for name, body in (("pre-push", HOOK.format(python=py)), ("post-commit", SYNC_HOOK), ("post-merge", SYNC_HOOK)):
+    for name, body in (("pre-push", HOOK.format(python=py)), ("post-commit", SYNC_HOOK.format(python=py)), ("post-merge", SYNC_HOOK.format(python=py))):
         hook = hooks / name
         hook.write_text(body, encoding="utf-8", newline="\n")
         hook.chmod(0o755)
@@ -197,13 +219,16 @@ def install_hook(repo: Path = REPO) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", nargs="?", default="status", choices=["status", "link", "hook"])
+    ap.add_argument("command", nargs="?", default="status", choices=["status", "link", "hook", "pre-sync"])
     ap.add_argument("--fetch", action="store_true", help="git fetch before reporting ahead/behind")
     args = ap.parse_args(argv)
     if args.command == "link":
         return link_all()
     if args.command == "hook":
         return install_hook()
+    if args.command == "pre-sync":
+        backup_drifted_copies()
+        return 0
     return status(fetch=args.fetch)
 
 

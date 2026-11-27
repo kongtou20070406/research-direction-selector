@@ -6,7 +6,7 @@ Distilled from Oral / Best-Paper rubrics and flagship architectures (*Counterfac
 
 Complex, nested sentences lose tired reviewers in the first two pages. Keep writing crisp and scannable (also enforced by the `plain-clear-writing` skill and `scripts/check_sentence_clarity.py`):
 
-- **One idea per sentence.** Target 12–22 English words (soft 25, hard 35) and 15–28 Han characters (soft 42, hard 60). Count commas and semicolons together. EN soft 3 / hard 4, ZH soft 2 / hard 3.
+- **One idea per sentence (advisory readability guide).** Aim for 12–22 English words (soft 25, max 35) and 15–28 Han characters (soft 42, max 60). Count commas and semicolons together (EN soft 3, ZH soft 2). Readable prose never substitutes for scientific positioning or baseline comparability.
 - **Subject and verb upfront**: avoid long front-loaded clauses (*"In order to..., while avoiding..., our method..."*). State what happens first; put numbers or caveats in the next short sentence.
 - **No rhetorical questions; no jargon inflation**: motivate strictly as *Problem -> Existing Methods & Trade-Off -> Named Method -> Community Takeaway*. Never package an implementation detail as a grand "dynamics" or "paradigm"; state plainly what capability, speed-accuracy gain, or empirical law the community gains.
 - **Standalone modular EN + ZH drafts**: write `latex/sections_en/00..08.tex` and `latex/sections_zh/00..08.tex` (natural academic Chinese, zero translationese) separately, included by `main_en.tex` and `main_zh.tex`; never interleave EN and ZH in one file. Both must pass `check_sentence_clarity.py --submission-mode` (`violations=0`) and `paper_gate.py --compile`. Legacy Markdown drafts are read-only.
@@ -30,8 +30,8 @@ A submission draft must read like a standalone manuscript for an external ML rev
 Every strong abstract opens directly in active voice without riddle framing (never start with *"We ask what conditions..."* or *"本文研究……如何……"*):
 
 1. **Beat 1 — Broad-Audience Stakes & Tension (1 sentence)**: Tell even a non-specialist reviewer why the real-world problem matters, what structural bottleneck stops existing paradigms from solving it, and why overcoming that bottleneck is significant.
-2. **Beat 2 — Named Method & What-Claim (1–2 sentences)**: Name the proposed method upfront and state **What** scientific capability or unification it achieves (never a laundry list of internal modules like gates or norms), contrasting with why prior paradigms fail.
-3. **Beat 3 — Core Theoretical Guarantees (1–2 sentences)**: State the falsifiable formal guarantees cleanly without secondary constants cluttering the prose.
+2. **Beat 2 — Named Method & What-Claim (1–2 sentences)**: Name the proposed method upfront and state **What** scientific capability it achieves (never a laundry list of internal modules). Only claim "unification" if equal-budget split-vs-shared ablations prove joint capability beyond parameter reuse.
+3. **Beat 3 — Core Guarantees or Mechanism Insight (1–2 sentences, optional)**: Include a formal guarantee only if backed by a verified theorem or proposition; for empirical/mechanistic papers, state the key diagnostic mechanism or omit this beat rather than forcing weak theory.
 4. **Beat 4 — Headline Evidence & Scientific Scope (2 sentences).** Give the strongest matched comparison and name the measured setting where it matters to the claim. Put regime boundaries from the review brief in §7 Limitations.
 
 ## Rule 3: Inverted-Pyramid §1 Introduction
@@ -43,26 +43,22 @@ Answer *"Why should the community change how it thinks?"* before presenting equa
 3. **Paragraph 3 (Conceptual Solution Before Equations)**: Explain the architectural/theoretical mechanism in plain physical or dynamical intuition *before* introducing symbols. Contrast directly with the nearest peer lines (*LeWorldModel*, *CWM*, *LoopFormer*, *Huginn*).
 4. **Paragraph 4 (3 Falsifiable `What` Contributions)**: Frame every contribution strictly as **What** scientific capability, law, or problem is solved—never as a list of modules or implementation tricks (**How**)—paired with verified quantitative scope.
 
-## Rule 4: Standard ICML Order & Theory-First Depth (§2 Setup -> §3 Theory -> §4 Method)
+## Rule 4: Standard ICML Order & Optional Theory Depth
 
-Follow standard ICML section order: `Abstract -> §1 Introduction -> §2 Setup -> §3 Theory -> §4 Theory-Driven Method -> §5 Experiments -> §6 Related Work -> §7 Discussion & Limitations -> Appendix` (`Related Work` follows `Experiments` rather than interrupting motivation).
+Follow standard ICML section order: `Abstract -> §1 Introduction -> §2 Setup -> §3 Method -> [Optional §4 Theory] -> Experiments -> Related Work -> Discussion & Limitations -> Appendix` (`Related Work` follows `Experiments`; swap `Method` and `Theory` only for pure theory, and omit `Theory` cleanly if the paper is empirical).
 
 1. **Zero-Collision Symbol Table (`§2`)**: Assign one symbol per meaning across all sections; define dimensions, sets, and operators on first use.
-2. **Academic 3-Part Theorem Standard (`§3`)**: Keep academic precision (never chatty oversimplification) while eliminating unreadable symbol walls:
+2. **Academic 3-Part Theorem Standard (when theorems are included)**: Keep academic precision while eliminating unreadable symbol walls (never pad weak claims into a forced theorem):
    - *Part 1 — Geometric/Physical Intuition*: 1–2 sentences explaining why the claim holds physically.
    - *Part 2 — Minimal Formal Statement*: state only the sharp condition and conclusion; banish secondary constants and long subscript chains.
    - *Part 3 — Stepwise Proof Sketch*: `<= 5` numbered steps, pairing 1 plain causal sentence with 1 compact equation line per step. Move dense algebra, full constants, and edge-case counterexamples to the Appendix.
-3. **Substantial Theory-Driven `§4 Method` (Never Thin)**: Map every design element back to `§3` rather than treating Method as a brief implementation note:
-   - Include a **`Theorem -> Method Component -> Purpose` mapping table**.
-   - Give explicit **architecture & tensor dimensions**, **warm-start / state initialization** (entering $\delta_0$), **iteration update & gating equations**, **explicit training objectives**, and a self-contained **Algorithm 1 pseudocode** + rollout complexity accounting.
+3. **Substantial `§3 Method` (Never Thin)**: Map design elements to the motivating bottleneck (and to `§4` if theorems exist):
+   - Include a **`Motivation / Theorem -> Method Component -> Purpose` mapping table** when helpful.
+   - Give explicit **architecture & tensor dimensions**, **state initialization**, **iteration update & gating equations**, **explicit training objectives**, and a self-contained **Algorithm 1 pseudocode** + complexity accounting.
 
-## Rule 5: §5 Experiments (4-Table Matrix, 3-Tier Citations & Evidence Split) & §7 Discussion
+## Rule 5: §5 Experiments (Evidence-Driven Tables, 3-Tier Citations & Split) & §7 Discussion
 
-1. **Compact 4-Table ICML Experiment Matrix**:
-   - *Table 1 (Cross-Env Sparse Inversion)*: equal-recipe baselines including multi-step equal-input recurrent control (eliminating input asymmetry), equal-parameter split control, unified core, and explicit regularized optimization (e.g., regularized Gauss–Newton).
-   - *Table 2 (Closed-Loop Physics Control & Cost)*: aligned row-by-row on `(model, fault_mode, T)` comparing success (`↑`), tracking error (`↓`), forward rollouts (`↓`), latency (`↓`), and batched throughput (`↑`) against CEM, Adam shooting, and CMA-ES.
-   - *Table 3 (Single-Component Ablations)*: single-variable toggles mapped 1-to-1 to §3 mechanisms.
-   - *Table 4 (Zero-Training Theorem Probes)*: empirical gradient tests, $\sigma_{\min}^{-1}$ noise scaling, `null_frac` (`↓`) with **isotropic random-subspace reference baselines**, principal angles, and $H$ scaling.
+1. **Evidence-Driven Table Budget (No Forced Slots)**: Design tables strictly around what the paper's actual evidence supports (typically main matched-supervision & wall-clock comparison + single-variable ablations, plus optional mechanism probes). Never force a closed-loop control table, theorem-probe table, or fixed 4-table quota when the evidence does not warrant it.
 2. **Three-Tier External Citations & Strict Two-Tier Evidence Split**:
    - *Tier 1* (identical protocol/split/metric): cite official table numbers directly with `†`. *Tier 2* (same env, different protocol): contextual reference only, no bold superiority claims. *Tier 3* (controlled main comparison): retrain 3 seeds locally under matched recipes.
    - Keep **3-seed FP32 recipe-aligned results in Main Text** and **single-seed exploratory runs in Appendix**. Report denominators, paired 95% CIs, and any raw metric where a baseline wins honestly without cherry-picking.
