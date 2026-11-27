@@ -21,7 +21,6 @@ Measured directly from published source text (arXiv HTML / official PDFs) versus
 **Target operating envelope (EN, advisory readability guide):**
 - **Abstract length:** 130–185 words (6–8 sentences).
 - **Decimals in Abstract:** **0–1 typical, soft cap 3.** Avoid 4-decimal tables in prose (`0.8123 vs. 0.7410`). Round to percentages or order-of-magnitude gains (`4x fewer rollouts`, `nearly 2x lower wall-clock latency`), or state clear regime wins.
-- **Sentence-length cadence:** Alternate short anchor sentences (**8–14 words**) with medium explanatory sentences (**18–26 words**). Keep prose under 35 words; never write a 50+ word scorecard sentence.
 - **Noun-stack ceiling:** At most **3 pre-modifiers** before a head noun in narrative prose (unpack 5–7 word stacks into clauses or Theorem blocks).
 
 ## 2. Information Layering Rule (What Goes Where)
@@ -36,18 +35,19 @@ Autoresearch drafts fail readability when they dump lab-notebook verification ar
 | **Experiments** | Full quantitative proof, controlled comparisons, ablations, and protocol fidelity. | Exact decimals, precision/seed/budget specs, paired bootstrap CIs, $p$-values, and `TBD` table cells (only if pending). | Unbounded narrative walls that re-read every cell of a table instead of stating the takeaway of each comparison. |
 | **Conclusion** | One-sentence conceptual synthesis + candid scope/limitations. | <= 2 numbers total; honest failure regimes and theoretical assumptions. | A second Abstract scorecard repeating Tables 3 and 4. |
 
-## 3. Anti-Autoresearch Redline Checklist (10 Advisory Checks)
+## 3. Anti-Autoresearch Redline Checklist (9 Advisory Checks)
 
 1. **Abstract Decimal Cap:** Count `\d+\.\d+` in the Abstract. Aim for `<= 3` (target `0–1`); avoid 4-decimal numbers (`0.xxxx`).
 2. **Abstract Protocol Ban:** Zero occurrences of `FP32`, `IEEE`, `three-seed`, `seed=`, `TBD`, or 3+ hyphenated solver-budget tags in the Abstract.
 3. **Zero Intro–Abstract Copy-Paste:** No 4-decimal metric or baseline list from the Abstract should reappear verbatim in the Introduction contributions.
-4. **Rhythm & Ceiling:** Average EN sentence 15–22 words; avoid sentences > 35 words; include at least one crisp 8–14 word anchor sentence in Abstract and in Intro P1–P2.
-5. **Noun-Stack Limit:** Flag any sequence of >= 4 stacked modifiers before a noun (e.g., `strict IEEE FP32 three-seed equal-observation evaluation`). Unpack into a verb phrase or move into a formal Theorem statement.
-6. **Physical Scenario Before Jargon:** Opening 2 sentences of Intro should depict a concrete physical dilemma before naming the architecture or parameter count.
-7. **Zero Mid-Claim Lawyer Disclaimers:** Do not smother a main-text claim with defensive parenthetical hedges. State the supported mechanism cleanly in prose; state exact formal hypotheses inside the Theorem block and §7 Limitations.
-8. **Zero Workflow / Pending Leakage:** Never write `TBD`, `rebuttal`, `rerun`, `card`, `stage`, or `verification protocol` in Abstract, Intro, or Conclusion prose.
-9. **Earned Transitions (No Audit Dumps):** Avoid mechanical `First... Second... Third...` dumps that list disconnected numbers. Each paragraph must advance one causal link (`observation → mechanism → consequence`).
-10. **Conclusion Synthesis Test:** Conclusion contains `<= 2` numbers and ends on the core scientific principle, not a recapitulation of every table row.
+4. **Noun-Stack Limit:** Flag any sequence of >= 4 stacked modifiers before a noun (e.g., `strict IEEE FP32 three-seed equal-observation evaluation`). Unpack into a verb phrase or move into a formal Theorem statement.
+5. **Physical Scenario Before Jargon:** Opening 2 sentences of Intro should depict a concrete physical dilemma before naming the architecture or parameter count.
+6. **Zero Mid-Claim Lawyer Disclaimers:** Do not smother a main-text claim with defensive parenthetical hedges. State the supported mechanism cleanly in prose; state exact formal hypotheses inside the Theorem block and §7 Limitations.
+7. **Zero Workflow / Pending Leakage:** Never write `TBD`, `rebuttal`, `rerun`, `card`, `stage`, or `verification protocol` in Abstract, Intro, or Conclusion prose.
+8. **Earned Transitions (No Audit Dumps):** Avoid mechanical `First... Second... Third...` dumps that list disconnected numbers. Each paragraph must advance one causal link (`observation → mechanism → consequence`).
+9. **Conclusion Synthesis Test:** Conclusion contains `<= 2` numbers and ends on the core scientific principle, not a recapitulation of every table row.
+
+Sentence-length diagnostics live in one place, the paper-write `SKILL.md` Draft rules; this guide adds no second ruler.
 
 ## 4. Before vs. After Rewrite Pairs (Generic Examples)
 
@@ -75,4 +75,4 @@ Never "polish" an autoresearch draft in place — local edits preserve the bloat
 Draft Chinese sections directly from `FACT_LEDGER.md` and the scientific argument — never translate English sentences clause-by-clause:
 1. **Kill telegraphic compressions & parenthetical scorecards:** Avoid parenthetical 4-decimal scorecards in Abstract/Intro prose; put exact tables in §5 and write clean Chinese claims in Abstract/Intro.
 2. **Unpack English pre-modifier chains:** Break stacked pre-modifiers into natural verb/clause phrases, and keep `FP32` / seed specs in §5 rather than the Abstract.
-3. **Natural cadence & zero calques:** Aim for 15–28 Han characters per sentence (soft limit 42, `<= 2` `的` per clause). Never put `TBD` inside Chinese Abstract/Intro/Conclusion sentences.
+3. **Natural phrasing & zero calques:** Write Chinese the way a researcher would explain the argument aloud; unpack long `的` chains. Never put `TBD` inside Chinese Abstract/Intro/Conclusion sentences.

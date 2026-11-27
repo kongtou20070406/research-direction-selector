@@ -118,9 +118,9 @@ def init_project(
         k_paths.append(local_kb.as_posix())
 
     checklists = {
-        "probe": "- 灵感探针：直奔核心直觉，用清晰极简的原生 PyTorch reference/ 快速验证关键假说，守好诚实与可复现底线。",
-        "paper": "- 专题成文：把一个清晰发现讲透、算准、画美；正文与视觉审美由主模型亲笔打磨，日常 arXiv 出 PDF 并用 % gate-sorry/TBD 记清待补数，定稿前清零。",
-        "program": "- 长期科学探索：锚定开放性核心难题，先共创可证伪假说与干净基线再启动高信息量实验；追求简洁机制与可理解理论，每步发现沉淀入知识库。",
+        "probe": "- 灵感探针：用 reference/ 下的极简原生 PyTorch 快速验证关键假说，只报告实际跑过的结果。",
+        "paper": "- 专题成文：正文与视觉由主模型负责；日常 arXiv 出 PDF，用 % gate-sorry/TBD 记清待补数，定稿前清零。",
+        "program": "- 长期科学探索：开训前定好可证伪假说、干净基线和判错线；探索与修错免卡，发现沉淀入知识库。",
     }
     brief_path = proj / ".agents" / "brief.json"
     if not brief_path.is_file() or not brief_path.read_text(encoding="utf-8").strip():

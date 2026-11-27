@@ -60,12 +60,12 @@ EN_SLOP_RE = re.compile(
     r"harness(?:es|ed|ing)?|elucidate(?:s|d|ing)?|ever-evolving|shed light on|pave(?:s|d|ing)? the way|"
     r"it is worth noting|play a (?:crucial|vital|pivotal) role|utilize(?:s|d|ing)?|leverage(?:s|d|ing)?|"
     r"facilitate(?:s|d|ing)?|revolutionary|groundbreaking|game-changing|paradigm shift|unprecedented|"
-    r"perfect(?:ly)?|completely|totally|eliminates|dramatically|massively"
+    r"totally|dramatically|massively"
     r")\b",
     flags=re.IGNORECASE,
 )
 SUBMISSION_JARGON_RE = re.compile(
-    r"(?:\b(?:Card|Arm)\s*\d+\b|\bpreflight\b|\bL0\.5\b|彻底|完美|根治|严丝合缝|实锤|打穿|焊死|全通了|一针见血)",
+    r"(?:\b(?:Card|Arm)\s*\d+\b|\bpreflight\b|\bL0\.5\b)",
     flags=re.IGNORECASE,
 )
 PROCESS_LEAK_RE = re.compile(
